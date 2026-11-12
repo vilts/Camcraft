@@ -95,7 +95,8 @@ fn a_reshape_is_refused_by_name_against_the_new_numbers() {
     assert!(m.starts_with(&format!("tool '{TOOL}': cutter profile:")) && m.contains("Ø 12.000"), "{m}");
     // Every ChangeTool law still holds.
     let m = refusal(ReshapeTool::new(&world, TOOL, Tool { diameter: -1.0, ..old.clone() }, None));
-    assert!(m.contains("finite and positive"), "{m}");
+    // #1186: the ChangeTool law names the tool and the field it breaks.
+    assert!(m.starts_with(&format!("tool '{TOOL}': diameter -1 mm is outside")), "{m}");
     assert!(matches!(ReshapeTool::new(&world, "nope", old.clone(), None), Err(CommandError::NotFound(_))));
     // A turning tool is not a spun profile.
     let m = refusal(ReshapeTool::new(&world, TOOL, Tool { kind: ToolKind::Turning, ..old }, Some(necked())));

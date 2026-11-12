@@ -140,10 +140,9 @@ pub fn parse_tool_library(text: &str) -> Result<Vec<LibraryTool>, String> {
         if let Some(why) = tool.torch_refusal() {
             return Err(format!("tool '{name}' is refused: {why}"));
         }
-        if !tool.is_sane() {
-            return Err(format!(
-                "tool '{name}' is refused: its sizes must be finite and positive, corner radius within the diameter"
-            ));
+        // #1186: the rule the tool breaks, by name.
+        if let Some(why) = tool.why_not_sane() {
+            return Err(format!("tool '{name}' is refused: {why}"));
         }
         let body = read_body(def, &tool, name)?;
         out.push(LibraryTool { name: name.to_owned(), tool, body });

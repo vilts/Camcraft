@@ -47,13 +47,8 @@ impl TurningData {
     /// Finite, positive and inside the bounds above.
     #[must_use]
     pub fn is_sane(&self) -> bool {
-        self.vc.is_finite()
-            && self.vc > 0.0
-            && self.vc <= MAX_VC
-            && self.feed_per_rev.is_finite()
-            && self.feed_per_rev > 0.0
-            && self.feed_per_rev <= MAX_FEED_PER_REV
-            && self.max_rpm.is_none_or(|m| m.is_finite() && m > 0.0 && m <= MAX_RPM_CLAMP)
+        // #1186: the bounds live in `why_not_sane`, which names them.
+        self.why_not_sane().is_none()
     }
 }
 

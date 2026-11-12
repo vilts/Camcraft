@@ -68,10 +68,9 @@ impl AddTool {
         if let Some(why) = tool.torch_refusal() {
             return Err(CommandError::Invalid(format!("tool '{name}': {why}")));
         }
-        if !tool.is_sane() {
-            return Err(CommandError::Invalid(format!(
-                "tool parameters must be finite and positive: {tool:?}"
-            )));
+        // #1186: the refusal names the tool and the rule it breaks.
+        if let Some(why) = tool.why_not_sane() {
+            return Err(CommandError::Invalid(format!("tool '{name}': {why}")));
         }
         if model::find_by_name(world, name).is_some() {
             return Err(CommandError::NameConflict(name.to_string()));
@@ -178,10 +177,8 @@ impl ChangeTool {
         if let Some(why) = next.torch_refusal() {
             return Err(CommandError::Invalid(format!("tool '{name}': {why}")));
         }
-        if !next.is_sane() {
-            return Err(CommandError::Invalid(format!(
-                "tool parameters must be finite and positive: {next:?}"
-            )));
+        if let Some(why) = next.why_not_sane() {
+            return Err(CommandError::Invalid(format!("tool '{name}': {why}")));
         }
         let Some(entity) = model::find_by_name(world, name) else {
             return Err(CommandError::NotFound(name.to_string()));

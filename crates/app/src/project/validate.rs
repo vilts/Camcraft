@@ -144,8 +144,10 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
             let Some(tool) = &dto.tool else {
                 return Err(corrupt("tool entity without a definition"));
             };
-            if !tool.to_tool().is_sane() {
-                return Err(corrupt(format!("tool parameters are not usable: {tool:?}")));
+            // #1186: name the tool and the rule it breaks, never the
+            // whole definition.
+            if let Some(why) = tool.to_tool().why_not_sane() {
+                return Err(corrupt(format!("tool '{}': {why}", dto.name)));
             }
             // #221: a stated number is a real tool-table number.
             if let Some(n) = tool.number

@@ -33,5 +33,7 @@ pub mod lathe_insert_zone;
 // #630: the lathe tool orientation code and its control point.
 pub mod orientation;
 pub mod tools;
+// #1186: the tool sanity law, said by name.
+pub mod tool_sanity;
 // #891: turning surface speed, feed per rev and the max-rpm clamp.
 pub mod turning_data;

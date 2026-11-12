@@ -219,10 +219,9 @@ impl ImportTools {
             if let Some(err) = reserved(world, &name) {
                 return Err(err);
             }
-            if !tool.is_sane() {
-                return Err(CommandError::Invalid(format!(
-                    "tool '{name}': parameters must be finite and positive"
-                )));
+            // #1186: the rule the tool breaks, by name.
+            if let Some(why) = tool.why_not_sane() {
+                return Err(CommandError::Invalid(format!("tool '{name}': {why}")));
             }
             if steps.iter().any(|s| matches!(s, Step::Add(n, ..) if *n == name)) || report_has(&report, &name) {
                 return Err(CommandError::Invalid(format!("tool '{name}' appears twice in the library")));

@@ -218,112 +218,12 @@ impl Tool {
 
     /// Finite, positive where it must be, and geometrically consistent:
     /// a corner radius cannot exceed half the diameter, lengths cannot be
-    /// negative. The gate every tool command runs before writing.
+    /// negative. The gate every tool command runs before writing. The
+    /// rules live in [`Tool::why_not_sane`] (#1186), which names the
+    /// first one broken.
     #[must_use]
     pub fn is_sane(&self) -> bool {
-        let fin = [
-            self.diameter,
-            self.corner_r,
-            self.tip_angle,
-            self.pitch,
-            self.nose_radius,
-            self.width,
-            self.flute_len,
-            self.shank_d,
-            self.shank_len,
-            self.holder_d,
-            self.holder_len,
-            self.rpm,
-            self.feed,
-        ]
-        .into_iter()
-        .all(|v| v.is_finite());
-        fin && self.diameter > 0.0
-            && self.diameter <= 500.0
-            && self.corner_r >= 0.0
-            && self.corner_r <= self.diameter * 0.5
-            && self.tip_angle < 180.0
-            && self.pitch >= 0.0
-            && self.nose_radius >= 0.0
-            && self.width >= 0.0
-            && self.flute_len > 0.0
-            && self.shank_d >= 0.0
-            && self.shank_len >= 0.0
-            && self.holder_d >= 0.0
-            && self.holder_len >= 0.0
-            // A torch turns no spindle (#670): its rpm is 0 by law, and
-            // every spinning kind states a positive one.
-            && (if self.kind == ToolKind::Torch { self.rpm == 0.0 } else { self.rpm > 0.0 })
-            && self.feed > 0.0
-            && self.flutes.is_none_or(|z| (1..=32).contains(&z))
-            && self.orientation.is_none_or(crate::orientation::is_valid)
-            // #891: stated turning data is sane, and the constant rpm
-            // the tool states never runs over its own max-rpm clamp.
-            && self.turning.is_none_or(|t| t.is_sane() && t.max_rpm.is_none_or(|m| self.rpm <= m))
-            && match self.kind {
-                // A point that cannot self-center is not a drill, and a
-                // tap with no thread pitch has no feed the cycle could
-                // derive. Other kinds carry both fields inert.
-                ToolKind::Drill => self.tip_angle > 60.0,
-                ToolKind::Tap => self.pitch > 0.0,
-                // A turning insert with no nose is a mathematical
-                // point - it would cut a knife line and verify with a
-                // zero-ball refusal - and a nose wider than half the
-                // shank is not the ball any insert body could hold.
-                // The bounds live HERE, kind-scoped, the drill's and
-                // tap's own law: an inert field may carry any sane
-                // number through a retype without refusing for
-                // geometry the kind never reads.
-                ToolKind::Turning => {
-                    self.nose_radius > 0.0 && self.nose_radius <= self.diameter * 0.5
-                }
-                // A blade with no width is a mathematical plane - it
-                // would part a knife line and judge a zero-band scan -
-                // and a blade as wide as its own body is not the edge
-                // any toolholder could ground. The same kind-scoped law
-                // as the insert's nose (the note above).
-                ToolKind::Groove => self.width > 0.0 && self.width < self.diameter,
-                // A thread form that is not a V (no opening, or a
-                // full flat) is not steel any grinder cuts, and a V
-                // as wide as the body is the insert no holder clamps
-                // - the blade's width law with the drill's angle
-                // bound, both fields read at once (kind-scoped, as
-                // every arm above).
-                ToolKind::Thread => {
-                    self.width > 0.0
-                        && self.width < self.diameter
-                        && self.tip_angle > 0.0
-                        && self.tip_angle < 180.0
-                }
-                // A gauge with no crown is a flat blade (mount a
-                // Groove), and a band ground wider than the arc's
-                // own reach has corners that are no steel at all -
-                // the kernel's door words it for a run; the tool
-                // says it never got made (kind-scoped, as above).
-                ToolKind::Form => {
-                    self.width > 0.0
-                        && self.width < self.diameter
-                        && self.nose_radius > 0.0
-                        && self.width <= 2.0 * self.nose_radius
-                }
-                // A cone that opens no angle at all is a cylinder
-                // wearing the name - the chamfer's generatrix would
-                // meet the wall nowhere, and the congruence door
-                // would divide on nothing (kind-scoped, as above;
-                // the global bound keeps it under a flat).
-                ToolKind::Taper => self.tip_angle > 0.0,
-                // A probe tip is a sphere: the ball radius IS the
-                // corner, and a stylus shorter than its own ball is
-                // no stylus at all.
-                ToolKind::Probe => {
-                    (self.corner_r - self.diameter * 0.5).abs() < 1e-9
-                        && self.flute_len >= self.diameter
-                }
-                // A torch's kerf is a cut width, never a corner: no
-                // corner radius rides it (#670).
-                ToolKind::Torch => self.corner_r == 0.0,
-                _ => true,
-            }
+        self.why_not_sane().is_none()
     }
 
     /// The torch's own refusal, by name (#670): a plasma torch stating a
