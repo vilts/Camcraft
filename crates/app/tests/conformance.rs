@@ -11,7 +11,7 @@
 //! suite `fanuc_post.rs` already locks); the four stage-B dialects get
 //! one subdirectory each.
 //!
-//! Gate map (M4.4): covers app::cl, app::post, app::posting.
+//! Gate map (M4.4): covers cl::cl, post::post, app::posting.
 
 use camcraft_app::cl::{CycleKind, MoveKind};
 use camcraft_app::post::{cnc, engine};
@@ -195,6 +195,12 @@ fn synth_stream_with(wcs: &str, tap: bool) -> String {
         R::Param { name: "OriginX".into(), value: json!(10.0) },
         R::Param { name: "OriginY".into(), value: json!(20.0) },
         R::Param { name: "OriginZ".into(), value: json!(5.0) },
+        // #1028: the planes a generator states for every section (as in
+        // the recorded drill_retract stream): the clearance, and the hop
+        // the holes traverse at - above their R plane 2. The holes below
+        // carry no leaving rapids, so each cycle is seated at this hop.
+        R::Param { name: "ClearancePlane".into(), value: json!(10.0) },
+        R::Param { name: "RetractPlane".into(), value: json!(5.0) },
         R::Tool { number: 2, name: "10MM END MILL".into() },
         R::Section { begin: true },
         // The contour: moves 0..2, no cycle anchored at or below 2

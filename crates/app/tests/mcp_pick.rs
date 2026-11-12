@@ -364,7 +364,7 @@ fn locate_part_refuses_a_mate_point_no_click_could_pick() {
     let part = c.ok("import_model", json!({ "path": boss.display().to_string() }))["model"].as_str().expect("name").to_owned();
     let steel = c.ok("import_model", json!({ "path": vise.display().to_string() }))["model"].as_str().expect("name").to_owned();
     c.ok("add_fixture", json!({ "model": steel }));
-    let top = flat_face(&mut c, &steel, 20.0);
+    let top = flat_face(&mut c, &steel, 20.0, "up");
     let mate = |part_id: &str| json!({ "part": part, "fixture": steel, "mates": [{ "part": part_id, "fixture": top }] });
     let before = c.ok("get_job", json!({}));
     let e = c.refused("locate_part", mate(&format!("vertex:{rim:#018x}")));
@@ -372,7 +372,7 @@ fn locate_part_refuses_a_mate_point_no_click_could_pick() {
     // Refused at the door: placements, undo/redo state, all as they were.
     assert_eq!(c.ok("get_job", json!({})), before, "a refused locate changes nothing");
     // The check refuses no click-pickable mate: the boss's flat bottom seats on the vise top.
-    let bottom = flat_face(&mut c, &part, 0.0);
+    let bottom = flat_face(&mut c, &part, 0.0, "down");
     c.ok("locate_part", mate(&bottom));
     let job = c.ok("get_job", json!({}));
     let boss = job["models"].as_array().and_then(|m| m.iter().find(|m| m["name"] == json!(part))).expect("the boss");
@@ -383,9 +383,74 @@ fn locate_part_refuses_a_mate_point_no_click_could_pick() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The id of `model`'s flat face lying at world Z `z` ("facing" is winding-free).
-fn flat_face(c: &mut Client, model: &str, z: f64) -> String {
+/// The id of `model`'s flat face at world Z `z` that reads `facing` (#884).
+fn flat_face(c: &mut Client, model: &str, z: f64, facing: &str) -> String {
     let f = c.ok("list_features", json!({ "model": model, "kinds": ["faces"] }));
-    let at = |fa: &&Value| [fa["bounds"]["min"][2].as_f64(), fa["bounds"]["max"][2].as_f64()] == [Some(z); 2];
-    f["faces"].as_array().and_then(|fs| fs.iter().find(at)).and_then(|fa| fa["id"].as_str()).map(str::to_owned).unwrap_or_else(|| panic!("{model}: no face at Z {z}: {f}"))
+    let at = |fa: &&Value| fa["facing"] == json!(facing) && [fa["bounds"]["min"][2].as_f64(), fa["bounds"]["max"][2].as_f64()] == [Some(z); 2];
+    f["faces"].as_array().and_then(|fs| fs.iter().find(at)).and_then(|fa| fa["id"].as_str()).map(str::to_owned).unwrap_or_else(|| panic!("{model}: no {facing} face at Z {z}: {f}"))
+}
+
+/// #884: a closed solid's top cap reads "up" and its bottom cap "down" -
+/// the cylinder boss and a box - and the winding-free plane normal no
+/// longer decides it.
+#[test]
+fn list_features_facing_follows_the_outward_side() {
+    let dir = std::env::temp_dir().join(format!("cc_facing_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let boss = dir.join("boss.stl");
+    write_boss_stl(&boss);
+    let mut c = Client::new();
+    let part = c.ok("import_model", json!({ "path": boss.display().to_string() }))["model"].as_str().expect("name").to_owned();
+    flat_face(&mut c, &part, 10.0, "up");
+    flat_face(&mut c, &part, 0.0, "down");
+    let f = c.ok("list_features", json!({ "model": part, "kinds": ["faces"] }));
+    let bottom = f["faces"].as_array().and_then(|fs| fs.iter().find(|fa| fa["facing"] == json!("down"))).expect("a down face");
+    assert!(bottom["normal"][2].as_f64().is_some_and(|z| z < -0.999), "outward normal: {bottom}");
+    let bx = dir.join("box.stl");
+    let mut s = String::from("solid box\n");
+    for t in camcraft_app::geometry::cube(camcraft_app::geometry::Point3::new(0.0, 0.0, 0.0), camcraft_app::geometry::Point3::new(10.0, 10.0, 10.0)).facets.iter() {
+        s.push_str(" facet normal 0 0 0\n  outer loop\n");
+        for p in [t.a, t.b, t.c] {
+            s.push_str(&format!("   vertex {} {} {}\n", p.x, p.y, p.z));
+        }
+        s.push_str("  endloop\n endfacet\n");
+    }
+    s.push_str("endsolid box\n");
+    std::fs::write(&bx, s).expect("write box");
+    let b = c.ok("import_model", json!({ "path": bx.display().to_string() }))["model"].as_str().expect("name").to_owned();
+    let f = c.ok("list_features", json!({ "model": b, "kinds": ["faces"] }));
+    let n = |w: &str| f["faces"].as_array().map_or(0, |fs| fs.iter().filter(|fa| fa["facing"] == json!(w)).count());
+    assert_eq!((n("up"), n("down"), n("side")), (1, 1, 4), "{f}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #956: the listed normal and facing are read where the part sits. The
+/// boss turned 90 degrees about Y lies on its side (its bottom cap looks
+/// -X, its top +X, both "side"); turned 180 degrees its bottom cap looks
+/// up and its top down.
+#[test]
+fn list_features_normal_follows_the_part_placement() {
+    let dir = std::env::temp_dir().join(format!("cc_placed_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("dir");
+    let boss = dir.join("boss.stl");
+    write_boss_stl(&boss);
+    let mut c = Client::new();
+    let part = c.ok("import_model", json!({ "path": boss.display().to_string() }))["model"].as_str().expect("name").to_owned();
+    let caps = |c: &mut Client| -> Vec<Value> {
+        let f = c.ok("list_features", json!({ "model": part, "kinds": ["faces"] }));
+        let mut flat: Vec<Value> = f["faces"].as_array().expect("faces").iter().filter(|fa| fa["normal"][2].as_f64().is_some()).cloned().collect();
+        flat.retain(|fa| fa["area"].as_f64().is_some_and(|a| a > 100.0));
+        flat
+    };
+    let facings = |fs: &[Value], w: &str| fs.iter().filter(|fa| fa["facing"] == json!(w)).count();
+    let h = std::f64::consts::FRAC_1_SQRT_2;
+    c.ok("move_model", json!({ "name": part, "position": [0.0, 0.0, 0.0], "rotation": [0.0, h, 0.0, h] }));
+    let side = caps(&mut c);
+    assert_eq!(facings(&side, "side"), side.len(), "on its side every cap reads side: {side:?}");
+    let x: Vec<f64> = side.iter().filter_map(|fa| fa["normal"][0].as_f64()).collect();
+    assert!(x.iter().any(|v| *v < -0.999) && x.iter().any(|v| *v > 0.999), "caps look -X and +X: {x:?}");
+    c.ok("move_model", json!({ "name": part, "position": [0.0, 0.0, 0.0], "rotation": [0.0, 1.0, 0.0, 0.0] }));
+    let flipped = caps(&mut c);
+    assert_eq!((facings(&flipped, "up"), facings(&flipped, "down")), (1, 1), "{flipped:?}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

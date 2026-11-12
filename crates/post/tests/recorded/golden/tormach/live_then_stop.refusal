@@ -1,0 +1,5 @@
+; tormach.cps refused live_then_stop: 4 warning(s), the program is never released
+warning: operation Cross drill: asks an optional stop after it, but this post script does not declare afterModes (it does not read PARAM AfterOperation) - set the operation to Continue or use a post that reads it
+warning: operation Cross drill: is C-axis live-tool work (the spindle turns as C under a radial live tool), but this post script does not declare liveTooling - use a lathe post that voices the C axis
+warning: machine TESTBENCH MILL-TURN LIVE does not state its safe Z retract - this post lifts Z with G53 G0 before each tool change and at the end, and machine Z0 is the top of travel only on a Tormach; state the Z axis's safe_retract (machine coordinates) in the machine file
+warning: tilted move in operation Cross drill - TESTBENCH MILL-TURN LIVE states no A rotary about X; the Tormach PathPilot post indexes only an A about X and has no RTCP output

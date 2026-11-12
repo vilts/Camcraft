@@ -1,5 +1,5 @@
 //! The machine KIND: what a `.mch` declares itself to be (mill, lathe,
-//! mill-turn, plasma), and the axis-inventory inference for files that
+//! mill-turn, plasma, wire or sinker EDM), and the axis-inventory inference for files that
 //! declare nothing.
 //!
 //! Provenance: general machine-tool practice (a mill moves a cutter in
@@ -8,6 +8,8 @@
 //! Operator's Manual UM10720 v1223A §2 (an X/Y gantry whose Z is the
 //! torch lifter) - behaviour only, our own words. Split out of `def`
 //! (#669) along the kind seam, so `def` stays the plain data.
+
+use serde_json::Value;
 
 use super::def::{AxisLimits, Machine};
 
@@ -40,6 +42,12 @@ pub enum Kind {
     /// (the control owns it - pierce height, cut height, THC), and no
     /// spindle turns.
     Plasma,
+    /// Wire EDM (#530): a wire through lower and upper guides, X/Y plus
+    /// U/V for taper. Declared only - no axis inventory infers it.
+    WireEdm,
+    /// Sinker (die-sink, ram) EDM (#530): an electrode burned down Z.
+    /// Declared only.
+    SinkerEdm,
 }
 
 impl Kind {
@@ -51,6 +59,8 @@ impl Kind {
             Kind::Lathe => "turning",
             Kind::MillTurn => "mill-turning",
             Kind::Plasma => "plasma cutting",
+            Kind::WireEdm => "wire EDM",
+            Kind::SinkerEdm => "sinker EDM",
         }
     }
 
@@ -64,6 +74,8 @@ impl Kind {
             Kind::Lathe => "lathe",
             Kind::MillTurn => "mill-turn",
             Kind::Plasma => "plasma",
+            Kind::WireEdm => "wire_edm",
+            Kind::SinkerEdm => "sinker_edm",
         }
     }
 
@@ -85,6 +97,8 @@ impl Kind {
             "lathe" | "turning" | "turn" => Some(Kind::Lathe),
             "millturn" | "turnmill" | "millturning" | "turningmill" => Some(Kind::MillTurn),
             "plasma" | "plasmacutting" | "plasmatable" => Some(Kind::Plasma),
+            "wireedm" | "wedm" | "wirecut" => Some(Kind::WireEdm),
+            "sinkeredm" | "sinker" | "diesinker" | "ramedm" | "diesinkedm" => Some(Kind::SinkerEdm),
             _ => None,
         }
     }
@@ -147,3 +161,36 @@ pub fn kind(machine: Option<&Machine>) -> Kind {
     }
 }
 
+
+/// The declared kind (M3.3 C) as `(kind, the file's word)`, `None`
+/// when the file states none. A stated word must be a known one: a file
+/// that declares "drill_press" is not silently demoted to the inference,
+/// as the declaration was the point of writing it. A declared kind keeps
+/// its door rules here (#669 plasma, #530 EDM): the first one broken
+/// names its key.
+///
+/// # Errors
+/// An unknown or non-word kind, or the first per-kind rule broken.
+pub(super) fn declared_kind(v: &Value) -> Result<Option<(Kind, String)>, String> {
+    match v.pointer("/general/kind") {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(w)) if w.is_empty() => Ok(None),
+        Some(Value::String(w)) => {
+            let Some(k) = Kind::from_word(w) else {
+                return Err(format!(
+                    "machine file: kind {w:?} is not mill, lathe, mill-turn, plasma, wire_edm or sinker_edm"
+                ));
+            };
+            let broken = match k {
+                Kind::Plasma => super::plasma::plasma_refusals(v),
+                Kind::WireEdm | Kind::SinkerEdm => super::edm::edm_refusals(v),
+                Kind::Mill | Kind::Lathe | Kind::MillTurn => Vec::new(),
+            };
+            if let Some((key, rule)) = broken.into_iter().next() {
+                return Err(format!("machine file: {key}: {rule}"));
+            }
+            Ok(Some((k, w.clone())))
+        }
+        Some(other) => Err(format!("machine file: kind must be a word, not {other}")),
+    }
+}

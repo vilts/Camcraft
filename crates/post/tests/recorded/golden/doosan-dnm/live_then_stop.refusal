@@ -1,0 +1,3 @@
+; doosan-dnm.cps refused live_then_stop: 2 warning(s), the program is never released
+warning: operation Cross drill: is C-axis live-tool work (the spindle turns as C under a radial live tool), but this post script does not declare liveTooling - use a lathe post that voices the C axis
+warning: rotary clamp/unclamp codes not declared for this machine or post options

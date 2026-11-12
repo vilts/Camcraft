@@ -61,17 +61,17 @@ fn port_rejects_degenerate_primitive_sizes() {
     let mut k = solidcore::Kernel::default();
     for s in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
         let r = prim::create_box(&mut k, o(), s, 10.0, 10.0);
-        assert!(r.is_err(), "create_box size {s}: {}", verdict(&k, r.as_ref()));
+        assert!(r.is_err(), "create_box size {s}: {}", verdict(&mut k, r.as_ref()));
         let r = prim::create_cylinder(&mut k, o(), s, 10.0);
-        assert!(r.is_err(), "create_cylinder radius {s}: {}", verdict(&k, r.as_ref()));
+        assert!(r.is_err(), "create_cylinder radius {s}: {}", verdict(&mut k, r.as_ref()));
         let r = prim::create_cylinder(&mut k, o(), 2.0, s);
-        assert!(r.is_err(), "create_cylinder height {s}: {}", verdict(&k, r.as_ref()));
+        assert!(r.is_err(), "create_cylinder height {s}: {}", verdict(&mut k, r.as_ref()));
     }
 }
 
 /// Compact, stable verdict on a port result: `Err`, `Ok non-solid`, or
 /// `Ok solid V=<3 decimals>`.
-fn verdict(k: &solidcore::Kernel, r: Result<&Brep, &solidcore::SolidError>) -> String {
+fn verdict(k: &mut solidcore::Kernel, r: Result<&Brep, &solidcore::SolidError>) -> String {
     let Ok(b) = r else {
         return "Err".into();
     };
@@ -80,7 +80,11 @@ fn verdict(k: &solidcore::Kernel, r: Result<&Brep, &solidcore::SolidError>) -> S
     if !solid {
         return "Ok non-solid".into();
     }
-    let mut b = b.clone();
+    // The port's B-rep is no longer `Clone` at the pinned commit (#916):
+    // a copy is the kernel's own `brep_copy`.
+    let Ok(mut b) = solidcore::topology::brep::p3::brep_copy(k, b) else {
+        return "Ok solid copy=Err".into();
+    };
     match volume(k, &mut b, VOLUME_ACCURACY) {
         Ok(v) => format!("Ok solid V={v:.3}"),
         Err(_) => "Ok solid V=Err".into(),
@@ -129,7 +133,9 @@ const KNOWN_PORT_VERDICTS: &[(&str, &str)] = &[
     ("box - sheet", "Ok non-solid"),
     ("sheet - box", "Ok non-solid"),
     ("box - same box", "Ok non-solid"),
-    ("offset NaN", "Ok solid V=1000.000"),
+    // Re-triaged at the pin of #916: 1.0.1 answered a NaN distance with an
+    // unchanged copy ("Ok solid V=1000.000"); the pinned commit refuses it.
+    ("offset NaN", "Err"),
     ("offset inf", "Err"),
     ("offset -inf", "Err"),
     ("offset -1 (SMLib default flags)", "Ok non-solid"),
@@ -145,11 +151,11 @@ fn port_degenerate_inputs_never_panic_and_match_pinned_verdicts() {
     let mut observed: Vec<(String, String)> = Vec::new();
     let mut k = solidcore::Kernel::default();
     let r = prim::create_box(&mut k, Point3::new(f64::NAN, 0.0, 0.0), 1.0, 1.0, 1.0);
-    observed.push(("box at NaN origin".into(), verdict(&k, r.as_ref())));
+    observed.push(("box at NaN origin".into(), verdict(&mut k, r.as_ref())));
     for name in ["empty - box", "box - empty", "box - sheet", "sheet - box", "box - same box"] {
         let mut k = solidcore::Kernel::default();
         let r = boolean_case(name, &mut k);
-        observed.push((name.into(), verdict(&k, r.as_ref())));
+        observed.push((name.into(), verdict(&mut k, r.as_ref())));
     }
     let offsets: [(&str, f64, bool); 8] = [
         ("offset NaN", f64::NAN, false),
@@ -167,11 +173,11 @@ fn port_degenerate_inputs_never_panic_and_match_pinned_verdicts() {
         let mut o = opts(d);
         o.merge_results = merge;
         let r = offset_brep_simple(&mut k, &mut b, o);
-        observed.push((name.into(), verdict(&k, r.as_ref())));
+        observed.push((name.into(), verdict(&mut k, r.as_ref())));
     }
     let mut k = solidcore::Kernel::default();
     let r = offset_brep_simple(&mut k, &mut Brep::new(), opts(1.0));
-    observed.push(("offset of empty brep".into(), verdict(&k, r.as_ref())));
+    observed.push(("offset of empty brep".into(), verdict(&mut k, r.as_ref())));
     for (n, v) in &observed {
         println!("{n:<36} -> {v}");
     }
@@ -301,14 +307,14 @@ fn port_stage2_degenerates_never_panic_and_match_pinned_verdicts() {
     let mut k = solidcore::Kernel::default();
     let b = unit_box(&mut k);
     let r = boolean_intersection(&mut k, b, Brep::new());
-    observed.push(("box & empty".into(), verdict(&k, r.as_ref())));
+    observed.push(("box & empty".into(), verdict(&mut k, r.as_ref())));
     let b = unit_box(&mut k);
     let r = boolean_union(&mut k, Brep::new(), b);
-    observed.push(("empty | box".into(), verdict(&k, r.as_ref())));
+    observed.push(("empty | box".into(), verdict(&mut k, r.as_ref())));
     let a = unit_box(&mut k);
     let far = prim::create_box(&mut k, Point3::new(20.0, 20.0, 20.0), 10.0, 10.0, 10.0);
     let r = far.and_then(|f| boolean_intersection(&mut k, a, f));
-    observed.push(("box & disjoint box".into(), verdict(&k, r.as_ref())));
+    observed.push(("box & disjoint box".into(), verdict(&mut k, r.as_ref())));
     for (name, radius) in [("fillet r6 on a 10-box edge", 6.0), ("fillet r NaN on a 10-box edge", f64::NAN)] {
         let mut k = solidcore::Kernel::default();
         let mut b = unit_box(&mut k);
@@ -317,7 +323,7 @@ fn port_stage2_degenerates_never_panic_and_match_pinned_verdicts() {
             Some(e) => fillet_edges(&mut k, &mut b, &[e], radius, 1, 1, 1.0).map(|()| b),
             None => Ok(Brep::new()),
         };
-        observed.push((name.into(), verdict(&k, r.as_ref())));
+        observed.push((name.into(), verdict(&mut k, r.as_ref())));
     }
     for (n, v) in &observed {
         println!("{n:<36} -> {v}");

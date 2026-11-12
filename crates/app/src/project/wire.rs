@@ -84,6 +84,7 @@ pub fn collect(world: &World) -> ProjectFile {
                         relative_to: d.relative_to.clone(),
                         stock_source: d.stock_source.map(|s| s.word().to_string()),
                         post_options: d.post_options.as_ref().map(SetupPostOptionsDto::from_options),
+                        workholding_max_rpm: d.workholding_max_rpm,
                     })
             } else {
                 None
@@ -152,6 +153,13 @@ pub fn collect(world: &World) -> ProjectFile {
                 }
                 _ => model::facets_of(world, &entity).map(|t| facets_to_dto(&t)),
             };
+            // #1094: the mark, as set, with its print (the verdict checks
+            // the print against the loaded model, so a stale one stays void).
+            let mark = entity
+                .entity_view(world)
+                .try_get::<&crate::schema::StockSourceOnly>(|f| f.clone())
+                .filter(|f| matches!(&stock, Some(StockDto::FromModel { source }) if *source == f.source))
+                .map(|f| f.print);
             EntityDto {
                 name,
                 translation: [loc.pos.x, loc.pos.y, loc.pos.z],
@@ -160,7 +168,11 @@ pub fn collect(world: &World) -> ProjectFile {
                 // The counter moves on models and stocks (every facet
                 // landing); everywhere else it reads 0 and omits itself.
                 rev: model::rev_of(world, &entity),
+                coarse_mm: crate::model_fidelity::chord_of(world, &entity),
+                facet_budget: crate::model_fidelity::budget_of(world, &entity),
                 kind,
+                raw_stock_only: mark.is_some(),
+                raw_stock_print: mark.as_ref().map(crate::stock_print::to_text),
                 stock,
                 tool,
                 operation,

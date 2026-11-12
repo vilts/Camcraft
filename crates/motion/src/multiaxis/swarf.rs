@@ -47,8 +47,9 @@ fn pose_and_link(
 ) -> Result<Toolpath, GenError> {
     let (led, said) = lead_in(base, facets, r, p);
     let posed = stamp_axes_ruled(&led, facets, r, c, Point3::new(f.ux, f.uy, 0.0), &f.ruled, p.tolerance)?;
-    let (mut linked, links) = link_swings(&posed, facets, r, p.clearance_z, p.plunge_feed)?;
-    guard_turns(&linked, p.clearance_z)?;
+    // #1015: the link laws judge a posed world path; it rides their refusals.
+    let (mut linked, links) = link_swings(&posed, facets, r, p.clearance_z, p.plunge_feed).map_err(|e| e.with_ghost(&posed))?;
+    guard_turns(&linked, p.clearance_z).map_err(|e| e.with_ghost(&linked))?;
     linked.notes.extend(said);
     if links > 0 {
         linked.notes.push(format!(

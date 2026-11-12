@@ -35,6 +35,7 @@ impl State {
     pub fn load_prefs_from(&mut self, path: PathBuf) {
         let (stored, note) = prefs::load(&path);
         self.prefs_store = Some(path);
+        self.import_tool_holders = !stored.skip_tool_holders;
         theme_set(&self.world, &stored.theme);
         let tokens = theme_files::resolve(&mut self.theme_cache, &stored.theme)
             .map_or_else(|_| theme::current(), |(t, _)| t);
@@ -54,9 +55,13 @@ impl State {
         self.prefs_store.as_deref()
     }
 
-    fn persist_prefs(&self) {
+    pub(crate) fn persist_prefs(&self) {
         let Some(path) = &self.prefs_store else { return };
-        let now = ViewPrefs { theme: theme_of(&self.world), color_vision: color_vision_of(&self.world) };
+        let now = ViewPrefs {
+            theme: theme_of(&self.world),
+            color_vision: color_vision_of(&self.world),
+            skip_tool_holders: !self.import_tool_holders,
+        };
         // The refusal is logged where it happens (app::prefs::save); the
         // choice in force stays right for this session either way.
         let _ = prefs::save(path, &now);

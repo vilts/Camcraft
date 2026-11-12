@@ -214,7 +214,7 @@ pub(crate) fn draw(ui: &mut Ui, ed: &mut MachineFileEditor, dir: Option<&Path>, 
     let ink = if refusals.is_empty() { pal.accent } else { error };
     ui.label(RichText::new(verdict(refusals.len())).color(ink).strong());
     for r in fields::unplaced(&groups, &refusals) {
-        ui.add(Label::new(RichText::new(r.to_string()).color(error)).wrap());
+        super::error_text::error_text(ui, error, &r.to_string());
     }
     ui.add_space(4.0);
 
@@ -240,7 +240,7 @@ pub(crate) fn draw(ui: &mut Ui, ed: &mut MachineFileEditor, dir: Option<&Path>, 
                     ui.end_row();
                     for refusal in f.refusals(&refusals) {
                         ui.label("");
-                        ui.add(Label::new(RichText::new(refusal.to_string()).color(error)).wrap());
+                        super::error_text::error_text(ui, error, &refusal.to_string());
                         ui.end_row();
                     }
                 }

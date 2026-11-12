@@ -8,7 +8,7 @@
 //! boundary, the legality, the command and the file.)
 //!
 //! Gate map (M11.5): covers app::operation (area, boundary, boundary_ctx,
-//! job, generate), geo2d (offset_sharp), app::verify.
+//! job, generate), geo2d (offset_sharp), sim::verify.
 
 mod area_support;
 mod common;

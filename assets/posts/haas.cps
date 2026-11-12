@@ -5,7 +5,7 @@
 // vendor script text; original work. Where a public convention leaves
 // a hole, the house style (see fanuc.cps) decides, and the conformance
 // goldens lock that decision, not any vendor's.
-description = "Haas (3-axis mill, G73/G81/G82/G83/G84/G86/G89, G2/G3, G98)";
+description = "Haas (3-axis mill, G73/G81/G82/G83/G84/G86/G89, G2/G3, G99)";
 vendor = "CamCraft (independent, unaffiliated)";
 legal = "Original clean-room work; public documentation only";
 certificationLevel = 1;
@@ -29,7 +29,9 @@ var toolWait = false;      // when the first motion needs them legal
 var tNo = 0;
 var inCycle = false;       // a cycle group is open; its chain is suppressed
 var cycleSig = "";         // g|Z|R|Q of the open group (modal X Y holes)
-var retractSet = false;    // G98 written once per program
+var cycX = 0, cycY = 0, cycR = 0; // the open group's hole XY and R plane (world, #994)
+var seatKnown = false;     // #994: this section moved, so the stream's Start is where the tool is
+var hopZ = null;           // #1028: the section's RetractPlane (its hop), null when unstated
 var coolant = "";          // the M-code this program started, if any
 var coolantAsk = "flood";  // the section's PARAM Coolant (#112), flood when unstated
 var afterAsk = "";         // the section's PARAM AfterOperation (#110), none when unstated
@@ -285,6 +287,7 @@ function compRefuse(what) {
 }
 
 function onParameter(name, value) {
+  if (name === "RetractPlane") hopZ = has(value) ? Number(value) : null;  // #1028
   if (name === "Smoothing") { smoothTol = Number(value) || 0; return; }
   if (name === "SmoothingMode") { smoothMode = String(value || ""); return; }
   commentParam(name, value);
@@ -393,22 +396,55 @@ function endPreamble() {
   afterOp();
 }
 
-function onSection() { startPreamble(); }
-function onSectionEnd() { endPreamble(); }
+function onSection() { seatKnown = false; startPreamble(); }
+function onSectionEnd() { endPreamble(); hopZ = null; }  // #1028: the next section states its own hop
 
 // ------------------------------------------------------------- motions
 // While a canned-cycle group is open its expanded hole chain is the
 // cycle block's business only - the chain is the generator's truth,
 // not a second copy of output.
+// The chain stays on its hole: the hole's XY, at or below its R plane.
+// #994: a rapid that leaves it (the hop up, the traverse, the exit)
+// ends the group - G80, then the rapid posted as the stream says - so
+// the program moves between holes at the hop the path was verified at,
+// never at R. A cut leaving the hole is no chain a cycle replaces:
+// refused by name.
+function onHole(p) {
+  return Math.abs(p.X - cycX) < 1e-6 && Math.abs(p.Y - cycY) < 1e-6 && p.Z <= cycR + 1e-6;
+}
+function chainRapid() {  // true: the open group's own retract, swallowed
+  seatKnown = true;
+  if (!inCycle) return false;
+  if (onHole(properties)) return true;
+  block(["G80"]);
+  inCycle = false;
+  return false;
+}
+function chainCut() {  // true: the cut is the cycle's (or refused)
+  seatKnown = true;
+  if (!inCycle) return false;
+  if (!onHole(properties)) msg("a cutting move leaves its hole inside a canned-cycle group");
+  return true;
+}
+// #1028: a probing move (a touch, its back-off, a protected positioning
+// move) moves the tool like any other motion: it ends an open cycle
+// group (G80 - no probe move is a hole's chain) and the tool stands
+// where the stream says, so a cycle read after it is seated.
+function probeSeat() {
+  seatKnown = true;
+  if (!inCycle) return;
+  block(["G80"]);
+  inCycle = false;
+}
 function onRapid() {
   startPreamble();
   compRefuse("a rapid");
-  if (!tiltOk(properties) || inCycle) return;
+  if (!tiltOk(properties) || chainRapid()) return;
   block(["G0"].concat(xyz(properties)));
 }
 function onLinear() {
   startPreamble();
-  if (!tiltOk(properties) || inCycle) return;
+  if (!tiltOk(properties) || chainCut()) return;
   // The pending comp word rides this straight block (#39).
   var cg = compG, cd = compD;
   compG = ""; compD = "";
@@ -417,7 +453,7 @@ function onLinear() {
 function onCircular() {
   startPreamble();
   compRefuse("an arc");
-  if (!tiltOk(properties) || inCycle) return;
+  if (!tiltOk(properties) || chainCut()) return;
   var p = properties;
   if (compPlaneRefuse(planeOf(p))) return;
   block([
@@ -430,9 +466,51 @@ function onCircular() {
 // ------------------------------------------------------- canned cycles
 // The cycle record replaces its whole move group: one block per hole,
 // holes of an unchanged cycle continuing modally with bare X Y lines.
+// #994: G99, stated as each group opens - each hole returns to its R
+// plane, where the stream's chain ends (RS-274 / ISO 6983: G98 returns
+// to the level the tool stood at when the cycle was read, G99 to R).
+// The hop and traverse to the next hole are the stream's own rapids,
+// posted after G80 (above), so no hole's retract level is left to where
+// the tool happened to be.
 // Feed word comes from the cycle (the generator synthesizes it from
 // the group's chain, so a tap's F is rpm x pitch by the agreement
 // law); a legacy marker carries none, and the modal feed stands.
+// #994: the cycle is read with the tool on its R plane over the hole,
+// where the stream's chain starts, so the level a hole returns to is R
+// and never the height the tool happened to stand at. A stream whose
+// tool stands elsewhere (its anchor on the rapid down to R) is seated
+// here: up to R first when below it, then over the hole, then down -
+// never under the straight rapid the stream itself states. A cycle
+// that is its section's first motion has no stream position to seat
+// from: the cycle positions over the hole from the height it is at.
+function cycleSeat(p) {
+  if (!seatKnown) return;
+  var lo = has(p.StartZ) && p.StartZ < p.R - 1e-6;
+  var away = !(has(p.StartX) && has(p.StartY)) || Math.abs(p.StartX - p.X) >= 1e-6 || Math.abs(p.StartY - p.Y) >= 1e-6;
+  var hi = !has(p.StartZ) || p.StartZ > p.R + 1e-6;
+  if (!lo && !away && !hi) return;
+  if (inCycle) block(["G80"]);
+  inCycle = false;
+  if (away) {
+    // #1028: no stream rapid took the tool to this hole (two cycle
+    // records back to back, or a cycle straight after a probe), so
+    // the traverse runs at the section's hop: up to its RetractPlane
+    // when below it, over the hole, then down to R - never lower than
+    // the hop the path was verified at. A section that states no
+    // RetractPlane has no hop to seat at: refused by name.
+    if (!has(hopZ)) {
+      msg("a canned cycle is read away from its hole with no rapid to it, and the section states no RetractPlane to traverse at");
+      return;
+    }
+    var top = Math.max(hopZ, p.R);
+    var at = has(p.StartZ) ? p.StartZ : -Infinity;
+    if (at < top - 1e-6) { block(["G0", wo("Z", top, orgZ)]); at = top; }
+    block(["G0", wo("X", p.X, orgX), wo("Y", p.Y, orgY)]);
+    if (at > p.R + 1e-6) block(["G0", wo("Z", p.R, orgZ)]);
+    return;
+  }
+  if (lo || hi) block(["G0", wo("Z", p.R, orgZ)]);
+}
 function onCycle() {
   startPreamble();
   restorePlane();            // M11.2 A: a cycle drills along G17's Z
@@ -445,13 +523,13 @@ function onCycle() {
   else if (p.CycleType === "TAP") g = "G84";
   else if (p.CycleType === "BORE") g = "G86";
   else if (p.CycleType === "BACKBORE") g = "G89";
+  cycleSeat(p);
   var sig = g + "|" + p.Z + "|" + p.R + "|" + p.Q;
   if (inCycle && sig === cycleSig) {
     block([wo("X", p.X, orgX), wo("Y", p.Y, orgY)]);
   } else {
     if (inCycle) block(["G80"]);
-    // The chain retracts to its initial (clearance) level each hole.
-    if (!retractSet) { block(["G98"]); retractSet = true; }
+    block(["G99"]);            // #994: each hole returns to R
     // Q is an increment (peck depth), not a position: no origin shift.
     var words = [g, wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ), wo("R", p.R, orgZ)];
     if ((p.CycleType === "PECK" || p.CycleType === "DEEP") && has(p.Q) && p.Q > 0) {
@@ -462,6 +540,8 @@ function onCycle() {
     block(words);
     cycleSig = sig;
   }
+  cycX = p.X; cycY = p.Y; cycR = p.R;
+  seatKnown = true;
   inCycle = true;
 }
 
@@ -496,6 +576,7 @@ function minusU(expr, v) {  // expr - v, the sign folded into the operator
 }
 function onProbeMove() {
   startPreamble();
+  probeSeat();               // #1028
   compRefuse("a probing move");
   var p = properties;
   block(["G31", wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ), fw(p.Feed)]);
@@ -510,6 +591,7 @@ function onProbeMove() {
   }
 }
 function onProbeRetreat() {
+  probeSeat();               // #1028
   var p = properties;
   block(["G91", "G1", w("X", p.DeltaX), w("Y", p.DeltaY), w("Z", p.DeltaZ), fw(p.Feed)]);
   block(["G90"]);
@@ -524,6 +606,7 @@ function onProbeRetreat() {
 // stops the program instead of the stylus being driven into it.
 function onProbeGuard() {
   startPreamble();
+  probeSeat();               // #1028
   compRefuse("a protected probe move");
   var p = properties;
   block(["G31", wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ), fw(p.Feed)]);

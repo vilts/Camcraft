@@ -11,44 +11,11 @@
 //! these. Enabling/disabling stays with the surface (it knows what the
 //! user can act on), but the effect lives here exactly once.
 
-use camcraft_app::machine::Kind as MachineKind;
 use camcraft_app::operation::SrcRef;
 
 use crate::operations::quick_params;
 use crate::state::{CommandKind, State, UiTarget};
 use crate::viewport::ProjectionMode;
-
-/// The ribbon's machine modes (the ribbon law): the workspace kind,
-/// the Title-case caption it wears on the bar, and the built-in
-/// library machine switching to it mounts. The names must exist in
-/// `camcraft_app::posting::MACHINES` - the switch is a
-/// `LoadBuiltinMachine`, never a bare field poke, so a mode change
-/// rides undo exactly like the Setup pane's picker does. A mill's
-/// reference is the plain VMC (the library's entry 0); the Tilt-head
-/// 5-axis stays picker-only, because a mode says what the document
-/// machines, not which five axes it owns.
-pub(crate) const MACHINE_MODES: [(MachineKind, &str, &str); 3] = [
-    (MachineKind::Mill, "Milling", "VMC 3-axis"),
-    (MachineKind::Lathe, "Turning", "Lathe"),
-    (MachineKind::MillTurn, "Mill-turning", "Mill-turn"),
-];
-
-/// Switch the document's workspace kind by mounting that kind's
-/// reference machine. Picking the mode already running mounts nothing
-/// - the row says "(current)" and this guard is the same law's second
-///   half, so no surface can push a no-change command (`LoadMachine`
-///   would refuse it at the front door anyway).
-pub(crate) fn set_machine_mode(state: &mut State, kind: MachineKind) {
-    if camcraft_app::machine::kind_of(&state.world) == kind {
-        return;
-    }
-    if let Some((_, caption, name)) = MACHINE_MODES.iter().find(|(k, _, _)| *k == kind) {
-        state.pending.push_back(CommandKind::LoadBuiltinMachine(
-            (*name).to_owned(),
-        ));
-        state.status = format!("machine mode: {caption}");
-    }
-}
 
 /// File menu: ask for a mesh to import (the dialog itself runs in
 /// `State::run`, never mid-frame).

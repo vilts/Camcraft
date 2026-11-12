@@ -28,7 +28,7 @@ pub fn bridge(addr: &str, input: impl Read + Send + 'static, mut output: impl Wr
     let _pump = std::thread::Builder::new().name("camcraft-mcp-bridge".into()).spawn(move || {
         let mut input = input;
         if let Err(e) = std::io::copy(&mut input, &mut to_app) {
-            eprintln!("camcraft-cli: mcp bridge: sending failed: {e}");
+            tracing::warn!("mcp bridge: sending failed: {e}");
         }
         let _ = to_app.shutdown(Shutdown::Write);
     })?;

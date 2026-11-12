@@ -4,7 +4,7 @@
 //! break - the record is dropped and the columns are judged sharp; a
 //! record on a kind that declares no break is not credited at all.
 //!
-//! Gate map (#529): covers app::stock_sim (breaks::bounded,
+//! Gate map (#529): covers app::stock_sim, sim::stock_sim (breaks::bounded,
 //! breaks::declared_width), app::project (the breaks key, read back).
 //! Provenance: our own fixtures (#303's brick and chamfer).
 

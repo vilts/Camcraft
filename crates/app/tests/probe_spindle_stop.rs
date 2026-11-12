@@ -10,7 +10,8 @@
 //! power); RS-274 / ISO 6983 M05 spindle stop; our own synthetic program.
 //!
 //! Gate map (M4.4): covers post::dump, post::engine and every mill post
-//! script's preamble (assets/posts/*.cps startPreamble, lathe excluded).
+//! script's preamble (assets/posts/*.cps startPreamble, lathe excluded;
+//! doosan-dnm since #1035).
 
 use camcraft_app::cl::{MoveKind, PathBuilder, Toolpath};
 use camcraft_app::geometry::Point3;
@@ -26,6 +27,8 @@ const MILL_POSTS: &[(&str, &str)] = &[
     ("sinumerik", "M5"),
     ("heidenhain", "M5"),
     ("mazak", "MOTOFF"),
+    // #1035: added after #574, and missed it.
+    ("doosan-dnm", "M5"),
 ];
 
 fn read(rel: &str) -> String {

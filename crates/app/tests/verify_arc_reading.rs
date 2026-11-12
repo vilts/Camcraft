@@ -13,7 +13,7 @@
 //!   straight wall whose apex the old chords hid is now convicted, so the
 //!   new reading is stricter there, never looser.
 //!
-//! Gate map: covers app::verify (sim::verify::section, law (b)).
+//! Gate map: covers sim::verify (sim::verify::section, law (b)).
 //!
 //! Provenance: chord sagitta `r (1 - cos(step / 2))` and point-to-line
 //! distance from elementary plane geometry; the tangency law is our own
@@ -68,6 +68,7 @@ fn ctx<'a>(region: &'a Region, tool: &'a ToolGeom) -> VerifyContext<'a> {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     }
 }
 
@@ -280,5 +281,63 @@ fn boundary_mode_keeps_the_old_joints_so_a_sharp_vertex_on_one_stays_convicted()
     for d in [3.995, 4.0] {
         assert!(d >= floor());
         assert_eq!(boundary(&region_at(d)), Vec::new(), "clearance {d}");
+    }
+}
+
+/// #864 with #689 review B1: a model coarser than the importer promises
+/// tightens the FLOOR (`model_excess`), never the reading - an arc is
+/// still read at the union of the old and the quarter joints, at the
+/// plain `gouge_tol`. So a sharp vertex on an OLD joint (which no quarter
+/// joint stands near) is judged against the tightened floor: inside it is
+/// convicted, though the untightened floor passes it, and outside it stays
+/// clean.
+#[test]
+fn boundary_mode_judges_the_union_joints_against_the_tightened_floor() {
+    // The B1 case: r 200 sweeping 0.048 rad, the old joint at 0.016 rad.
+    let (rad, sweep) = (200.0, 0.048);
+    let t = arc(p2(0.0, 0.0), rad, 0.0, sweep);
+    let a = sweep / 3.0;
+    let joint = p2(rad * a.cos(), rad * a.sin());
+    let (ux, uy) = (a.cos(), a.sin());
+    let (tx, ty) = (-uy, ux);
+    let region_at = |d: f64| {
+        let v = p2(joint.x + ux * d, joint.y + uy * d);
+        let side = |s: f64| p2(v.x + ux * 20.0 + tx * 5.0 * s, v.y + uy * 20.0 + ty * 5.0 * s);
+        let island = Loop::new(vec![v, side(1.0), side(-1.0)]).expect("island");
+        Region::new(vec![rect(150.0, -50.0, 260.0, 60.0), island]).expect("region")
+    };
+    let g = tool();
+    let boundary = |region: &Region, excess: f64| {
+        let mut c = ctx(region, &g);
+        c.mode = Mode::Boundary;
+        c.model_excess = excess;
+        verify(&t, &c)
+    };
+    // 6 um of excess leaves 4 um of tolerance: the floor rises from 3.990
+    // to 3.996 mm.
+    let excess = 0.006;
+    let tight = R - (TOL - excess);
+    assert!(floor() < tight && tight < R);
+    // Between the two floors: clean at full fidelity, convicted with the
+    // excess - at the old joint, so the union reading is what found it.
+    for d in [3.991, 3.993, 3.995] {
+        assert!(d >= floor() && d < tight);
+        assert_eq!(boundary(&region_at(d), 0.0), Vec::new(), "full fidelity, clearance {d}");
+        assert_eq!(boundary(&region_at(d), excess), vec![Warning::Gouge { at: 0 }], "coarse model, clearance {d}");
+    }
+    // Inside the plain floor: convicted either way (the #689 verdict).
+    assert_eq!(boundary(&region_at(3.98), 0.0), vec![Warning::Gouge { at: 0 }]);
+    assert_eq!(boundary(&region_at(3.98), excess), vec![Warning::Gouge { at: 0 }]);
+    // Outside the tightened floor: clean either way - the tightening is
+    // not a blanket conviction, and the reading added no false gouge.
+    for d in [3.997, 4.0] {
+        assert!(d >= tight);
+        assert_eq!(boundary(&region_at(d), 0.0), Vec::new(), "clearance {d}");
+        assert_eq!(boundary(&region_at(d), excess), Vec::new(), "coarse model, clearance {d}");
+    }
+    // An excess that uses the whole tolerance reads untightened (the
+    // program gate refuses instead): the full-fidelity verdicts exactly.
+    for d in [3.98, 3.993, 4.0] {
+        assert_eq!(boundary(&region_at(d), 0.02), boundary(&region_at(d), 0.0), "clearance {d}");
     }
 }

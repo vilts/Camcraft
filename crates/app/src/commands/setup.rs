@@ -127,6 +127,7 @@ impl CreateSetup {
                 relative_to: None,
                 stock_source: None,
                 post_options: None,
+                workholding_max_rpm: None,
             }
         } else {
             SetupDef {
@@ -152,6 +153,9 @@ impl CreateSetup {
                 stock_source: None,
                 // #389: the post's options ride the post (#343's transfer).
                 post_options: datum_from.and_then(|f| setup::def_of(world, f)).and_then(|d| d.post_options),
+                // #1031: the same clamping system keeps its chuck's rating -
+                // dropping a limit would silently lift a safety ceiling.
+                workholding_max_rpm: datum_from.and_then(|f| setup::def_of(world, f)).and_then(|d| d.workholding_max_rpm),
             }
         };
         let mut stock = None;

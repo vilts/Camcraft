@@ -144,8 +144,9 @@ pub(super) fn carried_grid(world: &World, chain: &Chain, min_r: f64, through_con
 /// The sweep itself, uncached.
 fn sweep(world: &World, chain: &Chain, min_r: f64, through_consumer: bool) -> Result<Body, String> {
     let origin = crate::setup::effective(world, chain.origin());
-    let dex = crate::stock_sim::stock_grid(world, origin.as_deref(), min_r)?;
-    let mut body = carry::first_body(world, origin.as_deref(), dex)?;
+    // #637: the carried stock on this thread's engine (the column body by
+    // default); the body it leaves is read back once, at the end.
+    let mut body = carry::first_carried(world, origin.as_deref(), min_r)?;
     let last = chain.segments.len().saturating_sub(1);
     for (i, s) in chain.segments.iter().enumerate() {
         if let Some(t) = &s.turn {
@@ -160,9 +161,9 @@ fn sweep(world: &World, chain: &Chain, min_r: f64, through_consumer: bool) -> Re
             .filter(|a| a.cut)
             .map(|a| SimOp { moves: &a.moves, radius: a.radius, ball: a.ball, cone: a.cone, corner: a.corner })
             .collect();
-        crate::stock_sim::simulate(&mut body.dex, &ops).map_err(|e| e.to_string())?;
+        body.simulate(&ops).map_err(|e| e.to_string())?;
     }
-    Ok(body)
+    body.into_body()
 }
 
 /// The block a later carried setup is entered with, bounded (#319): the

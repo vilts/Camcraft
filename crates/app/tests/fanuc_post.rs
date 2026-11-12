@@ -4,7 +4,7 @@
 //! either changes meaning, this test says so, and the diff is the
 //! review (UPDATE workflow per tests/golden/CLAUDE.md).
 //!
-//! Gate map (M4.4): covers app::post, motion::probing (probe result
+//! Gate map (M4.4): covers post::post, motion::probing (probe result
 //! arithmetic, #377).
 
 mod common;
@@ -190,14 +190,38 @@ ENDSECTION
     let tilt1 = at("A40");
     assert!(arm < tilt1, "the arm precedes the first tilt");
     assert_eq!(lines.iter().filter(|l| l.contains("G43.4")).count(), 1, "armed once");
-    assert_eq!(lines[arm + 1], "G00 X10 Y0 Z5 A40 B0 C0", "all three letters on the arm");
+    // #997: the arm names every rotary the machine states - here only A;
+    // the stream's B0 and C0 are letters of rotaries it has none of.
+    assert_eq!(lines[arm + 1], "G00 X10 Y0 Z5 A40", "the stated rotaries on the arm");
     // The cut continues: only A changed since the last block.
     assert_eq!(lines[at("A45")], "G01 X20 Y0 Z0 A45 F150", "modal words: unchanged angles rest");
-    assert!(lines[at("A45")].matches(' ').count() < lines[tilt1].matches(' ').count());
+    // (#997: with A the only stated rotary, the arm and the modal block
+    // carry the same one angle word - the exact lines above pin both.)
     // The home return: only A had left zero, so only A comes back -
     // the modal law runs in both directions. TCPM stays armed (the
     // next G49 would be a new preamble's; this program ends first).
     assert_eq!(lines[at("X30")], "G01 X30 Y0 Z0 A0 F150");
+}
+
+/// #997: on the A+B tilthead (no C) the arm writes A and B, never a C
+/// word - a control without a C axis alarms on the address; a C that
+/// turns stays refused by name.
+#[test]
+fn an_absent_rotary_takes_no_angle_word() {
+    let cps = read("assets/posts/fanuc.cps");
+    let text = read("assets/machines/tilthead.mch");
+    let mch = post::machine::mirror(&camcraft_app::machine::parse_mch(&text).expect("tilthead parses"));
+    let stream = |c: &str| {
+        format!("TOOL 1 T1\nSECTION\nRapid X 0 Y 0 Z 20000 A 30000 B 0 C {c}\nFeed X 20000 Y 0 Z 0 F 300000 A 0 B 30000 C {c}\nENDSECTION\n")
+    };
+    let out = engine::run(&cps, &mch, &stream("0")).expect("post");
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    assert!(out.program.lines().any(|l| l == "G00 X0 Y0 Z20 A30 B0"), "{}", out.program);
+    assert!(out.program.lines().any(|l| l == "G01 X20 Y0 Z0 A0 B30 F300"), "{}", out.program);
+    let c_word = |l: &str| l.split(' ').any(|w| w.len() > 1 && w.starts_with('C') && w[1..].parse::<f64>().is_ok());
+    assert!(!out.program.lines().any(c_word), "no C word on a machine with no C: {}", out.program);
+    let out = engine::run(&cps, &mch, &stream("10000")).expect("post");
+    assert_eq!(out.warnings, vec!["tilted move commands C - the machine states no C rotary"]);
 }
 
 #[test]

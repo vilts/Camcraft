@@ -187,8 +187,8 @@ fn reserved_name_refuses_with_nothing_applied() {
     let (_, t) = first_two().remove(0);
     let (w, _) = world_with(&[]);
     let lib = vec![
-        LibraryTool { name: "Mine".into(), tool: t.clone() },
-        LibraryTool { name: "Stock".into(), tool: t },
+        LibraryTool::bare("Mine", t.clone()),
+        LibraryTool::bare("Stock", t),
     ];
     let err = ImportTools::new(&w, lib).err().expect("reserved").to_string();
     assert!(err.contains("Stock"), "{err}");

@@ -6,8 +6,8 @@
 //! name; a rapid run left at depth becomes retract / traverse / plunge;
 //! a path whose links clear is left byte for byte.
 //!
-//! Gate map (M4.4): covers app::fixture, app::operation (fixture_route,
-//! generate, job), app::posting, app::verify.
+//! Gate map (M4.4): covers app::fixture, sim::fixture, app::operation (fixture_route,
+//! generate, job), app::posting, sim::verify.
 
 use camcraft_app::cl::{Move, MoveKind, Toolpath};
 use camcraft_app::commands::{

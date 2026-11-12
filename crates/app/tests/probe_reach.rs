@@ -59,7 +59,7 @@ fn seek(t: &Toolpath) -> usize {
 /// The whole law, as `generate_probe` runs it.
 fn judge(t: &Toolpath, tool: &Tool, facets: &[Triangle]) -> (Vec<Warning>, Vec<Warning>) {
     let ball = stylus_hits(t, tool.diameter * 0.5, facets);
-    let reach = stylus_reach_hits(t, tool, facets, &ball);
+    let reach = stylus_reach_hits(t, tool, None, facets, &ball);
     (ball, reach)
 }
 
@@ -141,7 +141,7 @@ fn clean_touches_stay_clean_under_the_reach_law() {
 
 #[test]
 fn the_stylus_stack_is_ball_then_stem_then_body() {
-    let c = stylus_cutter(&probe_tool(4.0, 30.0));
+    let c = stylus_cutter(&probe_tool(4.0, 30.0), None);
     assert_eq!((c.radius, c.corner_r, c.flute_len), (2.0, 2.0, 2.0), "the ball is the whole cutting atom");
     assert_eq!((c.shank_radius, c.shank_len), (2.0, 28.0), "the stem runs to the stylus length");
     assert_eq!((c.holder_radius, c.holder_len), (10.0, 40.0), "the probe body rides above it");

@@ -228,10 +228,12 @@ pub fn circular(_region: &Region, p: &CircularParams) -> Result<Toolpath, GenErr
             } else {
                 p.bowl_z((rho + p.stepover + r).min(p.radius))
             };
-            cut_levels(prev, floor, p.stepdown)?
+            cut_levels(prev, floor, p.stepdown)
         } else {
-            cut_levels(p.top_z, p.bottom_z, p.stepdown)?
-        };
+            cut_levels(p.top_z, p.bottom_z, p.stepdown)
+        }
+        // #871: a part-way refusal hands back the rings cut so far.
+        .map_err(|e| e.with_ghost_moves(b.moves()))?;
         run_levels(&mut b, &pass, &zs, &motion, None, cert.as_ref(), cert.as_ref());
         k += 1;
     }

@@ -94,6 +94,9 @@ struct Def {
     /// Lathe tool orientation (LinuxCNC 1-9); the starter catalog states none.
     #[serde(default)]
     orientation: Option<u8>,
+    /// Turning cutting data (#891); the starter catalog states none.
+    #[serde(default)]
+    turning: Option<crate::turning_data::TurningData>,
 }
 
 fn yes() -> bool {
@@ -139,6 +142,7 @@ impl Def {
             flutes: self.flutes,
             center_cutting: self.center_cutting,
             orientation: self.orientation,
+            turning: self.turning,
         }
     }
 }

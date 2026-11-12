@@ -5,7 +5,7 @@
 //! Provenance: our own parser, specced from the observable shape of a
 //! machine file and RS-274/ISO 6983 axis-lettering convention.
 
-use super::def::{AxisLimits, Coolant, Kind, LiveToolCodes, Machine};
+use super::def::{AxisLimits, Coolant, LiveToolCodes, Machine};
 use super::direction::AxisDirection;
 
 /// The number a machine field reads as, with the unstated-limit law:
@@ -186,32 +186,9 @@ pub fn parse_mch_with(text: &str, holders: Option<super::HolderLookup>) -> Resul
         ..Default::default()
     };
 
-    // The declared kind (M3.3 C): a stated word must be a known one.
-    // A file that declares "drill_press" is not silently demoted to
-    // the inference - the declaration was the point of writing it, so
-    // an unreadable one refuses at the front door.
-    match general.and_then(|g| g.get("kind")) {
-        None | Some(serde_json::Value::Null) => {}
-        Some(serde_json::Value::String(w)) if w.is_empty() => {}
-        Some(serde_json::Value::String(w)) => {
-            let Some(k) = Kind::from_word(w) else {
-                return Err(format!(
-                    "machine file: kind {w:?} is not mill, lathe, mill-turn or plasma"
-                ));
-            };
-            // #669: a declared plasma table keeps the plasma rules at
-            // the door - the first one broken names its key.
-            if k == Kind::Plasma
-                && let Some((key, rule)) = super::plasma::plasma_refusals(&v).into_iter().next()
-            {
-                return Err(format!("machine file: {key}: {rule}"));
-            }
-            m.kind = Some(w.clone());
-        }
-        Some(other) => {
-            return Err(format!("machine file: kind must be a word, not {other}"));
-        }
-    }
+    // The declared kind (M3.3 C) and its per-kind door rules.
+    let declared = super::kind::declared_kind(&v)?;
+    m.kind = declared.as_ref().map(|(_, w)| w.clone());
 
     // #828: the spindle mount and the default holder, refused by name.
     let (mount, holder) = super::tooling::parse_tooling(&v, holders).map_err(|e| format!("machine file: {e}"))?;
@@ -225,6 +202,10 @@ pub fn parse_mch_with(text: &str, holders: Option<super::HolderLookup>) -> Resul
     if matches!(length, Some("inch" | "inches")) {
         m.units = Some("inch".to_owned());
     }
+
+    // #530: the EDM section - only an EDM kind states one, and only
+    // its own kind's keys; anything else refuses the file by name.
+    m.edm = super::edm::parse_edm(v.get("edm"), f, declared.map(|(k, _)| k))?;
 
     if let Some(parts) = kine {
         if let Some(head) = find_type(parts, "head") {

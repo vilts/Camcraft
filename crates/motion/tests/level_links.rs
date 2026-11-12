@@ -95,6 +95,7 @@ fn check(path: &Toolpath, region: &Region, model: Option<&[Triangle]>, mode: Mod
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(path, &cx)
 }

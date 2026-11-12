@@ -70,14 +70,14 @@ fn the_operation_menu_adds_an_entry_and_its_own_menu_edits_it() {
     let row = leaves.iter().position(|leaf| matches!(leaf, Leaf::Op(name) if name == "Contour1"))
         .expect("operation row");
     let row_height = theme::current().row_height;
-    let at_row = |r: usize| egui::pos2(90.0, 200.0 + (r as f32 + 0.5) * row_height);
+    let at_row = |r: usize| egui::pos2(90.0, 221.0 + (r as f32 + 0.5) * row_height);
     let open = |harness: &mut Harness<'static, ShellUi>, r: usize| {
         set_pos(harness, at_row(r));
         button_at(harness, egui::PointerButton::Secondary, at_row(r), true);
         button_at(harness, egui::PointerButton::Secondary, at_row(r), false);
     };
     let pick = |harness: &mut Harness<'static, ShellUi>, r: usize, k: f32| {
-        let at = egui::pos2(90.0, 200.0 + (r as f32 + 1.0) * row_height + panes::DROP_GAP + k * row_height);
+        let at = egui::pos2(90.0, 221.0 + (r as f32 + 1.0) * row_height + panes::DROP_GAP + k * row_height);
         set_pos(harness, at);
         button_at(harness, egui::PointerButton::Primary, at, true);
         button_at(harness, egui::PointerButton::Primary, at, false);

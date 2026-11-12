@@ -12,8 +12,8 @@
 //! Regenerate after an intentional change:
 //! `WRITE_GOLDEN=1 cargo test -p camcraft-app --test wear_comp`
 //!
-//! Gate map (M4.4): covers app::commands, app::links, app::machining2d,
-//! app::model, app::operation, app::post, app::posting, app::project.
+//! Gate map (M4.4): covers app::commands, motion::links, motion::machining2d,
+//! app::model, app::operation, post::post, app::posting, app::project.
 
 mod common;
 

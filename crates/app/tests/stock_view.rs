@@ -7,7 +7,7 @@
 //! Provenance: our own fixtures over the M7.1 field engine; nothing
 //! from vendor binaries.
 //!
-//! Gate map (M4.4): covers app::stock_view, app::stock_sim (plan_program, part_facets), app::commands, app::model.
+//! Gate map (M4.4): covers app::stock_view, app::stock_sim, sim::stock_sim (plan_program, part_facets), app::commands, app::model.
 
 use flecs_ecs::prelude::World;
 

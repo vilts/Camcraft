@@ -49,6 +49,10 @@ pub(super) struct Material {
     /// so two models butted face to face are one solid, not a
     /// non-manifold refusal. Empty for one body - the plain read.
     pub(super) bodies: Vec<std::ops::Range<usize>>,
+    /// How much coarser than the importer's promise the source mesh is,
+    /// mm (#864, `model_fidelity`): the worst of the entities read. 0 for
+    /// every model that met it - the gouge laws then read as always.
+    pub(super) excess: f64,
 }
 
 /// The world facets an operation's generator stands in - exactly
@@ -78,6 +82,7 @@ pub(super) fn material_of(
             let mut top = f64::NEG_INFINITY;
             let mut seen: Vec<&str> = Vec::new();
             let mut bodies = Vec::new();
+            let mut excess = 0.0f64;
             for g in items {
                 if seen.contains(&g.entity.as_str()) {
                     continue;
@@ -89,6 +94,7 @@ pub(super) fn material_of(
                     &g.entity,
                     &format!("the selection names '{}', which is gone", g.entity),
                 )?;
+                excess = excess.max(m.excess);
                 let start = facets.len();
                 facets.extend(m.facets);
                 if facets.len() > start {
@@ -97,6 +103,7 @@ pub(super) fn material_of(
                 top = top.max(m.top);
             }
             let mut m = usable(facets, top, "the selection")?;
+            m.excess = excess;
             // Two or more bodies: each is read as its own solid and the
             // planes are united; one body keeps the plain read.
             if bodies.len() > 1 {
@@ -105,6 +112,22 @@ pub(super) fn material_of(
             Ok(m)
         }
     }
+}
+
+/// [`material_of`] as generation judges it (#904): the excess also
+/// covers the setup's stock when the source is not the stock itself.
+/// The collision laws (rapids in stock, the rotary bands, the turning
+/// margin) read clearance against that stock, so a stock copied from a
+/// coarser model than the part must tighten them too. One number for
+/// every law - the worst of the two - so it only ever tightens, and the
+/// program gate reads the same pair (`model_fidelity::op_problem`).
+pub(super) fn judged_material(world: &World, setup: Option<&str>, src: &SrcRef) -> Result<Material, GenError> {
+    let mut m = material_of(world, setup, src)?;
+    if !matches!(src, SrcRef::Stock) {
+        let stock = crate::setup::stock_entity_name(world, setup);
+        m.excess = m.excess.max(crate::model_fidelity::excess_of(world, &stock));
+    }
+    Ok(m)
 }
 
 /// The hole list of one source, for the panel's Detect holes button:
@@ -188,7 +211,9 @@ pub(super) fn named_material(world: &World, setup: Option<&str>, name: &str, gon
     let top = crate::setup_align::entity_aabb_in(world, &entity, setup)
         .map(|b| b.max.z)
         .unwrap_or(f64::NAN);
-    usable(facets, top, name)
+    let mut m = usable(facets, top, name)?;
+    m.excess = crate::model_fidelity::excess_of(world, name);
+    Ok(m)
 }
 
 /// The shared sanity gate: every vertex finite, a real top.
@@ -202,7 +227,7 @@ pub(super) fn usable(facets: Vec<Triangle>, top: f64, label: &str) -> Result<Mat
             "'{label}' has no usable geometry to machine"
         )));
     }
-    Ok(Material { facets, top, bodies: Vec::new() })
+    Ok(Material { facets, top, bodies: Vec::new(), excess: 0.0 })
 }
 
 pub(super) fn from_slice(e: SliceError) -> GenError {
@@ -214,18 +239,42 @@ pub(super) fn from_slice(e: SliceError) -> GenError {
 
 /// The section at `z`, retried a micron below when the plane grazes a
 /// vertex or edge (a tangential slice is an error by contract, and a
-/// 1 um shift cannot change what a cutter sees).
+/// 1 um shift cannot change what a cutter sees) - or when it comes back
+/// empty: a plane at the very top of an imported mesh whose top corners
+/// scatter by float noise (#241: 3e-13 mm) meets only the highest few
+/// and reads "no material" over a part that is plainly there. The
+/// section is only ever taken at Top of Part Z (`section_z_of`), so an
+/// empty answer names that height and the span that would answer.
 pub(super) fn section(facets: &[Triangle], z: f64) -> Result<Region, GenError> {
-    match slice::slice(facets, z) {
-        Ok(r) if !r.is_empty() => Ok(r),
-        Ok(_) => Err(GenError::Empty(format!("no material at z = {z:.3}"))),
-        Err(e) => match slice::slice(facets, z - SLICE_NUDGE) {
-            Ok(r) if !r.is_empty() => Ok(r),
-            Ok(_) => Err(GenError::Empty(format!("no material at z = {z:.3}"))),
-            // Both the plane and the nudged plane are unusable: the
-            // original error describes the level the user asked for.
-            Err(_) => Err(from_slice(e)),
-        },
+    let first = match slice::slice(facets, z) {
+        Ok(r) if !r.is_empty() => return Ok(r),
+        other => other,
+    };
+    match (first, slice::slice(facets, z - SLICE_NUDGE)) {
+        (_, Ok(r)) if !r.is_empty() => Ok(r),
+        // The asked plane was clean, or the nudged one was: nothing is
+        // there - say where something is.
+        (Ok(_), _) | (Err(_), Ok(_)) => Err(empty_at(facets, z)),
+        // Both the plane and the nudged plane are unusable: the
+        // original error describes the level the user asked for.
+        (Err(e), Err(_)) => Err(from_slice(e)),
+    }
+}
+
+/// The empty-section refusal, with the fix: the Z span the source does
+/// occupy, so the user can move Top of Part Z into it.
+fn empty_at(facets: &[Triangle], z: f64) -> GenError {
+    let (lo, hi) = facets
+        .iter()
+        .flat_map(|t| [t.a.z, t.b.z, t.c.z])
+        .filter(|v| v.is_finite())
+        .fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), v| (lo.min(v), hi.max(v)));
+    if lo <= hi {
+        GenError::Empty(format!(
+            "no material at z = {z:.3} - the source spans Z{lo:.3} to Z{hi:.3}; set Top of Part Z inside that span, or pick the face or edges to machine"
+        ))
+    } else {
+        GenError::Empty(format!("no material at z = {z:.3}"))
     }
 }
 

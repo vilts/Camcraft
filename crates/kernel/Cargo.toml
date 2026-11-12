@@ -17,13 +17,29 @@ truck = ["dep:truck-shapeops", "dep:truck-modeling", "dep:truck-meshalgo"]
 
 [dependencies]
 thiserror = { workspace = true }
-# The SMLib port (tangency-labs, Apache-2.0, pure Rust, forbid(unsafe_code),
-# thiserror its only dependency). Hard-pinned: a 1.x minor adds opt-in
-# upstream fixes, and the bench numbers are only meaningful against one.
-solidcore = "=1.0.1"
+# The SMLib port (tangency-labs, Apache-2.0, pure Rust, forbid(unsafe_code))
+# and its STEP reader, at ONE commit of the owner's fork (#916): the STEP
+# crate is unpublished and depends by path on the kernel beside it, so the
+# kernel comes from the same tree. Always `rev = "<full sha>"` (the fork's
+# tag camcraft-pin-2026-11-11), never a branch or tag name; moving the pin
+# is the procedure in docs/decisions/916-solidcore-step-bench.md.
+solidcore = { git = "https://github.com/NeoTech/solidcore", rev = "55d0e7638b9e1ebbf91ab8c10657e595c114ecda" }
+solidcore-step = { git = "https://github.com/NeoTech/solidcore", rev = "55d0e7638b9e1ebbf91ab8c10657e595c114ecda" }
+solidcore-convert = { git = "https://github.com/NeoTech/solidcore", rev = "55d0e7638b9e1ebbf91ab8c10657e595c114ecda" }
+# The record type the STEP reader hands out, and solidcore's mesher over it
+# (#940: the machining mesh, `machining_mesh`). Same commit as the kernel.
+# solidcore-tess turns rayon off on wasm32 in its own manifest.
+solidcore-record = { git = "https://github.com/NeoTech/solidcore", rev = "55d0e7638b9e1ebbf91ab8c10657e595c114ecda" }
+solidcore-tess = { git = "https://github.com/NeoTech/solidcore", rev = "55d0e7638b9e1ebbf91ab8c10657e595c114ecda" }
 truck-shapeops = { version = "=0.4.0", default-features = false, optional = true }
 truck-modeling = { version = "=0.6.0", optional = true }
 truck-meshalgo = { workspace = true, optional = true }
 
 [dev-dependencies]
 camcraft-kernel = { path = ".", features = ["truck"] }
+# The STEP bench (#916, tests/step_agreement.rs) only: truck's STEP reader
+# and mesher exactly as crates/app imports with them today (the workspace
+# pins). Dev-only on purpose: the library gains no truck-stepio.
+truck-stepio = { workspace = true }
+truck-meshalgo = { workspace = true }
+ruststep = { workspace = true }

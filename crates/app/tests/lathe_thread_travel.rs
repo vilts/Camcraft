@@ -5,7 +5,7 @@
 //! reaches the radius. A thread now passes the built-in Lathe, and a
 //! real over-travel is still refused by name.
 //!
-//! Gate map (#631): covers app::machine (check_document's travel law).
+//! Gate map (#631): covers app::machine, post::machine (check_document's travel law).
 //! Provenance: our own fixtures (the lathe_post_g76 thread bar).
 
 use flecs_ecs::prelude::World;

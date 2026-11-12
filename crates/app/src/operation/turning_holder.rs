@@ -75,6 +75,17 @@ pub(super) fn noted(mut path: Toolpath, params: &OpParams, tool: &Tool, has_body
     path
 }
 
+/// The world directions a lathe body's tool frame stands in on `path`
+/// (#1038): +x the path's signed radial, +z the spindle - the very
+/// frame [`judge`] reads a body point (x, y, z) in, fitted from the same
+/// part, so the drawn holder is the judged one. Refuses by name when no
+/// spindle fits the part.
+pub(crate) fn body_axes(part: &[crate::geometry::Triangle], path: &Toolpath) -> Result<([f64; 3], [f64; 3]), String> {
+    let frame = Frame::about(part).map_err(|e| format!("no spindle fits the part ({e})"))?;
+    let (dir, radial) = SignedMeridian::of(&frame, path).axes();
+    Ok(([radial.x, radial.y, radial.z], [dir.x, dir.y, dir.z]))
+}
+
 /// The holder law (#369) on `path`, for a tool whose lathe body is
 /// `body`: one [`Warning::HolderHit`] per rubbing move. Nothing for an op
 /// outside the turning section or a tool with no body. Refuses by name

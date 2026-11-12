@@ -2,6 +2,8 @@
 //! file dialog, then `tool_library::export_tool_library` to write, or
 //! `parse_tool_library` + `ImportTools` (one undo unit) to read. A
 //! refusal lands on the Tool pane by name, never swallowed.
+//! #889: the page's "Import tool holders" choice is the command's
+//! `holders` parameter (`ImportTools::with_options`), remembered per user.
 //! Provenance: our own `camcraft-tools/1` format (app::tool_library); no
 //! vendor tool-library format consulted.
 
@@ -35,6 +37,15 @@ impl State {
         }
     }
 
+    /// Tick or untick "Import tool holders": the person's choice, so it
+    /// is written to their preferences, never to the document or history.
+    pub(crate) fn set_import_tool_holders(&mut self, on: bool) {
+        if self.import_tool_holders != on {
+            self.import_tool_holders = on;
+            self.persist_prefs();
+        }
+    }
+
     pub(crate) fn export_tool_library_to(&mut self, path: &Path) {
         let written = tool_library::export_tool_library(&self.world)
             .and_then(|text| std::fs::write(path, text).map_err(|e| e.to_string()));
@@ -48,7 +59,10 @@ impl State {
         let planned = std::fs::read_to_string(path)
             .map_err(|e| e.to_string())
             .and_then(|text| tool_library::parse_tool_library(&text))
-            .and_then(|lib| ImportTools::new(&self.world, lib).map_err(|e| e.to_string()));
+            .and_then(|lib| {
+                ImportTools::with_options(&self.world, lib, self.tool_import_mode, self.import_tool_holders)
+                    .map_err(|e| e.to_string())
+            });
         match planned {
             Ok(command) => {
                 let summary = command.report().summary();

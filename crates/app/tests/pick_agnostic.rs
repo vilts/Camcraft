@@ -10,7 +10,7 @@
 //! name - never cut into the part.
 //!
 //! Gate map (M11.4 A): covers app::operation (selection, area, stitch,
-//! job, generate), app::machining2d (pocket), app::verify, app::load.
+//! job, generate), motion::machining2d (pocket), sim::verify, motion::load.
 //!
 //! Lane shape (M13.8): the debug ladder runs every test here in seconds.
 //! The island law runs under Zigzag in debug; its `_full` twin carries

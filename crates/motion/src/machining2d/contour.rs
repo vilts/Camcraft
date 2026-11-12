@@ -383,9 +383,12 @@ fn contour_impl(
                         e2.x,
                         e2.y,
                         lead_notes.join("; ")
-                    )));
+                    ))
+                    .with_ghost_moves(b.moves()));
                 }
-                contour_comp::push_span(&mut b, &SpanCtx { prog, p }, walk_at - 1, out_at)?;
+                // #871: a part-way refusal hands back the rings so far.
+                contour_comp::push_span(&mut b, &SpanCtx { prog, p }, walk_at - 1, out_at)
+                    .map_err(|e| e.with_ghost_moves(b.moves()))?;
             }
         }
     }

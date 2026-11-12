@@ -120,11 +120,25 @@ write (the gate), so the released program never carries one.
   everything the first raw motion line needs (`startPreamble`
   pattern), and serve legacy streams that carry no `SECTION` by
   firing it from the first motion too.
-- **Modal discipline.** G98 / G43.4 / retract modes once per program
+- **Modal discipline.** G43.4 / retract modes once per program
   or per arm; tool change resets the arm and the angle memory
   (stage D). The cycle group suppresses its expanded chain — one
   cycle block per hole, bare X Y continuations when the signature is
   unchanged, `G80` before any cycle-signature change or section end.
+  **The hop law (#994):** the chain a cycle replaces is only what
+  stays on its hole (its XY, at or below R). Each hole returns to R
+  (`G99` in the block; a dialect with no return word is read with the
+  tool seated on R, so either return mode lands there), and the first
+  rapid leaving the hole - the hop, the traverse, the exit - ends the
+  group with `G80` and posts as the stream says. The program never
+  moves between holes lower than the verified path, and a cut that
+  leaves the hole inside a group is refused by name
+  (`crates/post/tests/cycle_hop.rs` reads every cycle post back).
+  A cycle read away from its hole with no rapid to it (two cycle
+  records back to back, or a cycle straight after probing) is seated
+  at the section's own `RetractPlane`: up to it, over the hole, down
+  to R. A section that states no `RetractPlane` is refused by name
+  (#1028). Probe moves seat the next cycle like any other motion.
   A dialect whose documented cycles this post was not specced from
   (Heidenhain DIN/ISO: G200-G209 with Q parameters, #50) posts the
   expanded chain as plain moves instead and refuses what plain moves

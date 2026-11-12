@@ -7,7 +7,7 @@
 
 use super::{arg_opt, arg_str, builtin_cps, inventory, only_keys, Env};
 
-use crate::commands::{GenerateOperation, History, ImportModel, ImportTools, UpdateModel};
+use crate::commands::{GenerateOperation, History, ImportMode, ImportModel, ImportTools, UpdateModel};
 use crate::model;
 use crate::operation::OpStatus;
 use crate::posting;
@@ -21,8 +21,12 @@ use std::path::{Path, PathBuf};
 /// the run owns that law here exactly as the app's menu does.
 pub(crate) fn v_load(env: &mut Env, args: Vec<Value>) -> Result<Value, String> {
     let path = PathBuf::from(arg_str(&args, 0, "a project path")?);
-    crate::project::load(&env.world, &path).map_err(|e| e.to_string())?;
+    // Load in isolation: refusal leaves the current document and its undo/redo intact.
+    let world = crate::world::new_world();
+    crate::project::load(&world, &path).map_err(|e| e.to_string())?;
     env.history = History::default();
+    env.world = world;
+    env.posted = None;
     env.doc_path = Some(path.clone());
     Ok(json!({ "path": path.display().to_string(), "operations": ops_view(env) }))
 }
@@ -43,8 +47,11 @@ pub(crate) fn v_save(env: &mut Env, args: Vec<Value>) -> Result<Value, String> {
     Ok(json!({ "path": path.display().to_string() }))
 }
 
-/// `cam.import(path, name?)` - parse a mesh file and land it as a
-/// model entity, by its file stem unless named otherwise. A name that
+/// `cam.import(path, name?, facetBudget?)` - parse a mesh file and land
+/// it as a model entity, by its file stem unless named otherwise (a null
+/// name keeps the stem). `facetBudget` is the STEP facet budget (#1054):
+/// absent or null is the default; out of bounds, or given for a file that
+/// is not STEP, refuses by name. A name that
 /// already wears a model updates it (the revision counts, the stale
 /// marks follow); a name that belongs to setup furniture refuses -
 /// an import never overwrites the stock solid by accident.
@@ -53,18 +60,27 @@ pub(crate) fn v_import(env: &mut Env, args: Vec<Value>) -> Result<Value, String>
     // The command's own construction door: parse, validate, and the
     // extension refusals (IGES needs a kernel we do not have) are
     // ImportModel's law, not a second copy here.
-    let imp = ImportModel::new(&path).map_err(|e| e.to_string())?;
-    let name = arg_opt(&args, 1, "a model name")?.unwrap_or(imp.name);
+    let budget = crate::geometry::import::step_budget::from_json(args.get(2))?;
+    let imp = ImportModel::within(&path, budget).map_err(|e| e.to_string())?;
+    let name = arg_opt(&args, 1, "a model name")?.unwrap_or_else(|| imp.name.clone());
     if model::find_by_name(&env.world, &name).is_some() {
-        let cmd = UpdateModel::new(&env.world, &name, imp.mesh).map_err(|e| e.to_string())?;
+        let cmd = UpdateModel::new(&env.world, &name, imp.mesh).map_err(|e| e.to_string())?.with_fidelity(imp.coarse_mm).with_budget(imp.facet_budget);
         env.history.execute(&env.world, cmd);
     } else {
-        env.history.execute(&env.world, ImportModel::from_mesh(&name, imp.mesh));
+        env.history.execute(&env.world, imp.renamed(&name));
     }
-    let facets = model::find_by_name(&env.world, &name)
-        .and_then(|e| model::facets_of(&env.world, &e))
-        .map_or(0, |a| a.len());
-    Ok(json!({ "model": name, "facets": facets }))
+    let entity = model::find_by_name(&env.world, &name);
+    let facets = entity.and_then(|e| model::facets_of(&env.world, &e)).map_or(0, |a| a.len());
+    let mut out = json!({ "model": name, "facets": facets });
+    // #864: a mesh imported coarser than the importer promises says so,
+    // with the error it carries; a full-fidelity import adds nothing.
+    if let Some(chord) = entity.and_then(|e| crate::model_fidelity::chord_of(&env.world, &e)) {
+        out["reduced_fidelity"] = crate::model_fidelity::facts(&env.world, chord);
+    }
+    if let Some(b) = entity.and_then(|e| crate::model_fidelity::budget_of(&env.world, &e)) {
+        out["facet_budget"] = json!(b);
+    }
+    Ok(out)
 }
 
 /// `cam.exportTools(path)` - write the document's tools as a tool
@@ -79,16 +95,35 @@ pub(crate) fn v_export_tools(env: &mut Env, args: Vec<Value>) -> Result<Value, S
     Ok(json!({ "path": path.display().to_string(), "tools": count }))
 }
 
-/// `cam.importTools(path)` - read a tool library file into the
+/// `cam.importTools(path, mode?)` - read a tool library file into the
 /// document through `ImportTools`, the GUI's own command: the whole
 /// file is checked first (a malformed or insane file refuses by name),
 /// an identical tool is skipped, a clashing name arrives as "Name (2)",
-/// and the import is one undo step.
+/// and the import is one undo step. #899: `mode` is `add` (default),
+/// `update` (same-named tools take the file's definition in place) or
+/// `replace` (update, and tools the file lacks are removed unless an
+/// operation uses them).
+/// #889: `holders` (default true) takes the file's tool bodies.
 pub(crate) fn v_import_tools(env: &mut Env, args: Vec<Value>) -> Result<Value, String> {
     let path = PathBuf::from(arg_str(&args, 0, "a tool library path")?);
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let mode = match args.get(1) {
+        None | Some(Value::Null) => ImportMode::Add,
+        Some(v) => ImportMode::parse(v.as_str().ok_or("import mode must be a string")?)?,
+    };
+    let holders = match args.get(2) {
+        None | Some(Value::Null) => true,
+        Some(Value::Bool(b)) => *b,
+        Some(other) => return Err(format!("holders must be true or false, got {other}")),
+    };
+    import_tools(env, &path, mode, holders)
+}
+
+/// The import behind `cam.importTools` and MCP's `import_tool_library`
+/// (#889: `holders` takes the file's tool bodies, or leaves them out).
+pub(crate) fn import_tools(env: &mut Env, path: &Path, mode: ImportMode, holders: bool) -> Result<Value, String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let library = crate::tool_library::parse_tool_library(&text)?;
-    let cmd = ImportTools::new(&env.world, library).map_err(|e| e.to_string())?;
+    let cmd = ImportTools::with_options(&env.world, library, mode, holders).map_err(|e| e.to_string())?;
     let report = cmd.report().clone();
     env.history.execute(&env.world, cmd);
     let renamed: Vec<Value> = report.renamed.iter().map(|(from, to)| json!({ "from": from, "to": to })).collect();
@@ -97,6 +132,12 @@ pub(crate) fn v_import_tools(env: &mut Env, args: Vec<Value>) -> Result<Value, S
         "added": report.added,
         "renamed": renamed,
         "skipped": report.skipped,
+        "updated": report.updated,
+        "replaced": report.replaced,
+        "removed": report.removed,
+        "mode": mode.label(),
+        "holders": report.holders,
+        "holders_left_out": report.holders_left_out,
         "summary": report.summary(),
     }))
 }

@@ -133,21 +133,24 @@ fn corpus() -> Vec<(&'static str, Vec<u8>)> {
 }
 
 /// What the raw reader and the importer do with each corpus file, pinned.
-/// FINDINGS against the port's reader: it returns `Ok` with an EMPTY B-rep
-/// (no faces) for a blank file, plain text, binary noise and a header with
-/// no body (and for a NaN zone tolerance, which the seam now refuses before
-/// the reader runs); and `Ok` with a closed box whose vertex sits 1.0 off
-/// its edges. An absurd declared count (faces 2^32-1, control points 1e15)
-/// is refused by the port before it allocates (it checks counts against
-/// the bytes left). The importer refuses every one of them (the
-/// empty ones fail the heal guard's empty check -> `Err invalid`; the gap
-/// past `HEAL_GAP_LIMIT` -> `Err invalid`).
+/// FINDING against the port's reader: it returns `Ok` with a closed box
+/// whose vertex sits 1.0 off its edges; the importer refuses it (the gap is
+/// past `HEAL_GAP_LIMIT` -> `Err invalid`). An absurd declared count (faces
+/// 2^32-1, control points 1e15) is refused by the port before it allocates
+/// (it checks counts against the bytes left).
+///
+/// Re-triaged at the pin of #916: solidcore 1.0.1's reader returned `Ok`
+/// with an EMPTY B-rep (no faces) for a blank file, plain text, binary
+/// noise and a header with no body, and only the seam's heal guard refused
+/// them (`Err invalid`). The pinned commit's reader refuses all four itself
+/// (`Err failed`), so both columns changed for those rows. A NaN zone
+/// tolerance is still refused by the seam before the reader runs.
 const KNOWN_SMB_VERDICTS: &[(&str, &str, &str)] = &[
     ("empty file", "Err refused", "Err refused"),
-    ("one space", "Ok faces=0 no measure", "Err invalid"),
-    ("text, not a B-rep", "Ok faces=0 no measure", "Err invalid"),
-    ("binary noise 4 KiB", "Ok faces=0 no measure", "Err invalid"),
-    ("header only", "Ok faces=0 no measure", "Err invalid"),
+    ("one space", "Err failed", "Err failed"),
+    ("text, not a B-rep", "Err failed", "Err failed"),
+    ("binary noise 4 KiB", "Err failed", "Err failed"),
+    ("header only", "Err failed", "Err failed"),
     ("future version", "Err refused", "Err refused"),
     ("cut at 10%", "Err failed", "Err failed"),
     ("cut at 50%", "Err failed", "Err failed"),
@@ -201,17 +204,21 @@ fn corrupt_native_files_never_panic_or_hang() {
             let mut k = SolidcoreKernel::default();
             let raw = read_smb(&mut k, &bytes);
             let raw = port_verdict(raw, &mut k);
-            let imp = import_smb(&mut k, &bytes);
+            let mut imp = import_smb(&mut k, &bytes);
             let notes: Vec<String> = imp
                 .as_ref()
                 .map(|i| i.notes.iter().map(ToString::to_string).collect())
                 .unwrap_or_default();
-            let bbox = imp.as_ref().ok().map(|i| i.brep.clone());
+            // Measured in place: the port's B-rep is no longer `Clone` at
+            // the pinned commit (#916), and a measure leaves it as it was.
+            let bbox = imp
+                .as_mut()
+                .ok()
+                .and_then(|i| k.measure(&mut i.brep).ok());
             let mut imp = port_verdict(imp.map(|i| i.brep), &mut k);
             if !notes.is_empty() {
                 imp = format!("{imp} [{}]", notes.join("; "));
             }
-            let bbox = bbox.and_then(|mut b| k.measure(&mut b).ok());
             (raw, imp, bbox)
         });
         println!("{name:<34} read -> {raw:<22} import -> {imp}");

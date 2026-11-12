@@ -27,6 +27,7 @@ pub struct PointsPick {
 pub fn arm(state: &mut State, setup: &str) {
     state.plane_pick = None;
     crate::axis_pick::disarm(state);
+    crate::wcs_pick::disarm(state); // #701: one draft collects at a time
     state.points_pick = Some(PointsPick { setup: setup.to_owned(), picks: Vec::new() });
     state.geo_pick = GeoPick::Vertex;
     state.status = format!("{setup}: pick point 1 of the plane");

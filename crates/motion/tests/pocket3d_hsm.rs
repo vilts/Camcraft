@@ -136,6 +136,7 @@ fn verified(facets: &[Triangle], region: &Region, path: &Toolpath) -> Vec<Warnin
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(path, &cx)
 }

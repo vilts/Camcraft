@@ -7,7 +7,7 @@
 //! the verifier and the stock sim judge stays the nose centre.
 //!
 //! Gate map (M4.4): covers app::posting (op_streams, the nose module),
-//! app::orientation, app::commands (ChangeTool on a lathe tool).
+//! tools::orientation, app::commands (ChangeTool on a lathe tool).
 //! Lane shape: seconds.
 
 use flecs_ecs::prelude::World;

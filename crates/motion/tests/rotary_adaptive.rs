@@ -55,7 +55,7 @@ fn adaptive_plans_the_developed_levels_under_the_load_and_kink_laws() {
     // depth); the levels below it cut real stock, each read from the
     // skin above it - round 1's r6.2 stock left only the skin level to
     // the planner and its 0% reading proved nothing.
-    let reads = read_levels(&dev, 7.0, 0.0);
+    let reads = read_levels(&dev, 7.0, 0.0, p.stepdown);
     for r in &reads {
         println!(
             "radius {:.3}: {} planar moves ({} arcs), load {:.1}% D, breaks>5 {}, rings {}",
@@ -112,7 +112,7 @@ fn adaptive_plans_the_developed_levels_under_the_load_and_kink_laws() {
     // into the developed frame (each developed arc now its chords), read
     // by the same reader; every planned level holds it there too.
     let pulled = pull_back(&world, 7.0);
-    let wreads = read_levels(&pulled, 7.0, 0.0);
+    let wreads = read_levels(&pulled, 7.0, 0.0, p.stepdown);
     let wbreaks: usize = wreads.iter().filter(|w| planned.iter().any(|r| (r.rho - w.rho).abs() < 1e-5)).map(|w| w.breaks).sum();
     println!("world: {} moves (developed {}), in-cut breaks>5 on the planned levels {wbreaks}", world.moves.len(), dev.moves.len());
     for w in &wreads {
@@ -163,7 +163,7 @@ fn the_developed_window_reaches_the_planner_and_names_each_refusal() {
     };
     assert!(dev.is_chained() && dev.all_finite());
     println!("window notes: {:?}", dev.notes);
-    let reads = read_levels(&dev, 7.0, 0.0);
+    let reads = read_levels(&dev, 7.0, 0.0, p.stepdown);
     for r in &reads {
         println!(
             "radius {:.3}: {} planar moves ({} arcs), load {:.1}% D, breaks>5 {}, rings {}",
@@ -213,7 +213,7 @@ fn a_window_too_narrow_for_the_helix_is_refused_by_name_before_planning() {
     );
     let over = planner_overloads(&dev.notes);
     assert!(over.is_empty(), "the planner's own load reading broke the law: {over:?}");
-    let reads = read_levels(&dev, 7.0, 0.0);
+    let reads = read_levels(&dev, 7.0, 0.0, p.stepdown);
     for r in &reads {
         println!("radius {:.3}: {} planar moves ({} arcs), rings {}", r.rho, r.moves, r.arcs, r.ringed(7.0));
     }
@@ -242,7 +242,7 @@ fn the_r62_neck_levels_are_refused_for_travel_by_name() {
     };
     assert!(dev.is_chained() && dev.all_finite());
     println!("r6.2 notes: {:?}", dev.notes);
-    let reads = read_levels(&dev, 6.2, 0.0);
+    let reads = read_levels(&dev, 6.2, 0.0, p.stepdown);
     for r in &reads {
         println!("radius {:.3}: {} planar moves ({} arcs), rings {}", r.rho, r.moves, r.arcs, r.ringed(6.2));
     }
@@ -304,3 +304,25 @@ fn offset_rings_on_the_wrap_are_the_program_they_always_were() {
 /// round: the bitwise digest (5263, 2919766036457321567) still matched
 /// on the same build, so the lattice is the only change.
 const GOLDEN_RINGS: (usize, u64) = (5263, 11_592_310_142_122_113_043);
+
+/// Issue #983: the level reader reads the ladder's own planes only. A
+/// microlift on the 5.0 level lifts to 5.6 and its down ramp passes a
+/// vertex on 5.6 (5.7 -> 5.6 -> 5.0): read as a level, those lifted
+/// runs looked like a ring-cut level no note named (radius 5.6 in #882's
+/// variants). Now only 5.0 (named) is read, and the law holds.
+#[test]
+fn a_microlift_plane_is_not_read_as_an_unnamed_ring_level() {
+    use camcraft_motion::cl::MoveKind;
+    let mut b = PathBuilder::new(Point3::new(0.0, 0.0, 8.0));
+    b.push(MoveKind::Plunge, Point3::new(0.0, 0.0, 5.0), Some(100.0));
+    for (x, z) in [(10.0, 5.0), (12.0, 5.7), (14.0, 5.6), (20.0, 5.6), (22.0, 5.0), (30.0, 5.0)] {
+        b.push(MoveKind::Feed, Point3::new(x, 0.0, z), Some(500.0));
+    }
+    // The 5.0 level itself posts lines: say it rings-cut, by name.
+    b.note(format!("adaptive: the fixture - {}", ring_tag(5.0)));
+    let path = b.finish();
+    let reads = read_levels(&path, 7.0, 0.0, 0.5);
+    let zs: Vec<f64> = reads.iter().map(|r| r.rho).collect();
+    assert!(zs.iter().all(|z| (z - 5.0).abs() < 1e-9) && !zs.is_empty(), "only the ladder's 5.0 is read: {zs:?}");
+    assert_refusals_named(&reads, 7.0);
+}

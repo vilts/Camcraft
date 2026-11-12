@@ -61,6 +61,8 @@
 mod backend;
 mod backend_build;
 mod backend_edit;
+mod carried;
+mod carried_read;
 mod carry;
 mod columns;
 mod cut;
@@ -110,6 +112,7 @@ mod wall_slack;
 
 pub use backend::{Backend, Stock, FIELD_BAND, FIELD_VERDICT_EPS, LATHE_COLUMN_REFUSAL};
 pub use backend_edit::SET_TOPS_FIELD_REFUSAL;
+pub use carried::{clip_columns_under, lattice_of_grid, CarriedStock, FieldBody};
 pub use carry::{Body, LatticeTurn, CARRY_TURN_REFUSAL};
 pub use columns::Columns;
 pub use cut::{auto_cell, first_posed, simulate, SimOp, POSED_REFUSAL};

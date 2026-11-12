@@ -171,12 +171,15 @@ pub(super) fn radial_relink(
         if k > 0
             && let (Some(a), Some(b)) = (out.last().map(|m| m.to), run.first().map(|m| m.from))
         {
-            let s = infeed(run, b)?;
-            link_into(&mut out, a, b, r, hop, feed, plunge_feed, s)?;
+            // #1015: a link refused part-way hands back the passes
+            // linked so far (planning frame; the caller carries it out).
+            let s = infeed(run, b).map_err(|e| e.with_ghost_moves(&out))?;
+            link_into(&mut out, a, b, r, hop, feed, plunge_feed, s).map_err(|e| e.with_ghost_moves(&out))?;
         }
         out.extend(run.iter().cloned());
     }
-    out.push(Move::new(MoveKind::Rapid, end, lift(end, r, clear)?, None));
+    let exit = lift(end, r, clear).map_err(|e| e.with_ghost_moves(&out))?;
+    out.push(Move::new(MoveKind::Rapid, end, exit, None));
     let mut path = Toolpath::new(out);
     path.notes = base.notes.clone();
     if ramp.is_some() {

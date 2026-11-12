@@ -96,7 +96,13 @@ pub(super) fn finish_envelope(
                             gate_mm: gate,
                         });
                     }
-                    if rep.gouge_mm > gate || rep.rest_mm > gate {
+                    // #864: the gouge half answers to the tolerance
+                    // less a coarse model's excess chord error (its true
+                    // convex surface stands that far outside the facets
+                    // the scan measured); the rest half and the scan's
+                    // own band keep the op's tolerance.
+                    let gouge_gate = gate - (tol - cx.tightened(tol));
+                    if rep.gouge_mm > gouge_gate || rep.rest_mm > gate {
                         Some(Warning::Envelope {
                             at: nearest(rep.at),
                             gouge_mm: rep.gouge_mm.clamp(0.0, 1e9),

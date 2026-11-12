@@ -16,9 +16,3 @@ safe, it refuses to write it and says why.
 > **Pre-1.0 software.** CamCraft changes quickly. Treat every posted program
 > as a first draft: check it in your machine's own simulation and dry-run it
 > with the spindle off and Z raised before cutting material.
-
-**CamCraft in the browser is coming.** A WebAssembly build that runs in a
-current browser, with nothing to install, will be published on this site
-once the app and its interface build for the web
-([#31](https://github.com/NeoTech/Camcraft/issues/31)). Until then, use the
-desktop downloads.

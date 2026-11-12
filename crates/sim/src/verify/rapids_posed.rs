@@ -109,13 +109,14 @@ pub(super) fn in_rest<'a>(
     // The part: the rapid starts where the cut ended, so it is granted
     // the cut's own budget (the finish tolerance where one is judged)
     // on top of the gouge tolerance.
-    let allow = cx.gouge_tol.max(0.0) + cx.finish_tol.unwrap_or(0.0).max(0.0);
+    // #904: less a coarse model's excess, while that is honest.
+    let allow = cx.tightened(cx.gouge_tol.max(0.0) + cx.finish_tol.unwrap_or(0.0).max(0.0));
     let Some(index) = part.index.get_or_insert_with(|| SolidIndex::build(facets)).as_mut() else {
         return true; // unreadable mesh: fail closed
     };
     for &(p0, p1, a) in &pieces {
         let fr = Frame::new(p0, Some(a).filter(|a| !is_vertical(a)));
-        if index.hits(&fr, fr.local(p1), &atoms, allow, 0.0, false) {
+        if index.hits(&fr, fr.local(p1), &atoms, allow, 0.0, &[]) {
             return true;
         }
     }

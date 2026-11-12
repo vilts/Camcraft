@@ -165,6 +165,7 @@ fn a_feed_chorded_across_the_parts_corner_reads_a_gouge() {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     let gouges = |t: &Toolpath| -> Vec<usize> {
         verify(t, &cx).into_iter().filter_map(|w| if let Warning::Gouge { at } = w { Some(at) } else { None }).collect()

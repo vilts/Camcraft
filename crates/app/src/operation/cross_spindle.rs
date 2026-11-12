@@ -60,11 +60,14 @@ pub(super) fn lathe_reads(facets: &[Triangle], origin: [f64; 3]) -> Result<(), G
 /// out to it, and the chain is proven clear of it). An origin on the
 /// world Z axis runs the kernel unshifted, and a stock that does not
 /// reach past the part (or none) keeps the part-only chain's bits.
+/// `cutter` is the tool as the stack laws read it (#842): with a body,
+/// its band stack, which the holder and part laws sweep.
 pub(super) fn cross_drill(
     p: CrossParams<'_>,
     facets: &[Triangle],
     stock: Option<&[Triangle]>,
     origin: [f64; 3],
+    cutter: &crate::verify::Cutter,
     tool_name: &str,
 ) -> Result<Toolpath, GenError> {
     let (ox, oy) = (origin[0], origin[1]);
@@ -105,11 +108,14 @@ pub(super) fn cross_drill(
         ..p
     })
     .map_err(|e| in_world(e, &local, p.holes))?;
-    super::cross_stock::rapids_clear(&t, &st, p.tool)?;
-    super::drill_reach::cross_holder(&t, facets, stock, (ox, oy), p.tool, tool_name)?;
+    // #1015: these laws judge the chain in the spindle frame; their
+    // refusals carry it back to the world by the same shift (`back`).
+    super::cross_stock::rapids_clear(&t, &st, p.tool).map_err(|e| shifted_ghost(e, &t, ox, oy))?;
+    super::drill_reach::cross_holder(&t, facets, stock, (ox, oy), p.tool, cutter.body.as_ref(), tool_name)
+        .map_err(|e| shifted_ghost(e, &t, ox, oy))?;
     if on_origin {
         // Issue #117: what the chain leaves is judged against the part.
-        super::cross_part::part_clear(&t, facets, p.tool, p.holes)?;
+        super::cross_part::part_clear(&t, facets, p.tool, cutter, p.holes).map_err(|e| e.with_ghost(&t))?;
         return Ok(t);
     }
     // The kernel's chain is straight, cycle-free and computer-
@@ -131,8 +137,29 @@ pub(super) fn cross_drill(
     if !t.is_chained() || !t.all_finite() {
         return Err(GenError::Invalid("cross-drill chain self-check failed after the spindle shift".into()));
     }
-    super::cross_part::part_clear(&t, facets, p.tool, p.holes)?;
+    super::cross_part::part_clear(&t, facets, p.tool, cutter, p.holes).map_err(|e| e.with_ghost(&t))?;
     Ok(t)
+}
+
+/// #1015: a refusal of the spindle-frame chain `t` with that chain,
+/// carried to the world by the XY shift (`ox`, `oy`), as its ghost. A
+/// chain holding an arc (the XY carry would have to re-centre it) has
+/// no ghost - never one drawn in the spindle frame.
+fn shifted_ghost(e: GenError, t: &Toolpath, ox: f64, oy: f64) -> GenError {
+    if t.has_arcs() {
+        return e;
+    }
+    let moves: Vec<crate::cl::Move> = t
+        .moves
+        .iter()
+        .map(|m| {
+            let mut m = *m;
+            m.from = Point3::new(m.from.x + ox, m.from.y + oy, m.from.z);
+            m.to = Point3::new(m.to.x + ox, m.to.y + oy, m.to.z);
+            m
+        })
+        .collect();
+    e.with_ghost_moves(&moves)
 }
 
 /// Every hole must plunge TOWARD the spindle line: the kernel stands a
@@ -178,24 +205,41 @@ fn in_world(e: GenError, local: &[CrossHole], world: &[CrossHole]) -> GenError {
         }
         s
     };
+    // #261 part 2: the spindle frame is a pure translation (see `back`
+    // above), so a spot rides the same world - local shift every mouth
+    // does. No hole to read it from: the spot is dropped, never shown in
+    // the wrong frame.
+    let shift = local
+        .first()
+        .zip(world.first())
+        .map(|(l, w)| Point3::new(w.origin.x - l.origin.x, w.origin.y - l.origin.y, w.origin.z - l.origin.z));
+    let to_world = |at: Point3, d: Point3| Point3::new(at.x + d.x, at.y + d.y, at.z + d.z);
     match e {
         GenError::Invalid(s) => GenError::Invalid(fix(s)),
         GenError::Empty(s) => GenError::Empty(fix(s)),
-        // #261 part 2: the spindle frame is a pure translation (see
-        // `back` above), so the spot rides the same world - local shift
-        // every mouth does. No hole to read it from: the spot is dropped,
-        // never shown in the wrong frame.
-        GenError::At { msg, at } => {
+        GenError::At { msg, at } => match shift {
+            Some(d) => GenError::invalid_at(fix(msg), to_world(at, d)),
+            None => GenError::Invalid(fix(msg)),
+        },
+        // #871: a ghost-carrying refusal is rewritten like the located
+        // one - its sentence, its spot, and its moves carried by the same
+        // shift. No shift to read, or an arc the XY carry would have to
+        // re-centre: the ghost and spot are dropped, never drawn in the
+        // spindle frame.
+        GenError::Ghosted { msg, at, ghost } => {
             let msg = fix(msg);
-            match local.first().zip(world.first()) {
-                Some((l, w)) => GenError::invalid_at(
-                    msg,
-                    Point3::new(
-                        at.x + (w.origin.x - l.origin.x),
-                        at.y + (w.origin.y - l.origin.y),
-                        at.z + (w.origin.z - l.origin.z),
-                    ),
-                ),
+            match shift {
+                Some(d) if ghost.moves().iter().all(|m| m.arc.is_none()) => {
+                    GenError::Ghosted { msg, at, ghost }.map_location(|p| to_world(p, d)).map_ghost(|t| {
+                        let mut t = t.clone();
+                        for m in &mut t.moves {
+                            m.from = to_world(m.from, d);
+                            m.to = to_world(m.to, d);
+                        }
+                        t
+                    })
+                }
+                Some(d) => GenError::Ghosted { msg, at, ghost }.map_location(|p| to_world(p, d)).without_ghost(),
                 None => GenError::Invalid(msg),
             }
         }
@@ -230,5 +274,50 @@ mod tests {
         // No hole to read the shift from: the spot is dropped, never shown in the wrong frame.
         let lone = in_world(GenError::invalid_at("x", Point3::new(1.0, 2.0, 3.0)), &[], &[]);
         assert_eq!(lone, GenError::Invalid("x".into()));
+    }
+
+    #[test]
+    fn an_app_side_law_refusal_carries_the_chain_to_the_world() {
+        // #1015: the rapids and holder laws judge the chain where the
+        // kernel ran it (10 mm left of the world here); the ghost is
+        // that chain moved back - the very shift the posted chain takes.
+        use crate::cl::{Move, MoveKind};
+        let local = Toolpath::new(vec![
+            Move::new(MoveKind::Rapid, Point3::new(40.0, 0.0, 5.0), Point3::new(22.0, 0.0, 5.0), None),
+            Move::new(MoveKind::Feed, Point3::new(22.0, 0.0, 5.0), Point3::new(14.0, 0.0, 5.0), Some(100.0)),
+        ]);
+        let e = shifted_ghost(GenError::Invalid("cross-drill rapid 0 stops".into()), &local, 10.0, -3.0);
+        let g = e.ghost().expect("the chain rides");
+        assert_eq!(g.moves()[0].from, Point3::new(50.0, -3.0, 5.0));
+        assert_eq!(g.moves()[1].to, Point3::new(24.0, -3.0, 5.0));
+        assert_eq!(e.to_string(), "invalid machining parameters: cross-drill rapid 0 stops");
+        // An arc the XY carry would re-centre: no ghost, words kept.
+        let mut arced = local.clone();
+        arced.moves[1].arc = Some(crate::cl::ArcMove { center: crate::geo2d::Point2::new(18.0, 0.0), ccw: true, plane: Default::default() });
+        let e = shifted_ghost(GenError::Invalid("w".into()), &arced, 10.0, 0.0);
+        assert_eq!(e, GenError::Invalid("w".into()));
+    }
+
+    #[test]
+    fn a_ghosted_kernel_refusal_lands_its_words_spot_and_moves_in_the_world() {
+        // #871: a refusal carrying the moves built so far is rewritten
+        // like the located one - and its ghost rides the same shift.
+        use crate::cl::{Move, MoveKind};
+        let (local, world) = ([hole(20.0, 0.0)], [hole(30.0, 0.0)]);
+        let built = Toolpath {
+            moves: vec![Move::new(MoveKind::Rapid, Point3::new(40.0, 0.0, 5.0), Point3::new(22.0, 0.0, 5.0), None)],
+            ..Toolpath::default()
+        };
+        let e = GenError::invalid_at("a Drill cycle at (20, 0) plunges into solid", Point3::new(20.0, 0.0, 5.0))
+            .with_ghost(&built);
+        assert!(e.ghost().is_some());
+        let w = in_world(e, &local, &world);
+        assert!(w.to_string().contains("at (30, 0)"), "{w}");
+        assert_eq!(w.location(), Some(Point3::new(30.0, 0.0, 5.0)));
+        let g = w.ghost().expect("the ghost rides the shift");
+        assert_eq!((g.moves()[0].from, g.moves()[0].to), (Point3::new(50.0, 0.0, 5.0), Point3::new(32.0, 0.0, 5.0)));
+        // No hole to read the shift from: ghost and spot both dropped.
+        let lone = in_world(GenError::Invalid("y".into()).with_ghost(&built), &[], &[]);
+        assert_eq!(lone, GenError::Invalid("y".into()));
     }
 }

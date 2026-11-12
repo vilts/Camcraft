@@ -3,7 +3,7 @@
 //! arc moves, chords stay inside the sagitta law's word, and paths with
 //! arcs still chain and stay finite.
 //!
-//! Gate map (M4.4): covers app::cl, app::geo2d, app::geometry, app::machining2d.
+//! Gate map (M4.4): covers cl::cl, geometry::geo2d, app::geometry, motion::machining2d.
 
 use camcraft_app::cl::{Move, MoveKind};
 use camcraft_app::geo2d::{Loop, Point2, Region};

@@ -5,7 +5,9 @@
 //! holder's bands (#93)), spun about the tool axis into a display mesh.
 //! What is drawn is what is checked: a modelled body's own facets (flats,
 //! slots, its turn about the axis) are not what any law reads, so the
-//! simulation draws the envelope instead. A solid of revolution from its
+//! simulation draws the envelope instead; a necked tool's shank is
+//! drawn as its drawn neck's bands (#852), the very bands the laws
+//! read. A solid of revolution from its
 //! meridian is elementary geometry; our own design, no vendor file or
 //! source consulted.
 //!
@@ -15,6 +17,11 @@
 //! never a crash. The mesh is cached for the one tool at the playhead
 //! and dropped when that tool or operation is gone, its outline changes,
 //! or the transport closes ([`SimToolCache`]).
+//!
+//! A lathe-held body (#369) is the one exception to the spin: it is
+//! judged as modelled in the turning tool frame, so it is drawn as
+//! modelled there (#1038, `sim_lathe_body`), posed in the holder law's
+//! own frame. A lathe steel without one keeps the axis marker only.
 
 use std::sync::Arc;
 
@@ -24,6 +31,7 @@ use camcraft_tools::holder_profile::{HolderBand, HolderStack, MAX_BODY_HEIGHT, M
 
 use crate::geometry::Triangle;
 use crate::tools::Tool;
+use crate::sim_lathe_body::{self, LatheBodyCache};
 use crate::{model, tool_body, tool_body_view};
 
 /// Float dust on the outline checks (mm).
@@ -59,7 +67,9 @@ impl std::error::Error for OutlineError {}
 pub struct JudgedOutline {
     /// `(z, r)` from the tip centre up the cutter and the shank, closed
     /// to the axis at the shank's top - `Tool::profile` of the judged
-    /// record, whose breakpoints are the bands the shank laws sweep.
+    /// record, whose breakpoints are the bands the shank laws sweep; a
+    /// necked tool's shank is its neck's bands instead (#852), the very
+    /// `HolderStack::shank_bands` the laws read.
     pub cutter: Vec<(f64, f64)>,
     /// What stands above the shank, bottom-up: exactly the bands
     /// `tool_body::stack` hands the fixture laws (empty bands dropped).
@@ -71,7 +81,7 @@ impl JudgedOutline {
     /// `tool_body::judged`) under `stack` (`tool_body::stack` of its
     /// geometry). Refuses a degenerate outline by name.
     pub fn new(tool: &Tool, stack: &HolderStack) -> Result<Self, OutlineError> {
-        let cutter = Tool { holder_len: 0.0, ..tool.clone() }.profile();
+        let cutter = with_neck(Tool { holder_len: 0.0, ..tool.clone() }.profile(), tool, stack);
         if !cutter.iter().all(|p| p.0.is_finite() && p.1.is_finite())
             || !stack.bands.iter().all(|b| b.above.is_finite() && b.len.is_finite() && b.r.is_finite())
         {
@@ -138,10 +148,37 @@ impl JudgedOutline {
     }
 }
 
+/// `profile` (the judged record's cutter and shank) with its shank read
+/// as the neck `stack` carries (#852): the cutter up to the flute top,
+/// then each neck band, closed to the axis at the stickout. No neck, or
+/// one that does not fit the tool, leaves `profile` exactly as it is.
+fn with_neck(profile: Vec<(f64, f64)>, tool: &Tool, stack: &HolderStack) -> Vec<(f64, f64)> {
+    let g = tool.geom();
+    let neck = stack.shank_bands(&g);
+    if stack.neck.is_empty() || neck == HolderStack::cylinder(&g).shank_bands(&g) {
+        return profile;
+    }
+    let fl = g.flute_len;
+    let mut c: Vec<(f64, f64)> = profile.into_iter().take_while(|p| p.0 <= fl + EPS).collect();
+    // Up to the first point on the flute top: the step out to the
+    // stated shank is the neck's now.
+    if let Some(i) = c.iter().position(|p| (p.0 - fl).abs() <= EPS) {
+        c.truncate(i + 1);
+    }
+    for b in &neck {
+        c.extend([(b.above, b.r), (b.above + b.len, b.r)]);
+    }
+    if let Some(&(z, _)) = c.last() {
+        c.push((z, 0.0));
+    }
+    c
+}
+
 /// The judged outline of the tool operation `op` runs. `Ok(None)` when
-/// there is nothing to spin: the operation or its tool is gone, or the
+/// there is nothing to spin: the operation or its tool is gone, the
 /// tool is a lathe insert kind (its truth lives in the work's meridian;
-/// it keeps the axis marker only). `Err` names why a tool that should
+/// it keeps the axis marker only), or it carries a lathe-frame body
+/// (drawn as modelled instead, [`SimToolCache::posed`], #1038). `Err` names why a tool that should
 /// draw does not - its body no longer fits it, or its outline is
 /// degenerate.
 pub fn for_operation(world: &World, op: &str) -> Result<Option<JudgedOutline>, String> {
@@ -149,13 +186,15 @@ pub fn for_operation(world: &World, op: &str) -> Result<Option<JudgedOutline>, S
     let Some(name) = model::operation_of(world, &e).map(|o| o.tool) else { return Ok(None) };
     let Some(te) = model::find_by_name(world, &name) else { return Ok(None) };
     let Some(tool) = model::tool_of(world, &te) else { return Ok(None) };
-    if tool_body::LATHE_HELD.contains(&tool.kind) {
+    if tool_body::LATHE_HELD.contains(&tool.kind) || sim_lathe_body::lathe_body(world, &name).is_some() {
         return Ok(None);
     }
     // The same two reads every fixture law makes (`fixture_struck`,
     // `operation::generate`): the judged record, then its stack.
+    // #852: and the drawn neck, judged against the stored record.
+    let neck = crate::tool_cutter::neck_of(world, &te, &tool);
     let (judged, body) = tool_body::judged(world, &te, tool).map_err(|e| format!("tool {name}: {e}"))?;
-    let stack = tool_body::stack(&judged.geom(), body.as_ref());
+    let stack = tool_body::stack(&judged.geom(), body.as_ref()).with_neck(neck);
     JudgedOutline::new(&judged, &stack).map(Some).map_err(|e| format!("tool {name}: {e}"))
 }
 
@@ -167,6 +206,8 @@ pub fn for_operation(world: &World, op: &str) -> Result<Option<JudgedOutline>, S
 pub struct SimToolCache {
     built: Option<(JudgedOutline, Arc<[Triangle]>)>,
     refused: Option<String>,
+    /// #1038: a lathe-held body's fitted frame.
+    lathe: LatheBodyCache,
 }
 
 impl SimToolCache {
@@ -191,20 +232,40 @@ impl SimToolCache {
                 None
             }
             Err(why) => {
-                if self.refused.as_deref() != Some(why.as_str()) {
-                    tracing::warn!(op, "simulated tool not drawn: {why}");
-                }
-                self.built = None;
-                self.refused = Some(why);
+                self.refuse(op, why);
                 None
             }
         }
     }
 
+    /// Log a refusal once per distinct reason and hold no mesh.
+    fn refuse(&mut self, op: &str, why: String) {
+        if self.refused.as_deref() != Some(why.as_str()) {
+            tracing::warn!(op, "simulated tool not drawn: {why}");
+        }
+        self.built = None;
+        self.refused = Some(why);
+    }
+
     /// [`Self::tool_frame`] posed at a tool position: `tip` in world,
     /// `axis` the unit tip-to-spindle direction (`sim::Frame::axis`) -
-    /// the body follows a tilted axis, not only Z.
+    /// the body follows a tilted axis, not only Z. A lathe-held body
+    /// (#1038) is posed instead in the turning tool frame the holder
+    /// law judges it in - the tip at `tip`, `axis` unused.
     pub fn posed(&mut self, world: &World, op: &str, tip: [f64; 3], axis: [f64; 3]) -> Option<Vec<Triangle>> {
+        match self.lathe.of(world, op) {
+            Ok(Some((facets, axes))) => {
+                self.built = None;
+                self.refused = None;
+                return Some(sim_lathe_body::posed(&facets, tip, &axes));
+            }
+            Ok(None) => {}
+            Err(why) => {
+                self.lathe.clear();
+                self.refuse(op, why);
+                return None;
+            }
+        }
         let tris = self.tool_frame(world, op)?;
         Some(tool_body_view::posed(&tris, tip, axis))
     }
@@ -213,12 +274,13 @@ impl SimToolCache {
     pub fn clear(&mut self) {
         self.built = None;
         self.refused = None;
+        self.lathe.clear();
     }
 
-    /// Does the cache hold no mesh?
+    /// Does the cache hold no mesh (and no lathe frame)?
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.built.is_none()
+        self.built.is_none() && self.lathe.is_empty()
     }
 
     /// Why the last tool asked for was not drawn, if it was refused.

@@ -10,7 +10,7 @@
 //! the cutter radius to the finish wall (machine-tool handbooks); no
 //! vendor material.
 //!
-//! Gate map (#43): covers app::verify (section law b, Boundary walls).
+//! Gate map (#43): covers sim::verify (section law b, Boundary walls).
 
 use camcraft_app::cl::{Move, MoveKind, Toolpath};
 use camcraft_app::geo2d::{Loop, Point2, Region};
@@ -66,6 +66,7 @@ fn judge(t: &Toolpath, model: Option<&[Triangle]>) -> Vec<Warning> {
             finish_tol: None,
             fixtures: &[],
             spindle: None,
+            ..Default::default()
         },
     )
 }

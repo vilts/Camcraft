@@ -18,7 +18,7 @@
 //! Provenance: our own tests, specced from the issue's "Done means".
 //!
 //! Gate map (M4.4): covers app::commands::tool, app::commands::tool_body,
-//! app::machine (tooling keys), post::machine::tooling.
+//! app::machine, post::machine (tooling keys), post::machine::tooling.
 
 use camcraft_app::commands::{
     AddTool, CommandError, CreateOperation, GenerateOperation, History, HolderPick, LoadMachine, SetStock, TagFixture,

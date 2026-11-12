@@ -21,7 +21,7 @@
 //! Provenance: general lathe practice (Z0 on the finished face, the
 //! part in -Z, X from the centreline); every number is our own fixture.
 //!
-//! Gate map (M4.4): covers app::machine, app::posting, app::commands.
+//! Gate map (M4.4): covers app::machine, post::machine, app::posting, app::commands.
 //! Lane shape (M4.4): all tests here run in seconds.
 
 use flecs_ecs::prelude::World;

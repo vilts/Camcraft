@@ -10,6 +10,7 @@
 //! app::operation (detect_holes, #312), app::mcp::pockets (detect_pockets, #35).
 
 mod common;
+mod mcp_open;
 
 use camcraft_app::mcp::{self, Server};
 
@@ -320,6 +321,38 @@ fn tool_library_import_skips_duplicates_and_renames_clashes() {
     src.ok("undo", json!({}));
     src.ok("undo", json!({}));
     src.refused("undo", json!({}));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn tool_library_import_modes_update_and_replace_over_mcp() {
+    let dir = tmp_dir("toollib-modes");
+    let lib = dir.join("shop.camtools");
+    let mut src = Client::new();
+    let (a, b) = two_catalog_tools(&mut src);
+    src.ok("add_tool", json!({ "catalog": a }));
+    src.ok("add_tool", json!({ "catalog": b }));
+    src.ok("export_tool_library", json!({ "path": lib.display().to_string() }));
+
+    // The destination holds `a` under the same name but a different tool,
+    // plus `Extra`: update puts the file's `a` in place, replace also
+    // drops `Extra` (no operation uses it).
+    let mut dst = Client::new();
+    dst.ok("add_tool", json!({ "catalog": b, "name": a }));
+    dst.ok("add_tool", json!({ "catalog": a, "name": "Extra" }));
+    let imp = dst.ok("import_tool_library", json!({ "path": lib.display().to_string(), "mode": "update" }));
+    assert_eq!(imp["mode"], json!("update"), "{imp}");
+    assert_eq!(imp["updated"], json!([a]), "{imp}");
+    assert_eq!(imp["added"], json!([b]), "{imp}");
+    assert_eq!(imp["renamed"], json!([]));
+    let rep = dst.ok("import_tool_library", json!({ "path": lib.display().to_string(), "mode": "replace" }));
+    assert_eq!(rep["removed"], json!(["Extra"]), "{rep}");
+    let job = dst.ok("get_job", json!({}));
+    assert_eq!(job["tools"], src.ok("get_job", json!({}))["tools"], "the document now holds the file's set");
+    dst.ok("undo", json!({}));
+    assert!(job_tool_names(&mut dst).contains(&"Extra".to_owned()), "undo brings Extra back");
+    let msg = dst.refused("import_tool_library", json!({ "path": lib.display().to_string(), "mode": "merge" }));
+    assert!(msg.contains("unknown import mode"), "{msg}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

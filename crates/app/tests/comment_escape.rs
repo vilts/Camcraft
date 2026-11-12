@@ -8,7 +8,7 @@
 //! `( )`, DIN 66025 / Sinumerik `;`, the TNC ISO manual's `; ..*`
 //! blocks, and the LinuxCNC G-code manual's active comments.
 //!
-//! Gate map (#594): covers app::post (the seven assets/posts/*.cps
+//! Gate map (#594): covers post::post (the seven assets/posts/*.cps
 //! header and comment helpers, the PRELUDE's writeComment default).
 //! Lane shape (M4.4): all tests here run in milliseconds.
 

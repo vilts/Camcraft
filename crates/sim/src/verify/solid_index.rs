@@ -6,7 +6,8 @@
 //! design; no vendor source.
 
 use super::probe::{Atom, Frame};
-use super::swept::{Body, chord_dip, pen};
+use super::hole_wall::wall_excuse;
+use super::swept::{Body, pen};
 use crate::geometry::{Point3, Triangle};
 
 /// Facets whose XY box spans more cells than this ride the always-asked
@@ -129,9 +130,10 @@ impl<'a> SolidIndex<'a> {
 
     /// Does the assembly swept from `fr`'s tip along the local move `d`
     /// share volume with the solid beyond `allow`? `grow` widens every
-    /// atom (the arc chords' sagitta); `hole_walls` grants the
-    /// containment kinds their tessellated rims ([`chord_dip`]).
-    pub(super) fn hits(&mut self, fr: &Frame, d: [f64; 3], atoms: &[Atom], allow: f64, grow: f64, hole_walls: bool) -> bool {
+    /// atom (the arc chords' sagitta); `walls` are the containment
+    /// kinds' hole axes in `fr`'s XY, whose round walls' tessellation is
+    /// excused ([`wall_excuse`], #1205) - empty for every other law.
+    pub(super) fn hits(&mut self, fr: &Frame, d: [f64; 3], atoms: &[Atom], allow: f64, grow: f64, walls: &[[f64; 2]]) -> bool {
         let len = atoms.iter().map(|a| a.z1).fold(0.0, f64::max);
         let (p0, p1) = (fr.up(0.0), fr.up(len));
         let e = fr.end(d);
@@ -161,8 +163,11 @@ impl<'a> SolidIndex<'a> {
                 let body = Body::new(&t, d);
                 for a in set {
                     let pen = pen(&body, a, allow, allow, grow, &mut pts);
-                    if pen > allow && !(hole_walls && pen <= chord_dip(&t, d, a, allow, grow) + allow) {
-                        return true;
+                    if pen > allow {
+                        let ex = wall_excuse(&t, d, a, allow, grow, walls);
+                        if pen > ex + allow {
+                            return true;
+                        }
                     }
                 }
             }

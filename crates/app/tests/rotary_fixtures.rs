@@ -9,7 +9,7 @@
 //! Provenance: our own fixtures (the rotary suite's turned bar laid
 //! along x); the law is the Prime Directive's "never crash".
 //!
-//! Gate map (M4.4): covers app::fixture, app::operation, app::posting, app::verify, app::multiaxis.
+//! Gate map (M4.4): covers app::fixture, sim::fixture, app::operation, app::posting, sim::verify, motion::multiaxis.
 
 use flecs_ecs::prelude::World;
 

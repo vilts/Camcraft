@@ -1,8 +1,9 @@
 //! The solidcore (SMLib port) impl of the kernel seam: primitives, the three
 //! booleans, whole offset, edge blends (solidcore_blend.rs), and exact measure via the port's mass-property
 //! integrator and tight bounding box.
-//! Provenance: calls solidcore 1.0.1's public API as documented in its
-//! rustdoc and its own public tests (boolean_api.rs, offset fixtures); no
+//! Provenance: calls solidcore's public API (first written against 1.0.1,
+//! now the commit pinned in Cargo.toml, #916) as documented in its rustdoc
+//! and its own public tests (boolean_api.rs, offset fixtures); no
 //! SMLib/solidcore internals reimplemented here.
 
 use solidcore::boolean::api_brep::{boolean_difference, boolean_intersection, boolean_union};
@@ -147,8 +148,9 @@ impl Kernel for SolidcoreKernel {
     ///   refused up front - the port returns a manifold, positive-volume
     ///   solid for a 10-box inset by 6 (an inverted 2-cube, not empty);
     /// - the result's volume must move the way the sign says (inset
-    ///   smaller, outset larger) - the port returns an unchanged copy for a
-    ///   NaN distance, which this law also catches downstream.
+    ///   smaller, outset larger) - solidcore 1.0.1 returned an unchanged
+    ///   copy for a NaN distance (the pinned commit of #916 refuses it),
+    ///   which this law also catches downstream.
     ///
     /// The bbox guard only sees the overall extent: a thin wall in a large
     /// part can still collapse unseen - the monotonicity law is the backstop,

@@ -300,7 +300,8 @@ fn finish(lay: &Layout, p: &TrochoidParams, step: f64, deg: f64, b: f64, room: f
         }
         let from = (above + crate::approach::DEFAULT_PLUNGE_HEIGHT).min(hop).max(above);
         bld.push(MoveKind::Rapid, Point3::new(lay.entry.x, lay.entry.y, from), None);
-        emit_level(&mut bld, lay, p, z, from, true)?;
+        // #871: a part-way refusal hands back the levels so far.
+        emit_level(&mut bld, lay, p, z, from, true).map_err(|e| e.with_ghost_moves(bld.moves()))?;
         above = z;
     }
     let at = bld.at();
@@ -330,7 +331,8 @@ fn finish(lay: &Layout, p: &TrochoidParams, step: f64, deg: f64, b: f64, room: f
         return Err(GenError::Invalid(format!(
             "trochoidal slot: the loops would cross themselves (moves {i} and {j}, near ({:.3}, {:.3}))",
             at.x, at.y
-        )));
+        ))
+        .with_ghost(&path));
     }
     Ok(TrochoidPlan { path, step, loop_radius: lay.rho, loops: lay.loops, max_engagement: deg })
 }

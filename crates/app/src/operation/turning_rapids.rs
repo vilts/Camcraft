@@ -170,6 +170,13 @@ impl SignedMeridian {
         off.dot(off).sqrt() <= tol.max(1e-9) * (1.0 + r.abs())
     }
 
+    /// The spindle direction and the path's signed radial (unit,
+    /// world): the turning tool frame's +z and +x as a tip's (station,
+    /// signed radius) is read here (#1038: the drawn lathe body).
+    pub(super) fn axes(&self) -> (Point3, Point3) {
+        (self.dir, self.radial)
+    }
+
     pub(super) fn sr(&self, q: Point3) -> (f64, f64) {
         let d = q - self.origin;
         let s = d.dot(self.dir);

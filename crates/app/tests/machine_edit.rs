@@ -8,7 +8,7 @@
 //! the `.mch` layout of `assets/machines/AGENTS.md`.
 //! Provenance: our own tests, specced from the issue's "Done means".
 //!
-//! Gate map (M4.4): covers app::machine::draft, app::machine::fields, app::machine::store, app::machine::library.
+//! Gate map (M4.4): covers app::machine, post::machine::draft, app::machine, post::machine::fields, app::machine, post::machine::store, app::machine, post::machine::library.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};

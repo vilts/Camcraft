@@ -12,7 +12,7 @@
 //!
 //! Gate map (#321): covers app::fixture_carried (carried_fixture_problems,
 //! penetration), app::rest::carried_cache (body, computes, clear),
-//! app::rest::across (carried_body, entered_body), app::stock_sim::carry
+//! app::rest::across (carried_body, entered_body), app::stock_sim, sim::stock_sim::carry
 //! (CARRY_MACHINE_REFUSAL), app::posting (the workholding clause).
 //! Lane shape (M4.4): all tests here run in seconds.
 

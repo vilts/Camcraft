@@ -11,7 +11,7 @@
 //! blind-floor fix), specced from the Prime Directive; no vendor material.
 //!
 //! Gate map (shadowed islands): covers app::operation (area, selection,
-//! generate), app::machining2d (pocket), app::verify.
+//! generate), motion::machining2d (pocket), sim::verify.
 
 use camcraft_app::cl::{MoveKind, Toolpath};
 use camcraft_app::commands::{AddTool, History, ImportModel, SetStock};

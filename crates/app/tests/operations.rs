@@ -3,7 +3,7 @@
 //! at command construction (validate early), and staleness is derived,
 //! never stored.
 //!
-//! Gate map (M4.4): covers app::cl, app::commands, app::drilling, app::finishing3d, app::geo2d, app::geometry, app::machining2d, app::model, app::operation, app::schema, app::stock, app::tools, app::verify, app::world.
+//! Gate map (M4.4): covers cl::cl, app::commands, motion::drilling, motion::finishing3d, geometry::geo2d, app::geometry, motion::machining2d, app::model, app::operation, app::schema, geometry::geometry::stock, tools::tools, sim::verify, app::world.
 //!
 //! Lane shape (M13.8): the debug ladder runs every test here in seconds.
 //! The six slow generate-and-verify laws (swarf, the swarf ladder,
@@ -6594,6 +6594,7 @@ fn stub_tool() -> Tool {
         tool_material: None,
         flutes: None,
         orientation: None,
+        turning: None,
     }
 }
 
@@ -6821,9 +6822,13 @@ fn multiaxis_rough_refuses_a_slot_the_cone_cannot_clear() {
     };
     let (world, _history) = job(true);
     let cmd = GenerateOperation::new(&world, "SLOT");
-    let CommandError::Machining(msg) = cmd
-        .err()
-        .expect("a 10-wide shank must refuse a 9-wide slot")
+    let err = cmd.err().expect("a 10-wide shank must refuse a 9-wide slot");
+    // #1015: the shank refusal hands back the plan before its move as a
+    // ghost, so it arrives as `MachiningGhost`, which reads as `Machining`.
+    assert!(err.ghost().is_some(), "the shank refusal carries its ghost");
+    let (CommandError::Machining(msg)
+    | CommandError::MachiningAt { msg, .. }
+    | CommandError::MachiningGhost { msg, .. }) = err
     else {
         panic!("expected a machining refusal");
     };

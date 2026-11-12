@@ -7,7 +7,8 @@
 //! beside the DTO, in `project::params_impl`.
 //!
 //! Gate map (M13.11): covers app::operation::generate (Face arm),
-//! app::operation::material_source::standing_above.
+//! app::operation::material_source::standing_above,
+//! app::operation::picks (the open-mesh silhouette, #241).
 
 use flecs_ecs::prelude::World;
 
@@ -181,3 +182,86 @@ fn a_boss_is_an_island_and_is_lifted_over_even_under_cut_air() {
     assert_eq!(lift.path.moves, air.path.moves);
 }
 
+
+/// #241: a 40x40x5 plate whose mesh the slicer refuses as open (the
+/// lower half of its +X wall is missing - the dangling chord ends an
+/// imported part can carry), with a two-triangle top over a finely
+/// tessellated bottom, so most bottom facets' shadows nest inside a top
+/// facet's shadow.
+fn open_plate_with_nested_bottom() -> Mesh {
+    let mut f = Vec::new();
+    let t = ring(20.0, 5.0);
+    f.extend(quad(t[0], t[1], t[2], t[3]));
+    // The bottom, a 4x4 grid of quads facing down.
+    for i in 0..4 {
+        for j in 0..4 {
+            let (x0, y0) = (-20.0 + 10.0 * f64::from(i), -20.0 + 10.0 * f64::from(j));
+            let (a, b, c, d) = (
+                Point3::new(x0, y0, 0.0),
+                Point3::new(x0 + 10.0, y0, 0.0),
+                Point3::new(x0 + 10.0, y0 + 10.0, 0.0),
+                Point3::new(x0, y0 + 10.0, 0.0),
+            );
+            f.extend(quad(a, d, c, b));
+        }
+    }
+    walls(20.0, 2.5, 5.0, true, &mut f);
+    let (lo, mid) = (ring(20.0, 0.0), ring(20.0, 2.5));
+    for i in [0usize, 2, 3] {
+        f.extend(quad(lo[i], lo[(i + 1) % 4], mid[(i + 1) % 4], mid[i]));
+    }
+    Mesh::from_facets(f)
+}
+
+/// The closed edge chains rimming the planar face `face` of `name`, as
+/// picks - what clicking each top edge of the part in the viewport picks.
+fn rim_chains(world: &World, name: &str, face: u64) -> Vec<GeoSel> {
+    let e = model::find_by_name(world, name).expect("part exists");
+    let f = model::features_of(world, &e).expect("features");
+    let on_face = |t: u32| f.facet_face.get(t as usize).and_then(|&i| f.faces.get(i as usize)).is_some_and(|fa| fa.id == face);
+    camcraft_app::geometry::feature::chains(&f)
+        .iter()
+        .filter(|c| {
+            c.edges.iter().all(|&i| {
+                f.edges.get(i as usize).is_some_and(|ed| ed.facets[..ed.n_facets.min(3) as usize].iter().any(|&t| on_face(t)))
+            })
+        })
+        .map(|c| GeoSel { entity: name.into(), feature: FeatureSel::Chain(c.id) })
+        .collect()
+}
+
+#[test]
+fn an_open_mesh_rim_pick_faces_the_whole_top_with_no_phantom_holes() {
+    let (world, mut history) = world_with_tool();
+    history.execute(&world, ImportModel::from_mesh("open", open_plate_with_nested_bottom()));
+    let top = top_face_at(&world, "open", 5.0);
+    let rim = rim_chains(&world, "open", top);
+    assert!(rim.len() >= 4, "the top's rim picks: {rim:?}");
+    assert!(rim.iter().all(|g| matches!(g.feature, FeatureSel::Chain(_))), "a chain-only pick, as the issue's edge clicks are");
+
+    // The rim pick's region is the plate's whole top: the silhouette it
+    // is clipped by (the open mesh's facet shadow) holds no holes.
+    let op = camcraft_app::schema::Operation {
+        tool: "EM-0600-4FL".into(),
+        src: SrcRef::Selection(rim.clone()),
+        params: face_params(FaceHoles::Lift),
+        stamp: None,
+        setup: None,
+        area: Default::default(),
+        coolant: Default::default(),
+        after: Default::default(),
+        suppressed: false,
+    };
+    let region = camcraft_app::operation::region_of(&world, &op).expect("the rim's region");
+    let areas: Vec<f64> = region.loops().iter().map(|l| l.area()).collect();
+    assert_eq!(areas.len(), 1, "one loop, no phantom holes from nested bottom facets: {areas:?}");
+    assert!((areas[0] - 1600.0).abs() < 1.0, "the whole 40x40 top: {areas:?}");
+
+    // And the path is the face pick's path: one plunge, nothing lifted.
+    let by_rim = generate(&world, &mut history, "Rim", SrcRef::Selection(rim), FaceHoles::Lift);
+    let face_pick = SrcRef::Selection(vec![GeoSel { entity: "open".into(), feature: FeatureSel::Face(top) }]);
+    let by_face = generate(&world, &mut history, "Top", face_pick, FaceHoles::Lift);
+    assert_eq!(plunges(&by_rim), 1, "{:?}", by_rim.path.notes);
+    assert!(by_rim.path.notes.iter().all(|n| !n.contains("lifted over")), "{:?}", by_rim.path.notes);
+    assert_eq!(by_rim.path.moves, by_face.path.moves);
+}

@@ -1,12 +1,16 @@
 //! The rotary kinds' band and rapid verdict (M13): the radial field
 //! law of `verify::rotary_hits` run with the same fitted axis the
 //! generator posed about, the setup's stock solid and the part.
+//! On a model imported coarser than promised (#904) both allowances
+//! give the excess back: the field reads each ray's radius off the
+//! facets, and a facet of a convex skin stands inside the true one.
 //! Provenance: our own wiring of the sim crate's law (its sources are
 //! cited there); no vendor material consulted.
 
 use crate::geometry::Triangle;
 use crate::verify::{self, Warning};
 
+use super::fidelity_law::tightened;
 use super::material::GOUGE_TOL;
 use super::types::OpParams;
 
@@ -33,13 +37,17 @@ pub(super) fn rotary_tolerance(params: &OpParams) -> Option<f64> {
 /// the facets, so it is the very axis the generator turned about; a
 /// fit that fails here (it cannot, once the generator ran) fails
 /// closed as a Gouge at the first cut, never a silent pass.
+/// `excess` is the judged model's chord error past the import promise
+/// (`Material::excess`): each allowance shrinks by it while a positive
+/// one is left - past that the program gate refuses the operation
+/// (`fidelity_law::floor_of`), and the law reads untightened.
 pub(super) fn rotary_into(
     warns: &mut Vec<Warning>,
     path: &crate::cl::Toolpath,
     part: &[Triangle],
     stock: Option<&[Triangle]>,
     cutter: &verify::Cutter,
-    tolerance: f64,
+    (tolerance, excess): (f64, f64),
 ) {
     let hits = match crate::multiaxis::axis::fit(part) {
         Ok(ax) => verify::rotary_hits(
@@ -51,12 +59,12 @@ pub(super) fn rotary_into(
             &verify::RotaryLaw {
                 cell: CELL,
                 step: STEP,
-                allow: GOUGE_TOL,
-                rapid_allow: tolerance.max(GOUGE_TOL),
+                allow: tightened(GOUGE_TOL, excess),
+                rapid_allow: tightened(tolerance.max(GOUGE_TOL), excess),
             },
         ),
         Err(e) => {
-            eprintln!("rotary verdict: the axis fit refused ({e}); the path is not judged clean");
+            tracing::warn!("rotary verdict: the axis fit refused ({e}); the path is not judged clean");
             path.moves
                 .iter()
                 .position(|m| m.kind != crate::cl::MoveKind::Rapid)
@@ -70,3 +78,7 @@ pub(super) fn rotary_into(
         }
     }
 }
+
+#[cfg(test)]
+#[path = "rotary_law_tests.rs"]
+mod tests;

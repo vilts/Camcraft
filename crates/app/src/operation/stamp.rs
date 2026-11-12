@@ -120,6 +120,8 @@ pub fn current_stamp(
     // #368: a modelled body's envelope - bytes only when there is one,
     // so no digest without a body moves.
     crate::tool_body::digest(world, &tool_entity, &mut h);
+    // #852: a drawn neck the stack laws read - bytes only with one.
+    crate::tool_cutter::digest(world, &tool_entity, &tool, &mut h);
     params.stamp_with(world, setup, Some(src), &mut h);
     // #326: the setup's part alignment is a moved input for every op of
     // the setup (the parts it machines, verifies against or measures

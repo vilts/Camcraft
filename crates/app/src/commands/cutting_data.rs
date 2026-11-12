@@ -2,7 +2,9 @@
 //! document's workpiece material; `ApplyCuttingData` lands an
 //! operation's feeds-and-speeds suggestion as ONE undo unit - the
 //! feed through `EditOperationParams`, the spindle speed through
-//! `ChangeTool` (the tool's rpm IS the program's spindle word).
+//! `ChangeTool` (the tool's rpm IS the program's spindle word). A
+//! turning op (#891) also takes its plunge feed, and its tool the
+//! surface speed and feed per rev the suggestion read.
 //!
 //! Provenance: our own commands, the theme's snapshot-and-restore law
 //! for the singleton and a composite of our own two edit commands for
@@ -16,7 +18,7 @@ use flecs_ecs::prelude::World;
 use crate::commands::{ChangeTool, Command, CommandError, EditOperationParams};
 use crate::cutting::{self, Suggestion};
 use crate::model;
-use crate::tools::WorkMaterial;
+use crate::tools::{TurningData, WorkMaterial};
 
 pub struct SetWorkMaterial {
     prev: Option<WorkMaterial>,
@@ -61,20 +63,29 @@ impl ApplyCuttingData {
             .and_then(|t| model::tool_of(world, &t))
             .ok_or_else(|| CommandError::NotFound(op.tool.clone()))?;
         let mut params = op.params.clone();
-        let feed = cutting::feed_mut(&mut params).ok_or_else(|| {
-            CommandError::Invalid(format!("a {} operation has no milling feed to suggest", op.params.kind()))
-        })?;
-        let edit = if *feed == s.feed {
-            None
-        } else {
+        let mut next = crate::tools::Tool { rpm: s.rpm, ..tool.clone() };
+        let edit = if let Some(plan) = s.turning {
+            // #891: a turning op takes the feed AND the plunge at the
+            // suggested rpm, and the tool keeps the Vc and feed per rev
+            // it now runs (its own max-rpm clamp stays as stated).
+            let (feed, plunge) = crate::cutting_turn::turn_feeds_mut(&mut params).ok_or_else(|| {
+                CommandError::Invalid(format!("a {} operation has no turning feed to suggest", op.params.kind()))
+            })?;
             *feed = s.feed;
-            Some(EditOperationParams::new(world, name, params)?)
-        };
-        let change = if tool.rpm == s.rpm {
-            None
+            *plunge = plan.plunge_feed;
+            next.turning =
+                Some(TurningData { vc: s.vc, feed_per_rev: s.fz, max_rpm: plan.max_rpm });
+            (params != op.params).then_some(params)
         } else {
-            Some(ChangeTool::new(world, &op.tool, crate::tools::Tool { rpm: s.rpm, ..tool })?)
+            let feed = cutting::feed_mut(&mut params).ok_or_else(|| {
+                CommandError::Invalid(format!("a {} operation has no milling feed to suggest", op.params.kind()))
+            })?;
+            let moved = *feed != s.feed;
+            *feed = s.feed;
+            moved.then_some(params)
         };
+        let edit = edit.map(|p| EditOperationParams::new(world, name, p)).transpose()?;
+        let change = if next == tool { None } else { Some(ChangeTool::new(world, &op.tool, next)?) };
         if edit.is_none() && change.is_none() {
             let u = crate::units::of(world);
             return Err(CommandError::Invalid(format!(

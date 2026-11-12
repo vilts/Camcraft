@@ -151,6 +151,7 @@ fn check(t: &Toolpath, r: &Region) {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     assert_eq!(verify(t, &cx), Vec::new(), "{:?}", t.notes);
 }

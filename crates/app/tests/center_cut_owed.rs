@@ -9,7 +9,7 @@
 //! (M11.3 owed (4)) instead of refusing.
 //!
 //! Gate map (M11.3): covers app::operation (generate, plunge_solid),
-//! app::drilling, app::machining2d (face).
+//! motion::drilling, motion::machining2d (face).
 
 use flecs_ecs::prelude::World;
 

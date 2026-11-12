@@ -15,6 +15,14 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
         )));
     }
     super::program_entry_dto::validate(dto, kind)?; // #155
+    // #1054: a recorded STEP facet budget rides a model row only, inside
+    // the bounds an import would accept.
+    if let Some(b) = dto.facet_budget {
+        if !matches!(kind, EntityKind::Model) {
+            return Err(corrupt(format!("'{}' records a STEP facet budget but is not a model", dto.name)));
+        }
+        crate::geometry::import::step_budget::check(b).map_err(|e| corrupt(format!("'{}': {e}", dto.name)))?;
+    }
     match kind {
         EntityKind::Entry => {}
         EntityKind::Model => {

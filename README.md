@@ -210,13 +210,17 @@ version.
 
 ### Issues
 
-Work is the open GitHub issues, picked by priority: `P0` (wrong output,
-gouge, crash, data loss), then `P1` (wrong behaviour a user hits), then `P2`
-(owed polish), oldest first. Each issue carries one `P*` label and one or
+Work is the open GitHub issues, picked by priority, `P1` to `P9`, lowest
+number first and oldest first within a number: `P1` is wrong output, gouge,
+crash or data loss; `P2` a broken main; `P3` wrong behaviour a user hits;
+`P4` work the maintainer asked for; `P5` agent surface and tooling; `P6`
+accepted enhancements; `P7` owed polish; `P8` ideas needing research; `P9`
+someday (AGENTS.md "Priorities" has the table). `P1`-`P3` are defects only.
+Each issue carries one `P*` label and one or
 more `area:*` labels. Issues opened by an agent also carry `source:agent`.
 
 **`P?` means paused.** The maintainer puts `P?` on an issue (in place of
-`P0`/`P1`/`P2`) to hold it: nobody picks it up, claims it or changes its
+`P1`..`P9`) to hold it: nobody picks it up, claims it or changes its
 priority until the maintainer swaps `P?` for a real priority or closes it.
 Comments with relevant facts (a duplicate, a related fix) are still
 welcome.

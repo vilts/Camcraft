@@ -97,23 +97,43 @@ fn body(ui: &mut Ui, state: &mut State, name: &str, op: &camcraft_app::schema::O
             let thin = s.thinning.map_or(String::new(), |f| {
                 format!(", feed raised x{:.2} for radial chip thinning (hex = fz sin phi)", 1.0 / f)
             });
+            // #891: a turning suggestion speaks surface speed and feed
+            // per REV, read at the stock's swing diameter.
+            let readout = match s.turning {
+                Some(t) => format!(
+                    "Vc {:.0} m/min · f {} {}/rev at Ø {} {}",
+                    s.vc,
+                    units::len(s.fz, u, 3),
+                    u.suffix(),
+                    units::len(t.diameter, u, 1),
+                    u.suffix()
+                ),
+                None => format!("Vc {:.0} m/min · fz {} {}", s.vc, units::len(s.fz, u, 3), u.suffix()),
+            };
             prop_row_hint(
                 ui,
                 "Suggested",
                 &format!("{} ({}){thin}", s.material.label(), s.tool_material.label()),
-                |ui| ui.label(format!("Vc {:.0} m/min · fz {} {}", s.vc, units::len(s.fz, u, 3), u.suffix())),
+                |ui| ui.label(readout),
             );
-            let feed_now = cutting::feed_of(&op.params).unwrap_or(0.0);
-            let rpm_now = model::find_by_name(&state.world, &tool_name)
-                .and_then(|t| model::tool_of(&state.world, &t))
-                .map_or(0.0, |t| t.rpm);
+            let feed_now = cutting::feed_of(&op.params)
+                .or_else(|| {
+                    let mut q = op.params.clone();
+                    camcraft_app::cutting_turn::turn_feeds_mut(&mut q).map(|(f, _)| *f)
+                })
+                .unwrap_or(0.0);
+            let tool_now = model::find_by_name(&state.world, &tool_name).and_then(|t| model::tool_of(&state.world, &t));
+            let rpm_now = tool_now.as_ref().map_or(0.0, |t| t.rpm);
+            // A turning tool that already states this Vc and f/rev.
+            let data_same = s.turning.is_none()
+                || tool_now.and_then(|t| t.turning).is_some_and(|d| d.vc == s.vc && d.feed_per_rev == s.fz);
             prop_row(ui, "Spindle", |ui| ui.label(format!("{rpm_now:.0} -> {:.0} rpm", s.rpm)));
             prop_row(ui, "Feed", |ui| ui.label(format!("{} -> {}", units::feed(feed_now, u), units::feed(s.feed, u))));
             for n in &s.notes {
                 hint(ui, n);
             }
             let dirty = op.params != state.op_ui.params || op.area != state.op_ui.area;
-            let same = (feed_now - s.feed).abs() < 1e-9 && (rpm_now - s.rpm).abs() < 1e-9;
+            let same = data_same && (feed_now - s.feed).abs() < 1e-9 && (rpm_now - s.rpm).abs() < 1e-9;
             let why = if dirty {
                 Some("apply or revert the page's own edits first - a suggestion never overwrites typing")
             } else if same {

@@ -1,7 +1,7 @@
 //! Ray picking: nearest model along the ray, misses and degenerate rays
 //! return None - never a panic. Includes rigid (rotated) placements.
 //!
-//! Gate map (M4.4): covers app::commands, app::geometry, app::schema, app::stock.
+//! Gate map (M4.4): covers app::commands, app::geometry, app::schema, geometry::geometry::stock.
 
 use camcraft_app::commands::{Command, ImportModel};
 use camcraft_app::geometry::{cube, Mesh, Point3, quat_from_yaw};

@@ -4,7 +4,7 @@
 //! break, or a break on an edge the op never picked, still refuses as a
 //! gouge by name; the declared break survives save and load.
 //!
-//! Gate map (#303): covers app::stock_sim (simulate_document), app::posting
+//! Gate map (#303): covers app::stock_sim, sim::stock_sim (simulate_document), app::posting
 //! (verification_gate), app::project (the breaks key), motion::machining2d
 //! (chamfer), motion::finishing3d (deburr).
 

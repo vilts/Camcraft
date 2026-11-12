@@ -11,7 +11,7 @@
 //! from the Prime Directive; no vendor material.
 //!
 //! Gate map (M11.5 shadow): covers app::operation (boundary_ctx, boundary,
-//! generate), geometry::slice (material_overhead), app::verify.
+//! generate), geometry::slice (material_overhead), sim::verify.
 
 mod area_support;
 mod common;

@@ -4,7 +4,7 @@
 //! power) blocking the post by name and staying silent when unstated,
 //! and the material + suggestion commands through undo and a save.
 //!
-//! Gate map (M4.4): covers app::commands, app::cutting, app::machine, app::posting, app::project, app::tools.
+//! Gate map (M4.4): covers app::commands, app::cutting, app::machine, post::machine, app::posting, app::project, tools::tools.
 
 use flecs_ecs::prelude::World;
 

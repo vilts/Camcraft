@@ -7,7 +7,7 @@
 //! (undo / redo) and the project file.
 //! Provenance: our own tests over our own post, command and file.
 //!
-//! Gate map (M4.4): covers app::post (tormach.cps), app::posting
+//! Gate map (M4.4): covers post::post (tormach.cps), app::posting
 //! (options_value), app::commands (SetPostOptions), app::project
 //! (post_options end_units), app::schema (EndUnits).
 

@@ -13,7 +13,7 @@
 //! (camcraft-motion's turning suite); this file is the wiring.
 //!
 //! Gate map (M4.4): covers camcraft_app::commands (family gate,
-//! CreateOperation/GenerateOperation), camcraft_app::machine (kind
+//! CreateOperation/GenerateOperation), camcraft_app::machine, post::machine (kind
 //! read), camcraft_app::operation (the Facing arm of
 //! generate/heights/material, the seed), camcraft_app::posting-free
 //! generation path.

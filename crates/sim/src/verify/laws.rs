@@ -156,7 +156,8 @@ pub fn bands_vs_fixtures_held(
     // fixture law only - against stock the housing stands down by the kerf
     // reasoning that already excuses the holder band there.
     let spindle = spindle.map(|(sr, sl)| (FixturePart::Spindle, holder.top, sr, sl));
-    let mut bands = vec![(FixturePart::Shank, tool.flute_len, tool.shank_radius, tool.shank_len)];
+    // #852: the shank as swept - a drawn neck's bands, or the cylinder.
+    let mut bands: Vec<_> = holder.shank_bands(tool).iter().map(|b| (FixturePart::Shank, b.above, b.r, b.len)).collect();
     bands.extend(holder.bands.iter().map(|b| (FixturePart::Holder, b.above, b.r, b.len)));
     for (i, m) in path.moves.iter().enumerate() {
         if m.kind == MoveKind::Rapid {

@@ -100,6 +100,7 @@ fn judge(moves: Vec<Move>) -> Vec<Warning> {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(&p, &cx)
 }

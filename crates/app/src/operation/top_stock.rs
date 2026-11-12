@@ -27,7 +27,7 @@ pub(super) fn note(
         Ok(Some(z)) if z > top + Z_TOL => z,
         Ok(_) => return,
         Err(e) => {
-            eprintln!("camcraft: Top/stock warning could not read the region: {e}");
+            tracing::warn!("Top/stock warning could not read the region: {e}");
             return;
         }
     };

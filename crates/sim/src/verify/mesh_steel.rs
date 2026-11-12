@@ -71,8 +71,13 @@ pub struct SteelBand {
 /// states it, then the flute.
 #[must_use]
 pub fn steel_stack(tool: &ToolGeom, holder: &HolderStack, spindle: Option<(f64, f64)>) -> Vec<SteelBand> {
-    let (fl, sl) = (tool.flute_len, tool.shank_len);
-    let mut out = vec![SteelBand { part: FixturePart::Shank, lo: fl, hi: fl + sl, r: tool.shank_radius }];
+    let fl = tool.flute_len;
+    // #852: the shank as swept - a drawn neck's bands, or the cylinder.
+    let mut out: Vec<SteelBand> = holder
+        .shank_bands(tool)
+        .iter()
+        .map(|b| SteelBand { part: FixturePart::Shank, lo: b.above, hi: b.above + b.len, r: b.r })
+        .collect();
     // #368: what stands above the shank - the holder's own bands, the
     // same `HolderStack` the box laws (c2/d2) sweep.
     out.extend(holder.bands.iter().map(|b| SteelBand {

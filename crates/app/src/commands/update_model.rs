@@ -54,11 +54,22 @@ pub struct UpdateModel {
     /// model at construction (`Some`) - the propagation law's side of the
     /// snapshot, so undo trades model and material back together.
     prev_stock: Option<std::sync::Arc<[crate::geometry::Triangle]>>,
+    /// The fidelity of the new mesh and of the one it replaces (#864): the
+    /// flag describes the facets, so it is traded with them, both ways.
+    coarse_mm: Option<f64>,
+    prev_coarse_mm: Option<f64>,
+    /// The STEP facet budget each mesh was made under (#1054), traded
+    /// with the facets the same way; `None` is the default.
+    facet_budget: Option<u64>,
+    prev_facet_budget: Option<u64>,
     /// #826: a fixture plate's marker, when the model is one. Its grid was
     /// measured on the old mesh, so it goes with it and the riders leave
     /// the plate (the safe reading: the user re-detects), in this same
     /// undo step - the rule `ImportFixture` already kept for itself.
     plate: Option<Box<(FixtureDef, crate::plate::mount::Unmounts)>>,
+    /// #1094: a raw-stock-only mark was said of the geometry it replaces,
+    /// so a re-import in place drops it, in this same undo step.
+    marks: super::stock_source_only::MarkDrops,
 }
 
 impl UpdateModel {
@@ -91,10 +102,41 @@ impl UpdateModel {
             prev_facets: model::facets_of(world, &entity),
             prev_rev: model::rev_of(world, &entity),
             prev_stock,
+            coarse_mm: None,
+            prev_coarse_mm: crate::model_fidelity::chord_of(world, &entity),
+            facet_budget: None,
+            prev_facet_budget: crate::model_fidelity::budget_of(world, &entity),
             plate: crate::fixture::def_of(world, &entity)
                 .filter(|d| d.plate.plate.is_some())
                 .map(|d| Box::new((d, crate::plate::mount::Unmounts::of(world, name)))),
+            marks: super::stock_source_only::MarkDrops::of(world, name),
         })
+    }
+
+    /// State the fidelity the new mesh was imported at (#864). Unstated,
+    /// the update lands at full fidelity - a generated or STL mesh.
+    #[must_use]
+    pub fn with_fidelity(mut self, coarse_mm: Option<f64>) -> Self {
+        self.coarse_mm = coarse_mm;
+        self
+    }
+
+    /// Keep the fidelity the model already carries (#864): for an update
+    /// that reshapes the same facets (a repair), which makes them no
+    /// truer to the surface they were imported from.
+    #[must_use]
+    pub fn keeping_fidelity(mut self) -> Self {
+        self.coarse_mm = self.prev_coarse_mm;
+        self.facet_budget = self.prev_facet_budget;
+        self
+    }
+
+    /// State the STEP facet budget the new mesh was imported under
+    /// (#1054); unstated, the update records the default.
+    #[must_use]
+    pub fn with_budget(mut self, facet_budget: Option<u64>) -> Self {
+        self.facet_budget = facet_budget;
+        self
     }
 
     /// Drop the plate snapshot, so apply/invert leave the plate's grid and
@@ -127,6 +169,8 @@ impl Command for UpdateModel {
             .unwrap_or_else(|| model::spawn(world, &self.name));
         model::set_facets(world, &entity, self.mesh.facets.clone());
         model::set_rev(world, &entity, self.prev_rev + 1);
+        crate::model_fidelity::set(world, &entity, self.coarse_mm);
+        crate::model_fidelity::set_budget(world, &entity, self.facet_budget);
         // Propagation (M3.1 B): the derived stock's copy is local-frame
         // facets - the very mesh above (SetStock's copy law) - and the
         // stock's own placement is never touched: re-importing a model
@@ -144,6 +188,7 @@ impl Command for UpdateModel {
             entity.entity_view(world).set(off);
             p.1.write(world, true);
         }
+        self.marks.write(world, true);
     }
 
     fn invert(&self, world: &World) {
@@ -157,6 +202,8 @@ impl Command for UpdateModel {
                 }
             }
             model::set_rev(world, &entity, self.prev_rev);
+            crate::model_fidelity::set(world, &entity, self.prev_coarse_mm);
+            crate::model_fidelity::set_budget(world, &entity, self.prev_facet_budget);
             if let Some(p) = &self.plate {
                 entity.entity_view(world).set(p.0.clone());
                 p.1.write(world, false);
@@ -167,5 +214,6 @@ impl Command for UpdateModel {
                 model::set_facets(world, &stock, tris.clone());
             }
         }
+        self.marks.write(world, false);
     }
 }

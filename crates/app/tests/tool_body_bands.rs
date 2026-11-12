@@ -34,6 +34,7 @@ fn cx<'a>(region: &'a Region, stock: &'a Region, g: &'a ToolGeom, cutter: Option
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     }
 }
 
@@ -68,6 +69,7 @@ fn a_gapped_stack_is_refused_and_the_cylinder_stands() {
     let gapped = HolderStack {
         bands: vec![HolderBand { above: 14.0, len: 16.0, r: 6.0 }, HolderBand { above: 34.0, len: 15.0, r: 20.0 }],
         top: 49.0,
+        neck: Vec::new(),
     };
     assert_eq!(BodyBands::of(&g, &gapped), None);
     assert_eq!(Cutter::flat(&g).with_body(&g, &gapped).holder_bands(), vec![(14.0, 20.0, 35.0)]);
@@ -75,6 +77,7 @@ fn a_gapped_stack_is_refused_and_the_cylinder_stands() {
     let closed = HolderStack {
         bands: vec![HolderBand { above: 14.0, len: 20.0, r: 6.0 }, HolderBand { above: 34.0, len: 15.0, r: 20.0 }],
         top: 49.0,
+        neck: Vec::new(),
     };
     assert!(BodyBands::of(&g, &closed).is_some());
 }
@@ -86,6 +89,7 @@ fn a_late_starting_stack_is_refused_and_the_cylinder_stands() {
     let late = HolderStack {
         bands: vec![HolderBand { above: 20.0, len: 14.0, r: 6.0 }, HolderBand { above: 34.0, len: 15.0, r: 20.0 }],
         top: 49.0,
+        neck: Vec::new(),
     };
     assert_eq!(BodyBands::of(&g, &late), None);
     assert_eq!(Cutter::flat(&g).with_body(&g, &late).holder_bands(), vec![(14.0, 20.0, 35.0)]);
@@ -93,6 +97,7 @@ fn a_late_starting_stack_is_refused_and_the_cylinder_stands() {
     let overlap = HolderStack {
         bands: vec![HolderBand { above: 14.0, len: 22.0, r: 6.0 }, HolderBand { above: 34.0, len: 15.0, r: 20.0 }],
         top: 49.0,
+        neck: Vec::new(),
     };
     assert_eq!(BodyBands::of(&g, &overlap), None);
 }
@@ -182,6 +187,7 @@ fn stepped_body() -> (ToolGeom, Cutter) {
     let stack = HolderStack {
         bands: vec![HolderBand { above: 14.0, len: 20.0, r: 6.0 }, HolderBand { above: 34.0, len: 15.0, r: 20.0 }],
         top: 49.0,
+        neck: Vec::new(),
     };
     let body = Cutter::flat(&g).with_body(&g, &stack);
     assert!(body.body.is_some(), "the stepped stack is carried");

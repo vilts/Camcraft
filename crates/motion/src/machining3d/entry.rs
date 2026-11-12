@@ -140,7 +140,8 @@ pub fn pocket3d_air_split(
         // The material planes found nothing to cut: the air leg is the
         // whole job (the single ladder would have said the same).
         Err(GenError::Empty(_)) => {}
-        Err(e) => return Err(e),
+        // #1015: the air leg stands in front of the material leg's ghost.
+        Err(e) => return Err(e.after_moves(&moves)),
     }
     let path = Toolpath {
         moves,
@@ -269,7 +270,8 @@ fn run_rest(
         // Nothing stood above any rest plane: the coarse path was
         // already clean at lattice scale. A success, not a refusal.
         Err(GenError::Empty(_)) => {}
-        Err(e) => return Err(e),
+        // #1015: the coarse ladder stands in front of the rest leg's ghost.
+        Err(e) => return Err(e.after_moves(&moves)),
     }
     let path = Toolpath {
         moves,

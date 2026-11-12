@@ -27,9 +27,13 @@ pub use lathe::{LathePlan, LATHE_HELIX_REFUSAL, LATHE_THREAD_REFUSAL, LATHE_VERD
 // next setup's frame through the transform between the two.
 #[path = "stock_sim_carry.rs"]
 pub mod carry;
+// The stock as the walk holds it, and the engine that carries it (#637).
+#[path = "stock_sim_held.rs"]
+pub mod held;
 #[path = "stock_sim_breaks.rs"]
 pub mod breaks;
 pub use carry::{CARRY_MACHINE_CHANGE_REFUSAL, CARRY_MACHINE_REFUSAL, incoming_body};
+pub use held::{CARRY_ENGINE_ENV, FIELD_CARRY_SHAPE_REFUSAL, engine as carry_engine, with_engine as with_carry_engine};
 
 use crate::geometry::Triangle;
 
@@ -135,6 +139,9 @@ pub fn simulate_document(
 ) -> Result<ProgramSim, String> {
     let planned = plan_program(world)?;
     refuse_unjudged(&planned)?;
+    // #864: a part imported coarser than promised tightens the verdict by
+    // its excess; one too coarse for that is refused by name, not judged.
+    let tol = crate::model_fidelity::verdict_tol(world)?;
 
     // Setup changes (#317): a setup that holds the part differently, or
     // is placed relative to the one before it, starts from the body the
@@ -147,10 +154,7 @@ pub fn simulate_document(
     } else {
         part_facets(world)?
     };
-    let (mut dev, display) = match walked.held {
-        carry::Held::Plain(dex) => (deviate(&dex, &model_facets, DEV_TOL).map_err(|e| e.to_string())?, dex),
-        carry::Held::Carried(body) => (body.deviate(&model_facets, DEV_TOL).map_err(|e| e.to_string())?, body.display()),
-    };
+    let (mut dev, display) = walked.held.verdict(&model_facets, tol)?;
     // #303: the op owns its break - a chamfer's or deburr's declared
     // bevel is part of the finished part, judged by its own depth.
     credit_breaks(&mut dev, &display, &model_facets, &program_breaks(world, &planned, walked.spanned, &walked.frame));
@@ -396,8 +400,9 @@ fn part_facets_as_modelled(world: &flecs_ecs::prelude::World) -> Vec<Triangle> {
     use crate::model;
 
     let mut model_facets: Vec<Triangle> = Vec::new();
+    let skip = crate::stock_source::stock_only_model(world); // #1094
     for (_, e) in model::model_entities(world) {
-        if model::is_fixture(world, &e) {
+        if !crate::stock_source::judged(world, &e, skip) {
             continue;
         }
         let tris = model::facets_of(world, &e).unwrap_or_default();

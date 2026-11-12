@@ -83,7 +83,7 @@ fn body(ui: &mut Ui, state: &mut State, target: &str, live_setup: Option<&str>) 
         .filter(|m| m.starts_with("geometry selection not updated") || m.starts_with("links not updated"))
         .map(str::to_owned);
     if let Some(msg) = refusal.or(door) {
-        ui.colored_label(text_inks(ui, &state.world).error, msg);
+        super::error_text::error_text(ui, text_inks(ui, &state.world).error, &msg);
     }
     if state.op_ui.src_kind == 1 && !state.op_ui.src_name.is_empty() {
         let n = state.op_ui.src_name.clone();

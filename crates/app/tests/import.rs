@@ -298,3 +298,44 @@ fn mesh_to_binary(m: &Mesh) -> Vec<u8> {
     }
     out
 }
+
+/// Parse error text for a STEP buffer (must be an error).
+fn step_err(text: &str) -> String {
+    match import::parse_model(text.as_bytes(), Format::Step) {
+        Err(e) => e.to_string(),
+        Ok(_) => String::new(),
+    }
+}
+
+/// #912: one unparsable entity in the middle of DATA - the refusal names
+/// that entity's `#id` and its real line, not `DATA;`.
+#[test]
+fn step_parse_error_names_the_bad_entity_and_line() {
+    let path = testdata("bad_entity_mid_data.step");
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    let want = text.lines().position(|l| l.starts_with("#9 =")).map_or(0, |i| i + 1);
+    let err = import::load_model(&path).err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(err.contains("entity #9"), "{err}");
+    assert!(err.contains(&format!("line {want}")), "want line {want}: {err}");
+}
+
+/// #912: a bad entity spanning lines, after strings and comments that hold
+/// `;` and quotes, still reports its own first line.
+#[test]
+fn step_parse_error_line_survives_strings_and_comments() {
+    let f = "ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n/* a; comment\n over lines */\n#1 = A('it''s; ok');\n\n#2 = B(\n  1,,\n  2);\n#3 = C();\nENDSEC;\nEND-ISO-10303-21;\n";
+    let err = step_err(f);
+    assert!(err.contains("entity #2") && err.contains("line 9"), "{err}");
+}
+
+/// #912: unterminated string / comment and a file with no DATA section are
+/// clean refusals naming what is wrong.
+#[test]
+fn step_parse_error_unterminated_and_no_data() {
+    let s = step_err("ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n#1 = A('open);\n#2 = B();\nENDSEC;\nEND-ISO-10303-21;\n");
+    assert!(s.contains("string") && s.contains("line 5") && s.contains("#1"), "{s}");
+    let c = step_err("ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n#1 = A();\n/* never closed\n#2 = B();\n");
+    assert!(c.contains("comment") && c.contains("line 6"), "{c}");
+    let n = step_err("ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('X'));\nENDSEC;\nEND-ISO-10303-21;\n");
+    assert!(n.contains("DATA"), "{n}");
+}

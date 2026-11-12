@@ -76,6 +76,27 @@ mod gizmo_tests {
         assert!(ground_grid_lines(&state).is_empty(), "hiding the axes hides the floor");
     }
 
+    /// #948: a non-finite or absurd camera must not stretch the grid's
+    /// line-index range (dist 1e308 made `reach` infinite and the loop
+    /// walk the whole i64 range): the floor stays out of that frame.
+    #[test]
+    fn the_ground_grid_survives_a_nan_or_huge_camera() {
+        for (dist, target) in [
+            (f64::NAN, [0.0, 0.0, 0.0]),
+            (f64::INFINITY, [0.0, 0.0, 0.0]),
+            (1.0e308, [0.0, 0.0, 0.0]),
+            (80.0, [f64::NAN, 0.0, 0.0]),
+            (80.0, [0.0, f64::INFINITY, 0.0]),
+            (80.0, [f64::NEG_INFINITY, 1.0e300, 0.0]),
+        ] {
+            let mut state = State::new();
+            state.cam.dist = dist;
+            state.cam.target = target;
+            let grid = ground_grid_lines(&state);
+            assert!(grid.len() < 1000, "dist {dist} target {target:?}: {} lines", grid.len());
+        }
+    }
+
     #[test]
     fn a_fresh_world_shows_only_the_world_axes() {
         let state = State::new();
@@ -110,7 +131,9 @@ mod gizmo_tests {
         assert_eq!(lines.len(), 6, "the triad replaces the world axes");
         assert!(lines[0][3] > 0.5, "the single gizmo is the bright triad");
         let labels = overlay_labels(&state, 1.0);
-        assert_eq!(labels.len(), 3, "one letter per triad axis, no ghost set");
+        // #727: the letters, and the triad's own name in place of the
+        // suppressed world set.
+        assert_eq!(labels.len(), 4, "one letter per triad axis and its name, no ghost set");
         assert!(
             labels.iter().all(|(_, rgb, _)| rgb[0].max(rgb[1]).max(rgb[2]) > 0.5),
             "all labels are bright"
@@ -123,7 +146,7 @@ mod gizmo_tests {
         set_origin(&mut state, [50.0, 0.0, 0.0], 0.0);
         assert_eq!(collect_overlay(&state).len(), 12, "both gizmos");
         let labels = overlay_labels(&state, 1.0);
-        assert_eq!(labels.len(), 6, "three tips per gizmo, both gizmos");
+        assert_eq!(labels.len(), 8, "three tips and a name per gizmo, both gizmos (#727)");
         let xs: Vec<f32> = labels
             .iter()
             .filter(|(_, _, text)| *text == "X")
@@ -179,6 +202,95 @@ mod gizmo_tests {
         assert_eq!(collect_overlay(&state).len(), 6, "only world axes remain");
     }
 
+    /// #727: every gizmo wears its name - the offset triads take the
+    /// entity name the Setup pane shows them under, the dimmed world axes
+    /// take "World". Always visible: telling whose origin is whose must
+    /// not need a hover or a click.
+    #[test]
+    fn the_dimmed_world_axes_are_labelled_world() {
+        let state = State::new();
+        let labels = overlay_labels(&state, 1.0);
+        let world = labels
+            .iter()
+            .find(|(_, _, text)| text == "World")
+            .unwrap_or_else(|| panic!("the world axes have a name: {labels:?}"));
+        assert!(
+            world.1.iter().all(|c| *c < 0.7),
+            "dimmed like the axes it stands for: {:?}",
+            world.1
+        );
+        assert!(
+            (world.1[0] - world.1[1]).abs() < 1e-6 && (world.1[1] - world.1[2]).abs() < 1e-6,
+            "neutral gray, no axis claims the world: {:?}",
+            world.1
+        );
+    }
+
+    #[test]
+    fn each_triad_is_labelled_with_its_own_offset_name() {
+        let mut state = State::new();
+        // #342's two-setup shape, as in the hidden-offset test: G54 at
+        // world zero (its triad replaces the world axes), Setup2's WCS off it.
+        state.pending.push_back(CommandKind::CreateSetup { name: None, datum_from: None });
+        state.drain_actions();
+        set_origin(&mut state, [0.0, 0.0, 0.0], 0.0);
+        state.pending.push_back(CommandKind::CreateSetup { name: None, datum_from: None });
+        state.drain_actions();
+        set_origin(&mut state, [50.0, 0.0, 0.0], 0.0);
+        let labels = overlay_labels(&state, 1.0);
+        for want in ["G54", "Setup2/WCS"] {
+            let label = labels
+                .iter()
+                .find(|(_, _, text)| text == want)
+                .unwrap_or_else(|| panic!("{want} labels its own origin: {labels:?}"));
+            assert!(
+                label.1.iter().copied().fold(0.0f32, f32::max) > 0.85,
+                "offset names read bright against the letters: {want} {:?}",
+                label.1
+            );
+        }
+    }
+
+    #[test]
+    fn an_offset_name_stands_at_its_origin_not_its_axis_tips() {
+        let mut state = State::new();
+        set_origin(&mut state, [50.0, 0.0, 0.0], 0.0);
+        let expected = project_uv(&state.cam.mvp(1.0), [50.0, 0.0, 0.0]).expect("origin projects");
+        let label = overlay_labels(&state, 1.0)
+            .into_iter()
+            .find(|(_, _, text)| text == "G54")
+            .expect("G54 labels its origin");
+        assert!((label.0[0] - expected[0]).abs() < 1e-3, "the name rides its origin horizontally");
+        assert!(
+            label.0[1] > expected[1] && label.0[1] - expected[1] < 0.15,
+            "just below the origin, not crowded onto the axes: {:?}",
+            label.0
+        );
+    }
+
+    #[test]
+    fn a_hidden_work_offset_drops_its_name_with_its_gizmo() {
+        let mut state = State::new();
+        state.pending.push_back(CommandKind::CreateSetup { name: None, datum_from: None });
+        state.drain_actions();
+        set_origin(&mut state, [0.0, 0.0, 0.0], 0.0);
+        state.pending.push_back(CommandKind::CreateSetup { name: None, datum_from: None });
+        state.drain_actions();
+        set_origin(&mut state, [50.0, 0.0, 0.0], 0.0);
+        assert!(overlay_labels(&state, 1.0).iter().any(|(_, _, text)| text == "G54"));
+        State::toggle_visibility(&mut state.hidden_offsets, "G54");
+        let texts: Vec<String> =
+            overlay_labels(&state, 1.0).into_iter().map(|(_, _, text)| text).collect();
+        assert!(!texts.iter().any(|t| t == "G54"), "the pane's eye and the label agree: {texts:?}");
+        assert!(texts.iter().any(|t| t == "Setup2/WCS"), "the other offset keeps its name: {texts:?}");
+    }
+
+    #[test]
+    fn gizmo_names_are_not_the_big_axis_letters() {
+        // Names label; only X/Y/Z draw at the letter's size.
+        assert!(!is_axis_label("World") && !is_axis_label("G54") && !is_axis_label("Setup2/WCS"));
+    }
+
     #[test]
     fn a_rotated_offset_at_the_origin_still_shows_the_world_axes() {
         // Yaw 90 moves the triad axes off X/Y/Z - the coincidence was about
@@ -196,13 +308,33 @@ mod gizmo_tests {
         assert!(overlay_labels(&state, 1.0).is_empty(), "and no labels for it");
         set_origin(&mut state, [50.0, 0.0, 0.0], 0.0);
         assert_eq!(collect_overlay(&state).len(), 6, "the work offset still shows");
-        assert_eq!(overlay_labels(&state, 1.0).len(), 3);
+        assert_eq!(overlay_labels(&state, 1.0).len(), 4, "letters plus the offset's name (#727)");
         assert!(
             overlay_labels(&state, 1.0)
                 .iter()
                 .all(|(_, rgb, _)| rgb[0].max(rgb[1]).max(rgb[2]) > 0.5),
             "only the bright triad labels remain, no dimmed world letters"
         );
+    }
+
+    /// #645: the "Show origin names" switch asks for over #727. Its law:
+    /// it quiets the name rows and nothing else - the axis lines, the
+    /// triad strokes and the big `X`/`Y`/`Z` letters all ignore it.
+    #[test]
+    fn the_name_switch_quiets_names_not_letters_or_lines() {
+        let mut state = State::new();
+        assert_eq!(overlay_labels(&state, 1.0).len(), 4, "default on: the world set plus its name");
+        state.show_gizmo_names = false;
+        let labels = overlay_labels(&state, 1.0);
+        assert_eq!(labels.len(), 3, "the three letters survive");
+        assert!(labels.iter().all(|(_, _, text)| is_axis_label(text)), "no name anywhere: {labels:?}");
+        assert_eq!(collect_overlay(&state).len(), 6, "the axis lines are untouched");
+        assert_eq!(gizmo_segments(&state, 1.0).len(), 3, "and so are the triad strokes");
+        // With an offset out at a G5x, both gizmos shed names together.
+        set_origin(&mut state, [50.0, 0.0, 0.0], 0.0);
+        assert_eq!(overlay_labels(&state, 1.0).len(), 6, "one letter set per gizmo, no names");
+        state.show_gizmo_names = true;
+        assert_eq!(overlay_labels(&state, 1.0).len(), 8, "back on: both names return (#727)");
     }
 }
 

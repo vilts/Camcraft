@@ -161,7 +161,7 @@ pub(crate) fn shell_layout(
     // in-app egui::Window over the dock; the single-OS-window law
     // stands). None on a fresh State, closed by ✖, reopened by the next
     // successful post, so the snapshot never moves until a post happens.
-    pages::gcode_window(ui.ctx(), state);
+    super::gcode_view::gcode_window(ui.ctx(), state);
     // #265: a refused post's reason, kept on screen past the status
     // line's next write. None on a fresh State, so no snapshot moves.
     post_refusal::window(ui.ctx(), state);

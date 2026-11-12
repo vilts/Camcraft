@@ -85,17 +85,41 @@ impl GenError {
     /// finite to show, and any other kind of refusal, pass untouched.
     #[must_use]
     pub fn with_ghost(self, path: &crate::cl::Toolpath) -> Self {
+        self.with_ghost_moves(&path.moves)
+    }
+
+    /// [`GenError::with_ghost`] over a bare move list: for a refusal
+    /// raised part-way, with only a builder's moves in hand (#871).
+    #[must_use]
+    pub fn with_ghost_moves(self, moves: &[crate::cl::Move]) -> Self {
         let (msg, at) = match self {
             GenError::Invalid(msg) => (msg, None),
             GenError::At { msg, at } => (msg, Some(at)),
             other => return other,
         };
-        match Ghost::of(path) {
+        match Ghost::of_moves(moves) {
             Some(ghost) => GenError::Ghosted { msg, at, ghost },
             None => match at {
                 Some(at) => GenError::At { msg, at },
                 None => GenError::Invalid(msg),
             },
+        }
+    }
+
+    /// #1015: a nested refusal's merge. `outer` are the moves the
+    /// enclosing generator had built before the inner refusal, in the
+    /// same frame: they stand in front of the inner ghost (or become
+    /// the ghost, when the inner refusal carried none). A join with
+    /// nothing finite keeps the inner ghost as it was; other kinds of
+    /// refusal pass untouched.
+    #[must_use]
+    pub fn after_moves(self, outer: &[crate::cl::Move]) -> Self {
+        match self {
+            GenError::Ghosted { msg, at, ghost } => {
+                let ghost = ghost.after(outer).unwrap_or(ghost);
+                GenError::Ghosted { msg, at, ghost }
+            }
+            other => other.with_ghost_moves(outer),
         }
     }
 
@@ -229,5 +253,25 @@ mod tests {
         // A frame that leaves nothing finite drops the ghost, keeps the spot.
         let dropped = g.map_ghost(|_| crate::cl::Toolpath::default());
         assert_eq!(dropped, GenError::invalid_at("w (why)", Point3::new(11.0, 0.0, 0.0)));
+    }
+
+    #[test]
+    fn a_nested_refusal_shows_the_outer_moves_then_its_own() {
+        // #1015: the inner leg refused with its own ghost; the outer
+        // generator's moves go in front, the words and spot stay.
+        use crate::cl::{Move, MoveKind};
+        let outer = [Move::new(MoveKind::Rapid, Point3::new(-5.0, 0.0, 9.0), Point3::new(0.0, 0.0, -1.0), None)];
+        let inner = GenError::invalid_at("inner", Point3::new(5.0, 0.0, -1.0)).with_ghost(&built());
+        let g = inner.after_moves(&outer);
+        assert_eq!(g.to_string(), "invalid machining parameters: inner");
+        assert_eq!(g.location(), Some(Point3::new(5.0, 0.0, -1.0)));
+        let xs: Vec<f64> = g.ghost().map(|h| h.moves().iter().map(|m| m.to.x).collect()).unwrap_or_default();
+        assert_eq!(xs, vec![0.0, 5.0], "outer first, then the inner ghost");
+        // An inner refusal with no ghost takes the outer moves as one.
+        let plain = GenError::Invalid("p".into()).after_moves(&outer);
+        assert_eq!(plain.ghost().map(Ghost::len), Some(1));
+        // Nothing outer: the inner ghost stands; other kinds pass.
+        assert_eq!(GenError::Invalid("q".into()).with_ghost(&built()).after_moves(&[]).ghost().map(Ghost::len), Some(1));
+        assert_eq!(GenError::Empty("e".into()).after_moves(&outer), GenError::Empty("e".into()));
     }
 }

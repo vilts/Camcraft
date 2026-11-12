@@ -87,6 +87,7 @@ fn judge_tip(moves: Vec<Move>, r: f64, corner: Option<f64>) -> Vec<Warning> {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(&p, &cx)
 }

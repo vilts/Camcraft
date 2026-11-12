@@ -57,8 +57,13 @@ threadHands = true;  // reads PARAM SpindleDirection (#629): M4 when the thread'
 //    Nothing this post writes needs G94 (no live tooling, no C axis).
 //  - G97 S constant rpm from the stream's SpindleSpeed; G96 constant
 //    surface speed ONLY when the stream states a SurfaceSpeed PARAM
-//    (m/min; ft/min under G20), with D = the machine's stated maximum
-//    rpm as the cap. M3, unless the stream states PARAM
+//    (m/min; ft/min under G20), with D = the lower of the machine's
+//    stated maximum rpm and the tool's own (PARAM MaxSpindleSpeed,
+//    #891) as the cap; with neither stated the G96 is refused by name
+//    (an unclamped CSS runs away toward the centre). A section that
+//    posted G96 cancels it at its end (G97 after M5, #1173), so every
+//    section opens under G97 unless it states G96 itself, and the
+//    program never ends in CSS. M3, unless the stream states PARAM
 //    SpindleDirection reverse (#629, a thread whose hand needs it):
 //    then M4, with a note to mount the insert for reverse rotation.
 //  - Arcs: G18 ZX arcs with I K centre increments (G91.1, stated), I a
@@ -111,6 +116,8 @@ threadHands = true;  // reads PARAM SpindleDirection (#629): M4 when the thread'
 var wcsWord = "G54";
 var sRpm = 0;              // S/M3 waits for the section (PARAMs, TOOL, SECTION order)
 var sCss = 0;              // SurfaceSpeed PARAM (m/min), 0 = none stated
+var cssOn = false;         // this section posted G96: its end cancels it (#1173)
+var sMax = 0;              // MaxSpindleSpeed PARAM (#891): the tool's own rpm ceiling, 0 = none
 var spindleWait = false;
 var toolWait = false;
 var tNo = 0;
@@ -326,6 +333,7 @@ function onParameter(name, value) {
   else if (name === "OriginY" && has(value)) orgY = Number(value);
   else if (name === "OriginZ" && has(value)) orgZ = Number(value);
   else if (name === "SurfaceSpeed" && has(value)) sCss = Number(value);
+  else if (name === "MaxSpindleSpeed" && has(value)) sMax = Number(value);
   else if (name === "SpindleDirection") spinRev = String(value || "") === "reverse";
 }
 
@@ -350,6 +358,17 @@ function onToolChange(number, name) {
   }
 }
 
+// The rpm ceiling a G96 section runs under (#891): the lower of the
+// machine's stated spindle maximum and the tool's own (PARAM
+// MaxSpindleSpeed); 0 when neither is stated - and then no G96 posts.
+function cssCap() {
+  var mm = (typeof machine !== "undefined" && machine.spindleMax > 0) ? machine.spindleMax : 0;
+  var tm = sMax > 0 ? sMax : 0;
+  if (mm > 0 && tm > 0) return Math.min(mm, tm);
+  return mm > 0 ? mm : tm;
+}
+var UNCLAMPED = "constant surface speed (G96) with no rpm clamp - the machine states no spindle maximum and the tool no max rpm; an unclamped G96 runs away toward the centre";
+
 // The preamble closes over everything a raw motion line needs to be a
 // legal program: offset, tool + offsets, spindle, coolant.
 function startPreamble() {
@@ -367,9 +386,10 @@ function startPreamble() {
     var m = spinRev ? "M4" : "M3";
     if (spinRev) note("SPINDLE M4 - THREAD HAND NEEDS REVERSE ROTATION - MOUNT THE INSERT FOR M4");
     if (sCss > 0) {
-      var cap = (typeof machine !== "undefined" && machine.spindleMax > 0) ? "D" + ff(machine.spindleMax) : "";
+      var cap = cssCap();                              // machine and tool ceilings (#891)
       var css = inch ? sCss / 0.3048 : sCss;          // m/min -> ft/min under G20
-      block(["G96", cap, "S" + ff(css), m]);
+      if (!(cap > 0)) refuse(UNCLAMPED);
+      else { block(["G96", "D" + ff(cap), "S" + ff(css), m]); cssOn = true; }
     } else {
       block(["G97", "S" + ff(sRpm), m]);
     }
@@ -404,8 +424,11 @@ function endPreamble() {
   coolant = "";
   coolantAsk = "flood";
   block(["M5"]);
+  if (cssOn) block(["G97"]); // #1173: no section opens under a G96 it did not state
+  cssOn = false;
   spinRev = false;           // the next section states its own
   sCss = 0;                  // and its own spindle mode: no stale G96 (#772)
+  sMax = 0;                  // and its own clamp (#891)
   afterOp();
 }
 

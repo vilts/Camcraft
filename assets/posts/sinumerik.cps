@@ -26,6 +26,9 @@ var spindleWait = false;
 var toolWait = false;
 var tNo = 0;
 var inCycle = false;
+var cycX = 0, cycY = 0, cycR = 0; // the open group's hole XY and R plane (world, #994)
+var seatKnown = false;     // #994: this section moved, so the stream's Start is where the tool is
+var hopZ = null;           // #1028: the section's RetractPlane (its hop), null when unstated
 var coolant = "";
 var coolantAsk = "flood";  // the section's PARAM Coolant (#112), flood when unstated
 var afterAsk = "";         // the section's PARAM AfterOperation (#110), none when unstated
@@ -289,13 +292,14 @@ function compRefuse(what) {
 }
 
 function onParameter(name, value) {
+  if (name === "RetractPlane") hopZ = has(value) ? Number(value) : null;  // #1028
   if (name === "Smoothing") { smoothTol = Number(value) || 0; return; }
   if (name === "SmoothingMode") { smoothMode = String(value || ""); return; }
   commentParam(name, value);
   if (name === "OperationName") coolantOp = String(value || "");
   if (name === "Coolant") { coolantAsk = String(value || "flood"); return; }
   if (name === "AfterOperation") { afterAsk = String(value || ""); return; }
-  if (name === "WorkOffset" && value) wcsWord = String(value);
+  if (name === "WorkOffset" && value) wcsWord = frameWord(String(value));
   else if (name === "OriginX" && has(value)) orgX = Number(value);
   else if (name === "OriginY" && has(value)) orgY = Number(value);
   else if (name === "OriginZ" && has(value)) orgZ = Number(value);
@@ -405,22 +409,55 @@ function endPreamble() {
   afterOp();
 }
 
-function onSection() { startPreamble(); }
-function onSectionEnd() { endPreamble(); }
+function onSection() { seatKnown = false; startPreamble(); }
+function onSectionEnd() { endPreamble(); hopZ = null; }  // #1028: the next section states its own hop
 
 // ------------------------------------------------------------- motions
 // While a canned-cycle group is open its expanded hole chain is the
 // cycle block's business only - the chain is the generator's truth,
 // not a second copy of output.
+// The chain stays on its hole: the hole's XY, at or below its R plane.
+// #994: a rapid that leaves it (the hop up, the traverse, the exit)
+// ends the group - G80, then the rapid posted as the stream says - so
+// the program moves between holes at the hop the path was verified at,
+// never at R. A cut leaving the hole is no chain a cycle replaces:
+// refused by name.
+function onHole(p) {
+  return Math.abs(p.X - cycX) < 1e-6 && Math.abs(p.Y - cycY) < 1e-6 && p.Z <= cycR + 1e-6;
+}
+function chainRapid() {  // true: the open group's own retract, swallowed
+  seatKnown = true;
+  if (!inCycle) return false;
+  if (onHole(properties)) return true;
+  block(["G80"]);
+  inCycle = false;
+  return false;
+}
+function chainCut() {  // true: the cut is the cycle's (or refused)
+  seatKnown = true;
+  if (!inCycle) return false;
+  if (!onHole(properties)) msg("a cutting move leaves its hole inside a canned-cycle group");
+  return true;
+}
+// #1028: a probing move (a touch, its back-off, a protected positioning
+// move) moves the tool like any other motion: it ends an open cycle
+// group (G80 - no probe move is a hole's chain) and the tool stands
+// where the stream says, so a cycle read after it is seated.
+function probeSeat() {
+  seatKnown = true;
+  if (!inCycle) return;
+  block(["G80"]);
+  inCycle = false;
+}
 function onRapid() {
   startPreamble();
   compRefuse("a rapid");
-  if (!tiltOk(properties) || inCycle) return;
+  if (!tiltOk(properties) || chainRapid()) return;
   block(["G0"].concat(xyz(properties)));
 }
 function onLinear() {
   startPreamble();
-  if (!tiltOk(properties) || inCycle) return;
+  if (!tiltOk(properties) || chainCut()) return;
   // The pending comp word rides this straight block (#39).
   var cg = compG, cd = compD;
   compG = ""; compD = "";
@@ -429,7 +466,7 @@ function onLinear() {
 function onCircular() {
   startPreamble();
   compRefuse("an arc");
-  if (!tiltOk(properties) || inCycle) return;
+  if (!tiltOk(properties) || chainCut()) return;
   var p = properties;
   if (compPlaneRefuse(planeOf(p))) return;
   block([
@@ -445,6 +482,46 @@ function onCircular() {
 // The DIN cycles retract to the R plane by the documented default of
 // this family's plain G81-G89 forms - there is no G98 word to write,
 // so none is invented; every cycle block restates the hole position.
+// #994: the hop and traverse to the next hole are the stream's own
+// rapids, posted after G80 (above); and with the tool seated on R
+// (below) a control returning to the initial level lands on R too -
+// no return mode is assumed.
+// #994: the cycle is read with the tool on its R plane over the hole,
+// where the stream's chain starts, so the level a hole returns to is R
+// and never the height the tool happened to stand at. A stream whose
+// tool stands elsewhere (its anchor on the rapid down to R) is seated
+// here: up to R first when below it, then over the hole, then down -
+// never under the straight rapid the stream itself states. A cycle
+// that is its section's first motion has no stream position to seat
+// from: the cycle positions over the hole from the height it is at.
+function cycleSeat(p) {
+  if (!seatKnown) return;
+  var lo = has(p.StartZ) && p.StartZ < p.R - 1e-6;
+  var away = !(has(p.StartX) && has(p.StartY)) || Math.abs(p.StartX - p.X) >= 1e-6 || Math.abs(p.StartY - p.Y) >= 1e-6;
+  var hi = !has(p.StartZ) || p.StartZ > p.R + 1e-6;
+  if (!lo && !away && !hi) return;
+  if (inCycle) block(["G80"]);
+  inCycle = false;
+  if (away) {
+    // #1028: no stream rapid took the tool to this hole (two cycle
+    // records back to back, or a cycle straight after a probe), so
+    // the traverse runs at the section's hop: up to its RetractPlane
+    // when below it, over the hole, then down to R - never lower than
+    // the hop the path was verified at. A section that states no
+    // RetractPlane has no hop to seat at: refused by name.
+    if (!has(hopZ)) {
+      msg("a canned cycle is read away from its hole with no rapid to it, and the section states no RetractPlane to traverse at");
+      return;
+    }
+    var top = Math.max(hopZ, p.R);
+    var at = has(p.StartZ) ? p.StartZ : -Infinity;
+    if (at < top - 1e-6) { block(["G0", wo("Z", top, orgZ)]); at = top; }
+    block(["G0", wo("X", p.X, orgX), wo("Y", p.Y, orgY)]);
+    if (at > p.R + 1e-6) block(["G0", wo("Z", p.R, orgZ)]);
+    return;
+  }
+  if (lo || hi) block(["G0", wo("Z", p.R, orgZ)]);
+}
 function onCycle() {
   startPreamble();
   restorePlane();            // M11.2 A: a cycle drills along G17's Z
@@ -457,6 +534,7 @@ function onCycle() {
   else if (p.CycleType === "TAP") g = "G84";
   else if (p.CycleType === "BORE") g = "G86";
   else if (p.CycleType === "BACKBORE") g = "G89";
+  cycleSeat(p);
   var words = [g, wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ), wo("R", p.R, orgZ)];
   if ((p.CycleType === "PECK" || p.CycleType === "DEEP") && has(p.Q) && p.Q > 0) {
     words.push(w("Q", p.Q)); // an increment (peck depth): no origin shift
@@ -464,6 +542,8 @@ function onCycle() {
   if (ms > 0 && g !== "G73" && g !== "G84") words.push("P" + ms);
   words.push(fw(p.FeedRate));
   block(words);
+  cycX = p.X; cycY = p.Y; cycR = p.R;
+  seatKnown = true;
   inCycle = true;
 }
 
@@ -481,8 +561,8 @@ function onCycle() {
 // measure air. A measured trip k is kept in R(50+3k)..R(52+3k) and the
 // deviations in R90.., inside R0..R99 (the R parameters every 840D
 // carries; more are a machine-data option). The back-off is incremental
-// (G91). G58/G59 are axial programmable offsets
-// on this control, not settable frames: setting one is refused by name.
+// (G91). The fifth and sixth work offsets are the settable frames
+// G505/G506 here (frameWord, #934), so a probe sets those frames.
 // Arming the probe is the machine's own.
 var probeBase = 50;
 function axisIx(a) { return a === "X" ? 0 : (a === "Y" ? 1 : 2); }
@@ -499,6 +579,7 @@ function stopAlarm(cond, n, text) {  // message, alarm and stop when cond holds
 }
 function onProbeMove() {
   startPreamble();
+  probeSeat();               // #1028
   compRefuse("a probing move");
   var p = properties;
   block(["MEAS=1", "G1", wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ), fw(p.Feed)]);
@@ -512,6 +593,7 @@ function onProbeMove() {
   }
 }
 function onProbeRetreat() {
+  probeSeat();               // #1028
   var p = properties;
   block(["G91", "G1", w("X", p.DeltaX), w("Y", p.DeltaY), w("Z", p.DeltaZ), fw(p.Feed)]);
   block(["G90"]);
@@ -528,10 +610,24 @@ function onProbeRetreat() {
 // written on a trip, so it is meaningless when the move ran clear.
 function onProbeGuard() {
   startPreamble();
+  probeSeat();               // #1028
   compRefuse("a protected probe move");
   var p = properties;
   block(["MEAS=1", "G1", wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ), fw(p.Feed)]);
   stopAlarm("$AC_MEA[1]==1", 65002, "PROBE HIT ON POSITIONING");
+}
+// #934: the engine hands the setup's work offset as its generic word
+// (G54..G59, one per controller register). On the 840D the settable
+// zero offsets are G54..G57 and then G505..G599 (840D sl Fundamentals,
+// "settable zero offset"); G58/G59 are axial programmable offsets that
+// select no frame. So offsets 5 and 6 are written G505/G506, and a
+// word naming no settable frame is refused by name, never posted.
+function frameWord(word) {
+  var w = String(word).toUpperCase();
+  if (w === "G58") return "G505";
+  if (w === "G59") return "G506";
+  if (!frameOf(w)) msg("work offset " + w + " - only the settable frames G54..G57 / G505..G599 can be selected on this control");
+  return w;
 }
 function frameOf(word) {  // "G54".."G57" -> 1..4, G505..G599 -> 5..99; 0 none
   var n = Number(String(word).replace(/[^0-9]/g, ""));
@@ -558,7 +654,7 @@ function onProbeResult() {
     stopAlarm("ABS(R" + (dev + i) + ")>" + fu(p.Tolerance), 65001, "PROBE " + a.Axis + " OUT OF TOLERANCE");
   }
   if (has(p.SetWorkOffset) && p.SetWorkOffset >= 0) {
-    var want = "G" + (54 + Number(p.SetWorkOffset));
+    var want = frameWord("G" + (54 + Number(p.SetWorkOffset)));
     var to = frameOf(want), from = frameOf(wcsWord);
     if (!to || !from) {
       msg("probing: setting " + want + " from " + wcsWord + " - only the settable frames G54..G57 / G505..G599 can be set on this control");

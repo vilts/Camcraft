@@ -11,7 +11,7 @@
 //! this file is the document.
 //!
 //! Gate map (M4.4): covers camcraft_app::operation (the rotary arms'
-//! letter door), camcraft_app::machine (the rotary inventory),
+//! letter door), camcraft_app::machine, post::machine (the rotary inventory),
 //! camcraft_app::commands (LoadMachine, Create/GenerateOperation).
 //! Lane shape (M4.4): all tests here run in seconds.
 

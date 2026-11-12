@@ -5,171 +5,42 @@
 //! it was cut for, modelled as an import would hand it over (round
 //! holes as inscribed 32/128-gons). The pinned verdict is what the
 //! per-plane verifier gave before the solid law, warning for warning:
-//! the solid law adds none.
-//! (Slot and trace cut their source - no depth law runs on them; the
-//! 3D finish goldens verify as `Mode::Envelope`, where the solid law
+//! the solid law adds none - and since #862 that verdict is clean for
+//! every one of them, and every posted `.nc` golden's program must be
+//! one the gate passes (the guard below); the crossing refusal the two
+//! disc-hole goldens used to carry is pinned on its own fixture.
+//! (Slot and trace cut their source - no depth law runs on them; since
+//! #1000 they, the trochoidal slot and the plasma plate are judged by
+//! the gate their kind's post runs, `posted_gates`. The 3D
+//! finish goldens verify as `Mode::Envelope`, where the solid law
 //! stands down by mode gate - their verdict path is untouched; the
-//! arc-planes golden is a posting fixture with no part.)
+//! arc-planes golden is a hand-built posting fixture with no part.)
 //!
 //! Provenance: our own harness over our own goldens; no vendor material.
 //!
-//! Gate map (solid law): covers app::verify (engine b2, solid_hits),
-//! app::machining2d (contour, face, pocket), app::drilling (drill).
+//! Gate map (solid law): covers sim::verify (engine b2, solid_hits, the
+//! crossing law), the posted goldens under tests/golden/nc/,
+//! motion::machining2d (contour, face, pocket, slot, trochoid, trace),
+//! motion::drilling (drill), app::operation (region_of), sim::verify::plasma.
 
 mod common;
+mod posted_gates;
 
 use common::gen_to_cltext;
+use posted_gates::{narrowed_slot_verdict, plasma_findings, region_verdicts};
+use common::solid_part::{cap, circle, mill, plate, plate_cell, rect, region, walls};
 
 use camcraft_app::cl::Toolpath;
 use camcraft_app::drilling::{CycleChoice, CycleParams, Hole, drill};
-use camcraft_app::geo2d::{Loop, Point2, Region};
-use camcraft_app::geometry::{Point3, Triangle};
+use camcraft_app::geo2d::{Point2, Region};
+use camcraft_app::geometry::Triangle;
 use camcraft_app::machining2d::{ContourParams, FaceParams, Lead, PocketParams, PocketStrategy, Side, contour, face, pocket};
 use camcraft_app::tools::{Tool, ToolKind};
-use camcraft_app::verify::{Cutter, Mode, SolidLaw, ToolGeom, VerifyContext, Warning, solid_hits, verify};
-
-type P2 = (f64, f64);
+use camcraft_app::verify::{Cutter, HoleAxis, Mode, SolidLaw, ToolGeom, VerifyContext, Warning, solid_hits_walled, verify};
 
 fn golden(name: &str) -> String {
     let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden").join(name);
     std::fs::read_to_string(&p).expect("golden").replace("\r\n", "\n")
-}
-
-fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Vec<P2> {
-    vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
-}
-
-fn circle(c: P2, r: f64, n: usize) -> Vec<P2> {
-    (0..n).map(|k| {
-        let t = std::f64::consts::TAU * k as f64 / n as f64;
-        (c.0 + r * t.cos(), c.1 + r * t.sin())
-    }).collect()
-}
-
-fn region(loops: &[Vec<P2>]) -> Region {
-    Region::new(loops.iter().map(|l| Loop::new(l.iter().map(|&(x, y)| Point2::new(x, y)).collect()).expect("loop")).collect())
-        .expect("region")
-}
-
-/// Walls over a ccw loop, facing out of it (`out`) or into it (a hole).
-fn walls(l: &[P2], z0: f64, z1: f64, out: bool, f: &mut Vec<Triangle>) {
-    let mut v = l.to_vec();
-    if !out {
-        v.reverse();
-    }
-    for k in 0..v.len() {
-        let (a, b) = (v[k], v[(k + 1) % v.len()]);
-        let q = |p: P2, z: f64| Point3::new(p.0, p.1, z);
-        f.push(Triangle::new(q(a, z0), q(b, z0), q(b, z1)));
-        f.push(Triangle::new(q(a, z0), q(b, z1), q(a, z1)));
-    }
-}
-
-/// A horizontal face: the convex ccw loop `o`, less the convex ccw loop
-/// `i` inside it. Each sector between two rays from `i`'s centroid
-/// through consecutive `i` vertices is a convex polygon (inner edge, ray,
-/// outer boundary with its corners, ray), fanned; every triangle is
-/// turned ccw and the total checked against the area difference - the
-/// harness proves its own fixture tiles the face.
-fn cap(o: &[P2], i: Option<&[P2]>, z: f64, up: bool, f: &mut Vec<Triangle>) {
-    let area = |l: &[P2]| (0..l.len()).map(|k| { let (a, b) = (l[k], l[(k + 1) % l.len()]); a.0 * b.1 - b.0 * a.1 }).sum::<f64>() * 0.5;
-    let p = |q: P2| Point3::new(q.0, q.1, z);
-    let mut tris: Vec<[P2; 3]> = Vec::new();
-    match i {
-        None => (1..o.len() - 1).for_each(|k| tris.push([o[0], o[k], o[k + 1]])),
-        Some(i) => {
-            let c = i.iter().fold((0.0, 0.0), |s, q| (s.0 + q.0, s.1 + q.1));
-            let c = (c.0 / i.len() as f64, c.1 / i.len() as f64);
-            let tau = std::f64::consts::TAU;
-            let ang = |q: P2| (q.1 - c.1).atan2(q.0 - c.0).rem_euclid(tau);
-            // Where the ray from c through q leaves `o`.
-            let hit = |q: P2| -> P2 {
-                let (dx, dy) = (q.0 - c.0, q.1 - c.1);
-                let mut best = f64::INFINITY;
-                for k in 0..o.len() {
-                    let (a, b) = (o[k], o[(k + 1) % o.len()]);
-                    let (ex, ey) = (b.0 - a.0, b.1 - a.1);
-                    let den = dx * ey - dy * ex;
-                    if den.abs() < 1e-15 {
-                        continue;
-                    }
-                    let t = ((a.0 - c.0) * ey - (a.1 - c.1) * ex) / den;
-                    let u = ((a.0 - c.0) * dy - (a.1 - c.1) * dx) / den;
-                    if t > 0.0 && (-1e-12..=1.0 + 1e-12).contains(&u) {
-                        best = best.min(t);
-                    }
-                }
-                (c.0 + dx * best, c.1 + dy * best)
-            };
-            for k in 0..i.len() {
-                let (ia, ib) = (i[k], i[(k + 1) % i.len()]);
-                let (t0, mut t1) = (ang(ia), ang(ib));
-                if t1 <= t0 {
-                    t1 += tau;
-                }
-                let mut corners: Vec<(f64, P2)> = o.iter().map(|&q| {
-                    let mut t = ang(q);
-                    if t <= t0 {
-                        t += tau;
-                    }
-                    (t, q)
-                }).filter(|&(t, _)| t < t1).collect();
-                corners.sort_by(|a, b| a.0.total_cmp(&b.0));
-                let mut poly = vec![ia, hit(ia)];
-                poly.extend(corners.into_iter().map(|(_, q)| q));
-                poly.push(hit(ib));
-                poly.push(ib);
-                for j in 1..poly.len() - 1 {
-                    tris.push([ia, poly[j], poly[j + 1]]);
-                }
-            }
-        }
-    }
-    let want = area(o) - i.map_or(0.0, area);
-    let mut got = 0.0;
-    for [a, b, c] in tris {
-        let s = ((b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)) * 0.5;
-        if s.abs() < 1e-12 {
-            continue; // a sliver where a ray meets a corner
-        }
-        let (b, c) = if s > 0.0 { (b, c) } else { (c, b) };
-        got += s.abs();
-        f.push(if up { Triangle::new(p(a), p(b), p(c)) } else { Triangle::new(p(a), p(c), p(b)) });
-    }
-    assert!((got - want).abs() < 1e-6 * want.abs().max(1.0), "cap tiles its face: {got} vs {want}");
-}
-
-/// A plate `o` from z0 to z1 with at most one hole `h` from `hz` (z0
-/// for through) to the top; a blind hole gets its floor.
-fn plate(o: &[P2], h: Option<(&[P2], f64)>, z0: f64, z1: f64, f: &mut Vec<Triangle>) {
-    walls(o, z0, z1, true, f);
-    plate_cell(o, h, z0, z1, f);
-}
-
-/// One cell of a plate's faces (caps, hole walls and floor) - cells
-/// tiling a plate share its outer walls, never walls of their own, so
-/// the shell stays one closed surface.
-fn plate_cell(o: &[P2], h: Option<(&[P2], f64)>, z0: f64, z1: f64, f: &mut Vec<Triangle>) {
-    match h {
-        None => {
-            cap(o, None, z0, false, f);
-            cap(o, None, z1, true, f);
-        }
-        Some((h, hz)) => {
-            cap(o, Some(h), z1, true, f);
-            walls(h, hz, z1, false, f);
-            if hz > z0 {
-                cap(h, None, hz, true, f);
-                cap(o, None, z0, false, f);
-            } else {
-                cap(o, Some(h), z0, false, f);
-            }
-        }
-    }
-}
-
-fn mill(d: f64) -> ToolGeom {
-    ToolGeom { radius: d * 0.5, nose_radius: 0.0, flute_len: 25.0, shank_radius: d * 0.5, shank_len: 30.0, holder_radius: 16.0, holder_len: 40.0 }
 }
 
 fn cx<'a>(region: &'a Region, model: Option<&'a [Triangle]>, tool: &'a ToolGeom, mode: Mode, top: f64, clear: f64) -> VerifyContext<'a> {
@@ -188,6 +59,7 @@ fn cx<'a>(region: &'a Region, model: Option<&'a [Triangle]>, tool: &'a ToolGeom,
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     }
 }
 
@@ -197,11 +69,13 @@ fn section_law(t: &Toolpath, region: &Region, part: &[Triangle], tool: &ToolGeom
 }
 
 /// The containment kinds' depth verdict: the solid law with the tool's
-/// own tip, hole walls excused (their region laws read the exact rims,
-/// untouched by the solid law and not judged here).
-fn contain_law(t: &Toolpath, part: &[Triangle], tool: &Tool) -> Vec<Warning> {
+/// own tip, the round walls of the holes it drills excused (their region
+/// laws read the exact rims, untouched by the solid law and not judged
+/// here; #1205 measures each wall about its hole's own axis).
+fn contain_law(t: &Toolpath, part: &[Triangle], tool: &Tool, holes: &[Hole]) -> Vec<Warning> {
     let law = SolidLaw { step: 0.25, allow: 0.01, hole_walls: true };
-    solid_hits(t, part, &Cutter::of(tool), &law)
+    let walls: Vec<HoleAxis> = holes.iter().map(|h| HoleAxis::vertical(h.xy.x, h.xy.y)).collect();
+    solid_hits_walled(t, part, &Cutter::of(tool), &law, &walls)
 }
 
 fn contour_params(d: f64, lead: Lead, side: Side) -> ContourParams {
@@ -229,6 +103,15 @@ fn contour_params(d: f64, lead: Lead, side: Side) -> ContourParams {
     }
 }
 
+/// The 40 x 20 plate with the R6 bore (128-gon) through it, as a
+/// region and as the finished part.
+fn disc_hole_plate() -> (Region, Vec<Triangle>) {
+    let bore6 = circle((20.0, 10.0), 6.0, 128);
+    let mut part = Vec::new();
+    plate(&rect(0.0, 0.0, 40.0, 20.0), Some((&bore6, -4.0)), -4.0, 0.0, &mut part);
+    (region(&[rect(0.0, 0.0, 40.0, 20.0), bore6]), part)
+}
+
 /// (golden, verdict) for every depth-law golden.
 fn verdicts() -> Vec<(&'static str, Vec<Warning>)> {
     let mut out = Vec::new();
@@ -236,13 +119,11 @@ fn verdicts() -> Vec<(&'static str, Vec<Warning>)> {
         assert_eq!(gen_to_cltext(t), golden(name), "{name}: the regenerated program is the golden");
         out.push((name, w));
     };
-    // The plate with a round bore (contour_disc_hole, tangential lead).
-    let bore6 = circle((20.0, 10.0), 6.0, 128);
-    let mut part = Vec::new();
-    plate(&rect(0.0, 0.0, 40.0, 20.0), Some((&bore6, -4.0)), -4.0, 0.0, &mut part);
-    let reg = region(&[rect(0.0, 0.0, 40.0, 20.0), bore6.clone()]);
+    // The plate with a round bore (contour_disc_hole, tangential lead),
+    // 2 mm leads that stay clear of the R6 bore's r = 3 ring (#862).
+    let (reg, part) = disc_hole_plate();
     let g = mill(6.0);
-    for (name, lead) in [("contour_disc_hole.cl", Lead::Arc { radius: 3.0 }), ("contour_tangential_lead.cl", Lead::Tangential { radius: 3.0 })] {
+    for (name, lead) in [("contour_disc_hole.cl", Lead::Arc { radius: 2.0 }), ("contour_tangential_lead.cl", Lead::Tangential { radius: 2.0 })] {
         let t = contour(&reg, &contour_params(6.0, lead, Side::Auto)).expect("contour");
         check(name, &t, section_law(&t, &reg, &part, &g, Mode::Boundary, 0.0, 5.0));
     }
@@ -338,6 +219,7 @@ fn verdicts() -> Vec<(&'static str, Vec<Warning>)> {
         flutes: None,
         center_cutting: true,
         orientation: None,
+        turning: None,
     };
     let hole = |x: f64, y: f64, r: f64, floor: f64, through: bool| Hole { xy: Point2::new(x, y), radius: r, entry_z: 0.0, floor_z: floor, through, stepped: false };
     let cycle = |holes: &[Hole], tool: &Tool, clear: f64| {
@@ -350,21 +232,24 @@ fn verdicts() -> Vec<(&'static str, Vec<Warning>)> {
     walls(&rect(0.0, 0.0, 40.0, 20.0), -4.0, 0.0, true, &mut part);
     plate_cell(&rect(0.0, 0.0, 20.0, 20.0), Some((&ha, -4.0)), -4.0, 0.0, &mut part);
     plate_cell(&rect(20.0, 0.0, 40.0, 20.0), Some((&hb, -3.0)), -4.0, 0.0, &mut part);
-    let t = cycle(&[hole(10.0, 10.0, 3.0, -4.0, true), hole(30.0, 10.0, 3.0, -3.0, false)], &dr6, 5.0);
-    check("drill_plate.cl", &t, contain_law(&t, &part, &dr6));
+    let holes = [hole(10.0, 10.0, 3.0, -4.0, true), hole(30.0, 10.0, 3.0, -3.0, false)];
+    let t = cycle(&holes, &dr6, 5.0);
+    check("drill_plate.cl", &t, contain_law(&t, &part, &dr6, &holes));
     let hp = circle((20.0, 10.0), 3.0, 32);
     let mut part = Vec::new();
     plate(&rect(0.0, 0.0, 40.0, 20.0), Some((&hp, -23.0)), -23.0, 0.0, &mut part);
-    let t = cycle(&[hole(20.0, 10.0, 3.0, -23.0, true)], &dr6, 6.0);
-    check("drill_peck.cl", &t, contain_law(&t, &part, &dr6));
+    let holes = [hole(20.0, 10.0, 3.0, -23.0, true)];
+    let t = cycle(&holes, &dr6, 6.0);
+    check("drill_peck.cl", &t, contain_law(&t, &part, &dr6, &holes));
     // The tapped hole: the finished part's thread stands at the tap's
     // own diameter (the golden's 2.5 mm hole record is the tap DRILL's).
     let tap = tool(ToolKind::Tap, 10.0, 0.0, 1.5);
     let ht = circle((15.0, 15.0), 5.0, 32);
     let mut part = Vec::new();
     plate(&rect(0.0, 0.0, 30.0, 30.0), Some((&ht, -12.0)), -20.0, 0.0, &mut part);
-    let t = cycle(&[hole(15.0, 15.0, 2.5, -12.0, false)], &tap, 5.0);
-    check("tap_plate.cl", &t, contain_law(&t, &part, &tap));
+    let holes = [hole(15.0, 15.0, 2.5, -12.0, false)];
+    let t = cycle(&holes, &tap, 5.0);
+    check("tap_plate.cl", &t, contain_law(&t, &part, &tap, &holes));
     out
 }
 
@@ -376,30 +261,121 @@ fn every_depth_law_golden_verifies_exactly_as_before() {
     }
     assert_eq!(got.len(), 14, "every depth-law golden is judged");
     // The verifier's verdict on these programs, recorded at the base
-    // before the solid law - and unchanged by it, warning for warning.
+    // before the solid law - and unchanged by it: every golden passes
+    // the gate (#862 moved the disc-hole leads off the ring; the
+    // refusal they used to carry is pinned below on its own fixture).
     for (name, w) in got {
-        let want: Vec<Warning> = match name {
-            // Law (a), the XY crossing law the solid law never touches.
-            // The R6 bore's r = 3 cutter-centre ring and the 3 mm leads
-            // share one circle, so the leads cross the ring and the
-            // program stays refused. Since #689 the ring closes on arcs
-            // and the lead-out leaves on its true tangent, so the leads
-            // meet the ring's arcs as well as each other: more pairs,
-            // the same refusal.
-            "contour_disc_hole.cl" => [[17, 20], [18, 21], [40, 43], [41, 44], [63, 66], [64, 67]]
-                .into_iter()
-                .map(|moves| Warning::Crossing { moves })
-                .collect(),
-            "contour_tangential_lead.cl" => [
+        assert_eq!(w, Vec::new(), "{name}");
+    }
+}
+
+#[test]
+fn a_lead_on_the_rings_own_circle_is_refused() {
+    // Law (a), the XY crossing law the solid law never touches. The R6
+    // bore's r = 3 cutter-centre ring and 3 mm leads share one circle,
+    // so the leads cross the ring and the program is refused. Since
+    // #689 the ring closes on arcs and the lead-out leaves on its true
+    // tangent, so the leads meet the ring's arcs as well as each other.
+    // These were the contour_disc_hole / contour_tangential_lead
+    // goldens' programs until #862; no golden is kept for them, since
+    // no user can post them.
+    let (reg, part) = disc_hole_plate();
+    let g = mill(6.0);
+    let crossing = |pairs: &[[usize; 2]]| pairs.iter().map(|&moves| Warning::Crossing { moves }).collect::<Vec<_>>();
+    for (lead, want) in [
+        (Lead::Arc { radius: 3.0 }, crossing(&[[17, 20], [18, 21], [40, 43], [41, 44], [63, 66], [64, 67]])),
+        (
+            Lead::Tangential { radius: 3.0 },
+            crossing(&[
                 [17, 19], [17, 20], [18, 21], [19, 21],
                 [40, 42], [40, 43], [41, 44], [42, 44],
                 [63, 65], [63, 66], [64, 67], [65, 67],
-            ]
-            .into_iter()
-            .map(|moves| Warning::Crossing { moves })
-            .collect(),
-            _ => Vec::new(),
-        };
-        assert_eq!(w, want, "{name}");
+            ]),
+        ),
+    ] {
+        let t = contour(&reg, &contour_params(6.0, lead, Side::Auto)).expect("contour");
+        assert_eq!(section_law(&t, &reg, &part, &g, Mode::Boundary, 0.0, 5.0), want, "{lead:?}");
     }
 }
+
+/// The first line a posted golden of a gate-refused program must carry
+/// (#862 option (c)); none does today.
+const REFUSED_HEADER: &str = "refused program, posted for syntax conformance";
+
+/// Posted goldens whose program no gate judges, each with why: the
+/// guard below makes every other posted golden's program pass the gate
+/// its kind's post runs, so a new one is either judged or named here.
+/// The slot, trochoid, trace and plasma goldens are judged since #1000
+/// (`posted_gates`).
+const UNJUDGED: &[(&str, &str)] = &[(
+    "arc_planes",
+    "a hand-built posting fixture (arc_planes.rs): no operation kind, part, region or tool record makes it, \
+     so no gate a user's post runs can judge it - #1093",
+)];
+
+#[test]
+fn the_slot_trace_and_plasma_goldens_pass_their_gates() {
+    // #1000: the posted goldens no depth law judges, each through the
+    // gate its kind's post runs - the region laws for the slots and the
+    // trace, the plasma laws for the plate: every one verifies clean.
+    let got = region_verdicts();
+    assert_eq!(got.len(), 4, "every region-law golden is judged");
+    for (name, w) in got {
+        assert_eq!(w, Vec::new(), "{name}");
+    }
+    assert_eq!(plasma_findings(), Vec::new(), "plasma_plate_with_holes.cl: the plasma laws find nothing");
+}
+
+#[test]
+fn the_slot_gate_bites() {
+    // The harness is not vacuous: the wide-channel slot's program judged
+    // against a stadium 2 mm narrower than the one it was cut for gouges.
+    let got = narrowed_slot_verdict();
+    assert!(got.iter().any(|w| matches!(w, Warning::Gouge { .. })), "{got:?}");
+}
+
+#[test]
+fn every_posted_golden_is_a_program_the_gate_passes() {
+    // #862: a posted golden reads as "this output is right", so its
+    // program must be one a user can post. Every `.nc` under golden/nc/
+    // (the Fanuc top and each dialect's directory) whose stem is a `.cl`
+    // golden is judged here.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
+    // Every blocking finding of each judged program: the depth laws',
+    // the region laws' (slot, trochoid, trace) and the plasma laws'
+    // refusals (its warnings ride the verdict line, never block).
+    let blocking = |w: Vec<Warning>| w.iter().map(|w| format!("{w:?}")).collect::<Vec<_>>();
+    let mut judged: Vec<(&str, Vec<String>)> = verdicts().into_iter().chain(region_verdicts()).map(|(n, w)| (n, blocking(w))).collect();
+    let plasma = plasma_findings().iter().filter(|f| f.refuses()).map(|f| f.describe()).collect();
+    judged.push(("plasma_plate_with_holes.cl", plasma));
+    let mut dirs = vec![root.join("nc")];
+    let mut posted = 0;
+    while let Some(dir) = dirs.pop() {
+        for e in std::fs::read_dir(&dir).expect("nc dir").map(|e| e.expect("entry").path()) {
+            if e.is_dir() {
+                dirs.push(e);
+                continue;
+            }
+            let Some(stem) = e.file_stem().and_then(|s| s.to_str()).filter(|_| e.extension().is_some_and(|x| x == "nc")) else { continue };
+            if !root.join(format!("{stem}.cl")).is_file() {
+                continue; // posted from a document or its own stream, not a .cl golden
+            }
+            posted += 1;
+            let first = std::fs::read_to_string(&e).expect("nc").lines().next().unwrap_or_default().to_owned();
+            if first.contains(REFUSED_HEADER) {
+                continue;
+            }
+            let cl = format!("{stem}.cl");
+            match judged.iter().find(|(n, _)| *n == cl) {
+                Some((_, w)) => assert!(w.is_empty(), "{}: posted, but the gate refuses its program: {w:?}", e.display()),
+                None => assert!(
+                    UNJUDGED.iter().any(|(n, _)| *n == stem),
+                    "{}: posted, but no gate judges its program - judge it in verdicts() / posted_gates or name it in UNJUDGED",
+                    e.display()
+                ),
+            }
+        }
+    }
+    assert!(posted > 50, "the guard saw only {posted} posted goldens");
+}
+

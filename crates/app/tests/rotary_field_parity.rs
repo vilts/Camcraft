@@ -21,8 +21,8 @@
 //! column verdict refuses every kind by name). Provenance: our own
 //! fixtures and engines; nothing from vendor binaries.
 //!
-//! Gate map (M4.4): covers app::stock_sim (plan_program's rotary
-//! clause, stock_sim::rotary), app::stock_view, app::fixture.
+//! Gate map (M4.4): covers app::stock_sim, sim::stock_sim (plan_program's rotary
+//! clause, stock_sim::rotary), app::stock_view, app::fixture, sim::fixture.
 
 mod common;
 

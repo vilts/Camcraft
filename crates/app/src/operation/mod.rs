@@ -150,11 +150,15 @@ pub(crate) mod spindle_law;
 pub use spindle_law::{spindle_reading, SpindleReading, SPINDLE_TOL};
 mod rotary_gate;
 mod air_law;
+// #864: what a kind's gouge laws need of its model's fidelity.
+pub(crate) mod fidelity_law;
 mod top_stock;
+mod stock_top_law;
 pub use top_stock::TOP_STOCK_WARNING;
 mod turning_credit;
 mod turning_feeds;
 mod turning_holder;
+pub(crate) use turning_holder::body_axes as lathe_body_axes;
 mod turning_holder_scene;
 mod turning_outline;
 mod turning_rapids;

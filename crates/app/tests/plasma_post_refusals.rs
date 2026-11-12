@@ -123,6 +123,14 @@ fn the_post_refuses_what_a_plasma_table_cannot_say() {
     let vmc: Value = serde_json::from_str(&read("assets/machines/3axis-vmc.mch")).expect("json");
     let w = warnings(script(PLASMA), &vmc, &section("", HEAD, CUT));
     assert!(w.iter().any(|m| m.contains("is not declared a plasma machine")), "{w:?}");
+    // A document with no machine: the sentence must read, not double-negate
+    // ("no machine is not declared ...") - #998.
+    let w = warnings(script(PLASMA), &Value::Null, &section("", HEAD, CUT));
+    assert!(
+        w.iter().any(|m| m.contains("no machine is stated, so none is declared a plasma machine")),
+        "{w:?}"
+    );
+    assert!(!w.iter().any(|m| m.contains("no machine is not declared")), "{w:?}");
     let mut rot = pl1300();
     // (The mirror's door: the parsed 1300PL itself refuses a rotary.)
     rot["kinematics"]["static"] = serde_json::json!({ "rotaries": [{ "letter": "A", "direction": [1, 0, 0] }] });

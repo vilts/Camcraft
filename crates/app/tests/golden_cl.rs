@@ -2,7 +2,7 @@
 //! testing rule made concrete. Format, naming and the regeneration
 //! workflow: tests/golden/CLAUDE.md.
 //!
-//! Gate map (M4.4): covers app::cl, app::drilling, app::finishing3d, app::geo2d, app::geometry, app::machining2d, app::tools.
+//! Gate map (M4.4): covers cl::cl, motion::drilling, motion::finishing3d, geometry::geo2d, app::geometry, motion::machining2d, tools::tools.
 
 
 mod common;
@@ -84,7 +84,11 @@ fn contour_disc_hole_matches_golden() {
     // A plate with a 128-gon approximation of a round bore: the rim is
     // polygonal only because import tessellates it, so the fitter must
     // replace the chord runs with arc moves - this golden is the v2
-    // format's committed witness.
+    // format's committed witness. The lead is 2 mm (#862): a 3 mm lead
+    // on the R6 bore lies on the r = 3 cutter-centre ring itself, so the
+    // leads cross the ring and the gate refuses the program - a posted
+    // golden must be a program a user can post (`solid_law_goldens`
+    // pins both the pass and the R3 refusal).
     let mut loops = rect(0.0, 0.0, 40.0, 20.0).loops().to_vec();
     loops.push(circle(Point2::new(20.0, 10.0), 6.0, 128));
     let region = Region::new(loops).unwrap();
@@ -100,7 +104,7 @@ fn contour_disc_hole_matches_golden() {
         plunge_feed: 100.0,
         climb: true,
         side: Side::Auto,
-        lead: Lead::Arc { radius: 3.0 },
+        lead: Lead::Arc { radius: 2.0 },
         tolerance: 0.01,
         tab_count: 0,
         tab_width: 0.0,
@@ -120,7 +124,8 @@ fn contour_tangential_lead_matches_golden() {
     // The same plate-and-bore job, tangential entry instead of quarter:
     // this golden is the byte-witness that the half-arc leads post as
     // single S{±1} arc moves with a 2*radius standoff - rerun
-    // WRITE_GOLDEN=1 only together with a deliberate law change.
+    // WRITE_GOLDEN=1 only together with a deliberate law change. 2 mm,
+    // not 3, so the leads stay clear of the ring and the gate (#862).
     let mut loops = rect(0.0, 0.0, 40.0, 20.0).loops().to_vec();
     loops.push(circle(Point2::new(20.0, 10.0), 6.0, 128));
     let region = Region::new(loops).unwrap();
@@ -136,7 +141,7 @@ fn contour_tangential_lead_matches_golden() {
         plunge_feed: 100.0,
         climb: true,
         side: Side::Auto,
-        lead: Lead::Tangential { radius: 3.0 },
+        lead: Lead::Tangential { radius: 2.0 },
         tolerance: 0.01,
         tab_count: 0,
         tab_width: 0.0,
@@ -469,6 +474,7 @@ fn cycle_tool(kind: ToolKind, diameter: f64, tip_angle: f64, pitch: f64) -> Tool
         tool_material: None,
         flutes: None,
         orientation: None,
+        turning: None,
     }
 }
 

@@ -1,0 +1,2 @@
+; mazak.cps refused tool_change: 1 warning(s), the program is never released
+warning: operation Thread: cuts a thread that needs the spindle reversed (M04) for its hand, but this post script does not declare threadHands - it would cut the other hand; use a lathe post that states the thread's hand

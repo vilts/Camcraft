@@ -626,6 +626,12 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
     crate::ribbon::pinned_set(world, &file.pinned);
     // Opening lands the material too - including None (the units law).
     crate::cutting::material_set(world, material);
+    // #1094: a raw-stock-only mark lands only when its source model is in
+    // the file - one naming a missing model is read as unmarked (judged),
+    // so a model imported later under that name never inherits it.
+    let model_names: std::collections::HashSet<String> = file.entities.iter()
+        .filter(|e| e.kind.unwrap_or(EntityKind::Model) == EntityKind::Model)
+        .map(|e| e.name.clone()).collect();
     for dto in file.entities {
         let kind = dto.kind.unwrap_or(EntityKind::Model);
         let entity = model::spawn(world, &dto.name);
@@ -652,6 +658,11 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                 // not the file's whole history. Staleness never reads
                 // it; the stamp's signature does the work.
                 model::set_rev(world, &entity, dto.rev);
+                // #864: the flag lands with the facets it describes; an
+                // absent key, or a value that is no coarse chord, is none.
+                crate::model_fidelity::set(world, &entity, dto.coarse_mm);
+                // #1054: validate_kind refused a budget out of bounds.
+                crate::model_fidelity::set_budget(world, &entity, dto.facet_budget);
             }
             EntityKind::Stock => {
                 // validate_kind already refused these; Result, never unwrap.
@@ -677,6 +688,20 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                 entity.entity_view(world).set(StockDef {
                     shape: shape.clone(),
                 });
+                // #1094: the mark lands only on a from-model stock, naming
+                // its source; anywhere else it means nothing and is dropped.
+                // The print is the mark's check (third review): no print,
+                // no mark - read as unmarked with a note, never trusted.
+                if let (true, StockShape::FromModel { source }) = (dto.raw_stock_only, &shape) {
+                    let print = dto.raw_stock_print.as_deref().and_then(crate::stock_print::from_text);
+                    match print {
+                        Some(print) if model_names.contains(source) => {
+                            entity.entity_view(world).set(crate::schema::StockSourceOnly { source: source.clone(), print });
+                        }
+                        Some(_) => notes.push(format!("'{}' was marked raw stock only, but its source model '{source}' is not in the file - read as unmarked", dto.name)),
+                        None => notes.push(format!("'{}' was marked raw stock only without the fingerprint of '{source}' it was set on - read as unmarked; tick \"{}\" again if it is raw stock", dto.name, crate::stock_source::RAW_STOCK_ONLY)),
+                    }
+                }
             }
             EntityKind::Wcs => {
                 entity.entity_view(world).add(Wcs);
@@ -784,6 +809,11 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                     None => None,
                     Some(o) => Some(o.to_options(&dto.name).map_err(corrupt)?),
                 };
+                // #1031: a limit no command would accept is a corrupt file,
+                // never a guessed one.
+                if let Some(why) = sdto.workholding_max_rpm.and_then(crate::setup_workholding::invalid) {
+                    return Err(corrupt(format!("setup '{}': {why}", dto.name)));
+                }
                 entity.entity_view(world).set(SetupDef {
                     stock: sdto.stock,
                     // `wcs_one` left exactly one name on every setup.
@@ -801,6 +831,7 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                     relative_to: sdto.relative_to.clone(),
                     stock_source,
                     post_options,
+                    workholding_max_rpm: sdto.workholding_max_rpm,
                 });
             }
         }

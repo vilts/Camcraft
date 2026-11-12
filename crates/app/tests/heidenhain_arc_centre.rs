@@ -11,7 +11,7 @@
 //! tolerance 0.016 mm). These tests read the posted program exactly so
 //! and rebuild every arc's centre from the words.
 //!
-//! Gate map (M4.4): covers app::post (assets/posts/heidenhain.cps).
+//! Gate map (M4.4): covers post::post (assets/posts/heidenhain.cps).
 
 use camcraft_app::cl::MoveKind;
 use camcraft_app::post::{cnc, engine};

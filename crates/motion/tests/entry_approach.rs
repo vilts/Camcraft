@@ -95,6 +95,7 @@ fn check(t: &Toolpath, r: &Region) -> Vec<Warning> {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(t, &cx)
 }

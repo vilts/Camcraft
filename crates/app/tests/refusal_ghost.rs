@@ -8,7 +8,7 @@
 //! material consulted.
 //!
 //! Gate map (#261): covers app::commands (operation::generate),
-//! app::operation (generate), app::posting, app::stock_sim, app::script.
+//! app::operation (generate), app::posting, app::stock_sim, sim::stock_sim, app::script.
 
 use flecs_ecs::prelude::World;
 

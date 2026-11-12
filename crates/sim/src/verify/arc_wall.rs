@@ -1,6 +1,7 @@
 //! The XY trace of one move for law (b)'s whole-move wall reading
 //! (#905): a straight move's segment, or an XY arc's true circle, with
-//! the exact least distance from that trace to a wall edge. Specced from
+//! the exact least distance from that trace to a wall edge (an XZ / YZ
+//! arc's footprint is [`super::arc_wall_plane`]'s, #946). Specced from
 //! elementary plane geometry (point-circle distance along the radius,
 //! line-circle intersection); no sampling.
 //!
@@ -36,6 +37,10 @@ pub(super) enum Trace {
     Seg(Point2, Point2),
     /// An XY arc (a helix included: its XY trace is the arc).
     Arc(XyArc),
+    /// A helical XZ / YZ arc's footprint: a polyline through points of
+    /// it, every piece read `pad` nearer than it stands (#946,
+    /// [`super::arc_wall_plane`]).
+    Poly(Vec<Point2>, f64),
     /// An arc whose centre or radius is not a number: the law fails
     /// closed on it.
     Unread,
@@ -56,19 +61,19 @@ pub(super) struct XyArc {
 }
 
 impl Trace {
-    /// The trace of `m`, or `None` for an arc in XZ or YZ (its XY trace
-    /// is not a circle; the law points read it as before).
-    pub(super) fn of(m: &Move) -> Option<Trace> {
+    /// The trace of `m`. An arc in XZ or YZ has a footprint that is not
+    /// a circle: [`super::arc_wall_plane`] reads it (#946).
+    pub(super) fn of(m: &Move) -> Trace {
         let from = Point2::new(m.from.x, m.from.y);
         let to = Point2::new(m.to.x, m.to.y);
-        let Some(arc) = m.arc else { return Some(Trace::Seg(from, to)) };
+        let Some(arc) = m.arc else { return Trace::Seg(from, to) };
         if !arc.plane.is_xy() {
-            return None;
+            return super::arc_wall_plane::trace(m, arc);
         }
         let c = arc.center;
         let (ra, rb) = ((from.x - c.x).hypot(from.y - c.y), (to.x - c.x).hypot(to.y - c.y));
         if !(c.x.is_finite() && c.y.is_finite() && ra.is_finite() && rb.is_finite()) {
-            return Some(Trace::Unread);
+            return Trace::Unread;
         }
         let (a, b) = if arc.ccw { (from, to) } else { (to, from) };
         let a0 = (a.y - c.y).atan2(a.x - c.x);
@@ -77,9 +82,9 @@ impl Trace {
         // The chord law's own degeneracies (`cl::arc_chords`): it cuts
         // these as the straight chord, so that is what is read.
         if ra.max(rb) <= f64::EPSILON || !sweep.is_finite() || sweep <= 0.0 {
-            return Some(Trace::Seg(from, to));
+            return Trace::Seg(from, to);
         }
-        Some(Trace::Arc(XyArc {
+        Trace::Arc(XyArc {
             c,
             r_lo: (ra.min(rb) - ARC_PAD).max(0.0),
             r_hi: ra.max(rb) + ARC_PAD,
@@ -87,7 +92,7 @@ impl Trace {
             b,
             a0,
             sweep,
-        }))
+        })
     }
 
     /// Whether the trace comes nearer than `floor` to the edge `p`-`q`.
@@ -98,6 +103,10 @@ impl Trace {
             Trace::Seg(a, b) => dist2_segs(*a, *b, p, q) < floor * floor,
             // A NaN distance reads near: the law fails closed.
             Trace::Arc(arc) => arc.dist_seg(p, q).ge(&floor).not(),
+            Trace::Poly(pts, pad) => {
+                let f = floor + pad;
+                pts.windows(2).any(|w| dist2_segs(w[0], w[1], p, q).ge(&(f * f)).not())
+            }
             Trace::Unread => true,
         }
     }
@@ -108,6 +117,7 @@ impl Trace {
         match self {
             Trace::Seg(a, b) => proper_cross(*a, *b, p, q),
             Trace::Arc(arc) => arc.crosses(p, q),
+            Trace::Poly(pts, _) => pts.windows(2).any(|w| proper_cross(w[0], w[1], p, q)),
             Trace::Unread => false,
         }
     }
@@ -132,11 +142,13 @@ impl XyArc {
         // Where the segment crosses the lines through the centre and each
         // arc end: between two such breaks it is wholly in or out of the
         // wedge.
-        let mut ts = vec![0.0, 1.0];
-        for e in [self.a, self.b] {
+        // A fixed buffer, no allocation per edge: an unused break repeats
+        // 1.0, a zero-length piece that is never in the wedge alone.
+        let mut ts = [0.0, 1.0, 1.0, 1.0];
+        for (k, e) in [self.a, self.b].into_iter().enumerate() {
             let (o0, o1) = (orient(self.c, e, p), orient(self.c, e, q));
             if (o0 > 0.0) != (o1 > 0.0) && o0 != o1 {
-                ts.push((o0 / (o0 - o1)).clamp(0.0, 1.0));
+                ts[2 + k] = (o0 / (o0 - o1)).clamp(0.0, 1.0);
             }
         }
         ts.sort_by(f64::total_cmp);
@@ -219,7 +231,7 @@ mod tests {
         for (s0, s1, ccw) in [(0.3, 1.4, true), (2.0, 0.1, false), (-1.0, 3.5, true), (4.0, 0.5, true)] {
             let at = |a: f64| Point3::new(c.x + r * f64::cos(a), c.y + r * f64::sin(a), 0.0);
             let m = Move::new(MoveKind::Feed, at(s0), at(s1), Some(100.0)).with_arc(c, ccw);
-            let Some(Trace::Arc(arc)) = Trace::of(&m) else { panic!("an xy arc") };
+            let Trace::Arc(arc) = Trace::of(&m) else { panic!("an xy arc") };
             let pts: Vec<Point2> = m.chords(1e-5).into_iter().flat_map(|(a, b)| [a, b]).collect();
             for _ in 0..200 {
                 let p = Point2::new(c.x - 25.0 + 50.0 * rnd(), c.y - 25.0 + 50.0 * rnd());

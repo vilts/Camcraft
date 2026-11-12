@@ -98,7 +98,10 @@ pub(super) fn tangency(
         // deliberate overcut) - b2's own allowance. A positive leave
         // never licenses cutting into the finished wall: the old
         // `r - leave` let a 0.5 mm leave sink 0.5 mm unconvicted.
-        let floor = (r - (-cx.stock_to_leave).max(0.0) - cx.gouge_tol).max(0.0);
+        // #864: a model coarser than the importer promises gives its
+        // excess chord error back out of the tolerance - the true wall
+        // of a convex feature stands that far outside these loops.
+        let floor = (r - (-cx.stock_to_leave).max(0.0) - cx.tightened(cx.gouge_tol)).max(0.0);
         let mut loops = cx.region.loops().iter().chain(section.iter().flat_map(|s| s.loops().iter()));
         let gouged = loops.any(|l| {
             let pts = l.points();
@@ -107,12 +110,13 @@ pub(super) fn tangency(
                 chords.iter().any(|&(a, b)| dist2_segs(a, b, p, q) < floor * floor)
             })
         });
-        // The whole-move wall reading (#43, arcs since #905): every
-        // straight move and XY arc along its whole trace, so a wall
-        // corner between two of an arc's joints is measured, not missed.
+        // The whole-move wall reading (#43, XY arcs since #905, XZ / YZ
+        // arcs since #946): every move along its whole XY trace, so a
+        // wall corner between two of an arc's joints is measured, not
+        // missed.
         let walled = !gouged
             && cx.mode == Mode::Boundary
-            && Trace::of(m).is_some_and(|t| wall_gouge(&t, cx.region, section.as_ref(), cx.model.is_some(), floor));
+            && wall_gouge(&Trace::of(m), cx.region, section.as_ref(), cx.model.is_some(), floor);
         if gouged || walled {
             warns.push(Warning::Gouge { at: i });
         }
@@ -124,8 +128,9 @@ pub(super) fn tangency(
 /// feature the tolerance could care about.
 const WALL_PROBE: f64 = 0.05;
 
-/// The Boundary-mode whole-move reading (issue #43): a straight move, or
-/// an XY arc on its true circle (#905, [`super::arc_wall`]), measured
+/// The Boundary-mode whole-move reading (issue #43): a straight move, an
+/// XY arc on its true circle (#905, [`super::arc_wall`]), or an XZ / YZ
+/// arc on its true XY footprint (#946, [`super::arc_wall_plane`]), measured
 /// along its whole length against the region's WALLS only.
 /// The law points cannot see a G1 chorded across a convex corner of the
 /// wall with both ends `r` off it; a whole-chord reading of EVERY edge
@@ -187,9 +192,9 @@ fn edges(r: &crate::geo2d::Region) -> impl Iterator<Item = (Point2, Point2)> + '
 /// block corner sink 1.46 mm into it unconvicted. `Mode::Boundary` keeps the
 /// law points as zero-length chords: a Face's rows run across the
 /// face's open edge by design, which a whole-chord reading of every
-/// edge would convict; its straight moves and XY arcs answer to the
-/// WALL edges along their whole length instead ([`wall_gouge`], issues
-/// #43 and #905).
+/// edge would convict; its straight moves and arcs answer to the WALL
+/// edges along their whole length instead ([`wall_gouge`], issues #43,
+/// #905 and #946).
 ///
 /// The whole-chord reading covers only the stretch of the move that is
 /// below `wall_top` (the stock top): above it the region's walls are
@@ -203,8 +208,9 @@ fn edges(r: &crate::geo2d::Region) -> impl Iterator<Item = (Point2, Point2)> + '
 /// `tol / 4`), so the fine set alone can step over a sharp wall vertex
 /// an old joint stood on. Points on the arc never read closer than the
 /// truth, so the union adds no false gouge and keeps every old one. A
-/// joint reading is still a sampling: in Boundary mode an XY arc also
-/// answers on its true circle to the walls ([`wall_gouge`], #905).
+/// joint reading is still a sampling: in Boundary mode an arc also
+/// answers on its true XY trace to the walls ([`wall_gouge`], #905 for
+/// XY, #946 for XZ / YZ).
 fn segments(m: &Move, mode: Mode, chord_tol: f64, wall_top: f64) -> Vec<(Point2, Point2)> {
     let fine = chord_tol * ARC_READ_SHARE;
     let points = || {
@@ -276,7 +282,8 @@ pub(super) fn solid(
     if let Some(f) = cx.model {
         let law = super::SolidLaw {
             step: SOLID_STEP,
-            allow: cx.gouge_tol + (-cx.stock_to_leave).max(0.0),
+            // #864: tightened by a coarse model's excess, as (b) is.
+            allow: cx.tightened(cx.gouge_tol) + (-cx.stock_to_leave).max(0.0),
             hole_walls: false,
         };
         for w in super::solid_hits(path, f, cutter, &law) {

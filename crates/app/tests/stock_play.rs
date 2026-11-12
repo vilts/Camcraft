@@ -6,7 +6,7 @@
 //! name. Provenance: our own fixtures over the M7.1 field engine;
 //! nothing from vendor binaries.
 //!
-//! Gate map (M4.4): covers app::stock_play, app::stock_play_worker, app::stock_view (display_parts, display_target), app::sim seam.
+//! Gate map (M4.4): covers app::stock_play, app::stock_play_worker, app::stock_view (display_parts, display_target), sim::sim seam.
 
 use std::time::{Duration, Instant};
 

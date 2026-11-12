@@ -175,6 +175,7 @@ fn stepped() -> (ToolGeom, HolderStack) {
     let stack = HolderStack {
         bands: vec![HolderBand { above: 14.0, len: 20.0, r: 6.0 }, HolderBand { above: 34.0, len: 15.0, r: 20.0 }],
         top: 49.0,
+        neck: Vec::new(),
     };
     (g, stack)
 }
@@ -208,6 +209,7 @@ fn plunge_beside_island(gap: f64, tip_z: f64, g: &ToolGeom, cutter: Option<Cutte
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(&t, &cx).into_iter().filter(|w| matches!(w, Warning::ShankHit { .. } | Warning::SweepHit { .. })).collect()
 }
@@ -253,10 +255,10 @@ fn a_tool_with_no_body_reads_unchanged() {
 #[test]
 fn a_stack_that_is_not_this_tools_is_refused_and_the_cylinder_stands() {
     let (g, stack) = stepped();
-    let wider = HolderStack { bands: vec![HolderBand { above: 14.0, len: 35.0, r: 25.0 }], top: 49.0 };
-    let shorter = HolderStack { bands: vec![stack.bands[0]], top: 34.0 };
-    let in_flutes = HolderStack { bands: vec![HolderBand { above: 2.0, len: 47.0, r: 3.0 }], top: 49.0 };
-    let nan = HolderStack { bands: vec![HolderBand { above: 14.0, len: f64::NAN, r: 6.0 }], top: 49.0 };
+    let wider = HolderStack { bands: vec![HolderBand { above: 14.0, len: 35.0, r: 25.0 }], top: 49.0, neck: Vec::new() };
+    let shorter = HolderStack { bands: vec![stack.bands[0]], top: 34.0, neck: Vec::new() };
+    let in_flutes = HolderStack { bands: vec![HolderBand { above: 2.0, len: 47.0, r: 3.0 }], top: 49.0, neck: Vec::new() };
+    let nan = HolderStack { bands: vec![HolderBand { above: 14.0, len: f64::NAN, r: 6.0 }], top: 49.0, neck: Vec::new() };
     for s in [wider, shorter, in_flutes, nan] {
         assert_eq!(BodyBands::of(&g, &s), None, "{s:?}");
         assert_eq!(Cutter::flat(&g).with_body(&g, &s).holder_bands(), vec![(14.0, 20.0, 35.0)]);
@@ -332,6 +334,16 @@ fn a_law_that_keeps_the_cylinder_names_it() {
     let named = body_judged::name_enclosure(refusal(), &judged, Some(&profile)).to_string();
     let words = format!("judged here by the cylinder enclosing it, Ø{:.3} mm", judged.holder_d);
     assert!(named.contains(&words), "{named}");
+    // #871: a ghost-carrying refusal is named alike, its ghost kept.
+    let built = camcraft_app::cl::Toolpath::new(vec![camcraft_app::cl::Move::new(
+        camcraft_app::cl::MoveKind::Feed,
+        camcraft_app::geometry::Point3::new(0.0, 0.0, 0.0),
+        camcraft_app::geometry::Point3::new(5.0, 0.0, 0.0),
+        Some(500.0),
+    )]);
+    let ghosted = body_judged::name_enclosure(refusal().with_ghost(&built), &judged, Some(&profile));
+    assert!(ghosted.ghost().is_some(), "the ghost rides the rewrite");
+    assert_eq!(ghosted.to_string(), named, "the same words as the plain refusal");
     // No body, or a refusal about something else: unchanged.
     assert_eq!(body_judged::name_enclosure(refusal(), &t, None).to_string(), refusal().to_string());
     let other = || GenError::Invalid("the hole is deeper than the flute".into());

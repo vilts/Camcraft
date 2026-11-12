@@ -11,8 +11,9 @@
 
 use egui::{RichText, Ui};
 
-use camcraft_app::units::Unit;
+use camcraft_app::units::{Unit, len};
 use camcraft_app::vise::{self, ViseStyle};
+use camcraft_app::vise_fit::VisePreview;
 
 use crate::state::{CommandKind, ViseDraft};
 
@@ -22,6 +23,8 @@ use super::fields::{num, num_plain};
 pub(crate) enum ViseAct {
     Close,
     Place(Box<CommandKind>),
+    /// Close the dialog and open the Stock page.
+    OpenStock,
 }
 
 /// The Place button's command for this draft.
@@ -30,10 +33,55 @@ pub(crate) fn place_command(d: &ViseDraft) -> CommandKind {
     CommandKind::InsertBuiltinVise {
         setup: (!d.setup.is_empty()).then(|| d.setup.clone()),
         params: d.params.clone(),
-        fit_stock: d.fit_stock,
+        fit_stock: fitting(d),
         pos: d.pos,
         yaw_deg: d.yaw_deg,
     }
+}
+
+/// Is Fit in force: ticked, and the setup has a stock body to fit to.
+fn fitting(d: &ViseDraft) -> bool {
+    d.fit_stock && !matches!(d.fit, Some(VisePreview::NoStock))
+}
+
+/// The plain lines under the Fit checkbox: what the vise grips, and where
+/// it lands with a stock (all from `vise_fit::preview`, the command's own
+/// derivation).
+fn fit_lines(ui: &mut Ui, u: Unit, d: &ViseDraft) -> Option<ViseAct> {
+    let mut act = None;
+    match &d.fit {
+        Some(VisePreview::NoStock) => {
+            ui.label(
+                "This setup has no stock yet. A vise grips the stock - the block the part is cut from -                  not the imported model. Set the stock on the Stock page to fit the vise to it,                  or place the vise by position below.",
+            );
+            if ui.button("Open the Stock page").clicked() {
+                act = Some(ViseAct::OpenStock);
+            }
+        }
+        Some(VisePreview::Fits { opening, at, centred }) if d.fit_stock => {
+            ui.label(RichText::new("The vise grips the stock (set on the Stock page), not the imported model.").small());
+            let l = |v: f64| format!("{} {}", len(v, u, 3), u.suffix());
+            let (x, y, z) = (l(at.x), l(at.y), l(at.z));
+            if *centred {
+                ui.label(format!(
+                    "Centred on the stock at X {x}, Y {y}; the jaws close on its {} Y width; the stock sits on the jaw floor (Z {z}).",
+                    l(*opening)
+                ));
+            } else {
+                ui.label(format!(
+                    "Opens to {} on the stock's Y width; the fixed jaw sits against the stock's +Y side (Y {y}), centred in X ({x}); the stock sits on the jaw floor (Z {z}).",
+                    l(*opening)
+                ));
+            }
+        }
+        Some(VisePreview::Refused(why)) if d.fit_stock => {
+            ui.colored_label(ui.visuals().error_fg_color, format!("This vise cannot be fitted to the stock: {why}"));
+        }
+        _ => {
+            ui.label(RichText::new("The vise grips the stock (set on the Stock page), not the imported model.").small());
+        }
+    }
+    act
 }
 
 pub(crate) fn body(ui: &mut Ui, u: Unit, d: &mut ViseDraft) -> Option<ViseAct> {
@@ -88,8 +136,17 @@ pub(crate) fn body(ui: &mut Ui, u: Unit, d: &mut ViseDraft) -> Option<ViseAct> {
     });
     let centred = matches!(d.params.style, ViseStyle::SelfCentering(_));
     let fit = if centred { "Fit to the stock (centred, jaws closed on it)" } else { "Fit to the stock (jaws open to it)" };
-    ui.checkbox(&mut d.fit_stock, fit);
-    if !d.fit_stock {
+    if matches!(d.fit, Some(VisePreview::NoStock)) {
+        let mut off = false;
+        ui.add_enabled(false, egui::Checkbox::new(&mut off, fit))
+            .on_disabled_hover_text("Fit to the stock needs a stock: this setup has none yet.");
+    } else {
+        ui.checkbox(&mut d.fit_stock, fit);
+    }
+    if let Some(a) = fit_lines(ui, u, d) {
+        act = Some(a);
+    }
+    if !fitting(d) {
         egui::Grid::new("builtin-vise-place").num_columns(2).show(ui, |ui| {
             ui.label("Jaw opening");
             num(ui, u, &mut d.params.opening);
@@ -106,7 +163,7 @@ pub(crate) fn body(ui: &mut Ui, u: Unit, d: &mut ViseDraft) -> Option<ViseAct> {
         });
     }
     if let Some(err) = &d.error {
-        ui.colored_label(ui.visuals().error_fg_color, err);
+        super::error_text::error_text(ui, ui.visuals().error_fg_color, err);
     }
     ui.add_space(8.0);
     ui.horizontal(|ui| {

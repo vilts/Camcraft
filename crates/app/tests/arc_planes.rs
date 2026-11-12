@@ -13,7 +13,7 @@
 //! Regenerate after an intentional change:
 //! `WRITE_GOLDEN=1 cargo test -p camcraft-app --test arc_planes`
 //!
-//! Gate map (M4.4): covers app::cl, app::post, app::project.
+//! Gate map (M4.4): covers cl::cl, post::post, app::project.
 
 mod common;
 

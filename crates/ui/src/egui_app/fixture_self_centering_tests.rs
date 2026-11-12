@@ -100,12 +100,15 @@ fn a_stock_outside_the_clamping_range_is_named_in_the_dialog() {
     let mut h = opened(with_stock(40.0));
     h.get_by_label("52 mm self-centering").click();
     h.run();
+    h.run();
+    // #1105: said up front, before Place (once), and again after it.
+    assert_eq!(h.query_all_by_label_contains("wider than its clamping range").count(), 1, "said before Place");
     h.get_by_label("Place").click();
     h.run();
     h.run();
     let Some(FixtureLibDialog::Vise(d)) = &h.state().fixture_lib else { panic!("stays open") };
     assert!(d.error.as_deref().is_some_and(|e| e.contains("wider than its clamping range")), "{:?}", d.error);
-    assert!(h.query_by_label_contains("wider than its clamping range").is_some(), "said in the dialog");
+    assert!(h.query_all_by_label_contains("wider than its clamping range").count() >= 1, "said in the dialog");
 }
 
 #[test]

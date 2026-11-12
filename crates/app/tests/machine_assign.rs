@@ -12,7 +12,7 @@
 //! ITS machine through `SetSetupMachine::from_catalogue`, the document's
 //! untouched.
 //!
-//! Gate map (M4.4): covers app::commands::load_machine, app::commands::setup_mount, app::machine::library, app::machine::validate.
+//! Gate map (M4.4): covers app::commands::load_machine, app::commands::setup_mount, app::machine, post::machine::library, app::machine, post::machine::validate.
 
 use camcraft_app::commands::{CommandError, CreateSetup, History, LoadMachine, SetSetupMachine};
 use camcraft_app::machine::library::{self, MachineSource};

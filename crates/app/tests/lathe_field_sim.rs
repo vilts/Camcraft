@@ -19,7 +19,7 @@
 //! Provenance: our own engines and the M5.2 meridian law; nothing from
 //! vendor binaries.
 //!
-//! Gate map (M4.4): covers app::stock_sim (plan_program's lathe clause,
+//! Gate map (M4.4): covers app::stock_sim, sim::stock_sim (plan_program's lathe clause,
 //! stock_sim::lathe), app::stock_view (field_view_with's lathe arm),
 //! app::operation (source_facets).
 //! Lane shape (M4.4): all tests here run in seconds in debug.

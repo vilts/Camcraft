@@ -148,6 +148,34 @@ pub(super) fn turn_path(path: Toolpath, a: f64) -> Result<Toolpath, GenError> {
     Ok(out)
 }
 
+/// A refusal raised in the turned frame, carried back to the part's
+/// frame through the same turn `-a` the path takes (#1017): its spot and
+/// its ghost move with the path, so the viewport marks the cause where
+/// the part is. A turn of nothing leaves the refusal untouched; a ghost
+/// that cannot turn is dropped, never drawn in the wrong frame.
+pub(super) fn turn_refusal(e: GenError, a: f64) -> GenError {
+    if a == 0.0 {
+        return e;
+    }
+    let (s, c) = exact_sin_cos(a);
+    let q = crate::cl::lattice;
+    e.map_location(|p| Point3::new(q(c * p.x - s * p.y), q(s * p.x + c * p.y), p.z))
+        .map_ghost(|t| turn_path(t.clone(), a).unwrap_or_default())
+}
+
+/// Face laid in the turned frame and turned back to the part's: the path
+/// by [`turn_path`], a refusal by [`turn_refusal`].
+pub(super) fn face_over_back(
+    laid: &Region,
+    p: &machining2d::FaceParams,
+    lead: f64,
+    solid: Option<&Region>,
+    turn: f64,
+) -> Result<Toolpath, GenError> {
+    let path = machining2d::face_over(laid, p, lead, solid).map_err(|e| turn_refusal(e, -turn))?;
+    turn_path(path, -turn)
+}
+
 /// Face's honesty check under area controls: the facing law clears the
 /// bounding band of its region (rows across the full Y span, an overrun
 /// past each X end), so that band - in the turned frame `laid` lives in -
@@ -241,5 +269,87 @@ mod law {
         }
         let r = turn_region(&square(3.0), std::f64::consts::FRAC_PI_2).expect("turn");
         assert!((r.area() - square(3.0).area()).abs() < 1e-9);
+    }
+
+    /// A 40 x 40 plate with two 6 x 6 holes at X 9..15, one over the other
+    /// along Y with a 6 mm strip (Y -3..3) between them - in the part's
+    /// own frame - and a facing law whose 10 mm tool cannot cut it.
+    fn holed_plate() -> Region {
+        let rect = |x0: f64, y0: f64, x1: f64, y1: f64, ccw: bool| {
+            let mut v =
+                vec![Point2::new(x0, y0), Point2::new(x1, y0), Point2::new(x1, y1), Point2::new(x0, y1)];
+            if !ccw {
+                v.reverse();
+            }
+            Loop::new(v).expect("loop")
+        };
+        Region::new(vec![
+            rect(-20.0, -20.0, 20.0, 20.0, true),
+            rect(9.0, -9.0, 15.0, -3.0, false),
+            rect(9.0, 3.0, 15.0, 9.0, false),
+        ])
+        .expect("region")
+    }
+
+    fn facing() -> machining2d::FaceParams {
+        machining2d::FaceParams {
+            tool_diameter: 10.0,
+            stepover: 6.0,
+            clearance_z: 40.0,
+            cut_z: 10.0,
+            top_z: None,
+            stepdown: None,
+            feed: 1200.0,
+            plunge_feed: 300.0,
+            climb: true,
+            blend_turns: false,
+            holes: machining2d::FaceHoles::Lift,
+        }
+    }
+
+    /// #1017: the refusal comes out of the turned frame; its spot must
+    /// land where the cause stands on the part.
+    #[test]
+    fn a_refusal_from_the_turned_frame_names_its_spot_where_the_part_is() {
+        let world = holed_plate();
+        let in_strip = |p: Point3| (9.0..=15.0).contains(&p.x) && (-3.0..=3.0).contains(&p.y);
+        let mut refused = 0;
+        for turn in [std::f64::consts::FRAC_PI_2, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2, 0.7] {
+            let laid = turn_region(&world, turn).expect("laid");
+            // The rows run along the laid X: only a turned plate puts
+            // the strip across them, so the refusal is real.
+            let Err(e) = machining2d::face_over(&laid, &facing(), 0.0, None) else { continue };
+            refused += 1;
+            let raw = e.location().expect("the strip names its spot");
+            let back = face_over_back(&laid, &facing(), 0.0, None, turn).expect_err("refused");
+            let at = back.location().expect("spot carried back");
+            assert!(in_strip(at), "turn {turn}: {at:?} (laid frame said {raw:?})");
+            assert!((at.z - 10.0).abs() < 1e-9, "{at:?}");
+            assert_eq!(back.to_string(), e.to_string(), "the sentence is unchanged");
+        }
+        assert!(refused >= 2, "the quarter turns put the strip across the rows ({refused})");
+    }
+
+    #[test]
+    fn with_no_turn_the_spot_is_unchanged() {
+        // The strip across the rows as they are: holes side by side along X.
+        let laid = turn_region(&holed_plate(), std::f64::consts::FRAC_PI_2).expect("laid");
+        let e = machining2d::face_over(&laid, &facing(), 0.0, None).expect_err("refused");
+        let same = face_over_back(&laid, &facing(), 0.0, None, 0.0).expect_err("refused");
+        assert_eq!(same.location(), e.location());
+        assert!(same.location().is_some());
+    }
+
+    #[test]
+    fn a_ghost_turns_back_with_the_spot_and_a_plain_refusal_passes() {
+        let mut b = crate::cl::PathBuilder::new(Point3::new(1.0, 2.0, 5.0));
+        b.push(crate::cl::MoveKind::Feed, Point3::new(4.0, 2.0, 5.0), Some(100.0));
+        let e = GenError::invalid_at("x", Point3::new(3.0, 0.0, 5.0)).with_ghost(&b.finish());
+        let back = turn_refusal(e, -std::f64::consts::FRAC_PI_2);
+        let at = back.location().expect("spot");
+        assert!(at.x.abs() < 1e-6 && (at.y + 3.0).abs() < 1e-6, "{at:?}");
+        assert!(back.ghost().is_some(), "the ghost rides along");
+        let plain = GenError::Invalid("p".into());
+        assert_eq!(turn_refusal(plain, 1.0), GenError::Invalid("p".into()));
     }
 }

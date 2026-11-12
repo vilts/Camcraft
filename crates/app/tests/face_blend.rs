@@ -4,7 +4,7 @@
 //! where the key is written only when ON, so every legacy save stays
 //! byte-identical.
 //!
-//! Gate map (M11.1): covers app::commands, app::machining2d, app::operation, app::posting, app::project.
+//! Gate map (M11.1): covers app::commands, motion::machining2d, app::operation, app::posting, app::project.
 
 use flecs_ecs::prelude::World;
 

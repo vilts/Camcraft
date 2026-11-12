@@ -99,6 +99,10 @@ pub fn probe_records() -> Vec<Record> {
         mv(Feed, [35.0, 10.0, -1.0], Some(600.0)),
         mv(Rapid, [35.0, 10.0, 5.0], None),
     ];
+    // The cycle anchors on its first cut, as the generator lays a hole
+    // out (the agreement law): the rapid down to R before it is the
+    // positioning move, posted as motion (#994).
+    r.push(mv(Rapid, [70.0, 20.0, 2.0], None));
     let first = r.iter().filter(|x| matches!(x, Record::Move(_))).count();
     r.push(Record::Cycle(CycleRec {
         kind: CycleKind::Drill,
@@ -112,7 +116,6 @@ pub fn probe_records() -> Vec<Record> {
         first_move: first,
         feed: Some(150.0),
     }));
-    r.push(mv(Rapid, [70.0, 20.0, 2.0], None));
     r.push(mv(Plunge, [70.0, 20.0, -5.0], Some(150.0)));
     r.push(mv(Rapid, [70.0, 20.0, 2.0], None));
     r.push(Record::Section { begin: false });

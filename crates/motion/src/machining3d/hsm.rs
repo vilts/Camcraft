@@ -133,10 +133,12 @@ pub(super) fn plan_level(
         let passes = plan_passes(center, step, p.climb, PocketStrategy::OffsetRings)?;
         return Ok(LevelPlan::rings(passes, p.helix_radius));
     }
+    let what = match seam {
+        Some(_) => format!("the developed level at radius {z:.3}"),
+        None => format!("the level at Z {z:.3}"),
+    };
     if seam.is_some_and(|sm| sm.crossed_by(center)) {
-        b.note(format!("{SEAM_RINGS} - Offset rings cut the developed level at radius {z:.3} instead"));
-        let passes = plan_passes(center, step, p.climb, PocketStrategy::OffsetRings)?;
-        return Ok(LevelPlan::rings(passes, p.helix_radius));
+        return rings_named(b, center, p, SEAM_RINGS, &what);
     }
     // One level: the planner's budget counts its moves once.
     let pp = PocketParams {
@@ -158,33 +160,30 @@ pub(super) fn plan_level(
         blend_turns: false,
         links: p.links,
     };
-    let what = match seam {
-        Some(_) => format!("the developed level at radius {z:.3}"),
-        None => format!("the level at Z {z:.3}"),
-    };
     if seam.is_some()
         && let Some(why) = narrowed_helix(center, &pp)
     {
-        b.note(format!("adaptive: {why} - Offset rings cut {what} instead"));
-        let passes = plan_passes(center, step, p.climb, PocketStrategy::OffsetRings)?;
-        return Ok(LevelPlan::rings(passes, p.helix_radius));
+        return rings_named(b, center, p, &format!("adaptive: {why}"), &what);
     }
     // On the wrap a hard planner refusal (no room for an entry, ...)
     // costs the level, not the op: rings cut it, said by name - the
     // planar ladder keeps the refusal it always had.
     let (passes, notes, s, room, joins) = match (adaptive_passes(center, &pp, &what, false), seam) {
         (Ok(planned), _) => planned,
-        (Err(e), Some(_)) => {
-            b.note(format!("adaptive: the HSM planner refused ({e}) - Offset rings cut {what} instead"));
-            let passes = plan_passes(center, step, p.climb, PocketStrategy::OffsetRings)?;
-            return Ok(LevelPlan::rings(passes, p.helix_radius));
-        }
+        (Err(e), Some(_)) => return rings_named(b, center, p, &format!("adaptive: the HSM planner refused ({e})"), &what),
         (Err(e), None) => return Err(e),
     };
+    // Issue #983: the planner's own fallback names the level; were a
+    // path ever to hand back rings without that note, the level is
+    // named here - a strategy switch is never silent.
+    let fell = s != PocketStrategy::Adaptive;
+    if fell && !notes.iter().any(|n| n.ends_with(&rings_tag(&what))) {
+        b.note(format!("adaptive: the HSM plan was not posted{}", rings_tag(&what)));
+    }
     for n in notes {
         b.note(n);
     }
-    if s != PocketStrategy::Adaptive {
+    if fell {
         return Ok(LevelPlan::rings(passes, p.helix_radius));
     }
     let helix_r = room.as_ref().map_or(p.helix_radius, |e| e.helix_r);
@@ -219,6 +218,21 @@ pub(super) fn plan_level(
     Ok(LevelPlan { passes, joins, arcs: Some(runs), helix_r, hsm: true })
 }
 
+/// The tail every ring-cut level's note ends with (issue #983): the
+/// level by name - its Z, or on the wrap its developed radius.
+pub(super) fn rings_tag(what: &str) -> String {
+    format!(" - Offset rings cut {what} instead")
+}
+
+/// The level cut by Offset rings at the load step instead of the HSM
+/// plan, said by name with `why` (issue #983: every fallback arm of
+/// [`plan_level`] goes through here, so none is silent).
+fn rings_named(b: &mut PathBuilder, center: &Region, p: &Pocket3DParams, why: &str, what: &str) -> Result<LevelPlan, GenError> {
+    b.note(format!("{why}{}", rings_tag(what)));
+    let passes = plan_passes(center, p.tiling_step(), p.climb, PocketStrategy::OffsetRings)?;
+    Ok(LevelPlan::rings(passes, p.helix_radius))
+}
+
 /// Said (with the radii) per developed level refused for a narrowed helix.
 pub const NARROW_HELIX: &str = "the developed level is too narrow for the helix entry";
 
@@ -251,6 +265,10 @@ fn narrowed_helix(center: &Region, pp: &PocketParams) -> Option<String> {
 pub(super) fn microlift(b: &mut PathBuilder, ret: &Return, z: f64, hop_z: f64, feed: f64) {
     microlift_link(b, ret, z, hop_z, feed);
 }
+
+#[cfg(test)]
+#[path = "hsm_fallback_tests.rs"]
+mod fallback_tests;
 
 #[cfg(test)]
 mod tests {

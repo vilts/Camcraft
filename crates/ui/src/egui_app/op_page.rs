@@ -154,7 +154,7 @@ fn header_rows(ui: &mut Ui, state: &mut State, target: &str, live: Option<&Opera
     } else {
         let mut t_idx = tools.iter().position(|t| *t == state.op_ui.tool).unwrap_or(0);
         let before = t_idx;
-        combo_owned(ui, "op_tool", &mut t_idx, &tools);
+        ui.horizontal(|ui| { super::tool_icons::named_glyph(ui, &state.world, &state.op_ui.tool); combo_owned(ui, "op_tool", &mut t_idx, &tools); });
         if t_idx != before
             && let Some(t) = tools.get(t_idx)
         {
@@ -340,14 +340,14 @@ fn actions(ui: &mut Ui, state: &mut State, target: &str, live: Option<&Operation
         // frames it (view state, like every camera move - no command).
         match state.refusal_focus() {
             Some(p) => {
-                let text = egui::RichText::new(msg).color(inks.error).underline();
-                let r = ui.add(egui::Label::new(text).sense(egui::Sense::click()).wrap());
+                let text = egui::RichText::new(&msg).color(inks.error).underline();
+                let r = super::error_text::error_rich(ui, text, &msg, true);
                 if r.on_hover_text(REFUSAL_LINK_HINT).clicked() {
                     crate::actions::frame_at(state, p);
                 }
             }
             None => {
-                ui.colored_label(inks.error, msg);
+                super::error_text::error_text(ui, inks.error, &msg);
             }
         }
     } else if !unchanged && let Some(why) = &apply_hint {

@@ -59,7 +59,7 @@ pub fn set_transform(world: &World, entity: &Entity, mut loc: Location) {
     match normalize_quat(loc.rot) {
         Some(q) => loc.rot = q,
         None => {
-            eprintln!(
+            tracing::warn!(
                 "model: rotation {:?} is not a usable quaternion; using identity",
                 loc.rot
             );

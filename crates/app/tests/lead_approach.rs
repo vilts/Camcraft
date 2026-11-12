@@ -12,7 +12,7 @@
 //!
 //! Gate map (M11.3): covers app::operation (params, stamp, sane, links,
 //! generate), app::project (approach DTO, tool DTO), app::commands,
-//! app::verify, app::posting.
+//! sim::verify, app::posting.
 
 use camcraft_app::cl::{MoveKind, Toolpath};
 use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, ImportModel, SetStock};

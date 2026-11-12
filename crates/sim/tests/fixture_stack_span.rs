@@ -203,7 +203,7 @@ fn an_upright_rapid_reads_a_modelled_holder_bodys_bands() {
     let slim = ToolGeom { holder_radius: 5.0, ..tool() };
     let path = rapid(p(0.0, 0.0, 0.0), p(0.0, 0.0, 50.0));
     assert_eq!(rapids_vs_fixtures(&path, &slim, &[bolt()]), Vec::new(), "the r5 cylinder clears the bolt");
-    let body = HolderStack { bands: vec![HolderBand { above: 50.0, len: 40.0, r: 20.0 }], top: 90.0 };
+    let body = HolderStack { bands: vec![HolderBand { above: 50.0, len: 40.0, r: 20.0 }], top: 90.0, neck: Vec::new() };
     assert_eq!(
         rapids_vs_fixtures_held(&path, &slim, &body, &[bolt()], None),
         hit(FixturePart::Holder),

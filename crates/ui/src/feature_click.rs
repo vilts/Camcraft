@@ -60,7 +60,11 @@ impl Ask {
 pub(crate) fn ask(state: &State, mods: Mods) -> Ask {
     let chain = if mods.alt {
         EdgeUnit::Segment
-    } else if state.boundary_pick.is_some() || crate::axis_pick::collecting(state) {
+    } else if state.boundary_pick.is_some()
+        || crate::axis_pick::collecting(state)
+        || crate::wcs_pick::collecting(state)
+    {
+        // #701: a role pick takes one run per edge click too, like a boundary.
         EdgeUnit::Run
     } else {
         EdgeUnit::Chain
@@ -90,6 +94,10 @@ pub(crate) fn ask(state: &State, mods: Mods) -> Ask {
             AxisBy::Edge => PickKinds::EDGES,
             AxisBy::Points => PickKinds::POINTS,
         }
+    } else if crate::wcs_pick::collecting(state) {
+        // #701: the role draft takes faces, edges, corners and walls alike -
+        // the toolbar's pick mode stays the user's own.
+        PickKinds { faces: true, edges: true, points: true, centres: false }
     } else {
         mode
     };
@@ -99,8 +107,8 @@ pub(crate) fn ask(state: &State, mods: Mods) -> Ask {
 /// The pick query through a logical-px viewport point: the camera's ray
 /// and the pixel radius as world mm (ortho: one scale everywhere;
 /// perspective: per unit of depth, so it holds at the silhouette too).
-/// Never "pick through" - that mode is not offered (see the decision
-/// record), so `through` stays off.
+/// `through` follows the viewport's pick-through toggle (#692), off by
+/// default: only then can a hidden edge or point be picked.
 pub(crate) fn query_at(state: &State, p: [f32; 2], ask: Ask) -> Option<PickQuery> {
     let ([_, y0], [_, y1]) = state.viewport_rect;
     let h = f64::from(y1 - y0);
@@ -114,7 +122,7 @@ pub(crate) fn query_at(state: &State, p: [f32; 2], ask: Ask) -> Option<PickQuery
         }
     };
     let ray = PickRay { origin, dir, projection };
-    Some(PickQuery { ray, radius, radius_per_depth, kinds: ask.kinds, through: false })
+    Some(PickQuery { ray, radius, radius_per_depth, kinds: ask.kinds, through: state.pick_through })
 }
 
 /// The one pick under a viewport point, and the selection it stands for.
@@ -139,9 +147,10 @@ pub(crate) fn hover(state: &mut State, p: [f32; 2]) {
 
 /// A Face/Edge/Vertex click: resolve it by the one rule, then hand it to
 /// whoever collects - in main's order: a fixture locate draft, the
-/// three-points plane, an axis or plane row, the stray-click hint, a
-/// boundary, or the open operation's geometry (edges through the edge
-/// pick's Ctrl/Shift law, faces and points straight into the list).
+/// three-points plane, a #701 WCS role draft, an axis or plane row, the
+/// stray-click hint, a boundary, or the open operation's geometry (edges
+/// through the edge pick's Ctrl/Shift law, faces and points straight into
+/// the list).
 pub(crate) fn click(state: &mut State, p: [f32; 2], mods: Mods) {
     let ask = ask(state, mods);
     let Some((found, sel)) = feature_at(state, p, ask) else {
@@ -162,6 +171,10 @@ pub(crate) fn click(state: &mut State, p: [f32; 2], mods: Mods) {
     }
     if state.points_pick.is_some() {
         crate::points_pick::take(state, pick); // #555: refuses a face or an edge by name
+        return;
+    }
+    if crate::wcs_pick::collecting(state) {
+        crate::wcs_pick::take(state, pick); // #701: the Setups page's role draft
         return;
     }
     if crate::axis_pick::collecting(state) {

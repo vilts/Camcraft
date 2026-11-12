@@ -5,9 +5,9 @@
 //! commanded, a stale stamp through a tilt edit, a lean posted to a
 //! machine that cannot hold it) must refuse by name.
 //!
-//! Gate map (M4.4): covers app::cl, app::commands, app::geometry, app::machine,
-//! app::machining2d, app::model, app::operation, app::posting, app::project,
-//! app::schema, app::stock, app::tools, app::verify, app::world, cl::frame.
+//! Gate map (M4.4): covers cl::cl, app::commands, app::geometry, app::machine, post::machine,
+//! motion::machining2d, app::model, app::operation, app::posting, app::project,
+//! app::schema, geometry::geometry::stock, tools::tools, sim::verify, app::world, cl::frame.
 
 use std::path::{Path, PathBuf};
 

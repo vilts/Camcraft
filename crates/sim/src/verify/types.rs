@@ -134,6 +134,61 @@ pub struct VerifyContext<'a> {
     /// law only: against stock the housing still stands down by the
     /// same kerf reasoning as the holder band.
     pub spindle: Option<(f64, f64)>,
+    /// How much coarser than the importer's promise the judged model's
+    /// mesh is, mm (#864): the chord error the import actually kept less
+    /// the cap it promises. A facet of a curved wall stands inside the
+    /// true surface by up to its chord error, so on a convex wall a cut
+    /// that deep into the real part reads as clean against the mesh; the
+    /// gouge laws (b), (b2) and (f) give that much of their tolerance
+    /// back ([`VerifyContext::tightened`]), and - #904 - the collision
+    /// laws read it too: the reach law (c) and its sweep (c3) grow their
+    /// bands by it ([`VerifyContext::band_growth`]) and shrink the kerf
+    /// that excuses the flutes' own cut, and the rapid law (d) and its
+    /// posed reading shrink the slack of the footprint they march.
+    /// `0.0` - every model that met
+    /// the promise, and every context that never names a model - reads
+    /// each law exactly as it always did. Kept apart from `gouge_tol`,
+    /// which is also the budget moves are read into chords at and must
+    /// not shrink with the model.
+    pub model_excess: f64,
+}
+
+/// The inert tool of [`VerifyContext::default`].
+static NO_TOOL: ToolGeom = ToolGeom {
+    radius: 0.0,
+    nose_radius: 0.0,
+    flute_len: 0.0,
+    shank_radius: 0.0,
+    shank_len: 0.0,
+    holder_radius: 0.0,
+    holder_len: 0.0,
+};
+/// The empty region of [`VerifyContext::default`].
+static NO_REGION: std::sync::LazyLock<Region> = std::sync::LazyLock::new(Region::default);
+
+/// The base a context is written over (`..Default::default()`), so a new
+/// field with an inert reading (#864's `model_excess`) is not spelled out
+/// at every construction site. On its own it judges nothing.
+impl Default for VerifyContext<'_> {
+    fn default() -> Self {
+        VerifyContext {
+            region: &NO_REGION,
+            stock: None,
+            model: None,
+            tool: &NO_TOOL,
+            cutter: None,
+            mode: Mode::Area,
+            stock_top_z: 0.0,
+            clearance_z: 0.0,
+            stock_to_leave: 0.0,
+            gouge_tol: 0.0,
+            z_tol: 0.0,
+            finish_tol: None,
+            fixtures: &[],
+            spindle: None,
+            model_excess: 0.0,
+        }
+    }
 }
 
 /// Which machine element struck a fixture (M3.2 stage B). Serde on it

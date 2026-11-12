@@ -18,6 +18,7 @@
 pub mod diag;
 
 pub mod actions;
+pub(crate) mod machine_modes;
 mod axis_note;
 mod build_info;
 pub mod boundary_draft;
@@ -42,6 +43,7 @@ pub mod post_file;
 pub mod plane_pick;
 pub mod axis_pick;
 pub mod points_pick;
+pub mod wcs_pick;
 pub mod state;
 pub mod theme_dir;
 pub mod trace;

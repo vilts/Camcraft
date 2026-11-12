@@ -9,7 +9,7 @@
 //! practice; no vendor material consulted.
 //!
 //! Gate map (#320): covers app::setup_stock, app::commands
-//! (SetSetupStockSource), app::stock_sim (simulate_document, carry,
+//! (SetSetupStockSource), app::stock_sim, sim::stock_sim (simulate_document, carry,
 //! incoming_body), app::operation (stamp), app::project (stock_source),
 //! app::setup_sheet (STOCK source).
 //! Lane shape (M4.4): all tests here run in seconds.

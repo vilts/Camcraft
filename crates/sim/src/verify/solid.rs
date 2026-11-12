@@ -24,6 +24,7 @@
 //! a rapid that does is a [`Warning::RapidInStock`] - the part is stock
 //! too, and steel at rapid feed is a crash.
 
+use super::hole_wall::HoleAxis;
 use super::midpose;
 use super::probe::{Cutter, Frame};
 use super::solid_index::SolidIndex;
@@ -42,8 +43,11 @@ pub struct SolidLaw {
     pub allow: f64,
     /// The containment kinds (drill, bore, thread mill): their regions
     /// carry exact rims for the mesh's tessellated hole walls, so a
-    /// facet entered only by its chord's dip between two vertices that
-    /// stand outside the tool is the rim, not a gouge.
+    /// facet of a ROUND wall about one of the holes the caller names
+    /// ([`solid_hits_walled`]), entered only between vertices that stand
+    /// outside the tool and by no more than its own sagitta about that
+    /// hole's axis, is the rim, not a gouge ([`super::hole_wall`],
+    /// #1205). With no holes named nothing is excused.
     pub hole_walls: bool,
 }
 
@@ -81,6 +85,15 @@ fn pieces(m: &crate::cl::Move, step: f64) -> Vec<(Point3, Point3, f64)> {
 /// mesh or tool that cannot be read honestly fails closed: a Gouge at
 /// the first cutting move, never a pass.
 pub fn solid_hits(path: &Toolpath, facets: &[Triangle], cutter: &Cutter, law: &SolidLaw) -> Vec<Warning> {
+    solid_hits_walled(path, facets, cutter, law, &[])
+}
+
+/// [`solid_hits`] for a containment kind: `walls` are the holes it
+/// declares (in the path's frame), whose round walls' tessellation
+/// [`SolidLaw::hole_walls`] excuses. A hole axis that does not run along
+/// a move's tool axis excuses nothing on that move.
+pub fn solid_hits_walled(path: &Toolpath, facets: &[Triangle], cutter: &Cutter, law: &SolidLaw, walls: &[HoleAxis]) -> Vec<Warning> {
+    let walls = if law.hole_walls { walls } else { &[] };
     let first_cut = path.moves.iter().position(|m| m.kind != MoveKind::Rapid);
     if facets.is_empty() {
         return Vec::new();
@@ -118,7 +131,7 @@ pub fn solid_hits(path: &Toolpath, facets: &[Triangle], cutter: &Cutter, law: &S
             !set.is_empty()
                 && (pieces(m, law.step).into_iter().any(|(a, b, grow)| {
                     let fr = Frame::new(a, axis);
-                    index.hits(&fr, fr.local(b), set, allow, grow, law.hole_walls)
+                    index.hits(&fr, fr.local(b), set, allow, grow, &axes_in(&fr, walls))
                 }) || mid.iter().any(|iv| {
                     // The interval's tip travel swept exactly under the
                     // pose held at its midpoint: the pose's own turn
@@ -126,7 +139,7 @@ pub fn solid_hits(path: &Toolpath, facets: &[Triangle], cutter: &Cutter, law: &S
                     // (STEP of far-end travel), the same as the fixture
                     // laws' posed sweep.
                     let fr = Frame::new(iv.p0, normalize_axis(iv.am).filter(|a| !is_vertical(a)));
-                    index.hits(&fr, fr.local(iv.p1), set, allow, grow_mid, law.hole_walls)
+                    index.hits(&fr, fr.local(iv.p1), set, allow, grow_mid, &axes_in(&fr, walls))
                 }))
         };
         if m.kind == MoveKind::Rapid {
@@ -140,4 +153,9 @@ pub fn solid_hits(path: &Toolpath, facets: &[Triangle], cutter: &Cutter, law: &S
         }
     }
     out
+}
+
+/// The holes' axes in `fr`'s XY: those running along its tool axis.
+fn axes_in(fr: &Frame, walls: &[HoleAxis]) -> Vec<[f64; 2]> {
+    walls.iter().filter_map(|w| fr.axis_xy(w.at, w.dir)).collect()
 }

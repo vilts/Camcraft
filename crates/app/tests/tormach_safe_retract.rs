@@ -7,7 +7,7 @@
 //! name - never a guess that could rapid the spindle down into the part.
 //! Provenance: our own tests over our own post and machine files.
 //!
-//! Gate map (M4.4): covers app::post (tormach.cps safe retract),
+//! Gate map (M4.4): covers post::post (tormach.cps safe retract),
 //! post::machine (safeRetractZ, model), machine::parse (safe_retract).
 
 use camcraft_app::machine::parse_mch;

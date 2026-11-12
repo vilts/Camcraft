@@ -166,6 +166,7 @@ fn verified(path: &Toolpath, reg: &Region, tool_d: f64) -> Vec<Warning> {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(path, &cx)
 }

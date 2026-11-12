@@ -16,7 +16,7 @@
 //! `lathe_post_refusals.rs`.
 //!
 //! Gate map (M4.4): covers app::posting (stream_records, post_serves,
-//! default_post_for, the registry), app::post (engine on the lathe
+//! default_post_for, the registry), post::post (engine on the lathe
 //! dialect), app::commands (SelectPost by name on a lathe document).
 //! Lane shape (M4.4): all tests here run in seconds.
 

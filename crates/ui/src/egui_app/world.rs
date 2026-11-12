@@ -308,9 +308,10 @@ fn collect_parts(state: &State) -> Vec<GpuPart> {
 /// world space. Only while the transport is up and its timeline is this
 /// document's (`cached_script` refreshes it before the next frame), any
 /// playhead including 0 and the end, playing or paused, the op fresh or
-/// stale (display reads the cached path). Lathe insert kinds yield
-/// nothing (marker only); a degenerate or misfitting tool yields nothing
-/// and is logged. The mesh lives in `State::sim_tool_cache` and is
+/// stale (display reads the cached path). A lathe-held body (#1038) is
+/// drawn as modelled, posed in the holder law's turning frame; a lathe
+/// insert without one yields nothing (marker only); a degenerate or
+/// misfitting tool yields nothing and is logged. The mesh lives in `State::sim_tool_cache` and is
 /// dropped as soon as there is no tool to draw.
 pub(crate) fn sim_tool_tris(state: &State) -> Option<Vec<camcraft_app::geometry::Triangle>> {
     // A poisoned lock only means a draw panicked mid-update: the cache

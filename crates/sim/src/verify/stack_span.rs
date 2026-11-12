@@ -144,7 +144,8 @@ pub(super) fn upper_bands(
     holder: &HolderStack,
     spindle: Option<(f64, f64)>,
 ) -> Vec<(FixturePart, f64, f64, f64)> {
-    let mut out = vec![(FixturePart::Shank, tool.flute_len, tool.shank_radius, tool.shank_len)];
+    // #852: the shank as swept - a drawn neck's bands, or the cylinder.
+    let mut out: Vec<_> = holder.shank_bands(tool).iter().map(|b| (FixturePart::Shank, b.above, b.r, b.len)).collect();
     out.extend(holder.bands.iter().map(|b| (FixturePart::Holder, b.above, b.r, b.len)));
     if let Some((sr, sl)) = spindle {
         out.push((FixturePart::Spindle, holder.top, sr, sl));

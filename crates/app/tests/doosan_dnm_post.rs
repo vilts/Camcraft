@@ -7,7 +7,7 @@
 //! - Chip conveyor start/stop (M31/M33)
 //! - Probing: standard Fanuc G31 skip and Renishaw Inspection Plus macros (G65 P9832 / P9833)
 //!
-//! Gate map: covers app::post (doosan-dnm.cps), app::posting.
+//! Gate map: covers post::post (doosan-dnm.cps), app::posting.
 
 use camcraft_app::machine::parse_mch;
 use camcraft_app::post::{engine, machine};
@@ -146,7 +146,10 @@ fn doosan_dnm_high_speed_smoothing_aicc() {
     let cps = dnm_post();
     let mch = dnm_machine();
 
-    let stream = r#"; HSMW-CL v1 scale=0.001mm moves=5
+    // #994: the hole carries its chain (plunge, retract to R) and the
+    // stream leaves it by a rapid; a cut leaving the hole inside the
+    // cycle group is refused by name, never swallowed.
+    let stream = r#"; HSMW-CL v1 scale=0.001mm moves=8
 PARAM WorkOffset G54
 TOOL 1 "10mm Ball Endmill"
 PARAM SpindleSpeed 8000
@@ -154,7 +157,11 @@ SECTION 3DFinish
 Rapid 0 0 10000
 Feed 10000 10000 -2000 F800000
 Feed 20000 10000 -2000 F800000
+Rapid 20000 10000 2000
 CYCLE DRILL X20000 Y10000 Z-5000 R2000 F200000
+Plunge 20000 10000 -5000 F200000
+Rapid 20000 10000 2000
+Rapid 30000 10000 2000
 Feed 30000 10000 -2000 F800000
 SECTION END
 "#;
@@ -350,4 +357,43 @@ SECTION END
         "must refuse undeclared chip conveyor codes by name: {:?}",
         out_cc.warnings
     );
+}
+
+/// #997: the RTCP path names only the rotaries the machine states - the
+/// A+B tilthead's arm writes A and B, never C0 for the C it has none of.
+#[test]
+fn doosan_dnm_absent_rotary_takes_no_angle_word() {
+    let cps = dnm_post();
+    let mch = machine::mirror(&parse_mch(&read("assets/machines/tilthead.mch")).expect("tilthead parses"));
+    let stream = "TOOL 1 T1\nSECTION\nRapid X 0 Y 0 Z 20000 A 30000 B 0 C 0\nFeed X 20000 Y 0 Z 0 F 300000 A 0 B 30000 C 0\nENDSECTION\n";
+    let options = serde_json::json!({ "rotaryBrake": true });
+    let out = engine::run_with(&cps, &mch, stream, &options).expect("post");
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    assert!(out.program.contains("G43.4"), "{}", out.program);
+    assert!(out.program.lines().any(|l| l.contains("X0 Y0 Z20 A30 B0") && !l.contains(" C")), "{}", out.program);
+    let c_word = |l: &str| l.split(' ').any(|w| w.len() > 1 && w.starts_with('C') && w[1..].parse::<f64>().is_ok());
+    assert!(!out.program.lines().any(c_word), "no C word on a machine with no C: {}", out.program);
+}
+
+/// #1155: the indexing path (no RTCP) names only a rotary the machine
+/// states. An A index on a machine with no A is refused by name with no A
+/// word written; a stated C that turns is refused (this path writes only
+/// A); the shipped A machine posts its index words unchanged.
+#[test]
+fn doosan_dnm_index_names_only_a_stated_rotary() {
+    let cps = dnm_post();
+    let opts = serde_json::json!({ "rotaryBrake": true });
+    let stream = |a: &str, c: &str| format!("TOOL 1 T1\nSECTION\nRapid X 0 Y 0 Z 10000 A {a} C {c}\nFeed X 50000 Y 0 Z -1000 F 400000 A {a} C {c}\nENDSECTION\n");
+    let axis = |l: &str, k: char| l.split(' ').any(|w| w.len() > 1 && w.starts_with(k) && w[1..].parse::<f64>().is_ok());
+    let out = engine::run_with(&cps, &serde_json::json!({}), &stream("90000", "0"), &opts).expect("post");
+    assert_eq!(out.warnings, vec!["indexed move commands A - the machine states no A rotary"]);
+    assert!(!out.program.lines().any(|l| axis(l, 'A')), "no A word without an A: {}", out.program);
+    let mt = machine::mirror(&parse_mch(&read("assets/machines/millturn.mch")).expect("millturn parses"));
+    let out = engine::run_with(&cps, &mt, &stream("0", "45000"), &opts).expect("post");
+    assert_eq!(out.warnings, vec!["indexed move commands C - this dialect's indexing path writes only an A rotary"]);
+    assert!(!out.program.lines().any(|l| axis(l, 'C')), "no C word: {}", out.program);
+    let out = engine::run_with(&cps, &dnm_machine(), &stream("90000", "0"), &opts).expect("post");
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    let moves: Vec<&str> = out.program.lines().filter(|l| l.starts_with("G00") || l.starts_with("G01") || *l == "M10" || *l == "M11").collect();
+    assert_eq!(moves, vec!["M11", "G00 X0 Y0 Z10 A90", "M10", "G01 X50 Y0 Z-1 F400"], "{}", out.program);
 }

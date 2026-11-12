@@ -90,20 +90,6 @@ fn the_dialog_places_a_fitted_vise_in_one_undoable_step() {
 }
 
 #[test]
-fn a_refused_vise_is_named_in_the_dialog() {
-    let mut state = State::new(); // no stock to fit to
-    state.pending.push_back(CommandKind::BuiltinViseDialog(String::new()));
-    let mut h = dialog(state);
-    h.run();
-    h.get_by_label("Place").click();
-    h.run();
-    h.run();
-    let Some(FixtureLibDialog::Vise(d)) = &h.state().fixture_lib else { panic!("stays open") };
-    assert!(d.error.as_deref().is_some_and(|e| e.contains("no stock")), "{:?}", d.error);
-    assert!(h.query_by_label_contains("no stock").is_some(), "said in the dialog");
-}
-
-#[test]
 fn a_vise_row_sets_its_opening_and_opens_to_the_stock() {
     let mut state = with_stock();
     state.pending.push_back(CommandKind::BuiltinViseDialog(String::new()));

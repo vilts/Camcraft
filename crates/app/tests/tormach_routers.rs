@@ -11,7 +11,7 @@
 //! its product and package pages, and knowledge-base articles (the
 //! narrowest spindle window and smallest power where they disagree).
 //! Gate map (M4.4): covers app::posting (MACHINES registry),
-//! app::machine (check_document spindle window), post::machine.
+//! app::machine, post::machine (check_document spindle window), post::machine.
 
 use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, ImportModel, SetStock};
 use camcraft_app::geometry::{IDENTITY_Q, Point3, cube};

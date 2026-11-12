@@ -183,7 +183,8 @@ pub fn parallel(facets: &[Triangle], p: &Finish3DParams) -> Result<Toolpath, Gen
     };
     let mut emitted = raster_pass(&mut b, p, r, &sups, ax, ay, false)?;
     if crossed {
-        emitted |= raster_pass(&mut b, p, r, &sups, bx, by, emitted)?;
+        // #1015: the crossing pass refuses with the first one built.
+        emitted |= raster_pass(&mut b, p, r, &sups, bx, by, emitted).map_err(|e| e.with_ghost_moves(b.moves()))?;
     }
     // Then the rings, from wherever the raster left the tool: the
     // Some(clearance) marker makes the first ring's level-change
@@ -224,11 +225,12 @@ pub(super) fn rings_and_tail(
     facets: &[Triangle],
     emitted: bool,
 ) -> Result<Toolpath, GenError> {
-    let zs = levels(p, r, facets)?;
+    // #1015: the rings refuse with the shallow pass (and any rings) built.
+    let zs = levels(p, r, facets).map_err(|e| e.with_ghost_moves(b.moves()))?;
     let ds = dirs(r, p.tolerance);
     let mut last = Some(p.clearance_z);
     let mut emitted = emitted;
-    emitted |= emit_rings(&mut b, p, r, facets, &zs, &ds, &mut last)?;
+    emitted |= emit_rings(&mut b, p, r, facets, &zs, &ds, &mut last).map_err(|e| e.with_ghost_moves(b.moves()))?;
     if !emitted {
         return Err(GenError::Empty(
             "no surface reaches within one ball radius of the requested depths".into(),
@@ -316,10 +318,12 @@ pub fn swarf_multi(
             // (scallop grows with the square of the spacing).
             q.stepover = p.stepover.map(|s| s * (2.0f64).powi(i as i32));
         }
-        emitted |= raster_pass_spaced(&mut b, &q, r, &sups, (ux, uy), emitted, spacing.tolerance)?;
-        let zs = levels(&spacing, r, facets)?;
+        // #1015: a rung refuses with the rungs before it built.
+        let ghost = |e: GenError, b: &PathBuilder| e.with_ghost_moves(b.moves());
+        emitted |= raster_pass_spaced(&mut b, &q, r, &sups, (ux, uy), emitted, spacing.tolerance).map_err(|e| ghost(e, &b))?;
+        let zs = levels(&spacing, r, facets).map_err(|e| ghost(e, &b))?;
         let mut last = Some(q.clearance_z);
-        emitted |= emit_rings(&mut b, &q, r, facets, &zs, &ds, &mut last)?;
+        emitted |= emit_rings(&mut b, &q, r, facets, &zs, &ds, &mut last).map_err(|e| ghost(e, &b))?;
     }
     if !emitted {
         return Err(GenError::Empty(

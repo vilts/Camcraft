@@ -11,8 +11,8 @@
 //! feeds raster y -28..28 at z 19.5 (holder 71.5..106.5), the last move
 //! retracts at (-32, 28) from 19.5 to 25 (holder 71.5..112).
 //!
-//! Gate map (M4.4): covers app::fixture, app::operation, app::posting,
-//! app::verify.
+//! Gate map (M4.4): covers app::fixture, sim::fixture, app::operation, app::posting,
+//! sim::verify.
 //! Provenance: our own fixtures; the law is the Prime Directive's.
 
 use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, SetStock, TagFixture};

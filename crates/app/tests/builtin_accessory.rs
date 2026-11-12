@@ -6,7 +6,7 @@
 //!
 //! Gate map (M4.4): covers app::accessory, app::commands::accessory,
 //! app::commands::insert_fixture, app::project (fixture accessory key),
-//! app::fixture.
+//! app::fixture, sim::fixture.
 
 use std::collections::HashMap;
 

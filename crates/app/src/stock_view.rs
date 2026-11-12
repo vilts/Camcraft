@@ -123,7 +123,7 @@ impl PackedBase {
         // playback cut layers only lift cells over it). A refusal keeps
         // the packed lattice as it was - a picture, never a verdict.
         if let Err(e) = lat.renormalize() {
-            eprintln!("camcraft: stock view kept the un-normalized band: {e}");
+            tracing::warn!("stock view kept the un-normalized band: {e}");
         }
         let target = target.and_then(Stock::field).and_then(pack_target);
         Some((PackedBase { meta: lat.meta, mesh: lat.mesh, target }, lat.cut))

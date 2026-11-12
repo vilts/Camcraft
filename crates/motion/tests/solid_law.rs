@@ -184,6 +184,7 @@ fn law_verify(t: &Toolpath, region: &Region, f: &[Triangle], mode: Mode, top: f6
             finish_tol: None,
             fixtures: &[],
             spindle: None,
+            ..Default::default()
         },
     )
 }
@@ -383,7 +384,7 @@ fn the_tool_tip_shape_is_read_exactly() {
         b.finish()
     };
     let law = SolidLaw { step: 0.25, allow: TOL, hole_walls: false };
-    let ball = Cutter { radius: R, corner_r: R, tip_angle: 0.0, flute_len: 20.0, shank_radius: R, shank_len: 30.0, holder_radius: 16.0, holder_len: 40.0, body: None };
+    let ball = Cutter { radius: R, corner_r: R, tip_angle: 0.0, flute_len: 20.0, shank_radius: R, shank_len: 30.0, holder_radius: 16.0, holder_len: 40.0, body: None, neck: None };
     let flat = Cutter { corner_r: 0.0, ..ball };
     // A wall at x 3 over a floor at z 0, its foot broken by a 1 mm 45-
     // degree chamfer (x 2..3). Tip 0.05 over the floor on the axis x 0:
@@ -407,7 +408,7 @@ fn the_tool_tip_shape_is_read_exactly() {
     // A 90-degree V groove along Y, apex on the axis at z 0: a 90-degree
     // drill point stands in it exactly; a flat end at the same tip is in
     // its flanks; the point 0.1 under the apex is a gouge.
-    let drill = Cutter { radius: R, corner_r: 0.0, tip_angle: 90.0, flute_len: 20.0, shank_radius: R, shank_len: 30.0, holder_radius: 16.0, holder_len: 40.0, body: None };
+    let drill = Cutter { radius: R, corner_r: 0.0, tip_angle: 90.0, flute_len: 20.0, shank_radius: R, shank_len: 30.0, holder_radius: 16.0, holder_len: 40.0, body: None, neck: None };
     let s = 10.0;
     let v = vec![
         tri(p(-s, -10.0, s), p(0.0, -10.0, 0.0), p(0.0, 10.0, 0.0)),
@@ -423,7 +424,7 @@ fn the_tool_tip_shape_is_read_exactly() {
 #[test]
 fn degenerate_input_fails_closed_never_panics() {
     let law = SolidLaw { step: 0.25, allow: TOL, hole_walls: false };
-    let c = Cutter { radius: R, corner_r: 0.0, tip_angle: 0.0, flute_len: 20.0, shank_radius: R, shank_len: 30.0, holder_radius: 16.0, holder_len: 40.0, body: None };
+    let c = Cutter { radius: R, corner_r: 0.0, tip_angle: 0.0, flute_len: 20.0, shank_radius: R, shank_len: 30.0, holder_radius: 16.0, holder_len: 40.0, body: None, neck: None };
     let mut b = camcraft_motion::cl::PathBuilder::new(Point3::new(50.0, 50.0, 30.0));
     b.push(MoveKind::Feed, Point3::new(60.0, 50.0, 30.0), Some(100.0));
     let t = b.finish();
@@ -449,7 +450,7 @@ fn a_cutter_wholly_inside_the_solid_is_found_by_parity() {
     // cutter, the ray parity says steel.
     let f = mesh(&vec![([-100.0, -100.0, -100.0], [100.0, 100.0, 200.0])]);
     let law = SolidLaw { step: 0.25, allow: TOL, hole_walls: false };
-    let c = Cutter { radius: R, corner_r: 0.0, tip_angle: 0.0, flute_len: 20.0, shank_radius: R, shank_len: 30.0, holder_radius: 16.0, holder_len: 40.0, body: None };
+    let c = Cutter { radius: R, corner_r: 0.0, tip_angle: 0.0, flute_len: 20.0, shank_radius: R, shank_len: 30.0, holder_radius: 16.0, holder_len: 40.0, body: None, neck: None };
     let mut b = camcraft_motion::cl::PathBuilder::new(Point3::new(0.0, 0.0, 0.0));
     b.push(MoveKind::Feed, Point3::new(10.0, 0.0, 0.0), Some(100.0));
     b.push(MoveKind::Rapid, Point3::new(10.0, 0.0, 300.0), None);

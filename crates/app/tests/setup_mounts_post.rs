@@ -8,7 +8,7 @@
 //!
 //! Gate map (#388): covers app::setup_mount (program_mounts),
 //! app::posting (post_mounts, post_mounts_script, post_per_op,
-//! machine_checks, verification_report, post_setup), app::machine
+//! machine_checks, verification_report, post_setup), app::machine, post::machine
 //! (kind_of_setup, check_ops), app::operation (job, spindle_law),
 //! app::commands (family gate per setup), app::script (cam.post files).
 //! Lane shape (M4.4): all tests here run in seconds.

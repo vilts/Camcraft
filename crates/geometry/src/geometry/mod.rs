@@ -16,6 +16,7 @@ mod primitives;
 pub mod repair;
 pub mod revision;
 pub mod slice;
+mod slice_weld;
 pub mod stock;
 pub mod units;
 

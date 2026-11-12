@@ -279,6 +279,13 @@ impl Script {
         Ok(v.as_string().map(|s| s.to_std_string_escaped()))
     }
 
+    /// A top-level number the script states (the manifest's
+    /// `capabilities` mask), or `None` when it states none.
+    pub fn number_global(&mut self, name: &str) -> Result<Option<f64>, PostError> {
+        let v = self.eval(&format!("(typeof {name} === \"number\") ? {name} : null"))?;
+        Ok(v.as_number())
+    }
+
     /// Publish the document's post options once (issue #34).
     pub fn set_options(&mut self, o: &Value) -> Result<(), PostError> {
         self.eval(&format!("postOptions = {o};"))?;

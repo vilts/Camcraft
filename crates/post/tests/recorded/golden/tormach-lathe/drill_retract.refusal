@@ -1,0 +1,3 @@
+; tormach-lathe.cps refused drill_retract: 2 warning(s), the program is never released
+warning: rapid off the spindle axis meridian (both X and Y move) - milling work, not turning
+warning: cycle off the spindle axis meridian (both X and Y move) - milling work, not turning

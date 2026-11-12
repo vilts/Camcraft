@@ -31,6 +31,7 @@
 //! axis-fit law. No vendor strategy or post output was inspected.
 
 pub mod blade;
+pub mod blade_law;
 pub mod bore;
 pub mod contour;
 pub mod face;
@@ -42,6 +43,7 @@ pub mod profile;
 pub mod revolve;
 pub mod stock;
 pub mod thread;
+pub mod thread_law;
 
 pub use blade::{
     groove_finish, groove_finish_in, groove_rough, groove_rough_in, part, part_in,
@@ -52,13 +54,15 @@ pub use contour::{
     chamfer, chamfer_in, multi_pass, multi_pass_in, taper, taper_in, ChamferParams, MultiPassParams, TaperParams,
 };
 pub use face::{facing, FacingParams};
-pub use form::{form, form_in, form_warnings, FormParams};
+pub use form::{form, form_in, form_warnings, form_warnings_excess, FormParams};
 pub use offset::profile_offset;
 pub use prof::{
     profile_finish, profile_finish_in, profile_rough, profile_rough_in, ProfileFinishParams,
     ProfileRoughParams,
 };
 pub use profile::{profile_of, silhouette, Profile};
-pub use revolve::{blade_program_warnings, blade_warnings, BladeLeg, BandMove, Floor};
+pub use blade_law::{blade_program_warnings, blade_program_warnings_excess, blade_warnings, blade_warnings_excess, BladeLeg};
+pub use revolve::{gouge_tol_on, BandMove, Floor};
 pub use stock::StockEnv;
-pub use thread::{thread, thread_in, thread_hand_warnings, thread_warnings, ThreadParams};
+pub use thread::{thread, thread_in, ThreadParams};
+pub use thread_law::{thread_hand_warnings, thread_warnings, thread_warnings_excess};

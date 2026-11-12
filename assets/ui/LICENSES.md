@@ -34,22 +34,27 @@ source-form distributions.
     OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
     USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-## Original artwork (assets/ui/drill.png, assets/ui/post.png, assets/ui/sim.png, assets/ui/finish3d.png, assets/ui/fixture.png, assets/ui/contour5d.png, assets/ui/parallel5d.png, assets/ui/swarf.png, assets/ui/advancedswarf.png, assets/ui/rotarycontour.png, assets/ui/rotaryparallel.png, assets/ui/probe.png, assets/ui/debug-info.png)
+## Original artwork (every assets/ui/svg/*.svg and the PNG rasterised from each: the op-*, tool-*, tree-*, badge-* and act-* glyphs)
 
-These thirteen glyphs are our own drawings, authored for M1.6, M1.7, M2.2,
-M3.2, M5.1, #108 and #157 (no Tabler drill-bit, post-to-G-code, waterline, vise,
-5-axis, swarf or rotary-turned-bar glyph exists, and the move-simulation
-mark is a bespoke curve; AGENTS.md's "operation-specific glyphs are
-drawn original when no generic set fits"). Public-domain subjects, our
-renderings; no license notice owed, and they are not part of the Tabler
-set below. (The note once missed fixture.png - the exclusion lists here
-are the only record of which pixels are ours, so both lines now name all
-thirteen.)
-debug-info.png (#157) is the exception to that reason: Tabler has a bug
-glyph, but ours was drawn by a short script (no SVG rasterizer in the
-authoring environment) - still our pixels, no notice owed.
+These glyphs are our own drawings. Each has an SVG master in
+assets/ui/svg/, rasterised to its 32 px PNG by `cargo xtask icons`, drawn
+original on Tabler's conventions (24-unit grid, 2-unit stroke, round caps
+and joins): the operation glyphs (`op-*`, #661 slice 1) from what each
+operation does - a cutter and its path; the tool kinds (`tool-*`, #661
+slice 2) from each cutter's silhouette; the browser's setup rows
+(`tree-*`), the operation status badges (`badge-*`) and the CamCraft
+actions (`act-*`). They replace the earlier original PNGs (post, sim,
+fixture, debug-info and the operation originals) and the Tabler glyphs
+that stood in for the stock, model, work offset, generate, frame-all and
+eye rows (box-model, cube, transform, player-play, maximize, eye,
+eye-off). Nothing in them is taken or adapted from HSMWorks, Fusion,
+SolidCraft or any other product's icons. AGENTS.md's "operation-specific
+glyphs are drawn original when no generic set fits"; public-domain
+subjects, our renderings; no license notice owed, and they are not part of
+the Tabler set below. (The exclusion lists here are the only record of
+which pixels are ours, so both headings name the same files.)
 
-## Tabler Icons (UI glyphs, assets/ui/*.png except drill.png, post.png, sim.png, finish3d.png, fixture.png, contour5d.png, parallel5d.png, swarf.png, advancedswarf.png, rotarycontour.png, rotaryparallel.png, probe.png and debug-info.png, loaded by crates/ui/src/egui_app/icons.rs)
+## Tabler Icons (assets/ui/*.png with no SVG master in assets/ui/svg/ - file-plus, folder-open, file-import, device-floppy, arrow-back-up, arrow-forward-up, trash, tools - loaded by crates/ui/src/egui_app/icons.rs)
 
 Outline glyphs from Tabler Icons (https://tabler-icons.io), version 3.49.0,
 MIT (below): recolored to white at load; shapes otherwise unmodified.
@@ -132,14 +137,33 @@ reproduced in full in the solidcore section below; it applies to these
 crates as well. Retained as a license condition, same posture as the
 clipper2-rust notice.
 
-## solidcore (B-rep kernel on trial, crates/kernel - M12.1 stage 1)
+## solidcore (B-rep kernel on trial, crates/kernel - M12.1 stages 1-4)
 
-solidcore 1.0.1 (https://github.com/tangency-labs/solidcore), a Rust port of
+solidcore (https://github.com/tangency-labs/solidcore), a Rust port of
 the SMLib and SM_API components of NVIDIA's USD BRep, Apache-2.0. Linked as a
-crates.io dependency of camcraft-kernel only; no source copied into this
-repo. Apache-2.0 section 4 asks that redistributions carry the License and
-the NOTICE file's attribution text: both follow, verbatim from the
-published crate.
+dependency of camcraft-kernel only; no source copied into this repo. Since
+#916 it is taken as a git dependency at one commit of the owner's fork,
+https://github.com/NeoTech/solidcore, rev
+55d0e7638b9e1ebbf91ab8c10657e595c114ecda (the fork's tag
+camcraft-pin-2026-11-11); before that it was the crates.io release 1.0.1.
+
+The same commit supplies the other crates of that workspace camcraft-kernel
+links: `solidcore-step` (the STEP reader, written from ISO 10303-21 and
+ISO 10303-42), `solidcore-record`, `solidcore-convert` and `solidcore-ops`,
+and, for crates/kernel's own tests only, `solidcore-tess`. Each is
+Apache-2.0 per its Cargo.toml (`license.workspace = true`, the workspace's
+`license = "Apache-2.0"`) and is covered by the workspace's one LICENSE and
+NOTICE file. `solidcore-step` and the Part 21 parser in `solidcore-record`
+say in their sources that they came from the SolidCraft project (MIT OR
+Apache-2.0) with their history, and `solidcore-tess` that its mesher was
+moved from SolidCraft; all are taken here under Apache-2.0, as the
+workspace licenses them.
+
+Apache-2.0 section 4 asks that redistributions carry the License and
+the NOTICE file's attribution text: both follow, verbatim. The NOTICE and
+LICENSE files at the pinned commit are byte-identical to those of the
+published 1.0.1 crate (checked with `git diff solidcore-v1.0.1 55d0e763 --
+NOTICE LICENSE`: no difference).
 
 NOTICE (verbatim):
 

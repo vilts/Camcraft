@@ -10,7 +10,7 @@
 //!
 //! Gate map (#670): covers app::operation (plasma_op, kinds registry,
 //! family gate), app::commands (tool, operation create/edit/generate),
-//! app::machine::plasma (cuts_plasma), app::project (plasma_dto, tool
+//! app::machine, post::machine::plasma (cuts_plasma), app::project (plasma_dto, tool
 //! kind word), motion::plasma, cl torch records.
 
 use flecs_ecs::prelude::World;

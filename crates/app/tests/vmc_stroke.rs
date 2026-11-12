@@ -10,7 +10,7 @@
 //! Provenance: general machine-tool practice (a slide's stroke, a work
 //! offset placed anywhere along it); every number is our own fixture.
 //!
-//! Gate map (M4.4): covers app::machine, app::posting, app::commands.
+//! Gate map (M4.4): covers app::machine, post::machine, app::posting, app::commands.
 
 use flecs_ecs::prelude::World;
 

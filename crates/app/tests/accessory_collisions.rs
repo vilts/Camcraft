@@ -8,7 +8,7 @@
 //! posts clean, and one undo puts the vise back.
 //!
 //! Gate map (M4.4): covers app::accessory, app::commands::accessory,
-//! app::fixture, app::fixture_struck, app::posting.
+//! app::fixture, sim::fixture, app::fixture_struck, app::posting.
 
 use camcraft_app::accessory::Accessory;
 use camcraft_app::cl::{Move, MoveKind, Toolpath};

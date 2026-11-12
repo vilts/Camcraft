@@ -106,7 +106,7 @@ fn assert_shell_skeleton(h: &Harness<'static, ShellUi>) {
         let q = at(&texts, t);
         assert!(q.x > v.x && q.x < p.x, "view cube face {t:?} belongs to the viewport");
     }
-    for label in ["Show world origin axes", "Show all toolpaths", "Shaded", "Wireframe"] {
+    for label in ["Show world origin axes", "Show origin names", "Show all toolpaths", "Shaded", "Wireframe"] {
         assert!(!disabled(h, label), "viewport control {label:?} must be live");
     }
     // Properties: the seed's page, its sections, and the draft law's
@@ -235,6 +235,34 @@ fn tool_editor_structure() {
     );
 }
 
+/// #93 slice 3: the Draw cutter view's parameters stand in the editor's
+/// third column, right of the fields and the profile, in the order the
+/// tool is drawn (cutter, flutes, shank, neck), above Apply cutter.
+#[test]
+fn tool_cutter_params_structure() {
+    let mut harness = shell_harness();
+    harness.run();
+    crate::actions::open_tool_editor(&mut harness.state_mut().state, "EM-0600-4FL");
+    harness.run_steps(2);
+    harness.get_by_label("Profile").click();
+    harness.run();
+    harness.get_by_label("Draw cutter").click();
+    harness.run_steps(2);
+    let win = harness
+        .query_all_by_role(egui::accesskit::Role::Window)
+        .find(|n| n.accesskit_node().label().as_deref() == Some("Tool: EM-0600-4FL"))
+        .expect("the editor window");
+    let fields_right = win.get_by_label("Shank diameter").rect().max.x;
+    let mut last_y = f32::MIN;
+    for label in ["cutter Ø", "flutes", "shank Ø", "Neck", "Apply cutter"] {
+        let r = win.get_by_label(label).rect();
+        assert!(r.center().y > last_y, "{label:?} must follow the row above it");
+        assert!(r.min.x > fields_right, "{label:?} sits in the third column");
+        last_y = r.center().y;
+    }
+    assert!(win.get_by_label("shank length").rect().min.x > win.get_by_label("shank Ø").rect().max.x, "shank length beside shank Ø");
+}
+
 /// #557 / #554 / #555: a setup's own page carries the part-alignment rows in
 /// the properties leaf - the plane row (a face), the three-points row (#555) and the axes-in-the-plane
 /// rows (an edge or two points), each saying which pick it takes, with nothing armed and Apply hidden until
@@ -306,4 +334,200 @@ fn setup_page_alignment_rows_structure() {
         assert!(pane.contains_rect(r), "Apply lies inside the pane: {r:?}");
     }
     assert!(h.state().state.points_pick.is_none(), "nothing is armed by drawing the page");
+}
+
+/// #1031: a lathe setup's Settings page carries the "Workholding max rpm"
+/// row (a value, Apply, and Clear once a limit is stated); Apply lands one
+/// undoable `SetSetupWorkholdingRpm`. A mill setup shows no row.
+#[test]
+fn setup_page_workholding_rpm_row_structure() {
+    let _g = snapshot_guard();
+    let mut h = Harness::builder()
+        .with_size(Vec2::new(1280.0, 1600.0)) // the row sits at the page's foot
+        .build_ui_state(frame, ShellUi::blank());
+    {
+        let st = &mut h.state_mut().state;
+        st.pending.push_back(CommandKind::CreateSetup { name: None, datum_from: None });
+        st.drain_actions();
+        crate::actions::target(st, UiTarget::SetupNode("Setup1".into(), crate::state::SetupPage::Settings));
+    }
+    h.run_steps(3);
+    let row = crate::egui_app::setup_workholding_row::ROW_LABEL.trim();
+    assert!(h.query_by_label_contains(row).is_none(), "a mill setup has no chuck rating row");
+    {
+        let st = &mut h.state_mut().state;
+        let lathe = camcraft_app::machine::Machine { kind: Some("lathe".into()), ..Default::default() };
+        let load = camcraft_app::commands::LoadMachine::new(&st.world, "lathe.mch".into(), Some(lathe));
+        st.history.execute(&st.world, load.expect("a lathe"));
+    }
+    h.run_steps(3);
+    assert!(h.query_by_label_contains(row).is_some(), "a lathe setup shows the row");
+    assert!(h.query_by_label_contains("No workholding limit stated").is_some());
+    assert!(h.query_by_label("Clear rpm").is_none(), "nothing to clear yet");
+    assert!(!disabled(&h, "Apply rpm"), "Apply is live");
+    h.get_by_label("Apply rpm").click();
+    h.run_steps(3);
+    let world = &h.state().state.world;
+    assert_eq!(camcraft_app::setup_workholding::of(world, Some("Setup1")), Some(2000.0), "the row's default, applied: {}", h.state().state.status);
+    assert!(h.query_by_label_contains("Stated: 2000 rpm").is_some());
+    assert!(h.query_by_label("Clear rpm").is_some_and(|n| !n.accesskit_node().is_disabled()), "Clear shows once stated");
+    let st = &mut h.state_mut().state;
+    assert!(st.history.undo(&st.world), "one undo step");
+    assert_eq!(camcraft_app::setup_workholding::of(&st.world, Some("Setup1")), None);
+}
+
+/// #948: at the default 1280 px window every ribbon button reads whole
+/// (no elided galley, the "Milli..." clash gone: the four section doors
+/// say four different things), and the group captions are painted again
+/// under the cells they name. Text and coarse placement only.
+#[test]
+fn ribbon_labels_whole_and_captions_painted() {
+    let _g = snapshot_guard();
+    let mut h = shell_harness();
+    h.run_steps(3);
+    // (text, top-left, elided) of every painted galley, in paint order.
+    fn walk(shape: &egui::Shape, out: &mut Vec<(String, egui::Pos2, bool)>) {
+        match shape {
+            egui::Shape::Text(t) => {
+                out.push((t.galley.text().to_owned(), t.pos, t.galley.elided));
+            }
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+            _ => {}
+        }
+    }
+    let mut all = Vec::new();
+    for s in &h.output().shapes {
+        walk(&s.shape, &mut all);
+    }
+    let tab_y = at(&painted(&h), "Browser").y;
+    let ribbon: Vec<_> = all.iter().filter(|(_, p, _)| p.y < tab_y).cloned().collect();
+    assert!(!ribbon.is_empty(), "the ribbon paints text");
+    for (t, _, elided) in &ribbon {
+        assert!(!elided, "ribbon text {t:?} is elided at 1280 px");
+    }
+    // Every button is identifiable: the cell words, the four doors, each
+    // once - no two buttons share a label.
+    let words = [
+        "New", "Model", "Open", "Save", "Save As", "Post", "Setups", "Stock", "Origin", "Tools",
+        "Undo", "Redo", "Run", "Delete", "Frame", "Paths", "Simulate", "Deviate", "Panels\u{2026}",
+        "Theme\u{2026}", "Mill 2D\u{2026}", "Mill 3D\u{2026}", "Drill\u{2026}", "Multi\u{2026}",
+    ];
+    for w in words {
+        let n = ribbon.iter().filter(|(t, _, _)| t == w).count();
+        assert_eq!(n, 1, "ribbon button {w:?} must be painted exactly once, found {n}");
+    }
+    // The captions are back: one under each multi-cell group, in left to
+    // right order, below the cell row and above the dock.
+    let caps: Vec<(&str, egui::Pos2)> = ["File", "Setup", "Modify", "Inspect", "View"]
+        .into_iter()
+        .map(|c| {
+            let hit = ribbon.iter().find(|(t, _, _)| t == c);
+            match hit {
+                Some((_, p, _)) => (c, *p),
+                None => panic!("caption {c:?} missing; ribbon: {ribbon:?}"),
+            }
+        })
+        .collect();
+    let new_y = ribbon.iter().find(|(t, _, _)| t == "New").map(|(_, p, _)| p.y).unwrap_or(0.0);
+    for (c, p) in &caps {
+        assert!(p.y > new_y, "caption {c:?} sits under the cell labels");
+    }
+    for pair in caps.windows(2) {
+        assert!(pair[0].1.x < pair[1].1.x, "captions run left to right: {pair:?}");
+    }
+}
+
+/// #645 re-review: the structural both-states check for the "Show origin
+/// names" switch. The seeded document's G54 offset sits at world zero and
+/// its triad carries the name row; while the switch is on (the #727
+/// default) the painted frame shows that name inside the viewport and
+/// the checkbox click drops it. The big `X`/`Y`/`Z` letters and the
+/// triad's strokes ignore the switch. `view_names.rs` drives the same
+/// checkbox through State and the view file; this pins what the shell
+/// paints. The properties pane's WCS row also reads "G54", so the
+/// painted probe stays inside the viewport, as the view-cube check does.
+/// The re-review also pins the checkbox's AccessKit checked state, in
+/// both states: `toggled()` is AccessKit 0.24's name for it.
+#[test]
+fn origin_names_paint_on_and_quiet_off_letters_and_lines_always() {
+    let _g = snapshot_guard();
+    let mut h = shell_harness();
+    // Redirect the at-once persist away from the real user's view.json -
+    // the flip would otherwise write it out of this test process.
+    let d = std::env::temp_dir().join(format!(
+        "camcraft-view-structural-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).expect("make the test folder");
+    h.state_mut().state.view_store = Some(d.join("view.json"));
+    // On: the painted frame shows the offset's name row in the viewport,
+    // and the shared projection law agrees.
+    h.run_steps(2);
+    let texts = painted(&h);
+    let v = at(&texts, "Viewport").x;
+    let p = at(&texts, "Properties").x;
+    let in_viewport = |(t, q): &(String, egui::Pos2)| t == "G54" && q.x > v && q.x < p;
+    let letters = |labels: &[([f32; 2], [f32; 3], String)]| -> Vec<String> {
+        labels
+            .iter()
+            .filter(|(_, _, t)| interact::is_axis_label(t))
+            .map(|(_, _, t)| t.clone())
+            .collect()
+    };
+    let (segs_on, letters_on) = {
+        let st = &h.state().state;
+        assert!(st.show_gizmo_names, "the #727 default is on");
+        assert_eq!(
+            h.get_by_label("Show origin names").accesskit_node().toggled(),
+            Some(egui::accesskit::Toggled::True),
+            "the checkbox reads checked in the default state"
+        );
+        let labels = interact::overlay_labels(st, 1.0);
+        assert!(
+            labels.iter().any(|(_, _, t)| t == "G54"),
+            "on: the offset's name is in the labels: {labels:?}"
+        );
+        assert!(
+            texts.iter().any(in_viewport),
+            "on: the name row is painted in the viewport"
+        );
+        let segs = interact::gizmo_segments(st, 1.0);
+        assert!(!segs.is_empty(), "the triad's strokes draw");
+        let letters = letters(&labels);
+        assert!(!letters.is_empty(), "the axis letters draw");
+        (segs.len(), letters)
+    };
+    // Off: the checkbox clicks the flag through the real widget and the
+    // name row leaves the painted frame; letters and lines stay.
+    h.get_by_label("Show origin names").click();
+    h.run_steps(2);
+    let texts = painted(&h);
+    {
+        let st = &h.state().state;
+        assert!(!st.show_gizmo_names, "the click flipped the flag");
+        assert_eq!(
+            h.get_by_label("Show origin names").accesskit_node().toggled(),
+            Some(egui::accesskit::Toggled::False),
+            "the checkbox reads unchecked after the click"
+        );
+        let labels = interact::overlay_labels(st, 1.0);
+        assert!(
+            labels.iter().all(|(_, _, t)| t != "G54"),
+            "off: no name row anywhere: {labels:?}"
+        );
+        assert!(
+            !texts.iter().any(in_viewport),
+            "off: the painted viewport no longer shows the name row"
+        );
+        // Letters and strokes ignore the switch: the same letters and
+        // the same segments draw either way.
+        assert_eq!(letters(&labels), letters_on, "the letters survive untouched");
+        assert_eq!(
+            interact::gizmo_segments(st, 1.0).len(),
+            segs_on,
+            "the strokes ignore the switch"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&d);
 }

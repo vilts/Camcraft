@@ -12,7 +12,7 @@
 //! Regenerate the golden after an intentional change:
 //! `WRITE_GOLDEN=1 cargo test -p camcraft-app --test tormach_fourth_axis`
 //!
-//! Gate map (M4.4): covers app::post (tormach.cps), post::machine (rotary
+//! Gate map (M4.4): covers post::post (tormach.cps), post::machine (rotary
 //! mirror), app::posting (MACHINES registry, post_setup).
 
 use camcraft_app::cl::MoveKind;

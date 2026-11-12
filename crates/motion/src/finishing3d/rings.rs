@@ -454,7 +454,8 @@ pub fn waterline(facets: &[Triangle], p: &Finish3DParams) -> Result<Toolpath, Ge
     let ds = dirs(r, p.tolerance);
     let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
     let mut last: Option<f64> = None;
-    if !emit_rings(&mut b, p, r, facets, &zs, &ds, &mut last)? {
+    // #1015: a level refused part-way hands back the rings above it.
+    if !emit_rings(&mut b, p, r, facets, &zs, &ds, &mut last).map_err(|e| e.with_ghost_moves(b.moves()))? {
         return Err(GenError::Empty(
             "no surface reaches within one ball radius of the requested depths".into(),
         ));

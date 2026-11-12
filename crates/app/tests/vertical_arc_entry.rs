@@ -9,8 +9,8 @@
 //! Provenance: RS-274/NGC and ISO 6983 G17/G18/G19 plane selection and
 //! G2/G3 sense (public standards); our own generators and posts.
 //!
-//! Gate map (M11.2): covers app::machining2d (contour arc entry,
-//! motion::entry_arc), app::cl, app::post, app::verify.
+//! Gate map (M11.2): covers motion::machining2d (contour arc entry,
+//! motion::entry_arc), cl::cl, post::post, sim::verify.
 
 use camcraft_app::cl::{ArcPlane, Move, MoveKind, Toolpath};
 use camcraft_app::geo2d::{Loop, Point2, Region};
@@ -149,6 +149,7 @@ fn verify_bore(t: &Toolpath, region: &Region) -> Vec<camcraft_app::verify::Warni
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(t, &cx)
 }

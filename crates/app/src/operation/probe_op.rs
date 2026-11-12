@@ -6,14 +6,17 @@
 //! no stock: the sim never carves it (`stock_sim` skips probe paths).
 //! Provenance: NIST RS274NGC G38.2 semantics and touch-probe practice;
 //! the swept-ball distance is Ericson's segment-triangle test (the
-//! sim's `dist_seg_tri`). Our own design; no vendor material consulted.
+//! sim's `dist_seg_tri`). #842: a modelled tool body is judged by its
+//! band stack above the stylus (`stylus_cutter`). Our own design; no
+//! vendor material consulted.
 
 use crate::cl::Toolpath;
 use crate::geometry::{Point3, Triangle};
 use crate::machining2d::GenError;
 use crate::probing::{probe_cycle, ProbeParams};
-use crate::tools::{Tool, ToolKind};
-use crate::verify::{solid_hits, Cutter, SolidLaw, Warning};
+use crate::tools::{Tool, ToolGeom, ToolKind};
+use crate::verify::{solid_hits, BodyBands, Cutter, SolidLaw, Warning};
+use camcraft_tools::holder_profile::{HolderBand, HolderStack};
 
 use super::types::OpParams;
 
@@ -100,16 +103,18 @@ pub(super) fn probe_params(params: &OpParams, tool: &Tool, clearance_z: f64) -> 
 }
 
 /// Generate a probe op's path and judge it against `facets` (the model).
+/// `stack` is the tool's modelled body (#842), `None` without one.
 pub(super) fn generate_probe(
     params: &OpParams,
     tool: &Tool,
+    stack: Option<&HolderStack>,
     clearance_z: f64,
     facets: &[Triangle],
 ) -> Result<(Toolpath, Vec<Warning>), GenError> {
     let p = probe_params(params, tool, clearance_z)?;
     let path = probe_cycle(&p)?;
     let mut warns = stylus_hits(&path, tool.diameter * 0.5, facets);
-    warns.extend(stylus_reach_hits(&path, tool, facets, &warns));
+    warns.extend(stylus_reach_hits(&path, tool, stack, facets, &warns));
     warns.extend(search_advisory(&path, p.overtravel));
     Ok((path, warns))
 }
@@ -141,13 +146,20 @@ pub fn stylus_hits(path: &Toolpath, ball_r: f64, facets: &[Triangle]) -> Vec<War
 /// so never smaller than the real one) up to the stylus length, and the
 /// probe body with whatever holder rides above it one band, at the wider
 /// of the two radii over both lengths - never smaller than the real pair.
+///
+/// #842: with a modelled body (`stack`, `tool_body::stack` of the tool,
+/// `Some` only when the tool carries one) that one band is rebuilt as the
+/// probe body (the record's shank band) and the body's own bands above
+/// it - the shape the simulation draws. A stack that does not fit the
+/// stylus ([`BodyBands::of`]) leaves the one enclosing band, which can
+/// only over-report; `None` reads exactly as before.
 #[must_use]
-pub fn stylus_cutter(tool: &Tool) -> Cutter {
+pub fn stylus_cutter(tool: &Tool, stack: Option<&HolderStack>) -> Cutter {
     let r = tool.diameter * 0.5;
     let g = tool.geom();
     let body_len = g.shank_len.max(0.0) + g.holder_len.max(0.0);
     let body_r = if g.holder_len > 0.0 { g.shank_radius.max(g.holder_radius) } else { g.shank_radius };
-    Cutter {
+    let c = Cutter {
         radius: r,
         corner_r: r,
         tip_angle: 0.0,
@@ -156,16 +168,42 @@ pub fn stylus_cutter(tool: &Tool) -> Cutter {
         shank_len: (g.flute_len - r).max(0.0),
         holder_radius: body_r,
         holder_len: body_len,
-        // The stylus folds shank and holder into one band (#835: a
-        // probe's body is judged by that enclosing band; the probe
-        // reach note names it).
         body: None,
+        neck: None,
+    };
+    Cutter { body: stack.and_then(|s| stylus_body(&g, &c, s)), ..c }
+}
+
+/// The stylus's bands above its stem (#842): the probe body over the
+/// record's shank, then the modelled body's bands - checked against the
+/// stylus stack `c` describes ([`BodyBands::of`]), or `None` (the one
+/// enclosing band stands). The tool's own holder cylinder is no body.
+fn stylus_body(g: &ToolGeom, c: &Cutter, stack: &HolderStack) -> Option<BodyBands> {
+    let cyl = HolderStack::cylinder(g);
+    if stack.bands == cyl.bands && stack.top == cyl.top {
+        return None;
     }
+    let sg = ToolGeom {
+        radius: c.radius,
+        nose_radius: 0.0,
+        flute_len: c.flute_len,
+        shank_radius: c.shank_radius,
+        shank_len: c.shank_len,
+        holder_radius: c.holder_radius,
+        holder_len: c.holder_len,
+    };
+    let mut bands = Vec::with_capacity(stack.bands.len() + 1);
+    if g.shank_len > 0.0 {
+        bands.push(HolderBand { above: g.flute_len, len: g.shank_len, r: g.shank_radius });
+    }
+    bands.extend_from_slice(&stack.bands);
+    BodyBands::of(&sg, &HolderStack { bands, top: stack.top, neck: Vec::new() })
 }
 
 /// The reach half of the protected-move law (#172): every move swept
 /// with the stem and body bands against the model's solid
-/// ([`solid_hits`]). The ball's own verdict is [`stylus_hits`]'s
+/// ([`solid_hits`]); `stack` is a modelled body's, as
+/// [`stylus_cutter`] reads it. The ball's own verdict is [`stylus_hits`]'s
 /// (`ball` holds it), so a move it convicted is not reported twice;
 /// what the bands meet is a [`Warning::ShankHit`] on the part, a rapid
 /// that meets anything a [`Warning::RapidInStock`]. The expected
@@ -174,10 +212,16 @@ pub fn stylus_cutter(tool: &Tool) -> Cutter {
 /// ball conviction the distance law missed (a ball wholly inside the
 /// solid) is kept as the gouge it is.
 #[must_use]
-pub fn stylus_reach_hits(path: &Toolpath, tool: &Tool, facets: &[Triangle], ball: &[Warning]) -> Vec<Warning> {
+pub fn stylus_reach_hits(
+    path: &Toolpath,
+    tool: &Tool,
+    stack: Option<&HolderStack>,
+    facets: &[Triangle],
+    ball: &[Warning],
+) -> Vec<Warning> {
     let law = SolidLaw { step: 0.5, allow: STYLUS_SLACK, hole_walls: false };
     let convicted = |at: usize| ball.iter().any(|w| matches!(*w, Warning::Gouge { at: b } if b == at));
-    solid_hits(path, facets, &stylus_cutter(tool), &law)
+    solid_hits(path, facets, &stylus_cutter(tool, stack), &law)
         .into_iter()
         .filter(|w| match *w {
             Warning::Gouge { at } | Warning::RapidInStock { at } | Warning::ShankHit { at, .. } => !convicted(at),

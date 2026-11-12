@@ -108,6 +108,7 @@ fn judge(t: &Toolpath, cutter: Option<Cutter>) -> Vec<Warning> {
             finish_tol: None,
             fixtures: &[],
             spindle: None,
+            ..Default::default()
         },
     )
 }

@@ -1,0 +1,2 @@
+; fanuc-lathe.cps refused full_circle: 1 warning(s), the program is never released
+warning: thread half-turn with no lead

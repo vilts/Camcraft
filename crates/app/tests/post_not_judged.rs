@@ -8,7 +8,7 @@
 //! the tilt suite's parked pocket, the posting suite's contour); the
 //! law is the Prime Directive's "correct, or visibly refused".
 //!
-//! Gate map (M4.4): covers app::posting, app::stock_sim, app::script.
+//! Gate map (M4.4): covers app::posting, app::stock_sim, sim::stock_sim, app::script.
 
 use flecs_ecs::prelude::World;
 

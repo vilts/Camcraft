@@ -12,7 +12,7 @@
 //! that is clean, 20 an undercut (gouge), 16 a standing layer (rest),
 //! each 2 mm exactly, located.
 //!
-//! Gate map (M4.4): covers app::commands, app::geometry, app::machining2d, app::model, app::operation, app::posting, app::schema, app::stock, app::stock_sim, app::tools, app::world.
+//! Gate map (M4.4): covers app::commands, app::geometry, motion::machining2d, app::model, app::operation, app::posting, app::schema, geometry::geometry::stock, app::stock_sim, sim::stock_sim, tools::tools, app::world.
 
 use flecs_ecs::prelude::World;
 

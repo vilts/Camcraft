@@ -83,6 +83,21 @@ fn main() -> ExitCode {
     )
 }
 
+/// The machine value the engine posts with (#996): a vendor kinematics
+/// tree (`kinematics.default.parts`, every shipped `.mch`) is read the
+/// way the app reads it - parsed, then mirrored into the static grammar
+/// the script's `machine` global and the invert pass walk
+/// (`post::machine::mirror`, which carries the file's inverted axes as
+/// `invertedAxes`). A file already in the static grammar has no tree to
+/// mirror and posts as written, as it always did.
+fn script_machine(raw: Value, parsed: &camcraft_post::machine::Machine) -> Value {
+    if raw.pointer("/kinematics/default/parts").is_some() {
+        post::machine::mirror(parsed)
+    } else {
+        raw
+    }
+}
+
 fn die(msg: String) -> ExitCode {
     eprintln!("post: {msg}");
     ExitCode::FAILURE
@@ -114,18 +129,20 @@ fn run(
             // post cannot translate (Z, any letter but X/Y), or a garbled
             // direction, refuses by name - never standard-sign code for it.
             // An inverted X/Y posts: the engine mirrors the stream.
-            match camcraft_post::machine::parse_mch(&text) {
+            let parsed = match camcraft_post::machine::parse_mch(&text) {
                 Ok(m) => {
                     if let Some(why) = m.inverted_post_refusal() {
                         return die(why);
                     }
+                    m
                 }
                 Err(e) => return die(format!("{path}: {e}")),
-            }
-            match post::machine::from_json(&text) {
+            };
+            let raw = match post::machine::from_json(&text) {
                 Ok(v) => v,
                 Err(e) => return die(format!("cannot parse {path}: {e}")),
-            }
+            };
+            script_machine(raw, &parsed)
         }
         None => Value::Null,
     };

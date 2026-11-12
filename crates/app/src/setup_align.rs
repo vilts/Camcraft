@@ -178,12 +178,14 @@ pub fn solid_radius_about_in(world: &World, declared: Option<&str>, c: [f64; 2])
 }
 
 /// The parts (fixtures left out) as the machine must leave them, in a
-/// setup's frame - the program sim's gouge target.
+/// setup's frame - the program sim's gouge target. A model that is only
+/// the stock's source is stock, not part (#1094, `stock_source`).
 #[must_use]
 pub fn parts_facets_in(world: &World, declared: Option<&str>) -> Vec<Triangle> {
+    let skip = crate::stock_source::stock_only_model(world);
     model::model_entities(world)
         .into_iter()
-        .filter(|(_, e)| !model::is_fixture(world, e))
+        .filter(|(_, e)| crate::stock_source::judged(world, e, skip))
         .filter_map(|(_, e)| facets_in(world, &e, declared))
         .flatten()
         .collect()

@@ -15,9 +15,9 @@
 //! ours (M8.1's engagement study, the waterline tiling from the
 //! pocket's own law).
 //!
-//! Gate map (M4.4): covers app::commands, app::geometry, app::machining2d,
-//! app::machining3d, app::model, app::operation, app::schema, app::stock,
-//! app::tools, app::world.
+//! Gate map (M4.4): covers app::commands, app::geometry, motion::machining2d,
+//! motion::machining3d, app::model, app::operation, app::schema, geometry::geometry::stock,
+//! tools::tools, app::world.
 
 mod common;
 

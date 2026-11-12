@@ -50,7 +50,7 @@
 //! (our code) and the egui vendored sources; no HSMWorks material involved.
 
 use egui::{
-    Align, Align2, Color32, ComboBox, DragValue, FontId, Id, Label, Layout, Pos2, RichText, ScrollArea,
+    Align2, Color32, ComboBox, DragValue, FontId, Id, Pos2, RichText, ScrollArea,
     Sense, Shape, Stroke, TextEdit, Ui, Vec2, Window,
 };
 
@@ -66,7 +66,7 @@ use camcraft_app::units::{self, Unit};
 
 use crate::actions;
 use crate::interact;
-use crate::state::{CommandKind, ErrorScope, FixtureUi, ModelUi, PostView, State, UiTarget, quat_yaw_deg};
+use crate::state::{CommandKind, ErrorScope, FixtureUi, ModelUi, State, UiTarget, quat_yaw_deg};
 
 use super::layout::hint;
 use super::panes::kind_name;
@@ -177,7 +177,7 @@ pub fn properties(ui: &mut Ui, state: &mut State, pal: &Tokens) {
 
 fn setup_error(ui: &mut Ui, state: &State) {
     if let Some(msg) = state.error_for(ErrorScope::Setup).map(str::to_owned) {
-        ui.colored_label(super::colorvision::text_inks(ui, &state.world).error, msg);
+        super::error_text::error_text(ui, super::colorvision::text_inks(ui, &state.world).error, &msg);
     }
 }
 // --------------------------------------------------------------- stock page
@@ -242,6 +242,7 @@ fn stock_page(ui: &mut Ui, state: &mut State) {
                 state.stock_ui.source = models[idx.min(models.len() - 1)].clone();
             }
         }
+        super::raw_stock_row::raw_stock_row(ui, state);
     } else {
         field(ui, "Length (X)");
         num(ui, u, &mut state.stock_ui.dx);
@@ -725,12 +726,10 @@ fn setups_page(ui: &mut Ui, state: &mut State) {
             });
         }
         ui.separator();
-        // A document with no setups still machines steel - the
-        // workholding section and the tool list belong to the implicit
-        // context too.
-        fixtures_section(ui, state, None);
-        ui.separator();
-        tool_list_section(ui, state, None);
+        // Workholding and the tool list of the implicit first setup live
+        // under its Fixtures and Tool list nodes in the browser (#1197),
+        // the same place as in a document with setups.
+        ui.label(super::setup_pages::WORKHOLDING_POINTER);
         sheet_footer(ui, state);
         return;
     }
@@ -751,6 +750,17 @@ fn setups_page(ui: &mut Ui, state: &mut State) {
                         .pending
                         .push_back(CommandKind::DeleteSetup(name.clone()));
                 }
+                // Alignment, work offset, workholding and tools live on
+                // the setup's own page: one click from here (#1104).
+                if ui.small_button("Open page").clicked() {
+                    // Activate it too, as the browser's Stock row does: the
+                    // fixture and tool pages edit only the active setup.
+                    super::browser_pane::focus(state, name);
+                    actions::target(
+                        state,
+                        UiTarget::SetupNode(name.clone(), crate::state::SetupPage::Settings),
+                    );
+                }
             });
         });
         if let Some(def) = camcraft_app::setup::def_of(&state.world, name) {
@@ -764,11 +774,6 @@ fn setups_page(ui: &mut Ui, state: &mut State) {
                 line.push_str(&format!(", datum from {}", def.datum_from));
             }
             ui.label(line);
-            super::setup_align_pick::picker(ui, state, name);
-            super::setup_plane_pick::row(ui, state, name);
-            super::setup_points_pick::row(ui, state, name);
-            super::setup_axis_pick::rows(ui, state, name);
-            super::setup_wcs_pick::picker(ui, state, name);
         }
     }
     ui.separator();
@@ -788,11 +793,10 @@ fn setups_page(ui: &mut Ui, state: &mut State) {
         }
     });
     ui.separator();
-    fixtures_section(ui, state, active.as_deref());
-    ui.separator();
-    tool_list_section(ui, state, active.as_deref());
     sheet_footer(ui, state);
-    ui.label("The Stock and Work offset pages edit the active setup's stock and work offset.");
+    ui.label(
+        "Each setup's alignment, work offset, fixtures and tool list are on its own          Setup page in the browser (Open page).",
+    );
 }
 
 /// The tool list of one setup context (M3.2 stage C): what goes into
@@ -987,11 +991,21 @@ fn tool_page(ui: &mut Ui, state: &mut State, name: &str) {
                 .clicked();
             let import = ui
                 .button("Import library…")
-                .on_hover_text("add the tools of a CamCraft tool library file (one undo step; taken names are never overwritten)")
+                .on_hover_text("import the tools of a CamCraft tool library file (one undo step; the mode beside it says what happens to a name the document has)")
                 .clicked();
+            tool_import_mode_combo(ui, &mut state.tool_import_mode);
             (new, export, import)
         })
         .inner;
+    // #889: whether an import takes each tool's holder body from the file.
+    let mut holders = state.import_tool_holders;
+    if ui
+        .checkbox(&mut holders, "Import tool holders")
+        .on_hover_text("take each tool's holder body from the library file; unticked, tools arrive with their holder cylinder only")
+        .changed()
+    {
+        state.set_import_tool_holders(holders);
+    }
     if new {
         actions::open_tool_editor(state, "");
     }
@@ -1002,7 +1016,7 @@ fn tool_page(ui: &mut Ui, state: &mut State, name: &str) {
         state.import_tool_library_dialog();
     }
     if let Some(msg) = state.error_for(ErrorScope::Tool).map(str::to_owned) {
-        ui.colored_label(super::colorvision::text_inks(ui, &state.world).error, msg);
+        super::error_text::error_text(ui, super::colorvision::text_inks(ui, &state.world).error, &msg);
     }
     ui.separator();
     ui.heading("Catalog");
@@ -1044,211 +1058,6 @@ fn tool_page(ui: &mut Ui, state: &mut State, name: &str) {
 /// reach the world, through the same commands the dock's field list used
 /// to carry. Delete stays a library verb (the dock owns it), which also
 /// keeps every button label unique across the two surfaces.
-/// M1.7d: the G-code viewer. The program one successful post wrote,
-/// line-numbered and monospaced, with the scroll cursor (the line at
-/// the window's middle) published through `PostView::line` for the
-/// viewport's amber segment (`shell::gcode_segment`). It shows the
-/// retained text, not a re-read of the file: text and positions came
-/// from the same engine run, so a highlighted line always highlights
-/// the move that line posts, even if something edits the file after.
-pub(crate) fn gcode_window(ctx: &egui::Context, state: &mut State) {
-    let Some(view) = state.post_view.as_mut() else {
-        return;
-    };
-    if !view.open {
-        return; // closed by ✖ or a document switch: allocate nothing
-    }
-    let stem = view
-        .path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("program")
-        .to_owned();
-    let mut open = view.open;
-    let warn_ink = super::colorvision::palette_of(&state.world).text_on(super::theme::current().ink).warn;
-    // Disjoint field borrows: the closure writes `line` and reads
-    // `program` at once, and `open` is a copy resolved after the pass.
-    let PostView {
-        program,
-        line,
-        blocks,
-        trace,
-        not_judged,
-        ..
-    } = view;
-    // The trace pane's selection is DERIVED (the block owning the
-    // scroll cursor), never stored - the one cursor law the viewer
-    // already obeys, applied to a second view of the same evidence.
-    let owning = |ln: usize| -> Option<usize> {
-        blocks
-            .iter()
-            .position(|b| ln >= b.first && ln < b.last.max(b.first + 1))
-    };
-    Window::new(format!("G-code - {stem}"))
-        .id(Id::new("gcode-viewer"))
-        .open(&mut open)
-        .default_size([560.0, 400.0])
-        .show(ctx, |ui| {
-            let jump = std::cell::Cell::new(None::<usize>);
-            ui.horizontal(|ui| {
-                // Stage D: the debugging trace, beside the program it
-                // explains. Off by default - the plain viewer draws
-                // exactly as it always did.
-                ui.checkbox(trace, "trace");
-                // The header's not-judged line: same row as the
-                // checkbox, so a judged program's viewer geometry is
-                // untouched. Hover shows the whole reason.
-                if let Some(line) = not_judged.as_deref() {
-                    ui.add(
-                        Label::new(
-                            egui::RichText::new(format!("WARNING: {line}"))
-                                .color(warn_ink),
-                        )
-                        .truncate(),
-                    )
-                    .on_hover_text(line);
-                }
-            });
-            let trace_on = *trace;
-            let sel = owning(*line);
-            // Trace off: the listing is the window's direct child -
-            // byte-for-byte the geometry every cursor-law test was
-            // written against. Trace on: egui 0.36's Sides, sized to
-            // the listing's left (300 px) and the rest to the
-            // program. (A `horizontal` of `allocate_ui` panes was
-            // tried first and is wrong inside an auto-shrinking
-            // Window: the child measures available_width as its
-            // desired width, the window grows to satisfy it, and the
-            // next frame's cursor law reads a rectangle it never
-            // wrote. Sides asks each child only for a row during
-            // sizing, so the window's rect stays the user's.)
-            if trace_on {
-                let h = ui.available_height();
-                egui::containers::Sides::new()
-                    .shrink_right()
-                    .height(h)
-                    .show(
-                        ui,
-                        |ui| {
-                            ui.allocate_ui(Vec2::new(300.0, h), |ui| {
-                                ScrollArea::vertical()
-                                    .id_salt("gcode-trace-list")
-                                    .auto_shrink([false, false])
-                                    .show(ui, |ui| {
-                                        for (i, b) in blocks.iter().enumerate() {
-                                            let txt = format!("{:>4}  {}", b.first + 1, b.label);
-                                            let rt = egui::RichText::new(txt)
-                                                .monospace()
-                                                .size(11.0)
-                                                .color(if sel == Some(i) {
-                                                    ui.visuals().strong_text_color()
-                                                } else {
-                                                    ui.visuals().text_color()
-                                                });
-                                            let r = ui.add(
-                                                Label::new(rt)
-                                                    .selectable(false)
-                                                    .sense(Sense::click()),
-                                            );
-                                            if r.clicked() {
-                                                jump.set(Some(b.first));
-                                            }
-                                        }
-                                    });
-                            });
-                        },
-                        |ui| {
-                            gcode_listing(
-                                ui,
-                                program.as_str(),
-                                line,
-                                blocks.as_slice(),
-                                true,
-                                &jump,
-                            );
-                        },
-                    );
-            } else {
-                gcode_listing(ui, program.as_str(), line, blocks.as_slice(), false, &jump);
-            }
-        });
-    view.open = open;
-}
-
-/// The program listing: every line, uniformly `row_h` tall, with the
-/// scroll cursor law the viewer is tested against (the middle row of
-/// the clip rect IS the published line). Drawn as the window's direct
-/// child or to the right of the trace panel - one geometry, two
-/// hosts. While the trace is open, lines outside the block under
-/// study rest weak; a row of the clicked block centers itself, so the
-/// cursor law reads the selection back next frame - the pane stores
-/// no second truth about the scroll.
-fn gcode_listing(
-    ui: &mut Ui,
-    program: &str,
-    line: &mut usize,
-    blocks: &[camcraft_app::post::TraceBlock],
-    trace_on: bool,
-    jump: &std::cell::Cell<Option<usize>>,
-) {
-    ScrollArea::vertical()
-        .id_salt("gcode-scroll")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            // The scroll offset is read, not stored: egui lays the
-            // inner ui out at `-offset`, so the clip rect's center
-            // against the content top names the middle row - that row
-            // is the sync cursor. Uniform rows (one monospace label
-            // per line, spacing fixed) are what make the division
-            // exact.
-            let n = program.lines().count();
-            let row_h = ui.text_style_height(&egui::TextStyle::Monospace);
-            ui.spacing_mut().item_spacing.y = 0.0;
-            let top = ui.min_rect().min.y;
-            let vis = ui.clip_rect();
-            *line = (((vis.center().y - top) / row_h).max(0.0) as usize).min(n.saturating_sub(1));
-            let want = trace_on
-                .then(|| {
-                    blocks
-                        .iter()
-                        .position(|b| *line >= b.first && *line < b.last.max(b.first + 1))
-                        .map(|bi| (blocks[bi].first, blocks[bi].last))
-                })
-                .flatten();
-            let width = ui.available_width();
-            for (i, ln) in program.lines().enumerate() {
-                let label = format!("{:>4}  {}", i + 1, ln);
-                let mut rt = egui::RichText::new(label).monospace();
-                if let Some((a, b)) = want
-                    && !(i >= a && i < b.max(a + 1))
-                {
-                    rt = rt.weak();
-                }
-                // Every row is a left-to-right box exactly `width` by
-                // `row_h`, so the text starts at the left edge (#256:
-                // `add_sized` centred it) and the cursor arithmetic
-                // above stays exact over a long program instead of
-                // drifting a row. `truncate` keeps a line wider than
-                // the window on its one row (egui shows the whole line
-                // on hover) rather than wrapping it onto a second.
-                let resp = ui
-                    .allocate_ui_with_layout(
-                        Vec2::new(width, row_h),
-                        Layout::left_to_right(Align::Center),
-                        |ui| {
-                            ui.set_min_size(Vec2::new(width, row_h));
-                            ui.add(Label::new(rt).selectable(false).truncate())
-                        },
-                    )
-                    .inner;
-                if jump.get() == Some(i) {
-                    resp.scroll_to_me(Some(Align::Center));
-                    jump.set(None);
-                }
-            }
-        });
-}
-
 pub(crate) fn tool_editor_window(ctx: &egui::Context, state: &mut State) {
     let u = state.units();
     let Some(_subject) = state.tool_editor.clone() else {
@@ -1415,6 +1224,8 @@ pub(crate) fn tool_editor_window(ctx: &egui::Context, state: &mut State) {
                     }
                     // #630: which point of the nose the lathe posts write.
                     super::tool_orientation_row::orientation_row(ui, state);
+                    // #891: a lathe steel's surface speed, feed per rev, clamp.
+                    super::tool_turning_row::turning_rows(ui, state);
                     if state.tool_ui.kind == 7 {
                         field(ui, "Blade width");
                         num(ui, u, &mut state.tool_ui.width);
@@ -1504,10 +1315,9 @@ pub(crate) fn tool_editor_window(ctx: &egui::Context, state: &mut State) {
             };
             if exists {
                 if ui.button("Apply").clicked() {
-                    state.pending.push_back(CommandKind::ChangeTool {
-                        name: name_now.clone(),
-                        tool: state.tool_ui.to_tool(),
-                    });
+                    // #93 slice 3: a landed drawn cutter rides the edit.
+                    let apply = state.apply_tool_numbers(&name_now);
+                    state.pending.push_back(apply);
                     push_number_if_changed(state, &name_now);
                 }
             } else {
@@ -1524,7 +1334,7 @@ pub(crate) fn tool_editor_window(ctx: &egui::Context, state: &mut State) {
                 }
             }
             if let Some(msg) = state.error_for(ErrorScope::Tool).map(str::to_owned) {
-                ui.colored_label(super::colorvision::text_inks(ui, &state.world).error, msg);
+                super::error_text::error_text(ui, super::colorvision::text_inks(ui, &state.world).error, &msg);
             }
             close_clicked = ui.button("Close").clicked();
         });
@@ -1677,6 +1487,19 @@ fn model_page(ui: &mut Ui, state: &mut State, name: String) {
     };
     let tris = model::facets_of(&state.world, &entity).map_or(0, |f| f.len());
     ui.label(format!("{tris} triangle(s)"));
+    // #864: a model imported coarser than the importer promises says so,
+    // with the error it carries and what that does to the checks.
+    if let Some(chord) = camcraft_app::model_fidelity::chord_of(&state.world, &entity) {
+        ui.label(camcraft_app::model_fidelity::summary(&state.world, chord));
+        hint(
+            ui,
+            "This model was too large to import at full detail. Gouge checks against it are \
+             stricter to make up for that; when it is too coarse to check at all, its operations \
+             are refused at the post. Raise the STEP facet budget below and import the file \
+             again to clear this.",
+        );
+    }
+    super::step_budget_row::row(ui, state, &entity);
     if let Some(a) = model::entity_world_aabb(&state.world, &entity) {
         ui.label(format!(
             "{} x {} x {} {}",
@@ -1792,6 +1615,25 @@ fn model_page(ui: &mut Ui, state: &mut State, name: String) {
         ui.label("It is also the stock solid (Setup > Stock).");
     }
     ui.label("Selected now: Del removes it (undo restores).");
+}
+
+/// #899: the Import library mode picker (view state; the import is the command).
+fn tool_import_mode_combo(ui: &mut egui::Ui, mode: &mut camcraft_app::commands::ImportMode) {
+    use camcraft_app::commands::ImportMode;
+    egui::ComboBox::from_id_salt("tool_import_mode")
+        .selected_text(match mode {
+            ImportMode::Add => "Add (rename duplicates)",
+            ImportMode::Update => "Update same-named",
+            ImportMode::Replace => "Replace library",
+        })
+        .show_ui(ui, |ui| {
+            ui.selectable_value(mode, ImportMode::Add, "Add (rename duplicates)")
+                .on_hover_text("an identical tool is skipped, a different tool of a taken name comes in as \"Name (2)\"");
+            ui.selectable_value(mode, ImportMode::Update, "Update same-named")
+                .on_hover_text("a same-named tool takes the file's definition in place (number kept; operations using it go Stale); new names are added");
+            ui.selectable_value(mode, ImportMode::Replace, "Replace library")
+                .on_hover_text("update, and tools the file lacks are removed - refused if an operation uses one");
+        });
 }
 
 #[cfg(test)]

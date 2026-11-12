@@ -150,3 +150,30 @@ fn the_default_filter_is_used_when_the_environment_names_none() {
     camcraft_app::logging::init();
     camcraft_app::logging::init(); // a second install is a no-op, never a panic
 }
+
+/// #163: a generator that refuses on a limit says which limit and its
+/// value, at warn - not just "refused".
+#[test]
+fn a_budget_refusal_names_the_limit_that_fired_at_warn() {
+    let text = logged(|| {
+        let world = new_world();
+        let mut h = History::default();
+        let stock = SetStock::new(&world, StockShape::Box { dx: 60.0, dy: 60.0, dz: 20.0 }, Location::default());
+        h.execute(&world, stock.expect("stock"));
+        h.execute(&world, ImportModel::from_mesh("block", cube(Point3::new(-20.0, -20.0, 0.0), Point3::new(20.0, 20.0, 19.0))));
+        let tool = catalog().into_iter().find(|(n, _)| *n == "EM-0400-2FL").map(|(_, t)| t).expect("catalog tool");
+        h.execute(&world, AddTool::new(&world, "EM-0400-2FL", tool).expect("tool"));
+        let mut params = face_params();
+        if let OpParams::Face { stepover, .. } = &mut params {
+            *stepover = 1e-7; // millions of passes: past the pass budget
+        }
+        let op = CreateOperation::new(&world, "Face1", "EM-0400-2FL", SrcRef::Stock, params);
+        h.execute(&world, op.expect("op"));
+        if let Ok(cmd) = GenerateOperation::new(&world, "Face1") {
+            h.execute(&world, cmd);
+        }
+    });
+    let refusal = text.lines().find(|l| l.contains("refused")).unwrap_or_default();
+    assert!(refusal.contains("WARN"), "a refusal is a warning:\n{text}");
+    assert!(refusal.contains("passes"), "names the limit that fired:\n{text}");
+}

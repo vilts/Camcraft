@@ -1,7 +1,7 @@
 //! Verification warnings: clean generated paths stay silent, and each of
 //! the five planted offenders yields exactly its warning class.
 //!
-//! Gate map (M4.4): covers app::cl, app::finishing3d, app::geo2d, app::geometry, app::machining2d, app::verify - and the ENVELOPE verdict lane of sim::stock_sim (scan/gouge/engine), whose law changes must re-run this binary and its ignored release pair (the E2 lesson: a kernel-law commit that names no suite here goes unchecked through the narrow gate).
+//! Gate map (M4.4): covers cl::cl, motion::finishing3d, geometry::geo2d, app::geometry, motion::machining2d, sim::verify - and the ENVELOPE verdict lane of sim::stock_sim (scan/gouge/engine), whose law changes must re-run this binary and its ignored release pair (the E2 lesson: a kernel-law commit that names no suite here goes unchecked through the narrow gate).
 //! Lane shape (M4.4): 15 structural verifies run in milliseconds; the two
 //! cone_facets(96) envelope verdicts are #[ignore]d - heavy lane, run them with
 //! `cargo test --release -p camcraft-app -- --ignored` at milestone close.
@@ -85,6 +85,7 @@ fn ctx<'a>(region: &'a Region, stock: Option<&'a Region>, tool: &'a ToolGeom, mo
         // what it was before the stage existed.
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     }
 }
 
@@ -659,6 +660,7 @@ fn env_ctx<'a>(
         finish_tol,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     }
 }
 

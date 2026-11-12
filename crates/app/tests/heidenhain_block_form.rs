@@ -9,7 +9,7 @@
 //! plane; p. 456: `FUNCTION DWELL TIME<seconds>`. These tests parse the
 //! posted programs and assert exactly that.
 //!
-//! Gate map (M4.4): covers app::post (assets/posts/heidenhain.cps).
+//! Gate map (M4.4): covers post::post (assets/posts/heidenhain.cps).
 
 use camcraft_app::cl::{CycleKind, MoveKind};
 use camcraft_app::post::{cnc, engine};

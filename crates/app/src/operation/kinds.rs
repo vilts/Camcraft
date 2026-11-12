@@ -2497,7 +2497,7 @@ pub fn retype_params(cur: &OpParams, kind: usize) -> OpParams {
         Some(r) => r,
         None => {
             debug_assert!(false, "op kind index {kind} is past the table");
-            eprintln!("kinds: unknown op kind index {kind}, seeding a Face");
+            tracing::error!("kinds: unknown op kind index {kind}, seeding a Face");
             &KindInfo::ALL[0]
         }
     };

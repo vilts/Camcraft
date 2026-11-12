@@ -71,6 +71,7 @@ fn judge_with(p: &Toolpath, mode: Mode, tool: &ToolGeom, stock_top_z: f64, z_tol
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(p, &cx)
 }

@@ -6,7 +6,7 @@
 //! Provenance: HSMWorks expresses heights the same way (From + Offset);
 //! specced from its published user documentation, behavior only.
 //!
-//! Gate map (M4.4): covers app::commands, app::geometry, app::machining2d, app::model, app::operation, app::project, app::schema, app::stock, app::tools, app::world.
+//! Gate map (M4.4): covers app::commands, app::geometry, motion::machining2d, app::model, app::operation, app::project, app::schema, geometry::geometry::stock, tools::tools, app::world.
 
 use flecs_ecs::prelude::World;
 

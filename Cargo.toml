@@ -114,6 +114,11 @@ ruststep = "=0.4.0"
 # ruststep-derive comes from the same tree. This is deliberately the only
 # git dependency in the workspace (policy elsewhere: crates.io pins) and
 # should be dropped once a ruststep release contains the fix.
+# #1075: crates/app/src/geometry/import/step_depth.rs mirrors ruststep's
+# tokenizer (strings, comments, `<...>`, binaries) to refuse deep nesting
+# before ruststep's recursive parser overflows the stack, so that scan must
+# be re-audited against ruststep's token.rs / exchange parser whenever this
+# pin moves.
 [patch.crates-io]
 ruststep = { git = "https://github.com/ricosjp/ruststep", rev = "90fdc9351746f1f1d1e435b88f15371edaaaa14d" }
 

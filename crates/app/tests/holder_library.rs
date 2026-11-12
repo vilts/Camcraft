@@ -12,7 +12,7 @@
 //! collar face is the gauge line (tip to collar = the TTS tool length),
 //! and the TTS ER20's collar strikes a wall its nut would miss.
 //!
-//! Gate map (M4.4): covers app::commands, app::tool_body, app::tools.
+//! Gate map (M4.4): covers app::commands, app::tool_body, tools::tools.
 
 use camcraft_app::commands::{AddTool, CommandError, CreateOperation, GenerateOperation, History, SetStock, SetToolBody, TagFixture};
 use camcraft_app::geometry::{Point3, Triangle};

@@ -1,6 +1,8 @@
 {#- CamCraft docs site base layout (#688). Provenance: our own template, no third-party theme. -#}
 {%- set build = load_data(path="version.toml", required=false) -%}
 {%- if build and build.version -%}{%- set version = build.version -%}{%- else -%}{%- set version = "" -%}{%- endif -%}
+{#- #1103: `app = true` only when the release workflow put the browser build at app/. -#}
+{%- if build and build.app -%}{%- set app = true -%}{%- else -%}{%- set app = false -%}{%- endif -%}
 <!doctype html>
 <html lang="en">
 <head>

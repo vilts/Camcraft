@@ -1,0 +1,4 @@
+; tormach.cps refused css_then_live: 3 warning(s), the program is never released
+warning: operation Cross mill: is C-axis live-tool work (the spindle turns as C under a radial live tool), but this post script does not declare liveTooling - use a lathe post that voices the C axis
+warning: machine TESTBENCH MILL-TURN LIVE does not state its safe Z retract - this post lifts Z with G53 G0 before each tool change and at the end, and machine Z0 is the top of travel only on a Tormach; state the Z axis's safe_retract (machine coordinates) in the machine file
+warning: tilted move in operation Cross mill - TESTBENCH MILL-TURN LIVE states no A rotary about X; the Tormach PathPilot post indexes only an A about X and has no RTCP output

@@ -13,6 +13,29 @@
   {% endif %}
 </section>
 {{ section.content | safe }}
+{#- #1103: the browser build lives at app/. The release workflow says in version.toml (`app`) whether it put it there; only then does this page claim it. Without it, app/ is a page saying so. -#}
+<section class="browser">
+  <h2>Try CamCraft in your browser</h2>
+  {% if version and app %}
+  <p><a class="button" href="{{ get_url(path='@/app.md') }}">Open CamCraft {{ version }} in your browser</a></p>
+  <p>The same release as this site, with nothing to install. It needs a browser with
+    WebGL2 (a current Chrome, Firefox, Edge or Safari).</p>
+  {% elif version %}
+  <p><a href="{{ get_url(path='@/app.md') }}">The browser version of CamCraft {{ version }} is not available</a>:
+    it did not build for this release. Use the desktop downloads.</p>
+  {% else %}
+  <p><a href="{{ get_url(path='@/app.md') }}">CamCraft in the browser</a> comes with a released
+    copy of this site; this local preview does not have it.</p>
+  {% endif %}
+  <p>
+    The browser version is an early one. It cannot open or save files yet (models,
+    projects and programs), simulation playback does not work in it yet, it does not use
+    the newer WebGPU graphics, and views that need more graphics features than the
+    browser offers say so instead of drawing. For real work, use the
+    <a href="{{ config.extra.repo }}/releases">desktop downloads</a>
+    (<a href="{{ config.extra.repo }}/issues/31">#31</a> tracks what is still missing).
+  </p>
+</section>
 <div class="cards">
   {% set guide = get_section(path="guide/_index.md") %}
   <div class="card">

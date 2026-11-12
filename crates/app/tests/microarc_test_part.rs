@@ -13,7 +13,7 @@
 //! Regenerate the program and the project after an intentional change:
 //! `WRITE_GOLDEN=1 cargo test -p camcraft-app --test microarc_test_part`
 //!
-//! Gate map (M4.4): covers app::posting (post_setup), app::post
+//! Gate map (M4.4): covers app::posting (post_setup), post::post
 //! (tormach.cps), app::operation (tilted Slot, Rotary Parallel), app::project.
 
 use camcraft_app::commands::{

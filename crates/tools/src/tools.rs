@@ -18,6 +18,7 @@
 //! generation and the shank-reach law in `verify`.
 
 pub use crate::cutting::{ToolMaterial, WorkMaterial};
+pub use crate::turning_data::TurningData;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolKind {
@@ -200,6 +201,11 @@ pub struct Tool {
     /// names the touched-off corner of the tip edge (#641,
     /// [`crate::orientation::blade_corner`]); inert on every other kind.
     pub orientation: Option<u8>,
+    /// Turning cutting data (#891, [`crate::turning_data`]): surface
+    /// speed, feed per rev and the tool's max-rpm clamp. `None` = not
+    /// stated - the turning ops then post the constant `rpm` (G97) as
+    /// before. Read only by the turning operations (threading aside).
+    pub turning: Option<crate::turning_data::TurningData>,
 }
 
 impl Tool {
@@ -251,6 +257,9 @@ impl Tool {
             && self.feed > 0.0
             && self.flutes.is_none_or(|z| (1..=32).contains(&z))
             && self.orientation.is_none_or(crate::orientation::is_valid)
+            // #891: stated turning data is sane, and the constant rpm
+            // the tool states never runs over its own max-rpm clamp.
+            && self.turning.is_none_or(|t| t.is_sane() && t.max_rpm.is_none_or(|m| self.rpm <= m))
             && match self.kind {
                 // A point that cannot self-center is not a drill, and a
                 // tap with no thread pitch has no feed the cycle could
@@ -513,6 +522,7 @@ pub fn probe_tool(ball_d: f64, stylus_len: f64) -> Tool {
         flutes: None,
         center_cutting: false,
         orientation: None,
+        turning: None,
     }
 }
 
@@ -542,6 +552,7 @@ pub fn torch_tool(kerf: f64) -> Tool {
         flutes: None,
         center_cutting: false,
         orientation: None,
+        turning: None,
     }
 }
 

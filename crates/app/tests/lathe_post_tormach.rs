@@ -17,7 +17,7 @@
 //! `WRITE_GOLDEN=1 cargo test -p camcraft-app --test lathe_post_tormach`
 //!
 //! Gate map (M4.4): covers app::posting (the registry, stream_records,
-//! post_setup on the Tormach lathe post), app::post (engine on the
+//! post_setup on the Tormach lathe post), post::post (engine on the
 //! PathPilot lathe dialect), app::commands (SelectPost / SetPostOptions).
 //! Lane shape (M4.4): all tests here run in seconds.
 
@@ -214,7 +214,8 @@ fn css_arcs_part_load_and_a_trip_home_speak_linuxcnc() {
             // there reads CCW in ZX; X diameter 14, I K from the start.
             assert!(p.contains("G3 X14 Z0 I-5 K-2 F0.1\n"), "{p}");
         }
-        assert!(p.ends_with("M9\nM5\nG30\nM30\n"), "home once, not twice: {p}");
+        // #1173: the CSS section cancels its G96 after M5, before the home.
+        assert!(p.ends_with("M9\nM5\nG97\nG30\nM30\n"), "home once, not twice: {p}");
         linuxcnc_sane(p);
     }
 }
@@ -242,6 +243,38 @@ fn a_section_without_surface_speed_posts_g97_after_one_with_it() {
     assert!(p.contains("G96 D12000 S200 M3\n"), "{p}");
     let drill = &p[p.find("T0202").expect("the drill's tool change")..];
     assert!(drill.contains("G97 S500 M3\n"), "the drill states its own rpm: {drill}");
+    // #1173: the CSS section itself cancels G96 at its end, so no section
+    // that follows - whatever its kind - opens under it.
+    let css_end = &p[p.find("G96").expect("the CSS section")..p.find("T0202").expect("the drill")];
+    assert!(css_end.contains("M5\nG97\n"), "the CSS section ends in G97: {p}");
+    linuxcnc_sane(p);
+}
+
+#[test]
+fn two_css_sections_in_a_row_each_state_their_own_g96() {
+    // #1173's rule, its price stated: each CSS section cancels at its end,
+    // so the second states G96 again after the first's bare G97, and the
+    // program ends in G97.
+    let section = |tool: u32| {
+        let mut r = vec![cnc::Record::Param { name: "SurfaceSpeed".into(), value: json!(200.0) }];
+        r.extend(preface());
+        if let Some(cnc::Record::Tool { number, .. }) = r.iter_mut().find(|x| matches!(x, cnc::Record::Tool { .. })) {
+            *number = tool;
+        }
+        r.push(mv(MoveKind::Rapid, 0.0, 6.0, 10.0, None));
+        r.push(mv(MoveKind::Feed, 0.0, 6.0, 0.0, Some(100.0)));
+        r.push(cnc::Record::Section { begin: false });
+        r
+    };
+    let mut r = section(1);
+    r.extend(section(2));
+    let out = run(r);
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    let p = &out.program;
+    assert_eq!(p.matches("G96 D12000 S200 M3\n").count(), 2, "{p}");
+    assert_eq!(p.matches("\nG97\n").count(), 2, "one cancel per CSS section: {p}");
+    assert!(!p.contains("G97 S"), "{p}");
+    assert!(p.ends_with("M5\nG97\nG30\nM30\n"), "{p}");
     linuxcnc_sane(p);
 }
 

@@ -332,6 +332,21 @@ fn a_slot_no_angle_clears_refuses_by_name() {
 }
 
 #[test]
+fn the_shank_refusal_hands_back_the_world_plan_before_its_move() {
+    // #1015: the stamp's refusal carries the plan it was posing, up to
+    // the refused move - world, as the stamp's input is (the 3-D
+    // ladder over the same part), never a frame of its own.
+    let f = narrow_slot();
+    let region = silhouette(&f);
+    let e = multiaxis_rough(&f, &region, &params(), &control(0.0, 0.0, Some(60.0)), Some(&shank()))
+        .expect_err("no cone angle clears the slot");
+    let plan = camcraft_motion::machining3d::pocket3d(&f, &region, &params()).expect("the unposed ladder");
+    let g = e.ghost().expect("moves were planned before the refused one");
+    assert!(g.len() < plan.moves.len(), "only the plan before the refusal");
+    assert_eq!(g.moves(), &plan.moves[..g.len()], "the ghost is the world plan itself");
+}
+
+#[test]
 fn a_shank_that_never_speaks_leaves_the_path_alone() {
     // The opt-in has to be exactly opt-in: a long flute keeps every
     // band's column floor above the model (the box gate skips all

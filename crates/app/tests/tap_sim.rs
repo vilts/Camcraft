@@ -5,7 +5,7 @@
 //! tap-drill size the sim must find no gouge; a tap whose core is wider
 //! than the hole under it must still be a gouge.
 //!
-//! Gate map (M4.4): covers app::stock_sim (plan_program's tap atom), app::operation (tool_law::cutting_radius).
+//! Gate map (M4.4): covers app::stock_sim, sim::stock_sim (plan_program's tap atom), app::operation (tool_law::cutting_radius).
 //! Lane shape (M4.4): all tests here run in seconds.
 
 use flecs_ecs::prelude::World;

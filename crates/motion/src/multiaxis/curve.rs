@@ -589,7 +589,13 @@ pub fn contour_curve(
             prev = Some(cdir);
             Ok((cdir, h))
         };
-        let rests = super::curve_walk::walk(&pts[..k], *ring, r, &mut law)?;
+        // #1015: a chain refused hands back the chains walked before it
+        // (world, posed - the very moves the finished path starts with).
+        let built = |e: GenError, b: &Option<PathBuilder>| match b {
+            Some(b) => e.with_ghost_moves(b.moves()),
+            None => e,
+        };
+        let rests = super::curve_walk::walk(&pts[..k], *ring, r, &mut law).map_err(|e| built(e, &builder))?;
         let n = rests.len();
         let mut stations: Vec<(Point3, [f64; 3])> = Vec::with_capacity(n);
         for (j, rs) in rests.iter().enumerate() {
@@ -604,7 +610,8 @@ pub fn contour_curve(
                         ci + 1,
                         j + 1
                     ))
-                })?;
+                })
+                .map_err(|e| built(e, &builder))?;
             let cl = rs.centre;
             let i = j;
             let pose = match shank {
@@ -619,7 +626,8 @@ pub fn contour_curve(
                             ci + 1,
                             i + 1
                         ))
-                    })?
+                    })
+                    .map_err(|e| built(e, &builder))?
                 }
                 _ => axis,
             };

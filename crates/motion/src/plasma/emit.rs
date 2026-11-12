@@ -247,7 +247,8 @@ pub(super) fn cut(cs: &[Contour], order: &[usize], part: &Region, p: &PlasmaPara
             push_piece(&mut b, *q, p.cut_z, feed);
         }
         if b.moves_len() == on {
-            return Err(invalid(format!("contour C{} lays down no cut", id_of[*k])));
+            // #871: part-way refusals hand back the contours cut so far.
+            return Err(invalid(format!("contour C{} lays down no cut", id_of[*k])).with_ghost_moves(b.moves()));
         }
         let off = b.moves_len() - 1;
         if let Some((side, prog)) = &plan.comp {
@@ -261,7 +262,8 @@ pub(super) fn cut(cs: &[Contour], order: &[usize], part: &Region, p: &PlasmaPara
                 return Err(invalid(format!(
                     "contour C{}: the G41/G42 span does not chain onto its cut - cut it with the computer's offset",
                     id_of[*k]
-                )));
+                ))
+                .with_ghost_moves(b.moves()));
             }
             b.push_comp(span);
         }
@@ -278,9 +280,10 @@ pub(super) fn cut(cs: &[Contour], order: &[usize], part: &Region, p: &PlasmaPara
     let mut path = b.finish();
     // #672: no edge may stand beyond the kerf's reach - a slot narrower
     // than the kerf that the offset bridged is refused, not left uncut.
-    super::laws::cover_law(&path, &rec.torches, cs, order, p.kerf)?;
+    // #871: the laws judge the whole cut; a refusal hands it back.
+    super::laws::cover_law(&path, &rec.torches, cs, order, p.kerf).map_err(|e| e.with_ghost(&path))?;
     if let Some(f) = &forbidden {
-        super::laws::kerf_law(&path, &rec.torches, f)?;
+        super::laws::kerf_law(&path, &rec.torches, f).map_err(|e| e.with_ghost(&path))?;
     } else {
         notes.push("plasma: no part silhouette to judge - roles read by nesting, the kerf law not run".into());
     }
@@ -300,7 +303,7 @@ pub(super) fn cut(cs: &[Contour], order: &[usize], part: &Region, p: &PlasmaPara
     head.extend(notes);
     path.notes.extend(head);
     if !rec.is_sane(&path.moves) {
-        return Err(invalid("the torch spans do not sit on the moves - refused".into()));
+        return Err(invalid("the torch spans do not sit on the moves - refused".into()).with_ghost(&path));
     }
     path.plasma = Some(rec);
     Ok(path)

@@ -2,7 +2,7 @@
 //! paints them - pinned on a planted gouge ring that `verify` convicts
 //! move by move, and on a clean ring it leaves silent.
 //!
-//! Gate map (M4.4): covers app::warned_moves (over app::verify's output).
+//! Gate map (M4.4): covers app::warned_moves (over sim::verify's output).
 
 use camcraft_app::cl::{Move, MoveKind, Toolpath};
 use camcraft_app::geo2d::{Loop, Point2, Region};
@@ -59,6 +59,7 @@ fn judge(t: &Toolpath, region: &Region, tool: &ToolGeom) -> Vec<camcraft_app::ve
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(t, &cx)
 }

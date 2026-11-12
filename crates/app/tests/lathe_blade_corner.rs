@@ -10,7 +10,7 @@
 //! middle of the edge.
 //!
 //! Gate map (M4.4): covers app::posting (op_streams, the nose module's
-//! blade branch), app::orientation (blade corners), app::commands
+//! blade branch), tools::orientation (blade corners), app::commands
 //! (ChangeTool on a blade).
 //! Lane shape: seconds.
 

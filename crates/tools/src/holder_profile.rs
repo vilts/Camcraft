@@ -33,6 +33,10 @@ pub struct HolderBand {
 pub struct HolderStack {
     pub bands: Vec<HolderBand>,
     pub top: f64,
+    /// #852: the tool's drawn neck over the shank's span, bottom-up
+    /// (`neck::neck_bands`); empty - the stated shank cylinder - for
+    /// every tool without one. Read through `HolderStack::shank_bands`.
+    pub neck: Vec<HolderBand>,
 }
 
 impl HolderStack {
@@ -48,6 +52,7 @@ impl HolderStack {
                 r: g.holder_radius,
             }],
             top: g.flute_len + g.shank_len + g.holder_len,
+            neck: Vec::new(),
         }
     }
 }
@@ -217,7 +222,7 @@ impl HolderProfile {
             bands.push(HolderBand { above: shank_top, len: self.bottom() - shank_top, r: g.shank_radius });
         }
         bands.extend_from_slice(&self.bands);
-        HolderStack { bands, top: self.top().max(shank_top) }
+        HolderStack { bands, top: self.top().max(shank_top), neck: Vec::new() }
     }
 
     /// #828: this body judged no smaller than the stand-in holder

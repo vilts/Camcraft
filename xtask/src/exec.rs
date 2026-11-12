@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+use crate::checkout::{self, Reading};
 use crate::plan::{Plan, Step};
 use crate::scan::re;
 
@@ -17,6 +18,10 @@ pub struct Run {
     log_dir: PathBuf,
     clock: Instant,
     done: Vec<Done>,
+    /// HEAD and the working tree when the gate started (#1201); every later reading is compared with it.
+    guard: Reading,
+    /// The VOID line, once the checkout was seen to move; a void run has no verdict.
+    void: Option<String>,
 }
 
 struct Done {
@@ -129,7 +134,17 @@ impl Run {
     pub fn new(root: &Path, label: &str, dry: bool) -> Result<Run, String> {
         let log_dir = root.join("gate-logs").join(format!("{label}-{}", stamp(SystemTime::now())));
         std::fs::create_dir_all(&log_dir).map_err(|e| format!("create {}: {e}", log_dir.display()))?;
-        Ok(Run { root: root.to_path_buf(), label: label.into(), dry, log_dir, clock: Instant::now(), done: Vec::new() })
+        let guard = checkout::read(root)?;
+        Ok(Run {
+            root: root.to_path_buf(),
+            label: label.into(),
+            dry,
+            log_dir,
+            clock: Instant::now(),
+            done: Vec::new(),
+            guard,
+            void: None,
+        })
     }
 
     pub fn plan(&mut self, plan: &Plan) -> Result<(), String> {
@@ -137,9 +152,36 @@ impl Run {
             println!("{n}");
         }
         for s in &plan.steps {
+            if self.check(&format!("before {}", s.name)) {
+                break;
+            }
             self.step(s)?;
         }
+        if self.void.is_none() {
+            self.check("at the end");
+        }
         Ok(())
+    }
+
+    /// Compares the checkout with the start reading. Returns true (and prints VOID) once it has moved.
+    fn check(&mut self, at: &str) -> bool {
+        if self.void.is_some() {
+            return true;
+        }
+        let msg = match checkout::read(&self.root) {
+            Ok(now) => checkout::void_message(&self.guard, &now, at),
+            Err(e) => Some(format!(
+                "VOID: could not read the checkout ({e}) during the gate ({at}) - this run is void, not a verdict on any commit"
+            )),
+        };
+        match msg {
+            Some(m) => {
+                println!("{m}");
+                self.void = Some(m);
+                true
+            }
+            None => false,
+        }
     }
 
     fn step(&mut self, s: &Step) -> Result<(), String> {
@@ -190,6 +232,10 @@ impl Run {
         let bad = self.done.iter().filter(|d| !d.ok).count();
         let mins = self.clock.elapsed().as_secs_f64() / 60.0;
         println!("  wall {mins:.1} min, {} step(s), {bad} failed", self.done.len());
+        if self.void.is_some() {
+            println!("== gate VOID ({}) - the checkout moved during the run; no verdict, re-run on a checkout nobody pulls into", self.label);
+            return 1;
+        }
         i32::from(bad > 0)
     }
 }

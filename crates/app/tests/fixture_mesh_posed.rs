@@ -5,7 +5,7 @@
 //! the same vise with its jaws moved into the pass still blocks the post
 //! and warns at generation.
 //!
-//! Gate map (M4.4): covers app::fixture, app::operation, app::posting, app::verify.
+//! Gate map (M4.4): covers app::fixture, sim::fixture, app::operation, app::posting, sim::verify.
 
 use camcraft_app::cl::is_vertical;
 use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, SetStock, TagFixture};

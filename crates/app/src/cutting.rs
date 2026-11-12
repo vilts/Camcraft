@@ -36,7 +36,8 @@ pub fn material_set(world: &World, m: Option<WorkMaterial>) {
 
 /// The rotating milling cutters the table speaks for. Drills, taps and
 /// the turning steels (whose cutting speed is the WORK's diameter, not
-/// the tool's) are not tabulated.
+/// the tool's) are not tabulated here - the turning steels have their
+/// own table (#891, [`crate::cutting_turn::tabulated`]).
 #[must_use]
 pub fn tabulated(kind: ToolKind) -> bool {
     matches!(kind, ToolKind::EndMill | ToolKind::BallNose | ToolKind::BullNose | ToolKind::Taper)
@@ -138,6 +139,21 @@ pub struct Suggestion {
     pub feed: f64,
     /// Every clamp a stated machine limit applied, named.
     pub notes: Vec<String>,
+    /// `Some` for a turning suggestion (#891): then `fz` is the feed
+    /// per REV (mm/rev), `rpm` the speed at the working diameter and
+    /// `feed` = fz x rpm, so the posted per-rev F is exactly `fz`.
+    pub turning: Option<TurnPlan>,
+}
+
+/// What a turning suggestion adds (#891, [`crate::cutting_turn`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TurnPlan {
+    /// The working (swing) diameter the rpm was read at, mm.
+    pub diameter: f64,
+    /// The plunge feed, mm/min: half the feed per rev, at `rpm`.
+    pub plunge_feed: f64,
+    /// The tool's own max-rpm clamp, kept as the tool states it.
+    pub max_rpm: Option<f64>,
 }
 
 /// Compute the suggestion for operation `name`, or say by name why the
@@ -149,6 +165,9 @@ pub fn suggest(world: &World, name: &str) -> Result<Suggestion, String> {
         .and_then(|t| model::tool_of(world, &t))
         .ok_or_else(|| format!("tool {} is not in the library", op.tool))?;
     let material = material_of(world).ok_or("no workpiece material is stated - pick one first")?;
+    if crate::cutting_turn::css_op(&op.params) {
+        return crate::cutting_turn::suggest(world, &op, &tool, material);
+    }
     if !tabulated(tool.kind) {
         return Err(format!("the cutting-data table does not speak for a {}", tool.kind));
     }
@@ -200,7 +219,7 @@ pub fn compute(
         notes.push(format!("{feed:.0} mm/min held to the machine's {ceil:.0}"));
         feed = ceil.floor();
     }
-    Suggestion { tool: tool_name.to_owned(), material, tool_material: tm, vc, fz, thinning, rpm, feed, notes }
+    Suggestion { tool: tool_name.to_owned(), material, tool_material: tm, vc, fz, thinning, rpm, feed, notes, turning: None }
 }
 
 /// The row a material reads (re-exported for the pages' readouts).

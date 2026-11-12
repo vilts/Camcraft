@@ -60,6 +60,8 @@ fn setups_view(env: &Env) -> Vec<Value> {
                 "stock": stock.as_ref().map(project::stock_to_json),
                 "stock_bounds": model::stock_world_aabb_for(w, d).as_ref().map(aabb),
                 "wcs": wcs,
+                // #1031: the chuck's or collet's rated maximum rpm.
+                "workholding_max_rpm": s.as_deref().and_then(|n| crate::setup_workholding::of(w, Some(n))).map(fnum),
             })
         })
         .collect()
@@ -90,17 +92,26 @@ pub(super) fn get_job(env: &mut Env, _a: &Map<String, Value>) -> Result<Value, S
         .iter()
         .filter(|(_, e)| !model::is_stock(w, e))
         .map(|(n, e)| {
-            json!({
+            let mut m = json!({
                 "name": n,
                 "facets": model::facets_of(w, e).map_or(0, |f| f.len()),
                 "bounds": model::entity_world_aabb(w, e).as_ref().map(aabb),
                 "fixture": model::is_fixture(w, e),
-            })
+            });
+            // #864: only a model imported coarser than promised says so.
+            if let Some(chord) = crate::model_fidelity::chord_of(w, e) {
+                m["reduced_fidelity"] = crate::model_fidelity::facts(w, chord);
+            }
+            // #1054: and one imported under a non-default STEP facet budget.
+            if let Some(b) = crate::model_fidelity::budget_of(w, e) {
+                m["facet_budget"] = json!(b);
+            }
+            m
         })
         .collect();
     let tools: Vec<Value> = model::named_entities(w)
         .iter()
-        .filter_map(|(n, e)| model::tool_of(w, e).map(|t| json!({ "name": n, "definition": project::tool_to_json(&t) })))
+        .filter_map(|(n, e)| model::tool_of(w, e).map(|t| json!({ "name": n, "definition": project::tool_to_json(&t), "holder": super::holders::holder_view(w, n) })))
         .collect();
     let ops: Vec<Value> = inventory(env).iter().map(|(k, e, s)| op_full(env, k, e, *s)).collect();
     Ok(json!({

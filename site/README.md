@@ -21,6 +21,15 @@ workflow writes from the workspace version before it builds. Without it the
 site says it is a local preview. To preview the released look, write one:
 `printf 'version = "0.16.0"\n' > version.toml` (gitignored).
 
+`content/app.md` is the page at `app/` when the site has no browser build
+(a local preview, or a release whose wasm build failed). On a release the
+`wasm` job builds the browser shell (`web/build-app-wasm.sh --release`) and
+the `site` job puts that folder at `app/` in its place (#1103);
+`web/check-app-page.sh <folder>` checks it, locally on `target/web` too.
+The workflow adds `app = true` to `version.toml` only when it placed the
+browser build; the front page claims it only then (`app = false`: it says
+the browser version of that release is not available).
+
 The site is built and deployed by the `site` and `pages` jobs of
 `.github/workflows/release.yml`, on a release tag only. Write content from
 CamCraft's own code and docs: the clean-room protocol in `AGENTS.md`

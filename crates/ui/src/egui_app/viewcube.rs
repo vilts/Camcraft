@@ -97,9 +97,18 @@ pub(crate) enum Nav {
     Paths,
     /// The dimmed world origin axes.
     Axes,
+    /// Viewport picks may reach the far side of the part (#692). Off by
+    /// default; when on, a click sends `through: true`.
+    PickThrough,
 }
 
-pub(crate) const NAVS: [Nav; 5] = [Nav::Frame, Nav::Iso, Nav::Wire, Nav::Paths, Nav::Axes];
+pub(crate) const NAVS: [Nav; 6] = [Nav::Frame, Nav::Iso, Nav::Wire, Nav::Paths, Nav::Axes, Nav::PickThrough];
+
+/// The plain-English state line of the pick-through button (#692).
+#[must_use]
+pub(crate) fn pick_through_label(on: bool) -> &'static str {
+    if on { "Pick through: on" } else { "Pick through: off" }
+}
 
 impl Hud {
     /// Top-right corner furniture of `pane`, or None when the pane is
@@ -273,6 +282,10 @@ fn act(state: &mut State, kind: Nav) {
         }
         Nav::Paths => state.toggle_all_toolpaths(),
         Nav::Axes => state.show_world_axes = !state.show_world_axes,
+        Nav::PickThrough => {
+            state.pick_through = !state.pick_through;
+            state.status = pick_through_label(state.pick_through).to_string();
+        }
     }
 }
 
@@ -358,6 +371,7 @@ pub(crate) fn draw(
             Nav::Wire => state.display == DisplayMode::Wireframe,
             Nav::Paths => state.show_all_paths,
             Nav::Axes => state.show_world_axes,
+            Nav::PickThrough => state.pick_through,
         };
         let hov = hover.is_some_and(|p| r.contains(p));
         let fill = if hov { ink.button.saturating_add(28) } else { ink.button };
@@ -453,6 +467,14 @@ pub(crate) fn draw(
                     ui.painter()
                         .line_segment([o, o + dir], egui::Stroke::new(1.4, col));
                 }
+            }
+            Nav::PickThrough => {
+                // A pick ray crossing a bar: the ray runs through, the bar
+                // is the near surface it passes.
+                let c = r.center();
+                let half = r.width() * 0.5 - m;
+                ui.painter().line_segment([c - egui::vec2(half, 0.0), c + egui::vec2(half, 0.0)], s);
+                ui.painter().line_segment([c - egui::vec2(m * 0.4, m), c + egui::vec2(m * 0.4, m)], s);
             }
         }
     }

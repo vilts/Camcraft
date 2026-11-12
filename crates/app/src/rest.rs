@@ -67,6 +67,7 @@ use across::{carried_grid, chain_of};
 use ahead::{ahead_of, digest_of, Ahead};
 use crate::cl::Move;
 use crate::machining2d::GenError;
+use crate::stock_sim::carry::Held;
 use crate::stock_sim::{self, Dexel, SimOp};
 use flecs_ecs::prelude::World;
 
@@ -186,8 +187,9 @@ pub fn prior_state(
         .filter(|a| a.cut && a.radius > 0.0)
         .map(|a| a.radius)
         .fold(tool_r, f64::min);
-    let mut dex = stock_sim::stock_grid(world, setup, min_r)
-        .map_err(|e| GenError::Invalid(format!("rest from previous operations: {e}")))?;
+    let refused = |e: String| GenError::Invalid(format!("rest from previous operations: {e}"));
+    // #637: the stock on this thread's engine (the column grid by default).
+    let mut held = stock_sim::carry::first_held(world, setup, min_r).map_err(refused)?;
     let ops: Vec<SimOp> = ahead
         .iter()
         .filter(|a| a.cut)
@@ -199,10 +201,9 @@ pub fn prior_state(
             corner: a.corner,
         })
         .collect();
-    stock_sim::simulate(&mut dex, &ops)
-        .map_err(|e| GenError::Invalid(format!("rest from previous operations: {e}")))?;
+    held.simulate(&ops).map_err(refused)?;
     Ok(PriorState {
-        grid: Some(dex),
+        grid: Some(held.into_tops().map_err(refused)?),
         digest: Some(digest),
     })
 }
@@ -214,15 +215,14 @@ pub fn prior_state(
 /// costly half of [`prior_state`] - runs on the job thread, and only
 /// then ([`PriorPlan::simulate`]).
 pub struct PriorPlan {
-    grid: Dexel,
+    /// #637: the stock on the engine the plan was built with - plain for
+    /// a same-setup plan, two-sided carried stock for a crossing one.
+    held: Held,
     ahead: Vec<Ahead>,
     /// #318: the setups the body is carried through after `ahead` is
     /// cut - each turn and the cut operations of that setup. Empty for a
-    /// same-setup plan, whose `grid` is then a plain column grid; a
-    /// crossing plan's `grid` is the origin body's tops and `floor` its
-    /// floor.
+    /// same-setup plan.
     carried: Vec<(crate::stock_sim::LatticeTurn, Vec<Ahead>)>,
-    floor: Option<crate::stock_sim::Body>,
 }
 
 impl PriorPlan {
@@ -230,22 +230,22 @@ impl PriorPlan {
     /// posed predecessor the column grid cannot cut) is the caller's
     /// "prior unknown" - the raw stock, never an acquittal.
     pub fn simulate(self) -> Result<Dexel, String> {
-        let Some(mut body) = self.floor else {
-            let mut dex = self.grid;
-            sweep(&mut dex, &self.ahead)?;
-            return Ok(dex);
-        };
-        sweep(&mut body.dex, &self.ahead)?;
+        let mut held = self.held;
+        sweep(&mut held, &self.ahead)?;
         for (turn, ops) in &self.carried {
-            body = body.carry(turn)?;
-            sweep(&mut body.dex, ops)?;
+            held = match held {
+                Held::Carried(c) => Held::Carried(c.carry(turn)?),
+                // `prior_plan` builds every crossing plan carried.
+                Held::Plain(_) => return Err("a plain prior stock cannot be carried between setups".into()),
+            };
+            sweep(&mut held, ops)?;
         }
-        Ok(body.dex)
+        held.into_tops()
     }
 }
 
-/// Cut `ahead` into `dex`, each through its own atom.
-fn sweep(dex: &mut Dexel, ahead: &[Ahead]) -> Result<(), String> {
+/// Cut `ahead` into `held`, each through its own atom.
+fn sweep(held: &mut Held, ahead: &[Ahead]) -> Result<(), String> {
     {
         // A turning insert cuts with its nose: the centre path lowered
         // to the tip, swept as a ball (issue #89).
@@ -276,8 +276,7 @@ fn sweep(dex: &mut Dexel, ahead: &[Ahead]) -> Result<(), String> {
                 None => SimOp { moves: &a.moves, radius: a.radius, ball: a.ball, cone: a.cone, corner: a.corner },
             })
             .collect();
-        stock_sim::simulate(dex, &ops).map_err(|e| e.to_string())?;
-        Ok(())
+        held.simulate(&ops)
     }
 }
 
@@ -320,12 +319,11 @@ pub fn prior_plan(world: &World, name: &str, setup: Option<&str>, tool_r: f64) -
     }
     let min_r = ahead.iter().map(|a| a.nose.unwrap_or(a.radius)).filter(|r| *r > 0.0).fold(tool_r, f64::min);
     if !crosses {
-        let grid = stock_sim::stock_grid(world, setup, min_r)?;
-        return Ok(Some(PriorPlan { grid, ahead: first, carried, floor: None }));
+        let held = stock_sim::carry::first_held(world, setup, min_r)?;
+        return Ok(Some(PriorPlan { held, ahead: first, carried }));
     }
-    let grid = stock_sim::stock_grid(world, origin.as_deref(), min_r)?;
-    let body = stock_sim::carry::first_body(world, origin.as_deref(), grid.clone())?;
-    Ok(Some(PriorPlan { grid, ahead: first, carried, floor: Some(body) }))
+    let held = Held::Carried(stock_sim::carry::first_carried(world, origin.as_deref(), min_r)?);
+    Ok(Some(PriorPlan { held, ahead: first, carried }))
 }
 
 /// The staleness story re-machining adds to `stale_reason`'s list of

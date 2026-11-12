@@ -7,7 +7,7 @@
 //! Provenance: our own fixtures; comment forms from RS-274 / ISO 6983
 //! `( )`, DIN 66025 `;`, and the TNC ISO manual's numbered blocks.
 //!
-//! Gate map (#257): covers app::post (the seven assets/posts/*.cps
+//! Gate map (#257): covers post::post (the seven assets/posts/*.cps
 //! comment helpers, post::dump's commentary PARAMs), app::posting
 //! (op_streams' op kind / setup / tool kind context).
 //! Lane shape (M4.4): all tests here run in seconds.

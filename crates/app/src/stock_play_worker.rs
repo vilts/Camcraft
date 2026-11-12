@@ -202,7 +202,7 @@ impl Drop for PlayWorker {
         if let Some(h) = self.handle.take()
             && h.join().is_err()
         {
-            eprintln!("playback worker: the thread ended abnormally");
+            tracing::error!("playback worker: the thread ended abnormally");
         }
     }
 }

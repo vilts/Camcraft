@@ -30,7 +30,15 @@ pub struct MachineEditor {
     pub machine: Machine,
 }
 
-const KIND_WORDS: [&str; 5] = ["auto (axis inventory)", "mill", "lathe", "mill-turn", "plasma"];
+const KIND_WORDS: [&str; 7] = [
+    "auto (axis inventory)",
+    "mill",
+    "lathe",
+    "mill-turn",
+    "plasma",
+    "wire_edm",
+    "sinker_edm",
+];
 
 pub(crate) fn window(ctx: &egui::Context, state: &mut State) {
     // Take the draft out for the frame: the draw wants `&mut` on it
@@ -104,6 +112,8 @@ fn draw_kind(ui: &mut Ui, m: &mut Machine) {
         Some(Kind::Lathe) => 2,
         Some(Kind::MillTurn) => 3,
         Some(Kind::Plasma) => 4,
+        Some(Kind::WireEdm) => 5,
+        Some(Kind::SinkerEdm) => 6,
         None => 0,
     };
     let before = idx;

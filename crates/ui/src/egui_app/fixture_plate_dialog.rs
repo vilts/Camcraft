@@ -117,7 +117,7 @@ pub(crate) fn body(ui: &mut Ui, u: Unit, d: &mut PlateDraft) -> Option<ViseAct> 
     }
     ui.label(RichText::new("The collision check sees the plate as a solid slab (holes drawn solid).").small());
     if let Some(err) = &d.error {
-        ui.colored_label(ui.visuals().error_fg_color, err);
+        super::error_text::error_text(ui, ui.visuals().error_fg_color, err);
     }
     ui.add_space(8.0);
     ui.horizontal(|ui| {

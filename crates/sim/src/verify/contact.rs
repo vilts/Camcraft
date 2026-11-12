@@ -94,7 +94,7 @@ pub fn posed_contact(
             && let Some(ix) = index.get_or_insert_with(|| SolidIndex::build(facets)).as_mut()
         {
             let fr = Frame::new(Point3::new(c.x, c.y, c.z - r), None);
-            if ix.hits(&fr, [0.0, 0.0, 0.0], &body, 0.0, 0.0, false) {
+            if ix.hits(&fr, [0.0, 0.0, 0.0], &body, 0.0, 0.0, &[]) {
                 return None;
             }
         }

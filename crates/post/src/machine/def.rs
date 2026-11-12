@@ -193,6 +193,10 @@ pub struct Machine {
     /// post that needs it refuses rather than guess where up is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safe_retract_z: Option<f64>,
+    /// The `edm` section of a wire or sinker EDM machine (#530), or
+    /// None: unstated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edm: Option<super::edm::Edm>,
     /// The holder system the spindle takes (#828): `tooling.spindle_mount`,
     /// one of [`super::SPINDLE_MOUNTS`]. Unstated reads `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -256,6 +260,7 @@ impl Machine {
                 .is_none_or(|w| Kind::from_word(w).is_some())
             && self.coolants.iter().all(|c| !c.name.is_empty())
             && self.plasma_sane()
+            && self.edm_sane()
             && self.axes.iter().all(|a| {
                 rate_ok(a.feed) && rate_ok(a.rapid) && rate_ok(a.resolution) && a.travel.is_none_or(|(lo, hi)| lo.is_finite() && hi.is_finite() && hi > lo)
                     && a.axis.is_none_or(|d| d.iter().all(|x| x.is_finite()))
@@ -265,6 +270,7 @@ impl Machine {
                 (Some(lo), Some(hi)) => hi >= lo,
                 _ => true,
             }
+            && self.edm.as_ref().is_none_or(super::edm::Edm::is_sane)
     }
 
     /// The one-line identity for the Setup pane and the stage E sheet.

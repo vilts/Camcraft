@@ -11,6 +11,9 @@
 //! Gate map (#261): covers camcraft_motion::machining2d (gen_error,
 //! ghost, pocket, slots, bore, circular, contour, contour_chain),
 //! camcraft_motion::machining3d (ladder), camcraft_motion::plunge_law.
+//! #871: part-way refusals (bore's per-hole pass budget, and the sites
+//! listed in docs/decisions/871-refusal-ghost-rest.md) carry the moves
+//! built before them.
 
 use camcraft_motion::approach::{Approach, CENTER_CUT_REFUSAL};
 use camcraft_motion::cl::{Move, MoveKind, Toolpath};
@@ -128,3 +131,55 @@ fn the_plunge_audit_hands_back_the_path_it_judged_beside_its_spot() {
     assert!(audit(&t, true, 3.0, &solid, "x").is_ok());
 }
 
+
+fn bore_hole(x: f64, floor_z: f64) -> camcraft_motion::machining2d::BoreHole {
+    camcraft_motion::machining2d::BoreHole {
+        xy: Point2::new(x, 0.0),
+        radius: 8.0,
+        top_z: 0.0,
+        floor_z,
+        through: false,
+        stepped: false,
+    }
+}
+
+fn bore_over(holes: Vec<camcraft_motion::machining2d::BoreHole>) -> Result<Toolpath, GenError> {
+    camcraft_motion::machining2d::bore(&camcraft_motion::machining2d::BoreParams {
+        holes,
+        tool_diameter: 6.0,
+        stock_to_leave: 0.0,
+        stepdown: 0.01,
+        through_allowance: 0.5,
+        clearance_z: 5.0,
+        retract_z: Some(2.0),
+        feed: 500.0,
+        plunge_feed: 100.0,
+        climb: true,
+        tolerance: 0.01,
+        entry: Entry3D::Plunge,
+        helix_radius: 1.5,
+        links: Links::PLANAR,
+    })
+}
+
+#[test]
+fn a_part_way_refusal_hands_back_the_holes_bored_before_it() {
+    // #871: the second hole is too deep for the stepdown's pass budget;
+    // the first was bored already, and its moves ride the refusal.
+    let deep = -1_001.0;
+    let e = bore_over(vec![bore_hole(0.0, -0.05), bore_hole(40.0, deep)]).expect_err("the deep hole is refused");
+    assert!(e.to_string().contains("passes"), "the pass-budget words stand: {e}");
+    let g = e.ghost().expect("the first hole's moves ride the refusal");
+    assert!(g.moves().iter().all(|m| m.is_finite()));
+    // Every cutting move sits in the first hole; the refused one has none.
+    let cuts: Vec<&Move> = g.moves().iter().filter(|m| m.kind != MoveKind::Rapid).collect();
+    assert!(!cuts.is_empty());
+    assert!(cuts.iter().all(|m| m.to.x.abs() <= 8.0 + 1e-6), "only the bored hole's cuts");
+    // Refused at the first hole: nothing was built, so there is no ghost -
+    // and the sentence is exactly the plain refusal's.
+    let first = bore_over(vec![bore_hole(40.0, deep)]).expect_err("refused");
+    assert!(first.ghost().is_none(), "no move before the refusal, no ghost");
+    assert_eq!(first.to_string(), e.to_string());
+    // The successful bore is the same path either way (display-only).
+    assert!(bore_over(vec![bore_hole(0.0, -0.05)]).is_ok());
+}

@@ -296,7 +296,8 @@ pub fn groove_rough_in(
     let mut b = PathBuilder::new(f.point(rho_clear, f.station_of(p.clearance_z)));
     for &s in &cs {
         let base = revolve::span_max(&sg, s - p.blade_width * 0.5, s + p.blade_width * 0.5);
-        let tips = rungs(base, ref_top, p.stepdown, p.stock_to_leave)?;
+        // #871: a part-way refusal hands back the stations so far.
+        let tips = rungs(base, ref_top, p.stepdown, p.stock_to_leave).map_err(|e| e.with_ghost_moves(b.moves()))?;
         plunge(&mut b, &f, s, rho_clear, &tips, p.plunge_feed);
     }
     b.push(

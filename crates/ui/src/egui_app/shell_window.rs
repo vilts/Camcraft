@@ -143,6 +143,8 @@ impl Shell {
         let mut state = State::new();
         // #662: the user's recent projects and models, read once.
         state.load_recent();
+        // #645: the user's view preferences (the #727 name toggle), read once.
+        state.load_view();
         // #877: the user's theme and colour-vision mode, read once.
         state.load_prefs();
         let dock_state = build_dock();
@@ -197,6 +199,13 @@ impl Shell {
                 return;
             }
         };
+        // #1067: the native pickers take the shell window as their owner, so
+        // an Open/Save dialog opens in front of the app rather than behind it.
+        crate::file_dialog::set_parent(&window);
+        // A window launched from a terminal or a script does not always get
+        // the foreground: ask for it once, so the shell is not born behind
+        // whatever launched it.
+        window.focus_window();
         // M4.2 + #74: the honest fallback chain, adapter by adapter inside
         // each backend mask (gpu_init); a refusal names every adapter tried.
         // The View3D pipelines are built per candidate: an adapter that
@@ -285,7 +294,7 @@ impl Shell {
 /// The GPU refusal, also as a native dialog: a console-less launch must
 /// not end in a window that silently vanishes (Prime Directive).
 fn refuse_dialog(err: &str) {
-    let _ = rfd::MessageDialog::new()
+    let dialog = rfd::MessageDialog::new()
         .set_level(rfd::MessageLevel::Error)
         .set_title("CamCraft cannot start the viewport")
         .set_description(format!(
@@ -293,8 +302,13 @@ fn refuse_dialog(err: &str) {
 
 Try --gpu <adapter name> (or CAMCRAFT_GPU) to choose an adapter, or --gpu-backend dx12|vulkan|gl."
         ))
-        .set_buttons(rfd::MessageButtons::Ok)
-        .show();
+        .set_buttons(rfd::MessageButtons::Ok);
+    // #1067: owned by the shell window, so the refusal is in front of the app.
+    let dialog = match crate::file_dialog::parent() {
+        Some(window) => dialog.set_parent(&*window),
+        None => dialog,
+    };
+    let _ = dialog.show();
 }
 
 impl Shell {

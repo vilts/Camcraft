@@ -93,6 +93,24 @@ fn footprint(plate: &PlateDef, b: &JawParams, o: (f64, f64), d: (f64, f64), e: (
     Ok(())
 }
 
+/// The quarter turns `yaw_deg` is, or `None` when it is not a whole
+/// (finite, sane) number of them.
+fn quarter(yaw_deg: f64) -> Option<i64> {
+    let q = yaw_deg / 90.0;
+    (q.is_finite() && (q - q.round()).abs() <= 1e-9 && q.abs() <= 1e6).then(|| q.round() as i64)
+}
+
+/// Every bolt of block `b`, anchored on hole `at` of `plate` turned
+/// `yaw_deg`, on a hole of the grid and every pin on a dowel bore - the
+/// footprint law a figure edit of a placed block (`SetModJaw`, #832)
+/// re-runs where the block stands. Refused by name.
+pub fn footprint_at(plate: &PlateDef, b: &JawParams, at: &str, yaw_deg: f64) -> Result<(), String> {
+    let k = quarter(yaw_deg).ok_or_else(|| format!("the {} stands off a quarter turn ({yaw_deg} degrees)", b.what()))?;
+    let (d, e) = axes(k);
+    let o = plate.holes.locate(at).map_err(|e| format!("the {}: {e}", b.what()))?;
+    footprint(plate, b, o, d, e)
+}
+
 /// The stock box's corners in the plate's frame.
 fn corners(plate_pose: Location, stock: &Aabb) -> [Point3; 8] {
     let inv = inverse(plate_pose);
@@ -126,11 +144,8 @@ pub fn fit_pair(
     if fixed.side != super::JawSide::Fixed || adjustable.side != super::JawSide::Adjustable {
         return Err("a mod vise pair is a fixed and an adjustable jaw block".into());
     }
-    let q = yaw_deg / 90.0;
-    if !q.is_finite() || (q - q.round()).abs() > 1e-9 || q.abs() > 1e6 {
-        return Err(format!("a mod vise pair runs along a grid row or column: turn it 0, 90, 180 or 270 degrees (got {yaw_deg})"));
-    }
-    let k = q.round() as i64;
+    let k = quarter(yaw_deg)
+        .ok_or_else(|| format!("a mod vise pair runs along a grid row or column: turn it 0, 90, 180 or 270 degrees (got {yaw_deg})"))?;
     let (d, e) = axes(k);
     let (along_pitch, across_pitch) = if k.rem_euclid(2) == 0 { (plate.holes.pitch_y, plate.holes.pitch_x) } else { (plate.holes.pitch_x, plate.holes.pitch_y) };
     let o = plate.holes.locate(at).map_err(|e| format!("the fixed jaw block: {e}"))?;

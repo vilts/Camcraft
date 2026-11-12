@@ -196,3 +196,45 @@ fn degenerate_soup_never_panics() {
         let _ = slice::project(&facets, 6);
     }
 }
+
+/// #241: a closed box whose shared corners are not bit-identical - one
+/// wall carries a corner column at x = 10.0000005, its neighbour at
+/// 10.0000004 (an imported mesh's sub-micrometre scatter). The two
+/// crossing points straddle the 1 um rounding boundary; they are one
+/// point, and the slice is the box, not an "open mesh" refusal.
+#[test]
+fn sub_micrometre_corner_scatter_still_welds_into_a_closed_slice() {
+    let (xa, xb) = (10.000_000_5, 10.000_000_4);
+    let wall = |p: (f64, f64), q: (f64, f64)| {
+        let (a, b) = (Point3::new(p.0, p.1, 0.0), Point3::new(q.0, q.1, 0.0));
+        let (c, d) = (Point3::new(q.0, q.1, 5.0), Point3::new(p.0, p.1, 5.0));
+        [Triangle::new(a, b, c), Triangle::new(a, c, d)]
+    };
+    let mut f = Vec::new();
+    f.extend(wall((0.0, 0.0), (xa, 0.0)));
+    f.extend(wall((xb, 0.0), (10.0, 10.0)));
+    f.extend(wall((10.0, 10.0), (0.0, 10.0)));
+    f.extend(wall((0.0, 10.0), (0.0, 0.0)));
+    let r = slice::slice(&f, 2.5).expect("a closed box slices closed");
+    assert_eq!(r.loops().len(), 1);
+    assert!(close(r.area(), 100.0), "area {}", r.area());
+    let sil = slice::project(&f, 8).expect("and projects");
+    assert!(close(sil.area(), 100.0), "area {}", sil.area());
+}
+
+/// The weld tolerance stays a micrometre-scale law: a real 0.1 mm gap in
+/// a wall is still an open mesh, refused by name.
+#[test]
+fn a_tenth_of_a_millimetre_gap_is_still_open() {
+    let wall = |p: (f64, f64), q: (f64, f64)| {
+        let (a, b) = (Point3::new(p.0, p.1, 0.0), Point3::new(q.0, q.1, 0.0));
+        let (c, d) = (Point3::new(q.0, q.1, 5.0), Point3::new(p.0, p.1, 5.0));
+        [Triangle::new(a, b, c), Triangle::new(a, c, d)]
+    };
+    let mut f = Vec::new();
+    f.extend(wall((0.0, 0.0), (9.9, 0.0)));
+    f.extend(wall((10.0, 0.0), (10.0, 10.0)));
+    f.extend(wall((10.0, 10.0), (0.0, 10.0)));
+    f.extend(wall((0.0, 10.0), (0.0, 0.0)));
+    assert!(matches!(slice::slice(&f, 2.5), Err(SliceError::Open { .. })));
+}

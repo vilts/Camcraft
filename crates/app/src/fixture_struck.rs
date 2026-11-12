@@ -40,6 +40,8 @@ pub fn op_hits(
     };
     // #368: the body's enclosing cylinder and band stack; a body that no
     // longer fits its tool is itself the problem, by name.
+    // #852: the drawn neck, judged against the stored record.
+    let neck = crate::tool_cutter::neck_of(world, &tool_entity, &tool);
     let (tool, body) =
         crate::tool_body::judged(world, &tool_entity, tool).map_err(|e| format!("tool {}: {e}", op.tool))?;
     // `boxes_for` already folds in the machine-derived table, so empty
@@ -54,7 +56,7 @@ pub fn op_hits(
         .map(|(d, l)| (d * 0.5, l));
     let wh = crate::verify::Workholding { turning, fixed, axis: fixture::rotary_axis_of(world, op) };
     let geom = tool.geom();
-    let holder = crate::tool_body::stack(&geom, body.as_ref());
+    let holder = crate::tool_body::stack(&geom, body.as_ref()).with_neck(neck);
     Ok(path_hits(path, (&geom, &holder), &wh, spindle, meshes))
 }
 

@@ -108,7 +108,7 @@ pub(super) fn judged(world: &World, op_name: &str, setup: Option<&str>, tool_r: 
         // No material carried at all: any declared stock covers it.
         Ok(None) => return Ok(unchanged),
         Err(e) => {
-            eprintln!("camcraft: {op_name}: the carried body is unreadable, its uncut block is judged: {e}");
+            tracing::warn!(op = %op_name, "the carried body is unreadable, its uncut block is judged: {e}");
             (block, None)
         }
     };

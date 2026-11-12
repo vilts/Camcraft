@@ -109,7 +109,9 @@ pub fn plan_links(
                      its steel stands to Z {top:.3}, and the machine's Z stroke tops out at Z {cap:.3} - \
                      move the fixture or the part",
                     a.x, a.y, b.x, b.y
-                )));
+                ))
+                // #1015: an upright mill's path is world (no frame routes): it rides along.
+                .with_ghost(&path));
             }
             Plan::Raised(moves, h, k) if !struck(&moves, &laws) => {
                 raised += 1;

@@ -3,8 +3,9 @@
 //! Provenance: plane/triangle intersection with the half-open edge rule and
 //! cycle assembly by welding chord endpoints is the standard marching-slices
 //! formulation from published computational geometry; the welding trick
-//! itself (bucket by quantized position so duplicated STL corners count as
-//! shared) is the same construction the viewport's feature-edge pass uses.
+//! itself (bucket by quantized position, then weld within a micrometre so
+//! duplicated STL corners count as shared even when not bit-identical)
+//! lives in `slice_weld`.
 //! Region semantics (orientation, overlap fusion, crossing decomposition)
 //! come from `geo2d::Region::from_slices` - this module only produces the
 //! cycles and the diagnostics.
@@ -22,16 +23,11 @@
 //! reported, never half-used. Tangential slices (grazing an edge or vertex)
 //! error cleanly too; `project` nudges once before propagating.
 
-use std::collections::HashMap;
 
 use thiserror::Error;
 
 use crate::geo2d::{COORD_LIMIT, GeoError, Loop, Point2, Region};
 use crate::geometry::{Point3, Triangle};
-
-/// Weld grid: 1 unit = 1 um, the same quantization the geo2d bridge uses,
-/// so welded vertices and Clipper inputs never disagree.
-const WELD: f64 = 1e6;
 
 /// Cap on `project`'s Z samples - a silhouette converges on far fewer.
 pub const MAX_SAMPLES: usize = 64;
@@ -90,7 +86,20 @@ pub enum SliceError {
 /// Cross `facets` with the plane z = `z` and return the material region.
 /// An empty intersection is an empty region, not an error (z missed the
 /// model); bad geometry is always an error, never a partial region.
+///
+/// Chord ends weld on their exact 1 um key first - every mesh that slices
+/// that way keeps exactly the answer it always had. Only a slice that
+/// leaves ends dangling is retried with the micrometre tolerance weld
+/// (#241: an imported mesh's shared corners need not be bit-identical);
+/// a mesh still open under the tolerance is refused as before.
 pub fn slice(facets: &[Triangle], z: f64) -> Result<Region, SliceError> {
+    match slice_with(facets, z, false) {
+        Err(SliceError::Open { .. }) => slice_with(facets, z, true),
+        other => other,
+    }
+}
+
+fn slice_with(facets: &[Triangle], z: f64, tolerant: bool) -> Result<Region, SliceError> {
     if !z.is_finite() {
         return Err(SliceError::Invalid("non-finite slice height".into()));
     }
@@ -110,8 +119,7 @@ pub fn slice(facets: &[Triangle], z: f64) -> Result<Region, SliceError> {
     //    arithmetic and it welds exactly; the zero-length guard drops
     //    vertex grazes (a plane touching a triangle at one point encloses
     //    nothing).
-    let mut pts: Vec<Point2> = Vec::new();
-    let mut keys: HashMap<(i64, i64), u32> = HashMap::new();
+    let mut welder = super::slice_weld::Welder::new(tolerant);
     let mut segs: Vec<[u32; 2]> = Vec::new();
     for t in facets {
         let mut hits: [Point2; 2] = [Point2::default(); 2];
@@ -136,8 +144,8 @@ pub fn slice(facets: &[Triangle], z: f64) -> Result<Region, SliceError> {
         }
         match n {
             2 => {
-                let i = weld(&mut pts, &mut keys, hits[0]);
-                let j = weld(&mut pts, &mut keys, hits[1]);
+                let i = welder.weld(hits[0]);
+                let j = welder.weld(hits[1]);
                 if i != j {
                     segs.push([i, j]);
                 }
@@ -148,6 +156,7 @@ pub fn slice(facets: &[Triangle], z: f64) -> Result<Region, SliceError> {
     }
 
     // 2. Every chord end must be shared by exactly two chords.
+    let pts = welder.points();
     let mut adj: Vec<Vec<u32>> = vec![Vec::new(); pts.len()];
     for (k, [i, j]) in segs.iter().enumerate() {
         adj[*i as usize].push(k as u32);
@@ -290,17 +299,6 @@ fn project_uncached(facets: &[Triangle], samples: usize) -> Result<Region, Slice
         });
     }
     Ok(acc.unwrap_or_default())
-}
-
-fn weld(pts: &mut Vec<Point2>, keys: &mut HashMap<(i64, i64), u32>, p: Point2) -> u32 {
-    let key = ((p.x * WELD).round() as i64, (p.y * WELD).round() as i64);
-    if let Some(id) = keys.get(&key) {
-        return *id;
-    }
-    let id = pts.len() as u32;
-    pts.push(p);
-    keys.insert(key, id);
-    id
 }
 
 fn beyond_horizon(p: Point3) -> bool {

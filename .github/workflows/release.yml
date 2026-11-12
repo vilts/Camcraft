@@ -19,6 +19,10 @@
 # alongside the platform builds; `pages` deploys it to GitHub Pages only on
 # a tag run and only once `publish` has put the release page up, so the
 # site's download links never point at a release that is not there.
+# Browser build (#1103): `wasm` builds the shell for wasm32 from the same
+# tree and hands the page folder to `site`, which serves it at app/. A
+# failed wasm build leaves app/ as the site's own "not part of this copy"
+# page and a warning in the run; the docs and the release go out anyway.
 name: Release
 on:
   push:
@@ -438,10 +442,58 @@ jobs:
           # refused a release with no asset at all.
           fail_on_unmatched_files: false
 
+  wasm:
+    # #1103: the browser shell (#31), built for wasm32 from this run's tree
+    # by web/build-app-wasm.sh. Its own runner, so the Cargo.lock the build
+    # rewrites for its flecs patch (#949) never reaches another job: only
+    # target/web/ leaves it, as the wasm-app artifact. No rust-cache: tags
+    # come weeks apart and an unused cache is evicted after 7 days.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install the wasm32 Rust target and the C toolchain
+        # flecs' C is compiled by clang for wasm32 and archived by llvm-ar
+        # (Ubuntu's LLVM has the wasm32 backend). The wasi sysroot is a
+        # pinned, checksummed download inside the build script; the
+        # wasm-bindgen CLI is installed there with --version and --locked.
+        run: |
+          rustup target add wasm32-unknown-unknown
+          sudo apt-get update
+          sudo apt-get install -y clang-18 llvm-18
+          echo "CC_wasm32_unknown_unknown=clang-18" >> "$GITHUB_ENV"
+          echo "AR_wasm32_unknown_unknown=llvm-ar-18" >> "$GITHUB_ENV"
+      - name: Build the browser shell
+        run: bash web/build-app-wasm.sh --release
+      - name: Check the page folder
+        # The four files are there, the .wasm is a wasm module, and every
+        # URL is relative to the page's folder (it is served at
+        # <pages>/<repo>/app/, not at a site root).
+        run: |
+          bash web/check-app-page.sh target/web
+          ls -l target/web
+      - name: Cargo.lock untouched
+        # The script puts the lock back on exit; say so if it did not, so
+        # the next fix knows (nothing else is built from this checkout).
+        if: always()
+        run: git diff --quiet -- Cargo.lock || echo "::warning::web/build-app-wasm.sh left Cargo.lock modified (#949)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wasm-app
+          path: target/web/
+          if-no-files-found: error
+
   site:
     # #688: the documentation site, built with Zola from this run's tree
     # (the tagged tree on a tag run). Read-only; a workflow_dispatch run
     # builds it as a check and deploys nothing.
+    # #1103: waits for `wasm` whatever its result (but not on a cancelled
+    # run), like `publish` waits for the platforms: a failed browser build
+    # never withholds the docs.
+    needs: [wasm]
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -466,16 +518,55 @@ jobs:
           fi
           printf 'version = "%s"\n' "$ver" > site/version.toml
           cat site/version.toml
+      - uses: actions/download-artifact@v4
+        # #1103: a download that fails only means "no browser build" (the
+        # next step says so); it never withholds the docs.
+        if: ${{ needs.wasm.result == 'success' }}
+        continue-on-error: true
+        with:
+          name: wasm-app
+          path: /tmp/wasm-app
+      - name: Is there a browser build to publish
+        # The front page claims the browser build only when it is deployed:
+        # `app = true|false` in site/version.toml tells the templates. No
+        # browser build (wasm job failed, nothing downloaded, or the page
+        # check fails) is a warning by name, never a failed site.
+        shell: bash
+        env:
+          WASM_RESULT: ${{ needs.wasm.result }}
+        run: |
+          app=false
+          if [ "$WASM_RESULT" != success ]; then
+            echo "::warning::Browser build missing: the wasm job did not succeed (result: $WASM_RESULT); the site goes out with app/ saying so"
+          elif ! bash web/check-app-page.sh /tmp/wasm-app; then
+            echo "::warning::Browser build missing: the wasm-app artifact did not download or failed web/check-app-page.sh; the site goes out with app/ saying so"
+          else
+            app=true
+          fi
+          printf 'app = %s\n' "$app" >> site/version.toml
+          echo "CAMCRAFT_APP=$app" >> "$GITHUB_ENV"
+          cat site/version.toml
       - name: Build the site
         # The project Pages URL of whichever repo runs this (a fork's own
         # Pages included), so every link resolves where it is deployed.
+        # Zola writes app/ as the "not part of this copy" page; with a
+        # browser build, the build's folder replaces it and is checked again
+        # where it will be served. A copy that fails is dropped and the site
+        # is built again saying the browser build is missing.
         shell: bash
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           repo="${GITHUB_REPOSITORY#*/}"
-          cd site
-          /tmp/zola build --base-url "https://${owner}.github.io/${repo}"
-          test -s public/index.html
+          build() { (cd site && /tmp/zola build --base-url "https://${owner}.github.io/${repo}" && test -s public/index.html); }
+          build
+          if [ "$CAMCRAFT_APP" = true ]; then
+            if ! { rm -rf site/public/app && cp -r /tmp/wasm-app site/public/app && bash web/check-app-page.sh site/public/app; }; then
+              echo "::warning::Browser build missing: its copy at app/ failed web/check-app-page.sh; the site goes out with app/ saying so"
+              sed -i 's/^app = true$/app = false/' site/version.toml
+              build
+            fi
+          fi
+          test -s site/public/app/index.html
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site/public

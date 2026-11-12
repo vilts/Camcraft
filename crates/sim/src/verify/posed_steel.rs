@@ -118,8 +118,10 @@ pub(super) fn sweep(
     if fixtures.is_empty() {
         return out;
     }
-    let (fl, sl) = (tool.flute_len, tool.shank_len);
-    let mut stack: Vec<(FixturePart, f64, f64, f64)> = vec![(FixturePart::Shank, fl, fl + sl, tool.shank_radius)];
+    let fl = tool.flute_len;
+    // #852: the shank as swept - a drawn neck's bands, or the cylinder.
+    let mut stack: Vec<(FixturePart, f64, f64, f64)> =
+        holder.shank_bands(tool).iter().map(|b| (FixturePart::Shank, b.above, b.above + b.len, b.r)).collect();
     // What stands above the shank (#368): the holder cylinder - the
     // same sums as ever - or a modelled body's bands.
     stack.extend(holder.bands.iter().map(|b| (FixturePart::Holder, b.above, b.above + b.len, b.r)));

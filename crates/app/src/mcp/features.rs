@@ -13,11 +13,13 @@ use super::tools::req_str;
 use crate::geometry::feature::{self, FaceKind, Features, LoopKind};
 use crate::geometry::{transform_point, Point3};
 use crate::model;
-use crate::operation::FeatureSel;
+use crate::operation::{FeatureSel, GeoSel};
+use crate::pick::align::outward_normal;
 use crate::pick::{FeatureGraph, feature_chains, feature_graph_shared};
 use crate::schema::Location;
 use crate::script::{fnum, Env};
 
+use flecs_ecs::prelude::World;
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
@@ -123,7 +125,21 @@ fn loop_view(lp: &feature::Loop, by_edge: &HashMap<(u32, u32), u64>, loc: &Locat
     })
 }
 
-fn faces_view(g: &FeatureGraph, loc: &Location, limit: usize) -> (Vec<Value>, usize) {
+/// #884, #956: the face's outward unit normal where the part sits. The
+/// plane normal is sign-canonical (winding-free), so a bottom cap and a top
+/// cap share one; `pick::align::outward_normal` (the WCS picks' helper)
+/// flips it to the facets' outside and turns it by the part's placement.
+/// Where it refuses (an open or inside-out shell, no usable plane) the row
+/// keeps the canonical normal, placed - a listing must not fail on one face.
+fn outward(w: &World, model: &str, fa: &feature::Face, loc: &Location) -> [f64; 3] {
+    let sel = GeoSel { entity: model.to_owned(), feature: FeatureSel::Face(fa.id) };
+    match outward_normal(w, &sel, model::transform_of) {
+        Ok(Some(n)) => n,
+        _ => world_dir(loc, fa.normal),
+    }
+}
+
+fn faces_view(w: &World, name: &str, g: &FeatureGraph, loc: &Location, limit: usize) -> (Vec<Value>, usize) {
     let f = &*g.features;
     let by_edge = edge_chains(g);
     // Strip -> welded smooth face, so a strip names the logical face too.
@@ -138,7 +154,7 @@ fn faces_view(g: &FeatureGraph, loc: &Location, limit: usize) -> (Vec<Value>, us
         .iter()
         .take(limit)
         .map(|fa| {
-            let n = world_dir(loc, fa.normal);
+            let n = outward(w, name, fa, loc);
             let verts = fa.loops.iter().flat_map(|l| l.verts.iter()).filter_map(|&v| f.verts.get(v as usize).copied());
             json!({
                 "id": feature_id(FeatureSel::Face(fa.id)),
@@ -251,7 +267,7 @@ pub(super) fn list_features(env: &mut Env, a: &Map<String, Value>) -> Result<Val
     let mut truncated = false;
     for k in kinds {
         let (rows, total) = match k {
-            "faces" => faces_view(&g, &loc, limit),
+            "faces" => faces_view(w, name, &g, &loc, limit),
             "chains" => chains_view(&g, &loc, limit),
             "patches" => patches_view(f, limit),
             _ => vertices_view(&g, &loc, limit),

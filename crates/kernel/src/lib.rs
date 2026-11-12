@@ -12,18 +12,28 @@
 //! exactly through its mass-property integrator; the truck impl measures its
 //! tessellation. The bench compares those numbers.
 //!
+//! Stage 4 (#916) adds a STEP importer on the solidcore side
+//! ([`solidcore_step`]), bench only: the app still imports through truck.
+//! #940 adds the machining mesh of such a solid ([`machining_mesh`]):
+//! solidcore-tess at a chord in mm, every shortfall a named refusal, the
+//! deviation from the exact surfaces measured ([`mesh_deviation`]).
+//!
 //! Provenance: our own seam design; solidcore (tangency-labs, Apache-2.0
-//! port of NVIDIA's SMLib) and truck (ricosjp, Apache-2.0) are linked as
+//! port of NVIDIA's SMLib) and its STEP reader are linked at one pinned
+//! commit of the owner's fork (Cargo.toml), truck (ricosjp, Apache-2.0) as
 //! published crates; the mesh volume is the divergence theorem (any
 //! computational-geometry text). Notices in assets/ui/LICENSES.md.
 
 #![forbid(unsafe_code)]
 
 mod error;
+pub mod machining_mesh;
 mod measure;
+pub mod mesh_deviation;
 mod solidcore_blend;
 pub mod solidcore_impl;
 pub mod solidcore_import;
+pub mod solidcore_step;
 #[cfg(feature = "truck")]
 pub mod truck_impl;
 

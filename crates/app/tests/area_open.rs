@@ -12,7 +12,7 @@
 //!
 //! Gate map (M11.5): covers app::operation (boundary, boundary_turn,
 //! boundary_ctx, contour_open, footprint, stamp, generate), app::commands
-//! (EditOperationParams), app::project (area), app::verify,
+//! (EditOperationParams), app::project (area), sim::verify,
 //! motion::machining2d (contour_chain, lead_ext).
 
 mod area_support;

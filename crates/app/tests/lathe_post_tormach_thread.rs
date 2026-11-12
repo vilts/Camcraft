@@ -12,7 +12,7 @@
 //! `WRITE_GOLDEN=1 cargo test -p camcraft-app --test lathe_post_tormach_thread`
 //!
 //! Gate map (M4.4): covers app::posting (stream_records, post_setup on
-//! the Tormach lathe post), app::post (engine on the PathPilot lathe
+//! the Tormach lathe post), post::post (engine on the PathPilot lathe
 //! dialect: G33, G76, the hand), app::commands (SetPostOptions).
 //! Lane shape (M4.4): all tests here run in seconds.
 

@@ -1,7 +1,7 @@
 //! M1.1 acceptance: everything is a command, undo/redo is exact, and
 //! malformed input never enters the history.
 //!
-//! Gate map (M4.4): covers app::commands, app::geometry, app::model, app::operation, app::schema, app::stock, app::tools, app::units, app::world.
+//! Gate map (M4.4): covers app::commands, app::geometry, app::model, app::operation, app::schema, geometry::geometry::stock, tools::tools, app::units, app::world.
 
 use std::path::{Path, PathBuf};
 

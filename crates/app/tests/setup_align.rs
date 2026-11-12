@@ -9,7 +9,7 @@
 //!
 //! Gate map (#326): covers app::setup_align, app::commands
 //! (AlignPartToSetup, MoveModel, CreateSetup), app::operation (job,
-//! material, heights, stamp), app::stock_sim (part_facets),
+//! material, heights, stamp), app::stock_sim, sim::stock_sim (part_facets),
 //! app::project (save, load, open), app::posting.
 //! Lane shape (M4.4): all tests here run in seconds.
 

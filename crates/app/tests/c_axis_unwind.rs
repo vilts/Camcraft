@@ -9,7 +9,7 @@
 //! `WRITE_GOLDEN=1 cargo test -p camcraft-app --test c_axis_unwind`
 //!
 //! Gate map (M4.4): covers camcraft_app::operation (rotary_gate's C
-//! stamp and unwind), camcraft_app::cl (unwind_c), camcraft_app::post
+//! stamp and unwind), cl::cl (unwind_c), post::post
 //! (fanuc-lathe.cps voicing the orbit).
 //! Lane shape (M4.4): all tests here run in seconds.
 
@@ -131,6 +131,20 @@ fn bar() -> Vec<Triangle> {
 }
 
 fn world(travel: Option<(f64, f64)>) -> World {
+    world_on(mill_turn(travel))
+}
+
+/// The bench whose C states `travel` but no rate at all - neither feed
+/// nor rapid (#906).
+fn unrated(travel: (f64, f64)) -> Machine {
+    let mut m = mill_turn(Some(travel));
+    for a in m.axes.iter_mut().filter(|a| a.rotary) {
+        (a.feed, a.rapid) = (None, None);
+    }
+    m
+}
+
+fn world_on(machine: Machine) -> World {
     let world = camcraft_app::world::new_world();
     let mut h = History::default();
     let tool = catalog().into_iter().find(|(n, _)| *n == "BN-0600").map(|(_, t)| t).expect("catalog ball");
@@ -138,7 +152,7 @@ fn world(travel: Option<(f64, f64)>) -> World {
     let stock = SetStock::new(&world, StockShape::Box { dx: 14.0, dy: 14.0, dz: 34.0 }, Location::default());
     h.execute(&world, stock.expect("stock"));
     h.execute(&world, ImportModel::from_mesh("bar", Mesh::from_facets(bar())));
-    let cmd = LoadMachine::new(&world, "millturn.mch".into(), Some(mill_turn(travel)));
+    let cmd = LoadMachine::new(&world, "millturn.mch".into(), Some(machine));
     h.execute(&world, cmd.expect("machine"));
     world
 }
@@ -295,4 +309,32 @@ fn a_lower_stated_rate_posts_a_lower_feed() {
     assert_feeds_within(&text, 1000.0, 500.0);
     assert!(slow < fast, "a slower machine posts slower: {slow} vs {fast}");
     assert!(slow <= 1000.0 + 0.05, "no F past the slower machine's own limits: {slow}");
+}
+
+/// #906: a C travel with no C rate has nothing to cap a rewind by, so
+/// the unwind is refused by name at generation - never posted at the
+/// ~57 x max feed / radius an uncapped orbit would state.
+#[test]
+fn a_stated_c_travel_without_a_c_rate_refuses_the_rewind_by_name() {
+    let e = operation::generate(&world_on(unrated((-360.0, 360.0))), &contour(), "C wrap").err();
+    let e = e.map(|e| e.to_string()).unwrap_or_default();
+    assert!(e.contains("Rotary Contour") && e.contains("states a C travel but no C rate"), "{e}");
+    // A path that needs no rewind is not refused: the unstated rate
+    // matters only where a rewind would post.
+    let wide = (-100_000.0, 100_000.0);
+    assert!(operation::generate(&world_on(unrated(wide)), &contour(), "C wrap").is_ok(), "no rewind, no refusal");
+}
+
+/// #906 through the lathe post: an unwound path handed to the post on
+/// a machine stating a C travel but no C rate is refused by name - its
+/// orbit rapids carry no uncapped F.
+#[test]
+fn the_lathe_post_refuses_a_c_turning_rapid_without_a_stated_c_rate() {
+    let stamped = stamp_c(&two_rings(), [0.0, 0.0], 0.05).expect("stamps");
+    let path = unwind_c(&stamped, [0.0, 0.0], (-360.0, 360.0), 0.05, false).expect("unwinds");
+    let out = engine::run(LATHE_CPS, &post::machine::mirror(&unrated((-360.0, 360.0))), &stream(&path)).expect("runs");
+    assert!(out.warnings.iter().any(|w| w.contains("states a C travel but no C rate")), "refused by name: {:?}", out.warnings);
+    // The same path on the rated bench still posts clean (the golden's).
+    let rated = engine::run(LATHE_CPS, &post::machine::mirror(&mill_turn(Some((-360.0, 360.0)))), &stream(&path)).expect("runs");
+    assert!(rated.warnings.is_empty(), "{:?}", rated.warnings);
 }

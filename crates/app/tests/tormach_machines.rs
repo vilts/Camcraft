@@ -13,7 +13,7 @@
 //! PCNC 1100 Series I, 31138 Rev B1-4 PCNC 1100 Series II, UM10087 1013A
 //! PCNC 1100 Series 3).
 //! Gate map (M4.4): covers post::machine (spindle ranges, rigid tapping),
-//! app::post (tormach.cps), app::posting (MACHINES registry).
+//! post::post (tormach.cps), app::posting (MACHINES registry).
 
 use camcraft_app::machine::{Machine, parse_mch};
 use camcraft_app::post::{engine, machine};

@@ -9,7 +9,7 @@
 //! the helix entry posts as continuous helical G2/G3 words.
 //!
 //! Gate map (M11.2): covers app::operation (params, stamp, sane, links),
-//! app::project (links DTO, contour migration), app::commands, app::verify,
+//! app::project (links DTO, contour migration), app::commands, sim::verify,
 //! app::posting.
 
 use camcraft_app::cl::{Move, MoveKind, Toolpath};

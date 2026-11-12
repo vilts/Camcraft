@@ -6,7 +6,8 @@
 //! Provenance: our own tool surface over this repo's commands and the
 //! script verbs; schemas are JSON Schema as the MCP spec carries them.
 
-use super::{area, edit, features, job, pick, pockets, render};
+use super::{area, edit, features, holders, job, pick, pockets, render};
+use crate::commands::ImportMode;
 use crate::script::{api, Env};
 
 use serde_json::{json, Map, Value};
@@ -23,13 +24,15 @@ pub(super) struct Tool {
 const TOOLS: &[Tool] = &[
     Tool { name: "open_project", description: "Open a .camproj project file, replacing the current document and clearing undo history.", schema: s_path, run: open_project },
     Tool { name: "save_project", description: "Save the document as a .camproj file. Without a path, saves over the file last opened or saved.", schema: s_opt_path, run: save_project },
-    Tool { name: "import_model", description: "Import a mesh model (STL, STEP or OBJ) through the app's importers. A name already used by a model updates that model.", schema: s_import, run: import_model },
-    Tool { name: "get_job", description: "The whole document as JSON: setups, stock, work offsets, models, tools, and operations with their parameters and status.", schema: s_empty, run: job::get_job },
+    Tool { name: "import_model", description: "Import a mesh model (STL, STEP or OBJ) through the app's importers. A name already used by a model updates that model. A STEP model too large to import at full detail answers with reduced_fidelity: how closely its surfaces are approximated, in mm - gouge checks against it are stricter, and its operations are refused at the post when it is too coarse to check; import it again with a larger facet_budget to clear that.", schema: s_import, run: import_model },
+    Tool { name: "get_job", description: "The whole document as JSON: setups, stock, work offsets, models (one imported at reduced fidelity carries reduced_fidelity), tools, and operations with their parameters and status.", schema: s_empty, run: job::get_job },
     Tool { name: "list_operation_types", description: "Every operation kind with its parameter fields, JSON types and default values, and the tool kinds it accepts.", schema: s_empty, run: job::list_operation_types },
     Tool { name: "list_tool_catalog", description: "The built-in tool catalog: names and definitions add_tool can copy into the document.", schema: s_empty, run: job::list_tool_catalog },
+    Tool { name: "list_holder_library", description: "The built-in holder library: BT30, BT40 and CAT40 holders with ER collet or Weldon side-lock noses, and standalone ER11-ER40 chucks - names set_tool_holder takes, with their dimensions and the shanks they clamp.", schema: s_empty, run: holders::list_holder_library },
+    Tool { name: "set_tool_holder", description: "Set a document tool's holder: from the holder library by name (optional gauge_len and projection, mm), from a drawn spun profile (points), or back to the holder cylinder (clear). One undo step; an unknown entry, a shank the holder cannot take or a bad profile is refused by name.", schema: holders::s_set_tool_holder, run: holders::set_tool_holder },
     Tool { name: "add_tool", description: "Add a tool to the document, from the catalog by name or from a full definition (the shape get_job shows). It starts with the machine's default holder unless \"holder\" says otherwise; one undo removes the tool and its holder.", schema: s_add_tool, run: edit::add_tool },
     Tool { name: "export_tool_library", description: "Write the document's tools to a tool library file (.camtools), the same format the Tool library page's Export writes. Refuses a document with no tools or a path that cannot be written.", schema: s_library, run: export_tool_library },
-    Tool { name: "import_tool_library", description: "Import a tool library file into the document as one undo step, through the same command as the Tool library page's Import: an identical tool is skipped, a clashing name arrives as \"Name (2)\", a malformed or insane file is refused naming the tool.", schema: s_library, run: import_tool_library },
+    Tool { name: "import_tool_library", description: "Import a tool library file into the document as one undo step, through the same command as the Tool library page's Import. mode add (default): an identical tool is skipped, a clashing name arrives as \"Name (2)\"; update: a same-named tool takes the file's definition in place (number kept, operations go Stale); replace: update, and tools the file lacks are removed unless an operation uses one (refused by name). holders (default true) takes each tool's holder body from the file - in update/replace a changed body is a change like any other (gated, operations go Stale); false lands new tools with their holder cylinder only and leaves existing tools' bodies as they are. A malformed or insane file (or a tool body that does not fit its tool) is refused naming the tool. The reply counts holders taken and left out.", schema: s_import_library, run: import_tool_library },
     Tool { name: "set_stock", description: "Set the active setup's stock: a box, a cylinder, or a copy of a model.", schema: s_stock, run: edit::set_stock },
     Tool { name: "add_operation", description: "Add an operation of a kind (see list_operation_types) with a tool, on the stock or a model, seeded with the kind's defaults and an optional params patch. Not generated until generate runs.", schema: s_add_op, run: edit::add_operation },
     Tool { name: "edit_operation", description: "Patch an operation's parameters: the given fields replace the current ones (JSON merge patch over the kind's fields; null clears an optional field). One undo step.", schema: s_edit_op, run: edit::edit_operation },
@@ -50,7 +53,7 @@ const TOOLS: &[Tool] = &[
 ];
 
 /// Every row: this table, then the setup furniture's (#181), then the
-/// part placement (#716).
+/// part placement (#716), ..., then operation names and order (#45).
 fn all() -> impl Iterator<Item = &'static Tool> {
     TOOLS
         .iter()
@@ -63,6 +66,8 @@ fn all() -> impl Iterator<Item = &'static Tool> {
         .chain(super::cutter_tools::TOOLS)
         .chain(super::plate_tools::TOOLS)
         .chain(super::modvise_tools::TOOLS)
+        .chain(super::workholding_tools::TOOLS)
+        .chain(super::order_tools::TOOLS)
 }
 
 /// The `tools/list` rows.
@@ -123,11 +128,9 @@ fn save_project(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> 
 }
 
 fn import_model(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
-    let mut args = vec![json!(req_str(a, "path")?)];
-    if let Some(n) = opt_str(a, "name")? {
-        args.push(json!(n));
-    }
-    api::v_import(env, args)
+    let name = opt_str(a, "name")?.map_or(Value::Null, |n| json!(n));
+    let budget = a.get("facet_budget").cloned().unwrap_or(Value::Null);
+    api::v_import(env, vec![json!(req_str(a, "path")?), name, budget])
 }
 
 fn export_tool_library(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
@@ -135,7 +138,17 @@ fn export_tool_library(env: &mut Env, a: &Map<String, Value>) -> Result<Value, S
 }
 
 fn import_tool_library(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
-    api::v_import_tools(env, vec![json!(req_str(a, "path")?)])
+    let path = std::path::PathBuf::from(req_str(a, "path")?);
+    let mode = match opt_str(a, "mode")? {
+        None => ImportMode::Add,
+        Some(m) => ImportMode::parse(m)?,
+    };
+    let holders = match a.get("holders") {
+        None | Some(Value::Null) => true,
+        Some(Value::Bool(b)) => *b,
+        Some(other) => return Err(format!("\"holders\" must be true or false, got {other}")),
+    };
+    api::import_tools(env, &path, mode, holders)
 }
 
 fn generate(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
@@ -181,11 +194,23 @@ fn s_library() -> Value {
     obj(json!({ "path": { "type": "string", "description": "A tool library file (.camtools)." } }), &["path"])
 }
 
+fn s_import_library() -> Value {
+    obj(
+        json!({
+            "path": { "type": "string", "description": "A tool library file (.camtools)." },
+            "mode": { "type": "string", "enum": ["add", "update", "replace"], "description": "What to do with a tool whose name the document has; default add." },
+            "holders": { "type": "boolean", "description": "Take each tool's holder body from the file (default true); false keeps only the holder cylinder for new tools and leaves existing tools' bodies as they are." }
+        }),
+        &["path"],
+    )
+}
+
 fn s_import() -> Value {
     obj(
         json!({
             "path": { "type": "string", "description": "An .stl, .step/.stp or .obj file." },
-            "name": { "type": "string", "description": "Model name; defaults to the file stem." }
+            "name": { "type": "string", "description": "Model name; defaults to the file stem." },
+            "facet_budget": { "type": "integer", "minimum": crate::geometry::import::step_budget::MIN, "maximum": crate::geometry::import::step_budget::CEILING, "description": "STEP facet budget: the most triangles a STEP model may be meshed into (default 30000000). Raise it to import a large model at full detail; STEP files only." }
         }),
         &["path"],
     )

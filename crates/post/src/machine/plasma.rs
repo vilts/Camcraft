@@ -18,6 +18,7 @@
 use serde_json::Value;
 
 use super::def::{kind, Kind, Machine};
+use super::no_spindle::{head_refusals, NoSpindle};
 
 /// Why a plasma table states no spindle: one sentence, every refusal.
 const NO_SPINDLE: &str = "a plasma machine has no spindle - a torch states no rpm, power, speed range or tapping";
@@ -36,61 +37,16 @@ const NO_SPINDLE: &str = "a plasma machine has no spindle - a torch states no rp
 /// mill's; Z is the torch lifter there, not a depth axis.
 #[must_use]
 pub fn plasma_refusals(v: &Value) -> Vec<(String, String)> {
-    let mut out = Vec::new();
-    let mut heads = Vec::new();
-    let mut rotaries = Vec::new();
-    walk(v.pointer("/kinematics/default/parts"), &mut heads, &mut rotaries);
-    for head in heads {
-        if let Some(sp) = head.get("spindle").filter(|s| !s.is_null()) {
-            match sp.as_object().filter(|o| !o.is_empty()) {
-                Some(o) => out.extend(o.keys().map(|k| (format!("spindle.{k}"), NO_SPINDLE.to_owned()))),
-                None => out.push(("spindle".to_owned(), NO_SPINDLE.to_owned())),
-            }
-        }
-        let ts = head.get("tool_station");
-        if ts.and_then(|t| t.get("live_tool")).is_some_and(|l| !l.is_null()) {
-            out.push(("live_tool".to_owned(), "a plasma machine has no spindle to drive a live tool".to_owned()));
-        }
-        if states_list(ts.and_then(|t| t.get("coolants"))) {
-            out.push(("coolants".to_owned(), no_coolant()));
-        }
-    }
-    if states_list(v.pointer("/tooling/coolants")) {
-        out.push(("tooling.coolants".to_owned(), no_coolant()));
-    }
+    let rules = NoSpindle {
+        spindle: NO_SPINDLE,
+        live_tool: "a plasma machine has no spindle to drive a live tool",
+        coolant: "a plasma machine states no coolant - its control takes no M7/M8/M9",
+    };
+    let (mut out, rotaries) = head_refusals(v, &rules);
     for name in rotaries {
         out.push((name, "a plasma table cuts flat sheet in X and Y - it states no rotary axis".to_owned()));
     }
     out
-}
-
-fn no_coolant() -> String {
-    "a plasma machine states no coolant - its control takes no M7/M8/M9".to_owned()
-}
-
-/// A coolant list that states something (an empty list states nothing).
-fn states_list(v: Option<&Value>) -> bool {
-    v.is_some_and(|l| !l.is_null() && l.as_array().is_none_or(|a| !a.is_empty()))
-}
-
-/// The head parts and the rotary axis names, depth-first.
-fn walk<'a>(parts: Option<&'a Value>, heads: &mut Vec<&'a Value>, rotaries: &mut Vec<String>) {
-    let Some(arr) = parts.and_then(Value::as_array) else { return };
-    for p in arr {
-        match p.get("type").and_then(Value::as_str) {
-            Some("head") => heads.push(p),
-            Some("rotary") => {
-                let name = p
-                    .get("name")
-                    .or_else(|| p.get("id"))
-                    .and_then(Value::as_str)
-                    .unwrap_or("rotary axis");
-                rotaries.push(name.to_owned());
-            }
-            _ => {}
-        }
-        walk(p.get("parts"), heads, rotaries);
-    }
 }
 
 impl Machine {

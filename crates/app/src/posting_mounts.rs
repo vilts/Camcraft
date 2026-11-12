@@ -201,7 +201,23 @@ fn post_each(world: &World, out_path: &Path, cps: Option<&str>, mounts: Vec<Moun
         });
     }
     let streams = op_streams(world)?;
-    let mut report = verification_report(world);
+    // #1190: each mount's own script opens only what a lathe may run.
+    for (m, cps) in mounts.iter().zip(&scripts) {
+        let own = streams
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .filter(|name| model::find_by_name(world, name).is_some_and(|e| member(world, &e, &m.setups)));
+        crate::lathe_voice::at_post(world, own, cps)?;
+    }
+    // #1174: an explicit script is the dialect every op posts through;
+    // otherwise each op's own mount's post (the scripts read above).
+    let mut report = match cps {
+        Some(c) => {
+            let voice = crate::post::dialect::work_voice(c).map_err(|e| format!("post engine: {e}"))?;
+            crate::posting::verification_report_by(world, &|_| voice)
+        }
+        None => verification_report(world),
+    };
     for m in &mounts {
         report.problems.extend(wcs_slot::shared_word_problems_in(world, Some(&m.setups)));
     }

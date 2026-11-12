@@ -6,7 +6,7 @@
 //! a stock that equals the part is clean. A genuinely missing stock
 //! still refuses by name.
 //!
-//! Gate map (#592): covers app::stock_sim (stock_grid's lattice sizing,
+//! Gate map (#592): covers app::stock_sim, sim::stock_sim (stock_grid's lattice sizing,
 //! simulate_document), app::posting (verification_report's sim clause).
 //! Provenance: our own fixtures.
 

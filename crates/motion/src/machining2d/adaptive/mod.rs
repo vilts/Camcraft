@@ -38,6 +38,7 @@
 //! too much is left). Every loop is capped; the plan cannot hang.
 
 mod budget;
+mod core;
 mod front;
 mod grow;
 mod guard;
@@ -81,15 +82,10 @@ pub(crate) use loops::boundary_dist;
 pub(crate) use morph::SAG as PLAN_SAG;
 
 use super::GenError;
-use front::{rotate_to, tail};
-use rings::circle;
 use raster::Raster;
 
 /// The worst contact angle a trial walk read, and where.
 type Worst = (f64, Point2);
-/// A spiral revolution on trial: the ring it reaches, the revolution,
-/// the stock it leaves, its worst reading.
-type SpiralTrial = (Vec<Point2>, Vec<Point2>, Raster, Worst);
 /// An open round on trial: the cut, its link, the stock, the reading.
 type RoundTrial = (Vec<Point2>, Option<Vec<Point2>>, Raster, Worst);
 /// A wall lap on trial, with the corner rest its rounding leaves.
@@ -102,10 +98,6 @@ const STEPS: [f64; 8] = [1.0, 0.85, 0.7, 0.55, 0.45, 0.35, 0.28, 0.22];
 /// (Stori & Wright) wants steps far under the nominal width, and a
 /// closed revolution there is cheap to plan.
 const SPIRAL_STEPS: [f64; 11] = [1.0, 0.85, 0.7, 0.55, 0.45, 0.35, 0.28, 0.22, 0.15, 0.1, 0.07];
-
-/// The spiral rides a cleared-area loop while at least this share of it
-/// faces material.
-const SPIRAL_FRONT: f64 = 0.6;
 
 /// Where no step of the ladder holds the load, the least overload up
 /// to this multiple of it is cut (and named) rather than left standing.
@@ -342,85 +334,6 @@ impl Planner<'_> {
         self.mat = tidy::tidy(&self.mat.difference(&sw)?, 0.25 * h, 0.1 * h, 4.0 * h * h)?;
         Ok(())
     }
-
-    /// Phase 1: closed fronts around the bore, cut as one spiral.
-    /// Returns the heading the spiral ends on.
-    fn core_spiral(&mut self) -> Result<Point2, GenError> {
-        let s = self.s;
-        let mut rings: Vec<Vec<Point2>> = Vec::new();
-        // The bore's own orbit is the spiral's ring zero: the tool
-        // leaves the entry on a turn, not a radial step. It is walked
-        // once flat first - whatever floor the descent left (a helix
-        // leaves its last pitch as a ramp) is the bore's to clear,
-        // inside the entry's own circle.
-        rings.push(self.orbit());
-        // Each revolution is planned as what is emitted: the morph from
-        // the last ring onto the next front loop, measured on the stock
-        // the revolutions before it really left.
-        for _ in 0..MAX_ROUNDS {
-            let Some(prev) = rings.last().cloned() else { break };
-            let mut kept: Option<SpiralTrial> = None;
-            for (i, f) in SPIRAL_STEPS.iter().enumerate() {
-                let room = loops::cleared_loops(&self.mat, s.r - self.width(*f), self.center, (s.climb, self.seg, s.smooth), (&self.ras, self.rim, 0.5 * self.bound, self.bite))?;
-                // The spiral lasts while the cleared area has ONE loop
-                // still facing material (crumbs under half a radius
-                // aside - the open rounds take those) and that loop is
-                // mostly cutting: once the walls carry most of it, the
-                // open rounds' return links fly less air.
-                let mut live = room.iter().filter(|l| l.front >= 0.5 * s.r);
-                let (Some(l), None) = (live.next(), live.next()) else { break };
-                if l.strong < SPIRAL_FRONT * l.total {
-                    break;
-                }
-                let ring = rotate_to(&l.pts, prev[0]);
-                let rev = spiral::revolution(&prev, &ring);
-                let mut trial = self.ras.clone();
-                let w = trial.walk(&rev, s.r, self.rim, self.step);
-                if w.0 <= self.bound || i + 1 == SPIRAL_STEPS.len() {
-                    kept = Some((ring, rev, trial, w));
-                    break;
-                }
-            }
-            let Some((ring, rev, trial, w)) = kept else { break };
-            self.note_worst(w);
-            self.ras = trial;
-            self.take(&rev)?;
-            self.push_walk(&rev);
-            rings.push(ring);
-        }
-        // The last ring once whole: the spiral's outer edge is that loop.
-        let last = rings.last().cloned().unwrap_or_default();
-        if rings.len() > 1 {
-            let mut trial = self.ras.clone();
-            let w = trial.walk(&last, s.r, self.rim, self.step);
-            self.note_worst(w);
-            self.ras = trial;
-            self.take(&last)?;
-            self.push_walk(&last);
-        }
-        let heading = tail(&self.walk);
-        Ok(heading)
-    }
-
-    /// The bore's own orbit, walked once flat (a helix leaves its last
-    /// pitch as a ramp: that floor is the bore's to clear, inside the
-    /// entry's own circle), or - out of a tool-size bore - said.
-    fn orbit(&mut self) -> Vec<Point2> {
-        let s = self.s;
-        let ring0 = circle(s.seed, orbit_radius(&s), s.start, s.climb, self.seg);
-        if s.helix_r > 1e-6 {
-            self.walk.extend(ring0.iter().skip(1).copied());
-        } else {
-            self.plan.notes.push(format!(
-                "entry: the {} bore at ({:.2}, {:.2}) is tool-size - the first turn out of it exceeds the load (a Helix entry holds it)",
-                if s.bore > 0.0 { "axial" } else { "missing" },
-                s.seed.x,
-                s.seed.y
-            ));
-        }
-        ring0
-    }
-
 }
 
 #[cfg(test)]

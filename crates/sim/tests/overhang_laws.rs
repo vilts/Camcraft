@@ -79,6 +79,7 @@ fn judge(p: &Toolpath, facets: &[Triangle], tool: &ToolGeom) -> Vec<Warning> {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(p, &cx)
 }
@@ -238,6 +239,7 @@ fn a_2d_path_without_a_model_is_unchanged() {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     let w = verify(&rapid_cleared(5.0), &cx);
     assert!(w.is_empty(), "{w:?}");
@@ -263,6 +265,7 @@ fn judge_2d(p: &Toolpath, tool: &ToolGeom) -> Vec<Warning> {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(p, &cx)
 }
@@ -343,6 +346,7 @@ fn judge_ball(p: &Toolpath, facets: &[Triangle]) -> Vec<Warning> {
         holder_radius: tool.holder_radius,
         holder_len: tool.holder_len,
         body: None,
+        neck: None,
     };
     let cx = VerifyContext {
         region: &region,
@@ -359,6 +363,7 @@ fn judge_ball(p: &Toolpath, facets: &[Triangle]) -> Vec<Warning> {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(p, &cx)
 }

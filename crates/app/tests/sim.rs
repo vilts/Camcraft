@@ -3,7 +3,7 @@
 //! pin on synthetic ones - and the generators' own feed numbers must
 //! round-trip through the sim's time.
 //!
-//! Gate map (M4.4): covers app::cl, app::drilling, app::geo2d, app::machining2d, app::sim, app::tools.
+//! Gate map (M4.4): covers cl::cl, motion::drilling, geometry::geo2d, motion::machining2d, sim::sim, tools::tools.
 
 use camcraft_app::cl::Toolpath;
 use camcraft_app::drilling::{self, CycleParams, CycleChoice, Hole};

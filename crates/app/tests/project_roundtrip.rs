@@ -1,7 +1,7 @@
 //! M1.1 acceptance: save/load round-trips are byte-identical; a wrong
 //! version or corrupt file is a clean error.
 //!
-//! Gate map (M4.4): covers app::commands, app::drilling, app::finishing3d, app::geometry, app::machine, app::machining2d, app::machining3d, app::model, app::operation, app::posting, app::project, app::schema, app::setup, app::stock, app::tools, app::units, app::world.
+//! Gate map (M4.4): covers app::commands, motion::drilling, motion::finishing3d, app::geometry, app::machine, post::machine, motion::machining2d, motion::machining3d, app::model, app::operation, app::posting, app::project, app::schema, app::setup, geometry::geometry::stock, tools::tools, app::units, app::world.
 
 use std::path::PathBuf;
 

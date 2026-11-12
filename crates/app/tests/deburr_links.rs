@@ -5,7 +5,7 @@
 //! verify finds no rapid in stock.
 //!
 //! Gate map (#304): covers motion::finishing3d (deburr), app::operation
-//! (generate), app::verify.
+//! (generate), sim::verify.
 
 use camcraft_app::cl::MoveKind;
 use camcraft_app::commands::{

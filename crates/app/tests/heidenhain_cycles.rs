@@ -4,6 +4,9 @@
 //! Source limits: TNC 640 Cycle Programming manual 892905-25 §§2.1, 3.3,
 //! 3.8, 4.2, 4.3 and 10.4. These are regression assertions for our mapping,
 //! not controller execution or ISO syntax verification.
+//!
+//! Gate map (#922): covers post::post (engine, cnc, probe_rec), post::machine,
+//! app::posting.
 
 use camcraft_app::cl::{CompSide, CycleKind, MoveKind};
 use camcraft_app::post::{cnc::{self, CycleRec, MoveRec, Record}, engine, probe_rec::TouchRec};

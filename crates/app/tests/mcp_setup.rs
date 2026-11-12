@@ -5,7 +5,8 @@
 //! input a tool error.
 //!
 //! Gate map (M4.4): covers app::mcp::setup_tools, app::mcp::fixture_tools,
-//! app::mcp::align_tools (#557, #555),
+//! app::mcp::align_tools (#557, #555), app::commands::stock_source_only
+//! (#1094),
 //! app::posting (fixture_findings).
 
 use camcraft_app::mcp::Server;
@@ -286,7 +287,7 @@ fn locate_part_seats_the_part_on_the_fixture_by_feature_ids() {
     c.ok("import_model", json!({ "path": vise.display().to_string() }));
     c.ok("add_fixture", json!({ "model": "vise" }));
     c.ok("move_fixture", json!({ "name": "vise", "position": [100.0, 0.0, -20.0] }));
-    // The flat face lying at world Z `z` ("facing" is winding-free).
+    // The flat face lying at world Z `z`.
     let face = |c: &mut Client, model: &str, z: f64| -> String {
         let f = c.ok("list_features", json!({ "model": model, "kinds": ["faces"] }));
         f["faces"]
@@ -422,4 +423,29 @@ fn lay_part_on_points_lays_the_plane_through_three_vertices() {
     assert!(msg.contains("pick three points - 1 picked"), "{msg}");
     let msg = c.refused("lay_part_on_points", json!({ "points": wall, "plane": "g20" }));
     assert!(msg.contains("\"plane\""), "{msg}");
+}
+
+/// #1094: the stock page's "raw stock only" checkbox over MCP - the same
+/// command, one undo step, refused on a stock not made from a model.
+#[test]
+fn set_raw_stock_only_marks_the_stock_source_through_the_command() {
+    let dir = tmp_dir("raw");
+    let casting = dir.join("casting.stl");
+    write_box_stl(&casting, (30.0, 30.0, 20.0));
+    let mut c = Client::new();
+    c.ok("set_stock", json!({ "box": { "dx": 10.0, "dy": 10.0, "dz": 10.0 } }));
+    let e = c.refused("set_raw_stock_only", json!({ "on": true }));
+    assert!(e.contains("not made from a model"), "{e}");
+    c.ok("import_model", json!({ "path": casting.display().to_string() }));
+    c.ok("set_stock", json!({ "from_model": "casting" }));
+    let e = c.refused("set_raw_stock_only", json!({}));
+    assert!(e.contains("\"on\""), "{e}");
+    let on = c.ok("set_raw_stock_only", json!({ "on": true }));
+    assert_eq!(on["raw_stock_only"], json!(true), "{on}");
+    // No operation and no other model: the mark holds; nothing else to judge.
+    assert_eq!(on["judged_out"], json!("casting"), "{on}");
+    c.ok("undo", json!({}));
+    let off = c.ok("set_raw_stock_only", json!({ "on": false }));
+    assert_eq!(off["judged_out"], Value::Null, "undo walked the mark back: {off}");
+    let _ = std::fs::remove_dir_all(&dir);
 }

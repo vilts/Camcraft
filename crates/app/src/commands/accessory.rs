@@ -104,12 +104,8 @@ fn fit_under_stock(
         .and_then(|d| d.vise)
         .ok_or_else(|| CommandError::Invalid(format!("'{vise}' is not a built-in vise")))?;
     let pose = model::transform_of(world, &entity).unwrap_or_default();
-    let stock = model::stock_world_aabb_for(world, setup).ok_or_else(|| {
-        CommandError::Invalid(format!(
-            "{} has no stock to fit the parallels under",
-            setup.map_or_else(|| "the setup".to_owned(), |s| format!("setup '{s}'"))
-        ))
-    })?;
+    let stock = model::stock_world_aabb_for(world, setup)
+        .ok_or_else(|| CommandError::Needs(crate::vise_fit::no_stock_message(setup, "the parallels under")))?;
     let fit = accessory::fit_parallels(&pose, vp.jaw_height, vp.opening, &stock, thickness, above)
         .map_err(|e| CommandError::Invalid(format!("parallels in '{vise}': {e}")))?;
     let fitted = Accessory::Parallels { height: fit.height, thickness, length, spacing: fit.spacing };

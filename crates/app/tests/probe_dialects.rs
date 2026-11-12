@@ -150,13 +150,14 @@ fn sinumerik_bore_centre_posts_meas_blocks() {
     common::write_golden("nc/sinumerik/probe_bore_centre.nc", &prog);
 }
 
-/// G58 / G59 are axial programmable offsets on an 840D, not settable
-/// frames: a probe asked to set one is refused by name, never posted.
+/// #934: the sixth work offset is the settable frame G506 on an 840D
+/// (G58 / G59 are axial programmable offsets there, never written): a
+/// probe asked to set it writes frame 6 and re-selects G506.
 #[test]
-fn sinumerik_refuses_setting_g59_by_name() {
-    let out = engine::run(SINUMERIK, &serde_json::Value::Null, &bore_stream(Some(5), "G54")).expect("post");
-    assert!(out.warnings.iter().any(|w| w.contains("G59") && w.contains("settable frames")), "{:?}", out.warnings);
-    assert!(!out.program.contains("$P_UIFR"), "nothing is set");
+fn sinumerik_sets_the_sixth_offset_as_frame_g506() {
+    let prog = post_ok(SINUMERIK, &bore_stream(Some(5), "G54"));
+    assert!(prog.contains(" $P_UIFR[6,X,TR]=$P_UIFR[1,X,TR]+R90\n"), "sets frame 6 (G506) from G54: {prog}");
+    assert!(!prog.lines().any(|l| l.split_whitespace().any(|w| w == "G58" || w == "G59")), "{prog}");
 }
 
 /// Heidenhain's ISO manual states no skip move and no trip-position

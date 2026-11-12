@@ -7,7 +7,7 @@
 //! compensation in the control.
 //! Provenance: our own tests over our own post; the words are the Carvera
 //! firmware's supported-codes tables (see assets/posts/carvera.cps).
-//! Gate map (M4.4): covers app::post (carvera.cps) with the shipped
+//! Gate map (M4.4): covers post::post (carvera.cps) with the shipped
 //! Makera Carvera machine (posting::MACHINES).
 
 mod common;

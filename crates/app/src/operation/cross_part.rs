@@ -16,8 +16,9 @@
 //! Provenance: "never cut the part you keep" is shop practice in any
 //! machining handbook; the swept-tool-in-solid test is the verify
 //! crate's (ray-parity point-in-solid and swept-atom distance, cited
-//! there); the bisection is textbook. Our own design notes; no vendor
-//! material consulted.
+//! there); the bisection is textbook. #842: the drill carries its
+//! modelled body's band stack, the shape the simulation draws. Our own
+//! design notes; no vendor material consulted.
 
 use crate::cl::{Move, MoveKind, Toolpath};
 use crate::drilling::CrossHole;
@@ -41,16 +42,33 @@ fn law() -> verify::SolidLaw {
     verify::SolidLaw { step: STEP, allow: GOUGE_TOL, hole_walls: true }
 }
 
+/// The cross holes' axes, whose round walls the solid law excuses
+/// (#1205: measured about each hole's own line, never a flat).
+fn walls(holes: &[CrossHole]) -> Vec<verify::HoleAxis> {
+    holes.iter().map(|h| verify::HoleAxis { at: h.origin, dir: [h.dir.x, h.dir.y, h.dir.z] }).collect()
+}
+
 /// Refuse by name a cross-drill chain (world frame, the part's own)
 /// whose drill enters the finished part's solid. `holes` is the world
 /// hole list the user modelled - a moved-out raw mouth stays on its
 /// line, so the hole is named by the line the offending move rides.
-pub(super) fn part_clear(t: &Toolpath, facets: &[Triangle], tool: &Tool, holes: &[CrossHole]) -> Result<(), GenError> {
+/// `cutter` is the drill as every stack law reads it (#842,
+/// `Cutter::of(tool).with_body(..)`): with a modelled body its bands,
+/// not the cylinder enclosing it. It is re-judged against `tool`'s own
+/// geometry ([`verify::Cutter::judged`]): a cutter that no longer is this
+/// tool's falls back to the square stack, which can only over-report.
+pub(super) fn part_clear(
+    t: &Toolpath,
+    facets: &[Triangle],
+    tool: &Tool,
+    cutter: &verify::Cutter,
+    holes: &[CrossHole],
+) -> Result<(), GenError> {
     if facets.is_empty() {
         return Ok(()); // no part, nothing kept: the other laws own the chain
     }
-    let cutter = verify::Cutter::of(tool);
-    let Some(w) = verify::solid_hits(t, facets, &cutter, &law()).into_iter().next() else {
+    let cutter = verify::Cutter::judged(&tool.geom(), Some(*cutter));
+    let Some(w) = verify::solid_hits_walled(t, facets, &cutter, &law(), &walls(holes)).into_iter().next() else {
         return Ok(());
     };
     let (at, what) = match w {
@@ -125,7 +143,7 @@ fn met_at(m: &Move, facets: &[Triangle], cutter: &verify::Cutter, h: &CrossHole)
     };
     let hits = |f: f64| {
         let probe = Toolpath { moves: vec![Move { to: at(f), ..*m }], ..Toolpath::default() };
-        !verify::solid_hits(&probe, facets, cutter, &law()).is_empty()
+        !verify::solid_hits_walled(&probe, facets, cutter, &law(), &walls(std::slice::from_ref(h))).is_empty()
     };
     let (mut lo, mut hi) = (0.0f64, 1.0f64);
     if hits(0.0) {
@@ -144,3 +162,7 @@ fn met_at(m: &Move, facets: &[Triangle], cutter: &verify::Cutter, h: &CrossHole)
     let v = Point3::new(p.x - h.origin.x, p.y - h.origin.y, p.z - h.origin.z);
     v.dot(h.dir).max(0.0)
 }
+
+#[cfg(test)]
+#[path = "cross_part_tests.rs"]
+mod tests;

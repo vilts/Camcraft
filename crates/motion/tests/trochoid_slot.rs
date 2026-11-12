@@ -85,6 +85,7 @@ fn verified(path: &Toolpath, w: f64) -> Vec<Warning> {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(path, &cx)
 }
@@ -285,7 +286,10 @@ fn trochoid_bore_past_the_helix_turn_cap_is_refused() {
     p.bottom_z = -6200.0;
     p.stepdown = 6200.0;
     match trochoidal_slot(&line(), &p) {
-        Err(GenError::Invalid(m)) => assert!(m.contains("helix") && m.contains("1024 turns"), "{m}"),
+        // #871: the levels built before the refusal ride it as a ghost.
+        Err(GenError::Invalid(m) | GenError::Ghosted { msg: m, .. }) => {
+            assert!(m.contains("helix") && m.contains("1024 turns"), "{m}")
+        }
         other => panic!("expected the helix-turn refusal, got {other:?}"),
     }
 }

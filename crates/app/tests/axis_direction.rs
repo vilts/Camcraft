@@ -7,7 +7,7 @@
 //!
 //! Fixture law (clean-room): every value below is our own invention.
 //!
-//! Gate map (M4.4): covers app::machine, app::posting, app::fixture, app::project, app::commands, post::machine.
+//! Gate map (M4.4): covers app::machine, post::machine, app::posting, app::fixture, sim::fixture, app::project, app::commands, post::machine.
 
 use flecs_ecs::prelude::World;
 

@@ -14,7 +14,7 @@
 //!
 //! Gate map (M4.4): covers camcraft_app::operation (the axial arm of
 //! generate, holes_of), camcraft_app::commands (family gate,
-//! Create/GenerateOperation), camcraft_app::machine (the lathe kind),
+//! Create/GenerateOperation), camcraft_app::machine, post::machine (the lathe kind),
 //! camcraft_app::posting (the cycle words on a lathe document).
 //! Lane shape (M4.4): all tests here run in seconds.
 

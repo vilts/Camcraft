@@ -7,7 +7,7 @@
 //! `.mch` layout of `assets/machines/AGENTS.md`.
 //! Provenance: our own tests, specced from the issue's "Done means".
 //!
-//! Gate map (M4.4): covers app::machine::order, app::machine::draft.
+//! Gate map (M4.4): covers app::machine, post::machine::order, app::machine, post::machine::draft.
 
 use std::path::{Path, PathBuf};
 

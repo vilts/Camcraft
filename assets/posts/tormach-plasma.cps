@@ -77,13 +77,19 @@ function note(s) { block(["(" + s + ")"]); }
 // A plasma table cuts flat sheet - a stated rotary has no word here.
 function machineOk() {
   var m = typeof machine !== "undefined" ? machine : null;
-  var nm = (m && (m.name || m.model)) || "no machine";
+  var nm = (m && (m.name || m.model)) || "";
   if (!m || m.kind !== "plasma") {
-    refuse("kind", "the Tormach 1300PL plasma post writes torch words (M200, G15, G16, M205) only a plasma table reads - " + nm + " is not declared a plasma machine");
+    // The engine always publishes a machine object, with an empty name when
+    // the document states none: that fallback made the sentence a double
+    // negative ("no machine is not declared ..."). State it plainly (#998).
+    var why = nm
+      ? nm + " is not declared a plasma machine"
+      : "no machine is stated, so none is declared a plasma machine";
+    refuse("kind", "the Tormach 1300PL plasma post writes torch words (M200, G15, G16, M205) only a plasma table reads - " + why);
     return false;
   }
   if (m.rotaries && m.rotaries.length > 0) {
-    refuse("rotary", nm + " states a rotary axis - a plasma table cuts flat sheet in X and Y, and this post writes no rotary word");
+    refuse("rotary", (nm || "the machine") + " states a rotary axis - a plasma table cuts flat sheet in X and Y, and this post writes no rotary word");
     return false;
   }
   return true;

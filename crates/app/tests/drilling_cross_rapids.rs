@@ -77,6 +77,7 @@ fn judge_on_bar_stock(t: &Toolpath) -> Vec<Warning> {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(t, &cx)
 }

@@ -5,7 +5,7 @@
 //! written to the project file only when ON - so every legacy save
 //! stays byte-identical.
 //!
-//! Gate map (M11.1): covers app::commands, app::machining2d, app::operation, app::posting, app::project, app::verify.
+//! Gate map (M11.1): covers app::commands, motion::machining2d, app::operation, app::posting, app::project, sim::verify.
 
 use flecs_ecs::prelude::World;
 
@@ -66,6 +66,7 @@ fn ctx<'a>(region: &'a Region, stock: Option<&'a Region>, tool: &'a ToolGeom, mo
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     }
 }
 

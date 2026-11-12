@@ -39,9 +39,8 @@ use super::lift_split::{Piece, depends, split, thin_turn};
 use super::raster::Raster;
 use super::{GenError, Planner, Worst};
 
-/// The lift a return takes above the floor it crosses (mm): clear of
-/// the floor's grid crumbs and the cusp the cut leaves, far under any
-/// stepdown.
+/// Return lift above the crossed floor (mm): clear of its grid crumbs
+/// and the cut's cusp, far under any stepdown.
 pub(crate) const MICROLIFT: f64 = 0.3;
 
 /// A front's piece is re-thinned to this sag (mm, the verifier's own
@@ -58,8 +57,7 @@ const TRIES: usize = 16;
 /// The stock a piece is read on is within this many rims of it.
 const REACH_RIMS: f64 = 2.0;
 
-/// The re-ordered plan may leave this share more stock than the spiral
-/// (the air slivers it no longer rides) plus [`CRUMB_CELLS`].
+/// Extra stock share allowed for air slivers no longer ridden, plus [`CRUMB_CELLS`].
 const CRUMBS: f64 = 0.25;
 const CRUMB_CELLS: f64 = 200.0;
 
@@ -350,8 +348,7 @@ impl Planner<'_> {
     }
 }
 
-/// A plan's travel, per level (XY mm): in cut, in air at the floor and
-/// lifted; and the moves it posts.
+/// Per-level travel (XY mm): cut, floor air, lifted; and the moves posted.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct Travel {
     pub cut: f64,

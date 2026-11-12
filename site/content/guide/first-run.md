@@ -4,6 +4,16 @@ description = "The window, the ribbon, and a first toolpath."
 weight = 2
 +++
 
+## Trying it in the browser first
+
+When this site's release has a browser version,
+[CamCraft in the browser](@/app.md) opens it with nothing to install (it
+needs a browser with WebGL2: a current Chrome, Firefox, Edge or Safari), so
+you can look around the window described below; if it does not, that page
+says so, and the front page says which it is. The browser version cannot
+open or save files yet and simulation playback does not work in it, so for a
+real first toolpath, install a [desktop build](@/guide/install.md).
+
 ## The window
 
 - **The ribbon** across the top holds the commands, in groups:

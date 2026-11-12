@@ -168,6 +168,13 @@ pub struct ChangeTool {
 
 impl ChangeTool {
     pub fn new(world: &World, name: &str, next: Tool) -> Result<Self, CommandError> {
+        Self::judged(world, name, next, true)
+    }
+
+    /// Every `new` law; `judge_cutter: false` skips the drawn cutter's
+    /// agreement - only for `ReshapeTool` (#93 slice 3), which lands a
+    /// cutter checked against `next` in the same undo step.
+    pub(crate) fn judged(world: &World, name: &str, next: Tool, judge_cutter: bool) -> Result<Self, CommandError> {
         if let Some(why) = next.torch_refusal() {
             return Err(CommandError::Invalid(format!("tool '{name}': {why}")));
         }
@@ -197,7 +204,7 @@ impl ChangeTool {
         // #93 slice 2: a drawn cutter states the numbers it was drawn
         // to; an edit that leaves it disagreeing is refused by name
         // (clear it back to the numbers' outline first).
-        if let Some(c) = crate::tool_cutter::cutter_of(world, &entity) {
+        if let Some(c) = crate::tool_cutter::cutter_of(world, &entity).filter(|_| judge_cutter) {
             camcraft_tools::cutter_profile::agrees(&next, &c).map_err(|e| {
                 CommandError::Invalid(format!(
                     "tool '{name}': the drawn cutter profile no longer fits: {e} - reset the cutter profile to Parametric first"

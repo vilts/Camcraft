@@ -5,7 +5,7 @@
 //! saves, loads, undoes, redoes, dies with its tool, and refuses
 //! nonsense by name.
 //!
-//! Gate map (M4.4): covers app::commands, app::tool_body, app::operation, app::posting, app::project, app::schema, app::fixture, app::verify, app::tools.
+//! Gate map (M4.4): covers app::commands, app::tool_body, app::operation, app::posting, app::project, app::schema, app::fixture, sim::fixture, sim::verify, tools::tools.
 
 use camcraft_app::commands::{
     AddTool, ChangeTool, CommandError, CreateOperation, DeleteEntity, DeleteTool, GenerateOperation, History,

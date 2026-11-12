@@ -87,11 +87,21 @@ impl MachineDraft {
     #[must_use]
     pub fn blank(kind: Kind) -> Self {
         let lin = |n: &str| json!({ "id": n.to_ascii_lowercase(), "name": n, "type": "linear" });
-        let head = json!({ "id": "head", "name": "head", "type": "head",
-            "spindle": {}, "tool_station": { "coolants": [ { "name": "Flood", "mCode": "M8" } ] } });
+        // #530: an EDM machine carries no spindle and no coolant; its
+        // head is the wire guides or the electrode ram.
+        let head = if matches!(kind, Kind::WireEdm | Kind::SinkerEdm) {
+            json!({ "id": "head", "name": "head", "type": "head" })
+        } else {
+            json!({ "id": "head", "name": "head", "type": "head",
+                "spindle": {}, "tool_station": { "coolants": [ { "name": "Flood", "mCode": "M8" } ] } })
+        };
         let mut parts: Vec<Value> = match kind {
             Kind::Lathe => vec![lin("X"), lin("Z")],
-            Kind::Mill | Kind::MillTurn | Kind::Plasma => vec![lin("X"), lin("Y"), lin("Z")],
+            Kind::Mill | Kind::MillTurn | Kind::Plasma | Kind::SinkerEdm => {
+                vec![lin("X"), lin("Y"), lin("Z")]
+            }
+            // #530: lower guide X/Y and upper guide U/V.
+            Kind::WireEdm => vec![lin("X"), lin("Y"), lin("U"), lin("V")],
         };
         if kind == Kind::MillTurn {
             parts.push(json!({ "id": "c", "name": "C", "type": "rotary", "axis": [0.0, 0.0, 1.0] }));

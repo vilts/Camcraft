@@ -163,6 +163,14 @@ go to `CHANGELOG.md`.
   outside the working folder u started up in?"), and are removed once their
   PR is pushed. One issue, one branch; every commit for it lands there, never
   on `main`.
+- **A worktree agent never touches the main checkout's HEAD or tree.** It
+  runs `git fetch origin` and `git worktree add ... origin/main` and nothing
+  else there: no `switch`, `pull`, `merge`, `reset`, `checkout` or `stash` in
+  `C:\...\Claude-001` (any checkout the maintainer works in). The main checkout
+  may be running a gate (`cargo xtask gate` reads HEAD and the working tree
+  before and after, and prints VOID if a pull moved them mid-run, #1201), so a
+  worker's pull there voids that run for everyone. The first form above is for
+  the main session only, when it is the one owning `main`.
 - **A fork syncs from upstream at each cut tag, not continuously** (user,
   2026-11-09: "If we are on a forked repository (check for upstream), we
   pull from upstream, with every detected cut tag ex. jump from 0.14 to

@@ -5,7 +5,7 @@
 //! units reaching the script as `machine.units`.
 //! Provenance: our own tests over our own post and machine file.
 //!
-//! Gate map (M4.4): covers app::post (tormach.cps), post::machine (units),
+//! Gate map (M4.4): covers post::post (tormach.cps), post::machine (units),
 //! app::posting (registry).
 
 use camcraft_app::machine::parse_mch;
