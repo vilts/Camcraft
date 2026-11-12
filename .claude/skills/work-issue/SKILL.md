@@ -25,8 +25,12 @@ order of the steps. Load the `gh-issues` skill for the `gh` mechanics.
 - `gh issue edit N --add-label claimed --add-assignee @me` and
   `gh issue comment N --body "claimed: issue-worker-<tier> (<model>) · <UTC> · worktree/branch issue/N-<slug> · plan: <one line>"`.
 - In a fork, follow AGENTS.md's fork sync first (process files, cut tag).
-- `git fetch origin && git worktree add --no-track -b issue/N-<slug> .claude/worktrees/issue-N origin/main`;
-  work only there, with the worktree's own default `target/` (not a `CARGO_TARGET_DIR` env var: sccache hashes it, so the shared compile cache would miss across worktrees; AGENTS.md "Testing"). Never build
+- A worktree agent never switches, pulls, merges, resets, checks out or
+  stashes in the main checkout. Its only git there is
+  `git fetch origin && git worktree add --no-track -b issue/N-<slug> .claude/worktrees/issue-N origin/main`.
+  Reason: the main checkout may be running a gate, which reads HEAD and the
+  tree at start and end and voids the run if they moved (#1201); a worker's
+  pull would void that run for everyone. Work only in the worktree, with the worktree's own default `target/` (not a `CARGO_TARGET_DIR` env var: sccache hashes it, so the shared compile cache would miss across worktrees; AGENTS.md "Testing"). Never build
   in the main checkout. Check free disk first (10-20 GB per target).
 - Build cache: Prefer `cargo xtask gate ...` (it turns the compile cache on); for a direct cargo call set `RUSTC_WRAPPER=sccache` only when `sccache` is on PATH (cargo fails if the wrapper is missing), and never export `CARGO_TARGET_DIR`.
 

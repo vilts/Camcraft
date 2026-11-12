@@ -49,21 +49,32 @@ and go to step 2.
 Otherwise list open PRs that are ready for review (non-draft) with their head SHA and reviews:
 
 ```bash
+export COLLABS=$(gh api repos/NeoTech/Camcraft/collaborators --jq '.[] | select(.permissions.push) | .login' | tr '\n' ' ')
 gh pr list --repo NeoTech/Camcraft --state open --limit 100 \
   --json number,isDraft,author,headRepositoryOwner,headRefOid,reviews,comments \
-  --jq '.[] | select(.isDraft|not)
+  --jq '(env.COLLABS | split(" ")) as $c
+        | .[] | select(.isDraft|not)
         | .headRefOid as $s
-        | select([.reviews[].body, .comments[].body] | map(select(contains("<!-- pr-reviewer: " + $s))) | length == 0)
+        | ([.reviews[] | select(.author.login as $a | $c | index($a)) | .body]
+           + [.comments[] | select(.author.login as $a | $c | index($a)) | .body]) as $marks
+        | select($marks | map(select(contains("<!-- pr-reviewer: " + $s))) | length == 0)
         | "\(.number) \(.author.login) \($s)"'
 ```
 
-Every line printed is a PR that needs a review:
+Only a collaborator's marker counts (AGENTS.md "Only collaborators' reviews
+count", 2026-11-12: "Any collaborator review counts"; it replaced the
+owner-only rule of #1207): a `pr-reviewer` marker posted by an account that
+is not a collaborator is not a review of this head. Every line printed
+is a PR that needs a review:
 - it is ready for review - a fork PR or one of our own (user, 2026-11-08:
   "All PR*s made by owner should be reviewd and tagged"); our own PRs are
   flagged ready by a quick pass (AGENTS.md "Every PR opens as a draft") and
   get their full review here;
-- no review or comment carries the marker for its current head SHA (a new push
-  after our last review means the contributor answered - review again).
+- no review or comment by a collaborator carries the marker for its
+  current head SHA (a new push after our last review means the contributor
+  answered - review again), unless the new commits since that marker are only
+  clean merges of main: `cargo xtask merge-plan --delta <N> --reviewed <sha>`
+  says SAME, and the review stands (no dispatch; step 2b restores the label).
 
 Nothing to review: say "no PRs need review" in one line and stop (this is the
 common case on a loop tick - keep it quiet).
@@ -89,7 +100,7 @@ we can find em"):
 
 | Label | Colour | Means |
 |---|---|---|
-| `merge-ready` | green | review clean AND merges cleanly with main - the owner can merge now |
+| `merge-ready` | green | review clean AND merges cleanly with main - a collaborator can merge now |
 | `needs-rework` | red | the review found blocking items |
 | `conflicts` | orange | conflicts with main - needs a branch refresh (`git merge origin/main`) |
 | `needs-maintainer` | yellow | reviewed, no blockers, but the owner must decide first: a new dependency, or a `build.rs` / scripts / `.github` change the reviewer reads and does not build ("Not built - needs a maintainer look") |
@@ -120,11 +131,37 @@ ready again for a fresh review (AGENTS.md "Every PR opens as a draft").
 That applies to our own PRs; a fork contributor's PR is left as they set
 it, and the review comment says what to fix.
 
-Whoever refreshes a branch re-reads `mergeable` after the push: once it is
-`MERGEABLE`, drop `conflicts` and restore `merge-ready` if the last review
-was clean. Merging a PR can turn others `CONFLICTING`, so each run also
-re-checks every open PR labelled `merge-ready` and swaps any that now
-conflict to `conflicts`.
+A conflicting PR of ours that waits for the merge batch therefore stays a
+draft until merge time. The merging session refreshes it, and then flags it
+ready (`gh pr ready <N>`) right before the merge, with one PR comment naming
+the `--delta` class (SAME, MECHANICAL or DELTA) - AGENTS.md "Every PR opens
+as a draft", decided in #1221 ("Refresh only at merge time"). The review
+skill does not flag ready; it only reads the state.
+
+Whoever refreshes a branch (at merge time, AGENTS.md "Refresh only at merge
+time") re-reads `mergeable` after the push: once it is `MERGEABLE`, drop
+`conflicts` and restore `merge-ready` if the last review was clean. Run
+`cargo xtask merge-plan --delta <PR> --reviewed <sha>` on the merge: SAME
+(only merges of main with an empty remerge-diff) keeps the review with no
+agent, MECHANICAL is read by the merging session, DELTA gets a delta review,
+NEW CODE a full review (AGENTS.md "A clean merge of main keeps its review").
+Merging a PR can turn others `CONFLICTING`, so each run also re-checks
+every open PR labelled `merge-ready` and swaps any that now conflict to
+`conflicts`.
+
+A requested change that is still open on the current head, or `merge-ready`
+beside a collaborator review that requests changes, is a disagreement
+(AGENTS.md "Only collaborators' reviews count"): no agent removes either
+label.
+
+Only collaborators set the review labels and the markers that count
+(AGENTS.md "Only collaborators' reviews count"; the collaborator list is
+`$COLLABS` above). A `merge-ready` label with no collaborator-authored
+`pr-reviewer` marker that still stands for the PR - its
+current head, or an earlier head that `--delta` classes SAME or MECHANICAL
+against it - is removed, with the one-line comment `merge-ready removed: no
+review by a collaborator at <sha7>`. A label set by a non-collaborator
+is not a review.
 
 ## 2c. Token cost comment - when a PR turns merge-ready
 
