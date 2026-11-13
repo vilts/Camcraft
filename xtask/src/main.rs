@@ -16,6 +16,7 @@ mod merge_plan;
 mod merge_plan_git;
 mod merge_plan_out;
 mod package;
+mod path_mods;
 mod plan;
 mod quick;
 mod release;

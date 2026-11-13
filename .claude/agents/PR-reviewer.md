@@ -95,6 +95,12 @@ merge.
      whose `invert` restores the previous value; validation at command
      creation.
    - Layering ui -> app -> flecs; components only in `crates/app/src/schema.rs`.
+   - Placement (AGENTS.md "Code shape" and "Testing"): (a) a new test file
+     sits in the lowest crate that provides what it imports, its Gate map
+     names that crate; (b) no new `camcraft-*` dependency line without a
+     `docs/decisions/` entry listing the items, why the caller cannot pass
+     them in, and what rebuilds; (c) new code in `crates/app/src` reads or
+     writes the ECS world, project file, a command, MCP or the CLI.
    - Program order / rest-machining / posting / project round-trip laws if it
      touches them; project-format bumps need a forward migration and are a
      breaking change (`!` or `BREAKING CHANGE:`).

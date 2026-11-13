@@ -264,7 +264,8 @@ go to `CHANGELOG.md`.
     `.cargo/config.toml` (its `cargo xtask` alias), and the wrappers that
     forward to it - `scripts/gate.ps1`, `scripts/gate.sh`,
     `scripts/release.ps1`, `scripts/collect-decisions.ps1`,
-    `scripts/collect-decisions.sh` - changes between releases, and a fork's
+    `scripts/collect-decisions.sh`, and `crates/ui/AGENTS.md` (the UI
+    steering document, #1121) - changes between releases, and a fork's
     agents must follow the current rules.
     At the start of every session in a fork, before claiming work,
     compare `git show upstream/main:.claude/PROCESS_VERSION` with the
@@ -272,7 +273,7 @@ go to `CHANGELOG.md`.
     those files: `git checkout upstream/main -- AGENTS.md .claude/agents
     .claude/skills .claude/PROCESS_VERSION xtask .cargo/config.toml
     scripts/gate.ps1 scripts/gate.sh scripts/release.ps1
-    scripts/collect-decisions.ps1 scripts/collect-decisions.sh`, commit as `chore(process): sync
+    scripts/collect-decisions.ps1 scripts/collect-decisions.sh crates/ui/AGENTS.md`, commit as `chore(process): sync
     process files to upstream PROCESS_VERSION <n>` on a `process-sync`
     branch, and merge
     it into the fork's `main` (or open a PR there if the fork protects
@@ -621,6 +622,8 @@ must carry a delete hook that frees everything it owns.
 
 ## Assets
 
+UI work also follows `crates/ui/AGENTS.md` (the UI steering document; it restates the laws here, nothing more).
+
 `assets/ui/` holds PNGs for toolbar and tree icons; `assets/ui/fonts/` holds
 the fonts. The UI must render them — loading the files alone isn't enough;
 wired-in usage in each panel's draw code is required.
@@ -676,6 +679,22 @@ Phase 4 refactors the codebase for reuse; work in the shape it is heading to:
   goes in the module that will become its crate's seed, and cross-domain
   calls go through the seams that will become crate APIs - not through
   private helpers of another domain.
+- **`app` holds the document, nothing else** (maintainer, 2026-11-11: "high
+  cohesion, low coupling, because every gate is costly"). New code goes in
+  `crates/app/src` only if it reads or writes the ECS world, the project
+  file, a command, MCP or the CLI. Code that works only on domain values
+  (cl, geometry, tools, post, sim, motion types) goes in the crate that owns
+  them, and `app` re-exports it. A reviewer checks this from the new file's
+  `use` lines: if none names one of those five things, the file is in the
+  wrong crate.
+- **No new dependency between our crates without a decision.** A
+  `camcraft-*` entry added to `[dependencies]` or `[dev-dependencies]` in any
+  `crates/*/Cargo.toml` needs a `docs/decisions/` entry in the same PR. The
+  entry lists the imported items, says why the caller cannot pass the value
+  in instead (a parameter, a closure, a recorded file), and names what now
+  rebuilds when the dependency changes. An edge that would carry fewer than
+  five items is not added: the caller passes the value in. (The wording of
+  the five-item clause is the maintainer's to confirm.)
 - **Stays buildable everywhere.** No platform-specific assumptions in core
   code (M4.2 ships Windows/Linux/macOS builds from the same source).
 - **Neutral naming.** M4.3 renamed the product label hsmworks to camcraft
@@ -686,10 +705,20 @@ Phase 4 refactors the codebase for reuse; work in the shape it is heading to:
 
 ## Testing
 
-`crates/app/tests/` (app + commands) and `crates/ui/tests/` (UI/event tests
-which spawn the real app via `test_harness.rs`; helpers in `ui::test_harness`,
-app-level fixtures in `crates/app/tests/common/mod.rs`). Each future subcrate
-carries its own tests inside its crate (M4.1).
+`crates/app/tests/` (tests of what `crates/app/src` defines: commands, the
+project file, the schema, operations, MCP and the CLI) and `crates/ui/tests/`
+(UI/event tests which spawn the real app via `test_harness.rs`; helpers in
+`ui::test_harness`, app-level fixtures in `crates/app/tests/common/mod.rs`).
+Each future subcrate carries its own tests inside its crate (M4.1).
+
+- **A test lives with the code it tests.** A new test file goes in the lowest
+  crate that provides everything it imports, and its Gate map names that
+  crate (`camcraft_post::post::engine`, not `app::post`). A file in
+  `crates/app/tests/` must import something `crates/app/src` defines; a test
+  that uses only another crate's re-exports (`app::post`, `app::verify`,
+  `app::machining2d`) belongs in that crate's `tests/`. A test that needs
+  another crate's output reads a recorded file (`.cl`, `.cnc`) rather than
+  importing that crate's generator.
 
 **Three gate tiers - never hours per change** (user, 2026-11-07: "break up
 those test suites so we don't have to run hours on hours of tests"). One
@@ -941,6 +970,18 @@ a tag"):
    If the diff is not empty, do not tag: something reached main mid-cut;
    start the cut again from step 2 on a fresh release branch. Comment
    `shipped in vX.Y.Z` on every issue the cut closed.
+5. **Check the documentation site** (#688). The same tag run regenerates
+   the Zola site in `site/` from the tagged tree and deploys it to GitHub
+   Pages (`release.yml` jobs `site` and `pages`; `pages` waits for
+   `publish`, so the site's download links never point at a missing
+   release). The browser build (`wasm`, #1103) is served under `/app/`;
+   a failed wasm build leaves `/app/` as the "not part of this copy" page
+   and a warning, not a failed cut. Nothing is committed for it and no
+   trigger is added. The cut is done once the run's `pages` job is green
+   and `https://neotech.github.io/Camcraft/` shows "CamCraft X.Y.Z"; a
+   red `pages` job is re-run (Actions "Re-run failed jobs"), never fixed
+   by moving the tag. Preview locally with `zola build` in `site/`
+   (`site/README.md`).
 
 **`main` is protected on GitHub** (user, 2026-11-07: "so we don't get
 unauthorized pushes into main instead they follow the rules"): every change

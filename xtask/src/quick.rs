@@ -9,6 +9,7 @@ use std::path::Path;
 use regex::escape;
 
 use crate::assets;
+use crate::path_mods;
 use crate::plan::{ALL_CRATES, J, Plan, SHARED, Step, T, pkg, ps_cmp, ps_sorted};
 use crate::scan::{self, re};
 
@@ -107,6 +108,13 @@ pub fn plan(root: &Path, diff: &Diff, heavy: bool) -> Result<Quick, String> {
                 Some(x) if x != "mod" && x != "tests" => x.to_string(),
                 _ => String::new(),
             };
+            // #1021: a `#[path]`-included file is also its parent's submodule; both names are
+            // mapped (a union), so resolving the includer can only ever add suites.
+            if let Some((pm, ps)) = path_mods::included_as(root, &d, &rest)?
+                && (pm.as_str(), ps.as_str()) != (m.as_str(), sub.as_str())
+            {
+                p.mods.push((d.clone(), pm, ps));
+            }
             if !["lib", "main", "bin"].contains(&m.as_str()) {
                 p.mods.push((d, m, sub));
             }
