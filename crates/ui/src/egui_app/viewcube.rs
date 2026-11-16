@@ -7,7 +7,8 @@
 //!
 //! The law lives here in one file and has three parts. `Hud::new` lays
 //! the cube (top-right; the pane's bottom-right is the control hint's)
-//! and the nav column under it out of the pane rect alone -
+//! and the bottom control bar (`viewport_bar`, #1198) out of the pane
+//! rect alone -
 //! deterministic, so the pointer layer and the tests agree on every
 //! pixel without talking to each other. `hit_dir` classifies a cube
 //! click by ray-casting the point through the unit cube: one coordinate
@@ -25,18 +26,19 @@
 //! immediate-mode exemption the camera has (state.rs): never a
 //! command, never saved.
 
+pub(crate) use super::viewport_bar::Nav;
+#[cfg(test)]
+pub(crate) use super::viewport_bar::pick_through_label;
+use super::viewport_bar;
 use crate::actions;
-use crate::state::{DisplayMode, State};
+use crate::state::State;
 use crate::viewport::Camera;
 
-/// Side of the cube's screen footprint, and the nav buttons stacked
-/// under it. A pane too small to host the furniture (narrow docked
-/// window, the tiny harness before layout) gets no hud at all - the
-/// viewport keeps every gesture it had.
+/// Side of the cube's screen footprint. A pane too small to host the
+/// furniture (narrow docked window, the tiny harness before layout) gets
+/// no hud at all - the viewport keeps every gesture it had.
 pub(crate) const CUBE_PX: f32 = 108.0;
 const MARGIN: f32 = 10.0;
-const NAV_PX: f32 = 26.0;
-const NAV_GAP: f32 = 4.0;
 
 /// How close (in cube half-units - the cube spans [-1,1]^3) a ray's
 /// entry coordinate must come to a face to count as riding that
@@ -80,61 +82,42 @@ const FACE_QUADS: [[usize; 4]; 6] = [
     [0, 1, 5, 4], // FRONT y-
 ];
 
+/// The narrowest pane that hosts the furniture: the wider of the cube and
+/// the ribbon, plus the margin on each side.
+#[must_use]
+pub(crate) fn min_width() -> f32 {
+    CUBE_PX.max(viewport_bar::BAR_W) + 2.0 * MARGIN
+}
+
 pub(crate) struct Hud {
     pub cube: egui::Rect,
+    /// The bottom control ribbon (`viewport_bar`), grey background.
+    bar: egui::Rect,
     nav: Vec<(Nav, egui::Rect)>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Nav {
-    /// Reframe the whole document - the F key's button twin.
-    Frame,
-    /// The house isometric, yaw 0.9 / pitch 0.5.
-    Iso,
-    /// Shaded-with-wire <-> hidden-line wireframe (Solids radio's twin).
-    Wire,
-    /// Draw every cached path, not just the selected op's.
-    Paths,
-    /// The dimmed world origin axes.
-    Axes,
-}
-
-pub(crate) const NAVS: [Nav; 5] = [Nav::Frame, Nav::Iso, Nav::Wire, Nav::Paths, Nav::Axes];
-
 impl Hud {
-    /// Top-right corner furniture of `pane`, or None when the pane is
-    /// too small. Pure arithmetic on the rect - the pointer layer calls
-    /// it before routing presses, the draw pass after, and both get the
-    /// same rects.
+    /// Corner furniture of `pane`, or None when the pane is too small: the
+    /// cube top-right and the control ribbon along the bottom. Pure
+    /// arithmetic on the rect - the pointer layer calls it before routing
+    /// presses, the draw pass after, and both get the same rects.
     #[must_use]
     pub fn new(pane: egui::Rect) -> Option<Hud> {
-        if pane.width() < CUBE_PX + 2.0 * MARGIN || pane.height() < 260.0 {
+        if pane.width() < min_width() || pane.height() < 260.0 {
             return None;
         }
         let cube = egui::Rect::from_min_size(
             egui::pos2(pane.max.x - MARGIN - CUBE_PX, pane.min.y + MARGIN),
             egui::vec2(CUBE_PX, CUBE_PX),
         );
-        let nav = NAVS
-            .iter()
-            .enumerate()
-            .map(|(i, &kind)| {
-                let y = cube.max.y + 8.0 + i as f32 * (NAV_PX + NAV_GAP);
-                (
-                    kind,
-                    egui::Rect::from_min_size(
-                        egui::pos2(cube.max.x - NAV_PX, y),
-                        egui::vec2(NAV_PX, NAV_PX),
-                    ),
-                )
-            })
-            .collect();
-        Some(Hud { cube, nav })
+        let bar = viewport_bar::bar_rect(pane);
+        let nav = viewport_bar::buttons(bar);
+        Some(Hud { cube, bar, nav })
     }
 
     #[must_use]
     pub fn contains(&self, p: egui::Pos2) -> bool {
-        self.cube.contains(p) || self.nav.iter().any(|(_, r)| r.contains(p))
+        self.cube.contains(p) || self.bar.contains(p)
     }
 
     /// Where a nav button lives in this layout - the probes the
@@ -245,7 +228,7 @@ pub(crate) fn click(state: &mut State, h: &Hud, p: egui::Pos2) -> bool {
     // the cube's volume - the raycast must never outrank the button.
     for (kind, r) in &h.nav {
         if r.contains(p) {
-            act(state, *kind);
+            viewport_bar::act(state, *kind);
             return true;
         }
     }
@@ -256,24 +239,6 @@ pub(crate) fn click(state: &mut State, h: &Hud, p: egui::Pos2) -> bool {
         return true;
     }
     h.contains(p)
-}
-
-/// The nav buttons' effects, once each. `FrameAll` is a queued command
-/// like the F key's; the toggles are direct view-state writes exactly
-/// as panes.rs flips them (never commands - the camera's exemption).
-fn act(state: &mut State, kind: Nav) {
-    match kind {
-        Nav::Frame => actions::frame_all(state),
-        Nav::Iso => actions::view_iso(state),
-        Nav::Wire => {
-            state.display = match state.display {
-                DisplayMode::ShadedEdges => DisplayMode::Wireframe,
-                DisplayMode::Wireframe => DisplayMode::ShadedEdges,
-            };
-        }
-        Nav::Paths => state.toggle_all_toolpaths(),
-        Nav::Axes => state.show_world_axes = !state.show_world_axes,
-    }
 }
 
 /// Paint the furniture. Pure state -> paint: queues nothing, touches
@@ -352,108 +317,5 @@ pub(crate) fn draw(
             .circle_filled(point_screen(cam, h, q), 3.0, egui::Color32::from_rgb(255, 217, 102));
     }
 
-    for (kind, r) in &h.nav {
-        let active = match kind {
-            Nav::Frame | Nav::Iso => false,
-            Nav::Wire => state.display == DisplayMode::Wireframe,
-            Nav::Paths => state.show_all_paths,
-            Nav::Axes => state.show_world_axes,
-        };
-        let hov = hover.is_some_and(|p| r.contains(p));
-        let fill = if hov { ink.button.saturating_add(28) } else { ink.button };
-        ui.painter().rect_filled(*r, 5.0, egui::Color32::from_gray(fill));
-        if ink.outline_buttons {
-            // The light ground outlines the button like a cube face.
-            ui.painter().rect_stroke(*r, 5.0, stroke, egui::StrokeKind::Inside);
-        }
-        let s = egui::Stroke::new(1.4, if active { ink.glyph_on } else { ink.glyph_off });
-        let (a, b) = (r.min, r.max);
-        let m = NAV_PX * 0.22;
-        match kind {
-            Nav::Frame => {
-                // Four corner brackets around the button's inset square.
-                let i0 = a + egui::vec2(m * 0.45, m * 0.45);
-                let i1 = b - egui::vec2(m * 0.45, m * 0.45);
-                for (p, dx, dy) in [
-                    (i0, 1.0f32, 1.0f32),
-                    (egui::pos2(i1.x, i0.y), -1.0, 1.0),
-                    (egui::pos2(i0.x, i1.y), 1.0, -1.0),
-                    (i1, -1.0, -1.0),
-                ] {
-                    let hx = egui::vec2(dx * m, 0.0);
-                    let hy = egui::vec2(0.0, dy * m);
-                    ui.painter().line_segment([p + hx, p + hx + hy * 0.62], s);
-                    ui.painter().line_segment([p + hy, p + hx * 0.62 + hy], s);
-                }
-            }
-            Nav::Iso => {
-                // The cube from the house diagonal: hexagon silhouette,
-                // three visible faces' inner edges meeting at the center.
-                let c = r.center();
-                let rr = NAV_PX * 0.30;
-                let hex: Vec<egui::Pos2> = (0..6)
-                    .map(|k| {
-                        let t = std::f64::consts::FRAC_PI_3 * f64::from(k) + 0.261_799;
-                        c + egui::vec2(
-                            (t.cos() * f64::from(rr)) as f32,
-                            (t.sin() * f64::from(rr)) as f32,
-                        )
-                    })
-                    .collect();
-                ui.painter().add(egui::Shape::convex_polygon(
-                    hex.clone(),
-                    egui::Color32::TRANSPARENT,
-                    s,
-                ));
-                for k in [0usize, 2, 4] {
-                    ui.painter().line_segment([c, hex[k]], s);
-                }
-            }
-            Nav::Wire => {
-                let q0 = a + egui::vec2(m * 0.62, m * 0.62);
-                let q1 = b - egui::vec2(m * 0.62, m * 0.62);
-                ui.painter().rect_stroke(
-                    egui::Rect::from_min_max(q0, q1),
-                    1.0,
-                    s,
-                    egui::StrokeKind::Inside,
-                );
-                ui.painter().line_segment([q0, q1], s);
-                ui.painter()
-                    .line_segment([egui::pos2(q1.x, q0.y), egui::pos2(q0.x, q1.y)], s);
-            }
-            Nav::Paths => {
-                // A zigzag toolpath.
-                let p0 = egui::pos2(a.x + m * 0.4, r.center().y);
-                let step = (r.width() - m * 0.8) / 4.0;
-                let pts: Vec<egui::Pos2> = (0..5)
-                    .map(|k| {
-                        p0 + egui::vec2(
-                            step * k as f32,
-                            if k % 2 == 0 { 0.0 } else { -r.height() * 0.20 },
-                        )
-                    })
-                    .collect();
-                ui.painter().add(egui::Shape::line(pts, s));
-            }
-            Nav::Axes => {
-                // The origin triad: X down-right, Y down-left, Z up.
-                // An isometric triad: equal arms 120 deg apart, Z up, X and Y
-                // 30 deg below the horizontal; the box spans y -l..l/2, so the
-                // origin sits l/4 below the centre to centre it.
-                let l = NAV_PX * 0.32;
-                let (c30, s30) = (l * 0.866, l * 0.5);
-                let o = r.center() + egui::vec2(0.0, l * 0.25);
-                let [x, y, z] = ink.triad;
-                for (dir, col) in [
-                    (egui::vec2(c30, s30), x),
-                    (egui::vec2(-c30, s30), y),
-                    (egui::vec2(0.0, -l), z),
-                ] {
-                    ui.painter()
-                        .line_segment([o, o + dir], egui::Stroke::new(1.4, col));
-                }
-            }
-        }
-    }
+    viewport_bar::draw(ui, h.bar, &h.nav, state, hover);
 }

@@ -108,11 +108,14 @@ pub mod clamp {
 
 /// The ribbon strip's height: the cell box plus the caption row and the
 /// pad, so a theme that grows the cells grows the ribbon with them
-/// (64 = 38 + 26 is today's arithmetic, kept exact at the defaults).
+/// (66 = 16 + 30 + 20 is today's arithmetic, kept exact at the defaults).
 #[must_use]
 pub const fn ribbon_h(t: &Tokens) -> f32 {
-    t.cell_h + 26.0
+    RIBBON_TAB_H + t.cell_h + 20.0
 }
+
+/// The ribbon's workspace tab strip height (above the cell row).
+pub const RIBBON_TAB_H: f32 = 16.0;
 
 impl Tokens {
     /// The imgui shell's numbers, as tokens - unchanged values, now the
@@ -142,10 +145,10 @@ impl Tokens {
         button_padding_y: 1.0,
         control_height: 18.0,
         row_height: 20.0,
-        cell_h: 40.0,
-        cell_w: 72.0,
-        glyph_px: 24.0,
-        font_label: 13.0,
+        cell_h: 30.0,
+        cell_w: 76.0,
+        glyph_px: 16.0,
+        font_label: 11.0,
         font_caption: 12.5,
         font_row: 13.5,
         font_row_suffix: 11.5,
@@ -184,10 +187,10 @@ impl Tokens {
         button_padding_y: 1.0,
         control_height: 18.0,
         row_height: 20.0,
-        cell_h: 40.0,
-        cell_w: 72.0,
-        glyph_px: 24.0,
-        font_label: 13.0,
+        cell_h: 30.0,
+        cell_w: 76.0,
+        glyph_px: 16.0,
+        font_label: 11.0,
         font_caption: 12.5,
         font_row: 13.5,
         font_row_suffix: 11.5,

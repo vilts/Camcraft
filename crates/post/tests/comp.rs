@@ -48,6 +48,7 @@ fn comp_records_round_trip_and_malformed_ones_refuse() {
 const STREAM: &str = "; HSMW-CNC v1
 PARAM OperationName C1
 PARAM SpindleSpeed 8000
+PARAM ClearancePlane 5
 TOOL 2 EM6
 SECTION
 Rapid X -8000 Y 0 Z 5000
@@ -96,12 +97,12 @@ fn fanuc_writes_the_words_on_the_leads_with_the_tool_register() {
     let out = engine::run(&fanuc(), &Value::Null, STREAM).unwrap();
     assert!(out.warnings.is_empty(), "{:?}", out.warnings);
     let lines: Vec<&str> = out.program.lines().collect();
-    assert!(lines.contains(&"G01 G42 X0 Y0 Z-2 D02 F500"), "{}", out.program);
-    assert!(lines.contains(&"G01 G40 X8 Y0 Z-2 F500"), "{}", out.program);
+    assert!(lines.contains(&"G01 G42 X0. Y0. Z-2. D02 F500"), "{}", out.program);
+    assert!(lines.contains(&"G01 G40 X8. Y0. Z-2. F500"), "{}", out.program);
     assert_eq!(out.program.matches("G42").count(), 1);
     assert_eq!(out.program.matches("G40").count(), 2, "the preamble's and the cancel's: {}", out.program);
     // The contour between is written as given - the part, not the centre.
-    assert!(lines.contains(&"G01 X40 Y40 Z-2 F500"), "{}", out.program);
+    assert!(lines.contains(&"G01 X40. Y40. Z-2. F500"), "{}", out.program);
 }
 
 #[test]
@@ -125,8 +126,8 @@ fn fanuc_refuses_a_comp_word_that_would_land_on_an_arc_a_rapid_or_the_section_en
 /// engage carries no D (the tool call's `T2 D2` selected the edge) and
 /// states the NORM approach.
 const DIALECTS: &[(&str, &str, &str)] = &[
-    ("haas", "G1 G42 X0 Y0 Z-2 D2 F500", "G1 G40 X8 Y0 Z-2 F500"),
-    ("mazak", "G01 G42 X0 Y0 Z-2 D2 F500", "G01 G40 X8 Y0 Z-2 F500"),
+    ("haas", "G1 G42 X0. Y0. Z-2. D2 F500", "G1 G40 X8. Y0. Z-2. F500"),
+    ("mazak", "G01 G42 X0. Y0. Z-2. D2 F500", "G01 G40 X8. Y0. Z-2. F500"),
     ("sinumerik", "G1 G42 NORM X0 Y0 Z-2 F500", "G1 G40 X8 Y0 Z-2 F500"),
 ];
 
@@ -188,7 +189,7 @@ fn every_wear_post_notes_the_register_once_and_control_writes_no_note() {
 
 #[test]
 fn every_other_shipped_post_refuses_control_compensation_by_name() {
-    for stem in ["heidenhain", "fanuc-lathe", "tormach"] {
+    for stem in ["heidenhain", "fanuc-lathe", "tormach", "grblhal", "tinyg"] {
         let cps = post(stem);
         let out = engine::run(&cps, &Value::Null, STREAM).unwrap_or_else(|e| panic!("{stem}: {e}"));
         assert!(

@@ -2,6 +2,7 @@
 
 use super::types::{VerifyContext, Warning};
 use super::laws::{bands_vs_fixtures, rapids_vs_fixtures_spindle};
+use super::axis_door::axis_door;
 use super::rest::Rest;
 use super::{crossing, finish, rapids, reach, section};
 
@@ -29,8 +30,13 @@ pub fn verify_bodies(
 ) -> Vec<Warning> {
     let mut warns: Vec<Warning> = Vec::new();
 
+    // The axis door (#1312): a non-finite or zero-length tool axis is
+    // NonFinite's, and a non-unit one is normalised once, so no law
+    // below reads a scaled or unreadable pose.
+    let door = axis_door(path);
+    let path: &Toolpath = &door.path;
     for (i, m) in path.moves.iter().enumerate() {
-        if !(m.from.is_finite() && m.to.is_finite()) {
+        if !(m.from.is_finite() && m.to.is_finite()) || door.refused.contains(&i) {
             warns.push(Warning::NonFinite { at: i });
         }
     }

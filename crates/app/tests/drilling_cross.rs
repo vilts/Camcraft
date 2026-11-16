@@ -18,7 +18,7 @@
 //! Gate map (M4.4): covers camcraft_app::operation (the cross arm of
 //! generate, the region seam for posed plunges, cross_holes_of),
 //! camcraft_app::commands (Create/GenerateOperation,
-//! EditOperationParams undo), camcraft_app::machine (the turret
+//! EditOperationParams undo), camcraft_app::machine, post::machine (the turret
 //! door), camcraft_app::project (the v40 `cross` grammar).
 //! Lane shape (M4.4): all tests here run in seconds.
 

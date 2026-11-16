@@ -18,6 +18,7 @@
 //! runs on it - nothing here looks at the region's shape.
 
 use super::*;
+use crate::units::{self, Unit};
 
 /// The seam itself (M11.4 A / M11.5): every region an operation cuts -
 /// selection-built or source-built, Face included, and the Contour
@@ -87,6 +88,7 @@ pub(super) fn pocket_region_on_part(
     loops: Vec<Loop>,
     part: &[Triangle],
     planes: &[f64],
+    unit: Unit,
 ) -> Result<Region, GenError> {
     let mut enclosed = Region::empty();
     for l in &loops {
@@ -97,7 +99,8 @@ pub(super) fn pocket_region_on_part(
     }
     let full = |z: f64| {
         format!(
-            "the part fills the whole selection at Z {z:.3} - Bottom Z sits below the selected pocket's floor; raise Bottom Z to the floor"
+            "the part fills the whole selection at Z {} - Bottom Z sits below the selected pocket's floor; raise Bottom Z to the floor",
+            units::len(z, unit, 3)
         )
     };
     match minus_standing(&enclosed, part, planes, full)? {
@@ -176,13 +179,72 @@ pub(super) fn whole_model_pocket(
         Some(f) => (f.local_facets(&part), f.local_facets(&stock)),
         None => (part, stock),
     };
-    Some(around_part(&part, &stock, &ladder_planes(t - oz, b - oz, stepdown)))
+    Some(around_part(&part, &stock, &ladder_planes(t - oz, b - oz, stepdown), crate::units::of(world)))
+}
+
+/// The pocket family on the STOCK as its source (#1554): the stock is the
+/// material to remove, but the setup's parts standing in it are not. So
+/// the area to clear is the stock's outline minus every part section
+/// standing at the ladder planes - the same island law as a whole-part
+/// source (#12). `None` where the reading does not apply (not a
+/// pocket-family kind, not a Stock source, no stock facets, no part in
+/// the setup: there the whole stock stays the volume to remove) or where
+/// a height is unresolvable (the generator's refusal of record).
+pub(super) fn stock_pocket(
+    world: &World,
+    setup: Option<&str>,
+    src: &SrcRef,
+    params: &OpParams,
+    frame: Option<&crate::cl::TiltedFrame>,
+) -> Option<Result<Region, GenError>> {
+    let (top, bottom, stepdown) = match params {
+        OpParams::Pocket { top_z, bottom_z, stepdown, .. }
+        | OpParams::Adaptive2D { top_z, bottom_z, stepdown, .. }
+        | OpParams::Offset2D { top_z, bottom_z, stepdown, .. } => (*top_z, *bottom_z, *stepdown),
+        _ => return None,
+    };
+    if !matches!(src, SrcRef::Stock) {
+        return None;
+    }
+    let parts = crate::setup_align::parts_facets_in(world, setup);
+    if parts.is_empty() {
+        return None;
+    }
+    let stock_name = crate::setup::stock_entity_name(world, setup);
+    let stock = model::find_by_name(world, &stock_name).and_then(|e| model::world_facets(world, &e))?;
+    if stock.is_empty() {
+        return None;
+    }
+    let t = resolve_height(world, setup, Some(src), top)?;
+    let b = resolve_height(world, setup, Some(src), bottom)?;
+    let oz = frame.map_or(0.0, |f| f.origin.z);
+    let (parts, stock) = match frame {
+        Some(f) => (f.local_facets(&parts), f.local_facets(&stock)),
+        None => (parts, stock),
+    };
+    let unit = crate::units::of(world);
+    let full = |z: f64| {
+        format!(
+            "a pocket on the stock clears the stock around the setup's parts, and the parts fill the whole \
+             stock outline at Z {} - pick the area to clear, or use the model as the source",
+            units::len(z, unit, 3)
+        )
+    };
+    let planes = ladder_planes(t - oz, b - oz, stepdown);
+    let enclosed = match slice::project(&stock, FOOTPRINT_SAMPLES).map_err(from_slice) {
+        Ok(r) if !r.is_empty() => r,
+        Ok(_) => return None,
+        Err(e) => return Some(Err(e)),
+    };
+    // No part stands in the ladder: the region the source builds itself
+    // stays the answer, byte for byte (every path that cut no part).
+    minus_standing(&enclosed, &parts, &planes, full).transpose()
 }
 
 /// [`whole_model_pocket`]'s pure law: the stock's silhouette minus the
 /// part standing at `planes`. A part that covers the whole stock at a
 /// plane leaves nothing to clear around it - refused by name.
-pub(super) fn around_part(part: &[Triangle], stock: &[Triangle], planes: &[f64]) -> Result<Region, GenError> {
+pub(super) fn around_part(part: &[Triangle], stock: &[Triangle], planes: &[f64], unit: Unit) -> Result<Region, GenError> {
     let enclosed = slice::project(stock, FOOTPRINT_SAMPLES).map_err(from_slice)?;
     if enclosed.is_empty() {
         return Err(GenError::Empty("the stock casts no outline to clear around the part".into()));
@@ -190,7 +252,8 @@ pub(super) fn around_part(part: &[Triangle], stock: &[Triangle], planes: &[f64])
     let full = |z: f64| {
         format!(
             "a whole-model pocket clears the stock around the part, and the part fills the whole stock \
-             outline at Z {z:.3} - pick the pocket's faces instead"
+             outline at Z {} - pick the pocket's faces instead",
+            units::len(z, unit, 3)
         )
     };
     Ok(minus_standing(&enclosed, part, planes, full)?.unwrap_or(enclosed))
@@ -305,13 +368,13 @@ mod law {
         .expect("ring");
         let planes = ladder_planes(20.0, 0.0, 4.6);
         assert!(planes.iter().all(|&z| !(17.0..19.0).contains(&z)), "{planes:?}");
-        let r = pocket_region_on_part(vec![ring.clone()], &part, &planes).expect("region");
+        let r = pocket_region_on_part(vec![ring.clone()], &part, &planes, Unit::Millimeters).expect("region");
         assert!(!r.contains(Point2::new(8.0, 0.0)), "under the lip is part material");
         assert!(r.contains(Point2::new(0.0, 0.0)) && r.contains(Point2::new(5.5, 0.0)), "the open pocket stays");
         assert!((r.area() - 16.0 * 20.0).abs() < 1e-3, "the square less the lip: {}", r.area());
         // No lip, no shadow inside: today's region, byte for byte.
         part.truncate(part.len() - 12);
-        let plain = pocket_region_on_part(vec![ring.clone()], &part, &planes).expect("region");
+        let plain = pocket_region_on_part(vec![ring.clone()], &part, &planes, Unit::Millimeters).expect("region");
         assert_eq!(plain.loops(), Region::new(vec![ring]).expect("region").loops());
     }
 

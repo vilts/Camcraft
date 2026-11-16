@@ -4,9 +4,13 @@
 //! the ACTIVE setup's own machine/post (`SetSetupMachine` / `SetSetupPost`)
 //! when it owns one, and on the document's (`LoadMachine` / `SelectPost`)
 //! when it follows the document - so a verb never edits a mount the
-//! active setup does not use. Every arm is one undoable command, and a
-//! refusal names itself on the status line.
-//! Provenance: our own routing law (issue #343); no vendor material consulted.
+//! active setup does not use. With two or more setups (#1515) a verb on
+//! a setup that follows the document makes the pick THAT setup's own
+//! instead: the document's mount is what every other following setup
+//! reads, so writing it from one setup's page would silently re-mount
+//! the others (wrong travel and spindle refusals). Every arm is one
+//! undoable command, and a refusal names itself on the status line.
+//! Provenance: our own routing law (issues #343, #1515); no vendor material consulted.
 
 use std::path::Path;
 
@@ -41,8 +45,31 @@ impl State {
         setup_mount::own_post(&self.world, Some(&active)).map(|_| active)
     }
 
+    /// The setup a machine verb writes: the active setup when it owns its
+    /// machine, or when the document has more than one setup (#1515 - the
+    /// pick becomes its own, so no other setup's machine moves). `None` -
+    /// the document's machine (no setups, or the only one).
+    #[must_use]
+    pub fn machine_target(&self) -> Option<String> {
+        self.machine_owner().or_else(|| self.shared_mount_target())
+    }
+
+    /// The setup a post pick writes - the [`Self::machine_target`] law.
+    #[must_use]
+    pub fn post_target(&self) -> Option<String> {
+        self.post_owner().or_else(|| self.shared_mount_target())
+    }
+
+    /// The active setup when another setup exists: a write to the
+    /// document's mount would reach it too. Post options (#1526) take the
+    /// same law (`State::post_options_target`).
+    pub(super) fn shared_mount_target(&self) -> Option<String> {
+        let active = setup::active(&self.world)?;
+        (setup::names(&self.world).len() > 1).then_some(active)
+    }
+
     fn route_machine(&mut self, verb: MachineVerb<'_>, done: &str, refused: &str) -> bool {
-        let executed: Result<(), CommandError> = match self.machine_owner() {
+        let executed: Result<(), CommandError> = match self.machine_target() {
             Some(s) => match verb {
                 MachineVerb::Builtin(n) => SetSetupMachine::builtin(&self.world, &s, n),
                 MachineVerb::File(p) => SetSetupMachine::from_file(&self.world, &s, p),
@@ -97,8 +124,7 @@ impl State {
 
     /// The Machines pane's "Use for this setup" (#384): the catalogue
     /// machine is read and validated again (a refused file never
-    /// mounts), then routed like every machine verb - onto the active
-    /// setup's own machine when it has one, else the document's.
+    /// mounts), then routed like every machine verb (`machine_target`).
     pub(super) fn mount_catalogue(&mut self, source: &MachineSource) {
         match library::read_for_assign(source) {
             Ok((path, m)) => {
@@ -110,10 +136,11 @@ impl State {
     }
 
     /// Choose the post script (M3.3 A), for the active setup's own post
-    /// when it has one. Validation lives in the command constructors, so
-    /// a script that cannot run is refused at the pick, never at the post.
+    /// when it has one or when other setups exist (#1515, `post_target`).
+    /// Validation lives in the command constructors, so a script that
+    /// cannot run is refused at the pick, never at the post.
     pub(super) fn choose_post(&mut self, next: PostRef) {
-        let executed = match self.post_owner() {
+        let executed = match self.post_target() {
             Some(s) => SetSetupPost::new(&self.world, &s, Some(next)).map(|c| self.history.execute(&self.world, c)),
             None => SelectPost::new(&self.world, next).map(|c| self.history.execute(&self.world, c)),
         };

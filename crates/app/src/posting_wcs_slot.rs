@@ -1,5 +1,6 @@
-//! The work-offset slot law (#196, #329): which `G54`..`G59` word an
-//! operation posts at, and the one-file refusal a per-setup pick brings.
+//! The work-offset slot law (#196, #329, #931): which work offset (a
+//! 1-based index, the post's word for it) an operation posts at, and the
+//! one-file refusal a per-setup pick brings.
 //!
 //! - **The setup governs.** Every operation of a setup posts at the
 //!   setup's work-offset word (`SetupDef::work_offset`, set by
@@ -20,7 +21,7 @@
 use flecs_ecs::prelude::World;
 
 use crate::model;
-use crate::schema::{Location, WCS_SLOTS};
+use crate::schema::Location;
 
 /// Placement difference below which two offsets are the same zero:
 /// 1 nm, far under any machine resolution.
@@ -33,8 +34,11 @@ pub(crate) fn wcs_slot(world: &World, setup: Option<&str>) -> usize {
     crate::setup::wcs_slot(world, setup)
 }
 
-fn word(slot: usize) -> &'static str {
-    WCS_SLOTS.get(slot).copied().unwrap_or("G54")
+/// The offset's display name in a setup context's post (#931): what
+/// the refusal names; the comparison is by index, never by this text.
+fn word(world: &World, setup: Option<&str>, slot: usize) -> String {
+    let n = u32::try_from(slot).map_or(u32::MAX, |s| s.saturating_add(1));
+    crate::setup::offset_name(world, setup, n)
 }
 
 /// The placement a setup's WCS sits at (unplaced = the origin, the law
@@ -54,9 +58,10 @@ fn same_zero(a: &Location, b: &Location) -> bool {
     pos && (rot(1.0) || rot(-1.0))
 }
 
-/// The one-file clause (module header): one line per word that two
-/// setups of the program post at from different placements. Empty when
-/// every word means one zero.
+/// The one-file clause (module header): one line per offset INDEX that
+/// two setups of the program post at from different placements (#931:
+/// indexes compare, so two posts naming one offset differently are still
+/// one register). Empty when every offset means one zero.
 #[must_use]
 pub(super) fn shared_word_problems(world: &World) -> Vec<String> {
     shared_word_problems_in(world, None)
@@ -91,14 +96,14 @@ pub(super) fn shared_word_problems_in(world: &World, only: Option<&[String]>) ->
                      ({first}: X{:.3} Y{:.3} Z{:.3}, {name}: X{:.3} Y{:.3} Z{:.3}) - one program \
                      holds one {} register; pick another work offset for {name} on the Setups \
                      page, or post one file per operation",
-                    word(slot),
+                    word(world, setup, slot),
                     there.pos.x,
                     there.pos.y,
                     there.pos.z,
                     here.pos.x,
                     here.pos.y,
                     here.pos.z,
-                    word(slot)
+                    word(world, setup, slot)
                 );
                 if !out.contains(&line) {
                     out.push(line);

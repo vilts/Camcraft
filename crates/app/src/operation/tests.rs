@@ -81,7 +81,7 @@ fn params_sanity_gates() {
         climb: true,
     };
     assert!(!no_step.is_sane(), "stepdown must be positive when set");
-    let bad = OpParams::Pocket { tilt: None,
+    let bad = OpParams::Pocket { tilt: None, blend_radius: None,
         links: crate::links::Links::PLANAR,
         stepover: f64::NAN,
         stock_to_leave: 0.0,
@@ -165,6 +165,37 @@ fn stamp_follows_every_input() {
     c.stamp_with(&world, None, None, &mut hc);
     assert_ne!(ha.finish(), hb.finish());
     assert_ne!(ha.finish(), hc.finish(), "staging moves the stamp");
+    // #985: `external` flips the same list from holes to bosses - a
+    // different ride, so the stamp must move with identical holes (a
+    // flip made outside EditOperationParams must not leave a cached
+    // internal path reading Ok on an external op).
+    let thread = |external: bool| OpParams::Thread {
+        clearance_z: Height::fixed(5.0),
+        retract_z: None,
+        top_z: Height::fixed(0.0),
+        bottom_z: None,
+        infeed: 0.5,
+        feed: 300.0,
+        plunge_feed: 100.0,
+        climb: true,
+        holes: vec![crate::drilling::Hole {
+            xy: crate::geo2d::Point2::new(10.0, 20.0),
+            radius: 4.0,
+            entry_z: 0.0,
+            floor_z: -12.0,
+            through: false,
+            stepped: false,
+        }],
+        pitch: Some(1.25),
+        hand: crate::cl::ThreadHand::Right,
+        external,
+        passes: crate::machining2d::ThreadPasses::default(),
+    };
+    let mut hi = std::hash::DefaultHasher::new();
+    let mut he = std::hash::DefaultHasher::new();
+    thread(false).stamp_with(&world, None, None, &mut hi);
+    thread(true).stamp_with(&world, None, None, &mut he);
+    assert_ne!(hi.finish(), he.finish(), "toggling external moves the stamp");
     // The registry law (M5.0.2): one row per kind, table order ==
     // OpType::ordinal == digest tag, labels exactly as Display quotes
     // them. The tags are digest bytes - drift here greys every cache.
@@ -185,8 +216,11 @@ fn stamp_follows_every_input() {
     // contour), to its true 38 - #108's probe row, seated to close
     // the Drilling run, to its true 39 - #670's plasma profile,
     // appended as the plasma table's own section, to 40 - #220's
-    // trochoidal slot, seated after it at 40, to 41.)
-    assert_eq!(KindInfo::ALL.len(), 41);
+    // trochoidal slot, seated after it at 40, to 41 - #532's wire
+    // contour, appended as the wire EDM's own section, to 42 - #541's
+    // sinker burn, appended as the sinker EDM's own section, to 43 - #545's
+    // sinker side burn, appended behind it, to 44.)
+    assert_eq!(KindInfo::ALL.len(), 44);
     for (i, row) in KindInfo::ALL.iter().enumerate() {
         assert_eq!(row.ty.ordinal(), i, "row {i} out of step with ordinal");
         assert_eq!(row.tag as usize, i, "digest tag must equal table order");
@@ -461,6 +495,7 @@ fn the_arc_entry_splits_the_stamp_and_leaves_the_others_alone() {
     // words keep the bytes they always wrote.
     let world = crate::world::new_world();
     let pocket = |entry: Entry3D| OpParams::Pocket {
+        blend_radius: None,
         links: crate::links::Links::PLANAR,
         tilt: None,
         stepover: 3.0,

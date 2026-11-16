@@ -57,7 +57,10 @@ pub(super) fn finish_envelope(
             .unwrap_or(0);
         let verdict = match cx.model.zip(cx.finish_tol) {
             Some((facets, tol)) => match if nose_centers {
-                crate::stock_sim::envelope_scan_centers(facets, &path.moves, r, tol)
+                // #1408: the work turns under the nose - the hidden
+                // half reads the spindle the caller fitted, if any,
+                // and lets a rough's own leave stand.
+                crate::stock_sim::envelope_scan_turned(facets, &path.moves, r, tol, (cx.lathe_axis, cx.stock_to_leave))
             } else {
                 crate::stock_sim::envelope_scan(facets, &path.moves, r, tol)
             } {
@@ -96,7 +99,13 @@ pub(super) fn finish_envelope(
                             gate_mm: gate,
                         });
                     }
-                    if rep.gouge_mm > gate || rep.rest_mm > gate {
+                    // #864: the gouge half answers to the tolerance
+                    // less a coarse model's excess chord error (its true
+                    // convex surface stands that far outside the facets
+                    // the scan measured); the rest half and the scan's
+                    // own band keep the op's tolerance.
+                    let gouge_gate = gate - (tol - cx.tightened(tol));
+                    if rep.gouge_mm > gouge_gate || rep.rest_mm > gate {
                         Some(Warning::Envelope {
                             at: nearest(rep.at),
                             gouge_mm: rep.gouge_mm.clamp(0.0, 1e9),

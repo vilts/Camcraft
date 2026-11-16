@@ -117,7 +117,8 @@ fn computer_is_the_default_and_control_walks_the_same_ring_seamed_mid_run() {
     // the computer path (every golden) is untouched by the option.
     assert_eq!(cut_levels(&a), cut_levels(&b));
     assert_eq!(a.notes, b.notes);
-    spans_are_the_part_contour(&b, CompSide::Right);
+    // #1555: climb keeps the material right of travel - the tool left, G41.
+    spans_are_the_part_contour(&b, CompSide::Left);
     // The engage lead is collinear with the first cut: the control's
     // offset at its end is square to that cut, where the centre stands.
     for c in &b.comps {
@@ -132,11 +133,11 @@ fn computer_is_the_default_and_control_walks_the_same_ring_seamed_mid_run() {
 fn the_side_follows_the_travel_and_the_contour_side() {
     let lead = Lead::Perpendicular { length: 5.0 };
     let conv = contour(&square(), &params(Side::Outside, lead, false, Compensation::Control)).unwrap();
-    spans_are_the_part_contour(&conv, CompSide::Left);
+    spans_are_the_part_contour(&conv, CompSide::Right);
     let bore = contour(&square(), &params(Side::Inside, lead, true, Compensation::Control)).unwrap();
-    spans_are_the_part_contour(&bore, CompSide::Right);
+    spans_are_the_part_contour(&bore, CompSide::Left);
     let bore_conv = contour(&square(), &params(Side::Inside, lead, false, Compensation::Control)).unwrap();
-    spans_are_the_part_contour(&bore_conv, CompSide::Left);
+    spans_are_the_part_contour(&bore_conv, CompSide::Right);
 }
 
 #[test]

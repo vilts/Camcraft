@@ -24,7 +24,7 @@ use camcraft_app::tools::catalog;
 use camcraft_app::world::new_world;
 use serde_json::json;
 
-const MILLS: [&str; 5] = ["Fanuc", "Haas", "Siemens 840D", "Heidenhain", "Mazak"];
+const MILLS: [&str; 7] = ["Fanuc", "Haas", "Siemens 840D", "Heidenhain", "Mazak", "grblHAL", "TinyG"];
 const LATHE_CPS: &str = include_str!("../../../assets/posts/fanuc-lathe.cps");
 
 fn face_params(cut_z: f64) -> OpParams {
@@ -152,7 +152,7 @@ fn machine_coolant_names_read_through_spelling_variants() {
     }
     assert_eq!(
         camcraft_app::machine::COOLANT_KINDS,
-        ["Flood", "Mist", "Through-spindle", "Through-tool"],
+        ["Flood", "Mist", "Air", "Through-spindle", "Through-tool"],
         "the editor's pick list is the posts' vocabulary"
     );
 }
@@ -185,8 +185,15 @@ fn every_mill_post_switches_mist_then_flood_with_m9_between() {
         let out = post_with(&world, script(name));
         assert!(out.warnings.is_empty(), "{name}: {:?}", out.warnings);
         let (m7, m8, m9) = (lines_with(&out.program, "M7"), lines_with(&out.program, "M8"), lines_with(&out.program, "M9"));
-        assert_eq!((m7.len(), m8.len(), m9.len()), (1, 1, 2), "{name}: {}", out.program);
-        assert!(m7[0] < m9[0] && m9[0] < m8[0] && m8[0] < m9[1], "{name}: mist, off, flood, off: {}", out.program);
+        if name == "TinyG" {
+            // M0 does not own coolant: shut it off before each manual tool
+            // change as well as at the end of each cutting section.
+            assert_eq!((m7.len(), m8.len(), m9.len()), (1, 1, 4), "{name}: {}", out.program);
+            assert!(m9[0] < m7[0] && m7[0] < m9[1] && m9[1] < m9[2] && m9[2] < m8[0] && m8[0] < m9[3], "{name}: safety off, mist, section off, safety off, flood, section off: {}", out.program);
+        } else {
+            assert_eq!((m7.len(), m8.len(), m9.len()), (1, 1, 2), "{name}: {}", out.program);
+            assert!(m7[0] < m9[0] && m9[0] < m8[0] && m8[0] < m9[1], "{name}: mist, off, flood, off: {}", out.program);
+        }
     }
 }
 

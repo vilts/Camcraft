@@ -7,7 +7,7 @@
 //! of the selection.
 //!
 //! Gate map: covers app::operation (heights_sel, boundary, selection,
-//! generate), app::verify.
+//! generate), sim::verify.
 //! Provenance: our own regression of the user's report; no vendor
 //! material consulted.
 

@@ -21,7 +21,7 @@
 //! Provenance: general lathe practice (Z0 on the finished face, the
 //! part in -Z, X from the centreline); every number is our own fixture.
 //!
-//! Gate map (M4.4): covers app::machine, app::posting, app::commands.
+//! Gate map (M4.4): covers app::machine, post::machine, app::posting, app::commands.
 //! Lane shape (M4.4): all tests here run in seconds.
 
 use flecs_ecs::prelude::World;
@@ -94,6 +94,12 @@ fn job_load(clearance: f64, load: impl FnOnce(&World) -> LoadMachine) -> World {
     h.execute(&world, stock.expect("bar stock"));
     let cmd = load(&world);
     h.execute(&world, cmd);
+    // #1232: a turning job posts only through a turning dialect, on a
+    // lathe as on a mill-turn.
+    if matches!(camcraft_app::machine::kind_of(&world), camcraft_app::machine::Kind::Lathe | camcraft_app::machine::Kind::MillTurn) {
+        let post = camcraft_app::schema::PostRef::Named("Fanuc Lathe".into());
+        h.execute(&world, camcraft_app::commands::SelectPost::new(&world, post).expect("lathe post"));
+    }
     let tool = catalog().into_iter().find(|(n, _)| *n == TOOL).map(|(_, t)| t).expect("catalog");
     h.execute(&world, AddTool::new(&world, TOOL, tool).expect("tool"));
     h.execute(&world, ImportModel::from_mesh("bar", revolve(&BAR)));

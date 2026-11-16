@@ -1,0 +1,20 @@
+{
+  "format": "camcraft-theme/1",
+  "descriptor": {
+    "name": "Horizon Day",
+    "creator": "camcraft",
+    "description": "Light workbench with a warm signal accent - our light daily workbench"
+  },
+  "base": "light",
+  "colors": {
+    "accent": "#C8502A",
+    "accent_hover": "#DE6A41",
+    "selection_bg": "#F0CDCC",
+    "selection_stroke": "#DE6A41",
+    "field_active": "#EBDCD3"
+  },
+  "geometry": {
+    "radius_widget": 3,
+    "glyph_px": 22.0
+  }
+}

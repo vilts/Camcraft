@@ -1,6 +1,7 @@
 //! The all-air verdict (M13.8): a finish whose every cutting move stands upright above all material provably cuts nothing - our own law on the tip-up tool stack of the RS-274 tool-length convention; no vendor material consulted.
 
-use crate::cl::{is_vertical, MoveKind, Toolpath};
+use super::upright::is_upright;
+use crate::cl::{MoveKind, Toolpath};
 use crate::geometry::Triangle;
 use crate::tools::ToolGeom;
 
@@ -49,7 +50,7 @@ pub fn cuts_no_material(
             continue;
         }
         cuts += 1;
-        let upright = m.axis.is_none_or(|a| is_vertical(&a));
+        let upright = m.axis.is_none_or(|a| is_upright(&a));
         let planar = m.arc.is_none_or(|a| a.plane == crate::cl::ArcPlane::Xy);
         let low = m.from.z.min(m.to.z) - below;
         if !(upright && planar && low.is_finite() && low >= floor) {

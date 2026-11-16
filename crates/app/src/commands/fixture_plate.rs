@@ -140,6 +140,18 @@ pub(crate) fn seat(def: &PlateDef, plate_mesh: &[crate::geometry::Triangle], at:
     check_location(compose(at, local), &format!("'{rider}'"))
 }
 
+/// A placed accessory `rider` resized to `params` (its new mesh
+/// `rider_mesh`) while it stands at `m`: refused by name when a subplate's
+/// pins no longer fit the dowel pair or the new footprint hangs off the
+/// plate (#821). Its pose is unchanged: every accessory frame has its
+/// underside at z = 0.
+pub(crate) fn still_seated(world: &World, rider: &str, m: &PlateMount, params: &crate::accessory::Accessory, rider_mesh: &[crate::geometry::Triangle]) -> Result<(), CommandError> {
+    let def = plate_of(world, &m.plate)?;
+    crate::rotary_stack::pins_fit(&def, m, rider, Some(params)).map_err(CommandError::Invalid)?;
+    let (_, at) = def_named(world, &m.plate)?;
+    seat(&def, &facets(world, &m.plate), at, rider, rider_mesh, m).map(|_| ())
+}
+
 /// A marker swap plus the poses it moves - the body of every plate
 /// command but the insert.
 struct Swap {
@@ -165,6 +177,7 @@ fn reseat(world: &World, plate: &str, def: &PlateDef, mesh: &[crate::geometry::T
     for rider in mount::riders(world, plate) {
         let (rdef, before) = def_named(world, &rider)?;
         let Some(m) = rdef.plate.mount else { continue };
+        crate::rotary_stack::pins_fit(def, &m, &rider, rdef.accessory.as_ref()).map_err(CommandError::Invalid)?;
         let after = seat(def, mesh, at, &rider, &facets(world, &rider), &m)?;
         moves.extend(mount::carry(world, &rider, mount::delta(before, after), &[plate]));
         moves.push(RiderMove { name: rider, before, after });
@@ -266,6 +279,8 @@ impl PlaceOnPlate {
         }
         let (_, plate_at) = def_named(world, plate)?;
         let m = PlateMount { plate: plate.to_owned(), at, yaw_deg };
+        // #821: a rotary subplate goes on the dowel pair its pins fit.
+        crate::rotary_stack::pins_fit(&def, &m, name, prev.accessory.as_ref()).map_err(CommandError::Invalid)?;
         let after = seat(&def, &facets(world, plate), plate_at, name, &facets(world, name), &m)?;
         let mut moves = mount::carry(world, name, mount::delta(before, after), &[]);
         moves.push(RiderMove { name: name.to_owned(), before, after });

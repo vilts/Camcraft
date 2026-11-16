@@ -15,6 +15,28 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
         )));
     }
     super::program_entry_dto::validate(dto, kind)?; // #155
+    // #1054: a recorded STEP facet budget rides a model row only, inside
+    // the bounds an import would accept.
+    if let Some(b) = dto.facet_budget {
+        if !matches!(kind, EntityKind::Model) {
+            return Err(corrupt(format!("'{}' records a STEP facet budget but is not a model", dto.name)));
+        }
+        crate::geometry::import::step_budget::check(b).map_err(|e| corrupt(format!("'{}': {e}", dto.name)))?;
+    }
+    // #1056: the unknown-fidelity mark rides a mesh row only, and never
+    // beside a recorded chord - one entity cannot both know and not know.
+    if dto.fidelity_unknown {
+        if !matches!(kind, EntityKind::Model | EntityKind::Stock) {
+            return Err(corrupt(format!("'{}' marks a mesh fidelity unknown but is not a model or stock", dto.name)));
+        }
+        if dto.coarse_mm.is_some() {
+            return Err(corrupt(format!("'{}' records a chord error and an unknown fidelity at once", dto.name)));
+        }
+    }
+    // #1610: a hole is said of a model of unknown fidelity only.
+    if dto.mesh_open.is_some() && !(dto.fidelity_unknown && matches!(kind, EntityKind::Model)) {
+        return Err(corrupt(format!("'{}' names a mesh hole but is not a model marked fidelity unknown", dto.name)));
+    }
     match kind {
         EntityKind::Entry => {}
         EntityKind::Model => {
@@ -85,9 +107,9 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
             // names it `<setup>/WCS`, older setups kept their slot's
             // name (`G54`, `<setup>/G55`). The word it posts is the
             // setup's label, never this name.
-            let name_ok = WCS_SLOTS.contains(&dto.name.as_str())
+            let name_ok = LEGACY_WCS_NAMES.contains(&dto.name.as_str())
                 || dto.name.rsplit_once('/').is_some_and(|(_, last)| {
-                    WCS_SLOTS.contains(&last) || last == crate::setup::WCS_SUFFIX
+                    LEGACY_WCS_NAMES.contains(&last) || last == crate::setup::WCS_SUFFIX
                 });
             if !name_ok {
                 return Err(corrupt(format!(
@@ -179,8 +201,16 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
             let Some(op) = &dto.operation else {
                 return Err(corrupt("operation entity without a definition"));
             };
-            if op.tool.is_empty() {
-                return Err(corrupt(format!("'{}' names no tool", dto.name)));
+            // #532: a wire EDM kind mounts no library tool (the wire is
+            // the machine's condition) - it must name none; every other
+            // kind must name one.
+            let wire = matches!(op.params, ParamsDto::WireContour(_));
+            if op.tool.is_empty() != wire {
+                return Err(corrupt(if wire {
+                    format!("'{}' is a wire EDM operation and names a tool - it mounts none", dto.name)
+                } else {
+                    format!("'{}' names no tool", dto.name)
+                }));
             }
             if op.label.as_deref().is_some_and(|s| s.trim().is_empty() || s.len() > 120 || s.chars().any(char::is_control)) {
                 return Err(corrupt(format!("'{}' has an invalid operation label", dto.name)));
@@ -205,6 +235,9 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
                 )));
             }
             let params = op.params.to_params();
+            if let Some(why) = params.named_refusal() {
+                return Err(corrupt(format!("'{}': {why}", dto.name)));
+            }
             if !params.is_sane() {
                 return Err(corrupt(format!(
                     "operation parameters are not usable for a {} operation '{}'",
@@ -288,7 +321,7 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
 /// Tool arm's reserved-name test: a tool wearing a furniture name would
 /// poison the by-name lookups in `setup::stock_entity` and friends.
 pub(super) fn is_furniture_name(name: &str) -> bool {
-    name == STOCK_NAME || WCS_SLOTS.contains(&name) || crate::setup::is_furniture_shape(name)
+    name == STOCK_NAME || LEGACY_WCS_NAMES.contains(&name) || crate::setup::is_furniture_shape(name)
 }
 
 /// Moves and cycles, for the cache's structural checks (the warnings ride

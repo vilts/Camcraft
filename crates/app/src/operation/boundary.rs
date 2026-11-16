@@ -70,6 +70,8 @@ pub(super) enum Family {
 #[derive(Clone, Debug)]
 pub(super) enum OpenGeom {
     Chain(Vec<Point2>),
+    /// Separate chains that stay apart; the area lies between them (#1727).
+    Chains(Vec<Vec<Point2>>),
     Ring(Region),
 }
 
@@ -89,6 +91,12 @@ pub struct AreaCtx {
     pub(super) islands: bool,
     pub(super) extra: Vec<(BoundaryMode, Region)>,
     pub(super) open: Option<(OpenGeom, ChainSide)>,
+    /// #1735: the open-edge band of the selection, grown by the
+    /// extension along its walls (`open_band`); the area never leaves it.
+    pub(super) lane: Option<Region>,
+    /// #740: the document's display unit, so the area law's refusals (on
+    /// worker threads, world-free) spell their depths through this lens.
+    pub(super) unit: crate::units::Unit,
 }
 
 impl AreaCtx {
@@ -217,20 +225,28 @@ pub(super) fn resolve(base: Region, ctx: &AreaCtx) -> Result<AreaApplied, GenErr
                 Family::Face => stock.clone(),
                 _ => stock.offset_sharp(2.0 * r)?,
             };
-            let (left, right, dir) = match geom {
+            let (left, right, dir, laid) = match geom {
                 OpenGeom::Chain(pts) => {
                     let (l, rt, d) = sides_of_chain(pts, &reach)?;
-                    (l, rt, Some(d))
+                    (l, rt, Some(d), None)
                 }
-                OpenGeom::Ring(ring) => (reach.intersect(ring)?, reach.difference(ring)?, None),
+                OpenGeom::Chains(cs) => {
+                    let (between, beyond, t) = super::boundary_chains::sides_of_chains(cs, &reach, &base).map_err(super::boundary_chain_error)?;
+                    (between, beyond, None, Some(t))
+                }
+                OpenGeom::Ring(ring) => (reach.intersect(ring)?, reach.difference(ring)?, None, None),
             };
-            let left_inside = pick_side_left(&base, &left, &right)?;
+            // Separate chains name their Inside themselves (between them).
+            let left_inside = laid.is_some() || pick_side_left(&base, &left, &right)?;
             let keep_left = (*side == ChainSide::Inside) == left_inside;
             let (keep, drop) = if keep_left { (left, right) } else { (right, left) };
             if let Some(theta) = dir {
                 // Rows parallel to the chain, the machined side below it:
                 // the band starts at the far edge and works in.
                 turn = snap_turn(if keep_left { std::f64::consts::PI - theta } else { -theta });
+            }
+            if let Some(t) = laid {
+                turn = t;
             }
             far_side = Some(drop);
             check(keep, "open boundary (the chosen side holds no stock)")?
@@ -260,6 +276,9 @@ pub(super) fn resolve(base: Region, ctx: &AreaCtx) -> Result<AreaApplied, GenErr
     }
     if let Some(f) = &far_side {
         area = check(area.difference(f)?, "open boundary")?;
+    }
+    if let Some(l) = &ctx.lane {
+        area = check(area.intersect(l)?, "open-edge band")?;
     }
     // 4. Includes, then the part's own material back out.
     for (mode, b) in &ctx.extra {

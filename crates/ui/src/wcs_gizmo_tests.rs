@@ -44,6 +44,7 @@ fn another_setups_wcs_triad_rides_the_part_into_the_shown_setup() {
     let a2 = camcraft_app::setup_align::stored(&state.world, "Setup2").expect("Setup2 holds the part turned");
     let c = transform_point(Point3::new(CORNER[0], CORNER[1], CORNER[2]), a2.pos, a2.rot);
     let want = [c.x, c.y, c.z];
+    state.toggle_setup_display("Setup1"); // #1494: another setup is drawn only with its eye on
     let shown = triads(&state);
     assert!(shown.iter().any(|p| near(*p, want)), "Setup1's WCS on the turned corner {want:?}; drawn: {shown:?}");
     assert!(!shown.iter().any(|p| near(*p, CORNER)), "never at its raw stored place: {shown:?}");

@@ -259,7 +259,7 @@ fn the_command_lays_it_and_undo_redo_walk_it() {
     let laid = setup_align::stored(&w, "Setup1").expect("an alignment is held");
     assert!(on_axis(laid_dir(&w, laid, Z), neg(Z)));
     assert_eq!(camcraft_app::setup::work_offset(&w, "Setup1"), None, "the work offset is untouched");
-    // Absolute: the same picks again change nothing.
+    // #738: composed on the held pose, the same picks again are a zero step.
     let again = AlignPartToSetup::lay_on_points(&w, "Setup1", &picks, pl(true, true, false));
     assert!(again.is_err_and(|e| e.to_string().contains("already holds the part that way")));
     assert!(points_side(&w, &picks).is_ok_and(|s| s.contains("away from the material")));

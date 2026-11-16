@@ -73,7 +73,7 @@ fn seg_dist(p: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
 /// The pixel over the middle of a block edge hidden behind the block
 /// (both its faces turned away), the one drawn farthest from every
 /// visible edge - and that distance, px.
-fn over_a_hidden_edge(sh: &ShellUi) -> (egui::Pos2, f32) {
+pub(super) fn over_a_hidden_edge(sh: &ShellUi) -> (egui::Pos2, f32) {
     let edges = block_edges();
     let shown: Vec<(egui::Pos2, egui::Pos2)> = edges
         .iter()
@@ -128,7 +128,7 @@ fn a_corner(sh: &ShellUi) -> egui::Pos2 {
 }
 
 /// Click `p` on Contour1's page in Edge mode; Contour1's picks after.
-fn op_click(harness: &mut Harness<'static, ShellUi>, p: egui::Pos2) -> Vec<GeoSel> {
+pub(super) fn op_click(harness: &mut Harness<'static, ShellUi>, p: egui::Pos2) -> Vec<GeoSel> {
     crate::actions::target(&mut harness.state_mut().state, UiTarget::Operation("Contour1".into()));
     harness.run();
     harness.state_mut().state.geo_pick = GeoPick::Edge;

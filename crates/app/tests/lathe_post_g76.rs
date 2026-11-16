@@ -12,7 +12,7 @@
 //! `WRITE_GOLDEN=1 cargo test -p camcraft-app --test lathe_post_g76`
 //!
 //! Gate map (M4.4): covers app::posting (post options, stream_records,
-//! post_script), app::post (cnc THREAD record, engine run_with, the
+//! post_script), post::post (cnc THREAD record, engine run_with, the
 //! lathe dialect's G76), app::commands (SetPostOptions undo),
 //! app::project (thread record + post options round trip).
 //! Lane shape (M4.4): all tests here run in seconds.
@@ -121,6 +121,7 @@ fn thread_world_hand(hand: ThreadHand) -> (World, History) {
         infeed: 0.4,
         feed: 120.0,
         plunge_feed: 40.0,
+        infeed_plan: Default::default(),
         hand,
     };
     let cmd = CreateOperation::new(&world, "TH1", "TD-1732-60", SrcRef::Entity("bar".into()), params);
@@ -183,10 +184,13 @@ fn a_g76_thread_posts_to_the_lathe_golden() {
     // Root Ø9.6 at Z8, from the start point at the clearance radius on
     // the TOP centre (Z14) - #629: a right-hand thread cut toward the
     // chuck under M03; one finishing pass, square pull-out, radial
-    // infeed; 1.2 high in 0.4 rungs; lead 2.
+    // infeed; 1.2 high in 0.4 rungs; lead 2. R is the finishing pass's
+    // own 0.4 (#417): the control roughs 0.4, 0.8 and finishes at 1.2 -
+    // the three passes verified. R0 had it rough to 1.2 and cut the
+    // root once more.
     assert!(text.contains("M03\n") && !text.contains("M04"), "{text}");
-    assert!(text.contains("G00 X12.1 Z14\nG76 P010000 Q400 R0\n"), "{text}");
-    assert!(text.contains("G76 X9.6 Z8 P1200 Q400 F2\n"), "{text}");
+    assert!(text.contains("G00 X12.1 Z14.\nG76 P010000 Q400 R0.4\n"), "{text}");
+    assert!(text.contains("G76 X9.6 Z8. P1200 Q400 F2.\n"), "{text}");
     assert_eq!(text.matches("G76").count(), 2, "one two-block cycle: {text}");
     assert!(!text.contains("G32"), "the passes are the control's now: {text}");
     // The in-app post (gate and all) follows the document's option.
@@ -344,7 +348,7 @@ fn a_right_hand_thread_posts_toward_the_chuck_under_m03() {
     }
     let (g76, refused) = post(&world, &records, g76());
     assert!(refused.is_empty(), "{refused:?}");
-    assert!(g76.contains("M03") && g76.contains("G00 X12.1 Z14\n") && g76.contains("G76 X9.6 Z8 "), "{g76}");
+    assert!(g76.contains("M03") && g76.contains("G00 X12.1 Z14.\n") && g76.contains("G76 X9.6 Z8. "), "{g76}");
 }
 
 #[test]
@@ -368,7 +372,7 @@ fn a_left_hand_thread_posts_toward_the_chuck_under_m04() {
     assert!(zs.chunks(6).all(|p| p.windows(2).all(|w| w[1] < w[0])), "toward the chuck: {zs:?}");
     let (g76, refused) = post(&world, &records, g76());
     assert!(refused.is_empty(), "{refused:?}");
-    assert!(g76.contains("M04") && g76.contains("G76 X9.6 Z8 "), "{g76}");
+    assert!(g76.contains("M04") && g76.contains("G76 X9.6 Z8. "), "{g76}");
     // The gated in-app post agrees.
     let path = std::env::temp_dir().join(format!("camcraft-lh-{}.nc", std::process::id()));
     let _ = std::fs::remove_file(&path);

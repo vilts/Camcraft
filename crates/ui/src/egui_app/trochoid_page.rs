@@ -59,6 +59,8 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
         prop_row(ui, "Stock to leave", |ui| num(ui, u, stock_to_leave));
         prop_row(ui, "Forward step", |ui| num(ui, u, step));
         prop_row(ui, "Max engagement", |ui| num_unit(ui, max_engagement, "deg"));
+        // #1512: which of the two wins.
+        hint(ui, "the forward step is the most a loop advances: where it would bite past Max engagement, the loops shorten to hold the limit and the path says so");
         let mut ri = usize::from(*ret == TrochoidReturn::Retract);
         prop_row(ui, "Return", |ui| combo(ui, "trochoid.return", &mut ri, &RETURNS));
         let lift = match *ret {

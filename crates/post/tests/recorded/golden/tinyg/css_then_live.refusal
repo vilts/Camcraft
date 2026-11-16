@@ -1,0 +1,3 @@
+; tinyg.cps refused css_then_live: 2 warning(s), the program is never released
+warning: operation Cross mill: is C-axis live-tool work (the spindle turns as C under a radial live tool), but this post script does not declare liveTooling - use a lathe post that voices the C axis
+warning: tilted move - TinyG post has no RTCP output

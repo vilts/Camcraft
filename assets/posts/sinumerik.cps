@@ -15,20 +15,28 @@ setCodePage = "utf-8";
 capabilities = 1; // reference contract: integer feature mask (bit 1 = milling)
 coolantModes = true; // reads PARAM Coolant (#112/#150): the engine refuses non-Flood ops for a post without it
 afterModes = true; // reads PARAM AfterOperation (#110): the engine refuses a stop or home ask for a post without it
+workOffsetIndex = true; // reads PARAM WorkOffset as the 1-based offset number (#931)
+workOffsetMax = 6;      // G54..G57, G505, G506 (#934); more G505+ frames need the machine's frame count (#931)
+programUnits = "mm inch"; // #902: writes the document's unit (postOptions.Units), G710 / G700
 
 // Determinism law: no timestamps, no randomness - the same stream
 // always posts to the same text (golden files depend on it).
 
 // ---------------------------------------------------------------- state
 var wcsWord = "G54";
+var wcsIndex = 1;          // the offset number wcsWord writes (#931)
 var sRpm = 0;
 var spindleWait = false;
 var toolWait = false;
 var tNo = 0;
 var inCycle = false;
+var cycX = 0, cycY = 0, cycR = 0; // the open group's hole XY and R plane (world, #994)
+var seatKnown = false;     // #994: this section moved, so the stream's Start is where the tool is
+var hopZ = null;           // #1028: the section's RetractPlane (its hop), null when unstated
 var coolant = "";
 var coolantAsk = "flood";  // the section's PARAM Coolant (#112), flood when unstated
 var afterAsk = "";         // the section's PARAM AfterOperation (#110), none when unstated
+var setupNext = null;      // #1647: null means no marker; a cleaned name may be empty
 var homedAt = -1;          // linesWritten() just after a trip home (#504): onClose skips its own home when nothing followed
 var coolantOp = "";        // the section's OperationName, for refusals (#150)
 var sectionOpen = false;
@@ -45,13 +53,24 @@ var nLine = 0;             // the numbered-block dialect: every written
 
 // ------------------------------------------------------------ helpers
 function has(v) { return v !== null && v !== undefined && isFinite(v); }
-function fu(v) {  // mm at three decimals, trailing zeros trimmed
-  if (!has(v)) return "0";
-  var s = Number(v).toFixed(3);
+// #902: the program's unit is the document's (postOptions.Units, "mm"
+// or "inch"; absent = mm), never the machine file's. The stream speaks
+// mm and mm/min: an inch program writes every length / 25.4 at four
+// decimals and every feed in in/min at two; angles, seconds and rpm
+// carry no length and are written as they come.
+var inch = false;
+function trimNum(s) {
   if (s.indexOf(".") >= 0) s = s.replace(/0+$/, "").replace(/\.$/, "");
   return s === "-0" ? "0" : s;
 }
-function ff(v) { return has(v) && v > 0 ? String(Math.round(v)) : "0"; }
+function fu(v) {  // a length: mm at three decimals, or inch at four
+  if (!has(v)) return "0";
+  return trimNum(Number(inch ? v / 25.4 : v).toFixed(inch ? 4 : 3));
+}
+function ff(v) {  // a feed: whole mm/min, or in/min at two decimals
+  if (!(has(v) && v > 0)) return "0";
+  return inch ? trimNum((v / 25.4).toFixed(2)) : String(Math.round(v));
+}
 function ni(v) { return has(v) ? String(Math.round(v)) : "0"; }
 function w(letter, v) { return has(v) ? letter + fu(v) : ""; }
 function fw(v) { return has(v) ? "F" + ff(v) : ""; }
@@ -70,6 +89,29 @@ function wo(letter, v, o) { return has(v) ? letter + fu(v - o) : ""; }
 function msg(s) {  // counted warning where the host offers message()
   if (typeof message === "function") message(s); else writeln("; " + s);
 }
+
+// #1359 (from #1357): a cut needs a turning spindle. spindleOn is true
+// from the preamble's spindle start (S.. M3) to the next M5 (every
+// section end, and a touch probe's stop). A touch probe's section feeds
+// its stylus with the spindle stopped on purpose: a section is a
+// probe's only when it states 0 rpm (#574) AND its tool is a touch
+// probe (PARAM ToolKind) - a cutter whose speed reads 0 is a stopped
+// spindle, not a probe. A feed, arc or cycle with the spindle stopped
+// anywhere else is refused by name and not posted: a stream that states
+// no spindle speed would otherwise drag a stopped cutter through the
+// part. Once per program.
+var spindleOn = false;
+var probeSection = false;
+var kindProbe = false;    // this section's PARAM ToolKind names a touch probe
+var spindleRefused = false;
+function spindleStopped(what) {  // true: refused, nothing is posted
+  if (spindleOn || probeSection) return false;
+  if (!spindleRefused) {
+    spindleRefused = true;
+    msg(what + " with the spindle stopped - no spindle start (S.. M3) precedes it; state the operation's spindle speed");
+  }
+  return true;
+}
 var tiltRefused = false;  // stage D: one named refusal per program, not per line
 function tiltOk(p) {  // RTCP words are Fanuc-family; this dialect refuses them
   if (!has(p.A)) return true;
@@ -85,7 +127,7 @@ function tiltOk(p) {  // RTCP words are Fanuc-family; this dialect refuses them
 // flood code: refused by name (#150), never posted as mist or dry. An
 // unstated list stays silent (the unstated-limit law). M9 (stop) is
 // the RS-274 fixed pair.
-var COOLANT_KINDS = ["flood", "mist", "through-spindle", "through-tool"];
+var COOLANT_KINDS = ["flood", "mist", "air", "air-blast", "through-spindle", "through-tool"];
 function coolantWho() { return coolantOp ? "operation " + coolantOp + ": " : ""; }
 function coolantCode() {
   var cs = (typeof machine !== "undefined" && machine.coolants) || [];
@@ -103,14 +145,14 @@ function coolantCode() {
 }
 
 // The op's coolant ask (#112): the stream says nothing for flood (every
-// older stream), or carries PARAM Coolant off / mist / through-tool. The
+// older stream), or carries PARAM Coolant off / mist / air (#869) / through-tool. The
 // code is the machine's own entry of that family - the machine is truth;
 // an ask the machine states no code for is refused by name, naming the
 // operation (#150), never silently posted dry.
 function coolantFor(ask) {
   if (ask === "off") return "";
   if (!ask || ask === "flood") return coolantCode();
-  var want = ask === "mist" ? ["mist"] : (ask === "through-tool" ? ["through-spindle", "through-tool"] : []);
+  var want = ask === "mist" ? ["mist"] : (ask === "air" ? ["air", "air-blast"] : (ask === "through-tool" ? ["through-spindle", "through-tool"] : []));
   if (want.length === 0) { msg(coolantWho() + "unknown coolant ask " + ask); return ""; }
   var cs = (typeof machine !== "undefined" && machine.coolants) || [];
   for (var i = 0; i < cs.length; i++) {
@@ -195,7 +237,7 @@ function commentParam(name, value) {
   if (name === "SetupName") setupName = clean(value);
   else if (name === "OperationName") opName = clean(value);
   else if (name === "OperationKind") opKind = clean(value).toUpperCase();
-  else if (name === "ToolKind") toolKind = clean(value).toUpperCase();
+  else if (name === "ToolKind") { toolKind = clean(value).toUpperCase(); kindProbe = toolKind === "TOUCH PROBE"; }
   else if (name === "ToolDiameter" && has(value)) toolDia = Number(value);
   else if (name === "ToolCornerRadius" && has(value)) toolCr = Number(value);
 }
@@ -213,11 +255,44 @@ function toolNote() {  // just before the tool change it describes
   toolKind = ""; toolCr = 0;
 }
 
+// -------------------------------------------------------------- header
+// The document's program identity (#258), from the engine's `program`
+// global: its number (1 when the document states none; one file per
+// operation counts up from it, #111), whether the document stated it,
+// and its program comment ("" for none - the header then names the
+// machine, as before #258).
+function progNo() {
+  var n = typeof program !== "undefined" ? program.number : (typeof programNumber !== "undefined" ? programNumber : 1);
+  return Math.round(Number(n) || 1);
+}
+function progNumbered() { return typeof program !== "undefined" && program.numbered === true; }
+function progComment() { return clean(typeof program !== "undefined" ? program.comment : ""); }
+// #258: the control addresses a main program by its name. Siemens'
+// published SINUMERIK 840D sl / 828D programming manual (Fundamentals,
+// "Program names") states the rules: letters, digits and underscores
+// only, the first two characters letters (or an underscore and a
+// letter), at most 24 characters; a program read in as text opens with
+// the `%_N_<name>_MPF` line naming it a main program. So a stated
+// program comment becomes that name (spaces and every other character
+// to `_`), and a name the rules refuse is refused by name here, never
+// renamed into another program. A stated number has no word on this
+// control - it rides the header comment. None stated: the header is
+// the machine's name, as before.
+function mpfName(said) {
+  var t = said.replace(/[^A-Za-z0-9_]/g, "_");
+  if (!/^([A-Za-z]{2}|_[A-Za-z])/.test(t) || t.length > 24) {
+    throw new Error("program name \"" + said + "\" cannot name a SINUMERIK program (" + t
+      + "): it must start with two letters (or _ and a letter) and be at most 24 characters");
+  }
+  return t;
+}
 function onOpen() {
+  inch = typeof postOptions !== "undefined" && postOptions.Units === "inch";
   var nm = (typeof machine !== "undefined" && machine.name) || "CAMCRAFT";
-  // #594: the name is user text from the machine file - cleaned like
-  // every other comment text, one rule for every comment line.
-  writeln("; " + (clean(nm) || "CAMCRAFT"));
+  var said = progComment();
+  if (said) writeln("%_N_" + mpfName(said) + "_MPF");
+  var t = said || clean(nm) || "CAMCRAFT"; // #594: cleaned
+  writeln("; " + (progNumbered() ? "PROGRAM " + progNo() + " - " + t : t));
   var z = safeZ();
   if (z !== null && z !== 0) note("SAFE RETRACT G53 Z" + fu(z) + " - STATED BY THE MACHINE");
 }
@@ -288,14 +363,30 @@ function compRefuse(what) {
   }
 }
 
+// #931: PARAM WorkOffset arrives as the 1-based offset number (the engine
+// refuses one above workOffsetMax by setup name); the word is ours to write.
+function workOffsetName(n) {  // offset n -> this control's word; "" when it has none
+  if (!(n >= 1 && n <= 6 && n === Math.floor(n))) return "";
+  return n <= 4 ? "G" + (53 + n) : "G" + (500 + n);  // settable frames G54..G57, then G505..
+}
+function offsetWord(value) {
+  var n = Number(value), w = workOffsetName(n);
+  if (!w) { msg("work offset " + value + " - this post expresses work offsets 1-" + workOffsetMax + " only"); return wcsWord; }
+  wcsIndex = n;
+  return w;
+}
+
 function onParameter(name, value) {
+  if (name === "RetractPlane") hopZ = has(value) ? Number(value) : null;  // #1028
+  if (name === "ClearancePlane") clearZ = has(value) ? Number(value) : null;  // #1633
   if (name === "Smoothing") { smoothTol = Number(value) || 0; return; }
   if (name === "SmoothingMode") { smoothMode = String(value || ""); return; }
   commentParam(name, value);
   if (name === "OperationName") coolantOp = String(value || "");
   if (name === "Coolant") { coolantAsk = String(value || "flood"); return; }
   if (name === "AfterOperation") { afterAsk = String(value || ""); return; }
-  if (name === "WorkOffset" && value) wcsWord = String(value);
+  if (name === "SetupChange") { setupNext = clean(value); return; }
+  if (name === "WorkOffset" && value) wcsWord = offsetWord(value);
   else if (name === "OriginX" && has(value)) orgX = Number(value);
   else if (name === "OriginY" && has(value)) orgY = Number(value);
   else if (name === "OriginZ" && has(value)) orgZ = Number(value);
@@ -346,21 +437,27 @@ function startPreamble() {
   // programming manual: G71 switches only geometric data, so F would
   // still read in the basic system's unit; G710 switches both). Stated
   // in the opening block before any motion, whatever the control's
-  // basic system or the last program left modal. Where the program's
-  // unit is chosen, and inch output, is #902.
-  block(["G17", "G710", "G90", wcsWord, "G40", "G80"]);
+  // basic system or the last program left modal. #902: the unit is the
+  // document's - an inch program states G700, inch for lengths and
+  // feeds alike, by the same law.
+  block(["G17", inch ? "G700" : "G710", "G90", wcsWord, "G40", "G80"]);
   planeG = 17;              // the preamble states the plane
   if (toolWait) {
     toolNote();
     block(["T" + ni(tNo), "D" + ni(tNo), "M6"]);
+    xyUnknown = true;          // #1633: the first traverse states its height again
     toolWait = false;
   }
   if (spindleWait && sRpm > 0) {   // a touch probe (#173) states no spindle
-    block(["S" + ff(sRpm), "M3"]);
+    block(["S" + ni(sRpm), "M3"]);
+    spindleOn = true;
     spindleWait = false;
   }
-  if (probeStop) block(["M5"]);
-  coolant = coolantFor(coolantAsk);
+  if (probeStop) { block(["M5"]); spindleOn = false; }
+  probeSection = probeStop && kindProbe;
+  // #995: a touch probe section starts no coolant, whatever its ask -
+  // fluid on the stylus and the measured faces spoils the reading.
+  coolant = probeStop ? "" : coolantFor(coolantAsk);
   if (coolant) block([coolant]);
   smoothOn();
 }
@@ -371,8 +468,17 @@ function startPreamble() {
 // section states its own.
 function afterOp() {
   var ask = afterAsk;
+  var next = setupNext;
   afterAsk = "";
+  setupNext = null;
   if (!ask) return;
+  if (next !== null && (ask === "optional-stop" || ask === "stop")) {
+    // #1647: lift Z before inviting the operator to re-clamp the part.
+    var setupZ = safeZ();
+    if (setupZ === null) return;
+    block(["G0", "G53", "Z" + fu(setupZ)]);
+    note("SETUP CHANGE - NEXT: " + (next || "UNNAMED SETUP"));
+  }
   if (ask === "optional-stop") { block(["M1"]); return; }
   if (ask === "stop") { block(["M0"]); return; }
   if (ask === "home") {
@@ -402,25 +508,111 @@ function endPreamble() {
   coolant = "";
   coolantAsk = "flood";      // the next section states its own ask
   block(["M5"]);
+  spindleOn = false;
+  probeSection = false;
+  kindProbe = false;         // the next section states its own tool kind
   afterOp();
 }
 
-function onSection() { startPreamble(); }
-function onSectionEnd() { endPreamble(); }
+function onSection() { seatKnown = false; startPreamble(); }
+function onSectionEnd() { endPreamble(); hopZ = null; clearZ = null; }  // #1028, #1633: the next section states its own planes
 
 // ------------------------------------------------------------- motions
 // While a canned-cycle group is open its expanded hole chain is the
 // cycle block's business only - the chain is the generator's truth,
 // not a second copy of output.
+// The chain stays on its hole: the hole's XY, at or below its R plane.
+// #994: a rapid that leaves it (the hop up, the traverse, the exit)
+// ends the group - G80, then the rapid posted as the stream says - so
+// the program moves between holes at the hop the path was verified at,
+// never at R. A cut leaving the hole is no chain a cycle replaces:
+// refused by name.
+function onHole(p) {
+  return Math.abs(p.X - cycX) < 1e-6 && Math.abs(p.Y - cycY) < 1e-6 && p.Z <= cycR + 1e-6;
+}
+function chainRapid() {  // true: the open group's own retract, swallowed
+  seatKnown = true;
+  if (!inCycle) return false;
+  if (onHole(properties)) return true;
+  block(["G80"]);
+  inCycle = false;
+  return false;
+}
+function chainCut() {  // true: the cut is the cycle's (or refused)
+  seatKnown = true;
+  if (!inCycle) return false;
+  if (!onHole(properties)) msg("a cutting move leaves its hole inside a canned-cycle group");
+  return true;
+}
+// #1028: a probing move (a touch, its back-off, a protected positioning
+// move) moves the tool like any other motion: it ends an open cycle
+// group (G80 - no probe move is a hole's chain) and the tool stands
+// where the stream says, so a cycle read after it is seated.
+function probeSeat() {
+  seatKnown = true;
+  if (!inCycle) return;
+  block(["G80"]);
+  inCycle = false;
+}
+// ------------------------------------------------- the first traverse
+// #1633 (#1616's second half; the #1614 hazard): X and Y are unknown at
+// the program's start and after every tool change, and so is the height
+// the change left the tip at - a long tool on a high work offset can
+// stand below the part top there, and a first move written as one
+// combined rapid (`G0 X20 Y10 Z-3`) is a straight line from that point,
+// across the part. So the first X/Y traverse is made at a STATED
+// height: a Z-only rapid to the section's clearance - its
+// ClearancePlane, else its RetractPlane, never below the move's own Z -
+// then X/Y alone at it, then the move as the stream states it. A setup
+// that cannot reach that height is stopped by the control's Z limit
+// instead of rapiding through the part. A stream that states neither
+// plane has no verified height to traverse at: refused by name.
+// This dialect refuses tilted records (tiltOk), so the rapids are always
+// in the frame of the section's upright words.
+var clearZ = null;            // #1633: the section's ClearancePlane, null when unstated
+var xyUnknown = true;         // #1633: at the program's start and after each tool change
+var traverseRefused = false;  // #1633: once per program
+function traverseZ(z) {
+  var c = has(clearZ) ? clearZ : (has(hopZ) ? hopZ : null);
+  if (c === null) return null;
+  return has(z) ? Math.max(c, Number(z)) : c;
+}
+// (x, y, z): a rapid's target (a cycle's hole at its R plane), which the
+// record itself then goes to; or, with `descend`, where the stream says a
+// feed, an arc or a probing move starts - rapided down to when it lies
+// below the clearance, so the move runs only the stretch planned.
+// False when refused: the caller then writes nothing for its move - nor
+// for any later one while X/Y stay unknown (the rest of the section) -
+// so no combined X/Y/Z rapid from an unknown height reaches the text.
+function xyFirst(x, y, z, descend) {
+  if (!xyUnknown || !has(x) || !has(y)) return true;
+  var tz = traverseZ(z);
+  if (tz === null) {
+    if (!traverseRefused) {
+      traverseRefused = true;
+      msg(coolantWho() + "first X/Y traverse with no clearance height stated (no ClearancePlane or RetractPlane) - the post will not rapid X/Y at an unknown height");
+    }
+    return false;
+  }
+  block(["G0", wo("Z", tz, orgZ)]);
+  // A rapid already at the clearance is the traverse itself.
+  if (descend || !has(z) || Math.abs(Number(z) - tz) > 1e-9) block(["G0", wo("X", x, orgX), wo("Y", y, orgY)]);
+  if (descend && has(z) && Number(z) < tz - 1e-9) block(["G0", wo("Z", z, orgZ)]);
+  xyUnknown = false;
+  return true;
+}
 function onRapid() {
   startPreamble();
   compRefuse("a rapid");
-  if (!tiltOk(properties) || inCycle) return;
+  if (!tiltOk(properties) || chainRapid()) return;
+  if (!xyFirst(properties.X, properties.Y, properties.Z, false)) return;  // #1633: refused - the move is not written
   block(["G0"].concat(xyz(properties)));
 }
 function onLinear() {
   startPreamble();
-  if (!tiltOk(properties) || inCycle) return;
+  if (!tiltOk(properties) || chainCut()) return;
+  if (spindleStopped("feed move G1")) return;
+  if (!xyFirst(properties.StartX, properties.StartY, properties.StartZ, true)) return;  // #1633: refused - the move is not written
   // The pending comp word rides this straight block (#39).
   var cg = compG, cd = compD;
   compG = ""; compD = "";
@@ -429,9 +621,11 @@ function onLinear() {
 function onCircular() {
   startPreamble();
   compRefuse("an arc");
-  if (!tiltOk(properties) || inCycle) return;
+  if (!tiltOk(properties) || chainCut()) return;
+  if (spindleStopped("arc move " + (properties.CircularDirection === "CW" ? "G2" : "G3"))) return;
   var p = properties;
   if (compPlaneRefuse(planeOf(p))) return;
+  if (!xyFirst(properties.StartX, properties.StartY, properties.StartZ, true)) return;  // #1633: refused - the move is not written
   block([
     planeWord(planeOf(p)),
     p.CircularDirection === "CW" ? "G2" : "G3",
@@ -445,6 +639,46 @@ function onCircular() {
 // The DIN cycles retract to the R plane by the documented default of
 // this family's plain G81-G89 forms - there is no G98 word to write,
 // so none is invented; every cycle block restates the hole position.
+// #994: the hop and traverse to the next hole are the stream's own
+// rapids, posted after G80 (above); and with the tool seated on R
+// (below) a control returning to the initial level lands on R too -
+// no return mode is assumed.
+// #994: the cycle is read with the tool on its R plane over the hole,
+// where the stream's chain starts, so the level a hole returns to is R
+// and never the height the tool happened to stand at. A stream whose
+// tool stands elsewhere (its anchor on the rapid down to R) is seated
+// here: up to R first when below it, then over the hole, then down -
+// never under the straight rapid the stream itself states. A cycle
+// that is its section's first motion has no stream position to seat
+// from: the cycle positions over the hole from the height it is at.
+function cycleSeat(p) {
+  if (!seatKnown) return;
+  var lo = has(p.StartZ) && p.StartZ < p.R - 1e-6;
+  var away = !(has(p.StartX) && has(p.StartY)) || Math.abs(p.StartX - p.X) >= 1e-6 || Math.abs(p.StartY - p.Y) >= 1e-6;
+  var hi = !has(p.StartZ) || p.StartZ > p.R + 1e-6;
+  if (!lo && !away && !hi) return;
+  if (inCycle) block(["G80"]);
+  inCycle = false;
+  if (away) {
+    // #1028: no stream rapid took the tool to this hole (two cycle
+    // records back to back, or a cycle straight after a probe), so
+    // the traverse runs at the section's hop: up to its RetractPlane
+    // when below it, over the hole, then down to R - never lower than
+    // the hop the path was verified at. A section that states no
+    // RetractPlane has no hop to seat at: refused by name.
+    if (!has(hopZ)) {
+      msg("a canned cycle is read away from its hole with no rapid to it, and the section states no RetractPlane to traverse at");
+      return;
+    }
+    var top = Math.max(hopZ, p.R);
+    var at = has(p.StartZ) ? p.StartZ : -Infinity;
+    if (at < top - 1e-6) { block(["G0", wo("Z", top, orgZ)]); at = top; }
+    block(["G0", wo("X", p.X, orgX), wo("Y", p.Y, orgY)]);
+    if (at > p.R + 1e-6) block(["G0", wo("Z", p.R, orgZ)]);
+    return;
+  }
+  if (lo || hi) block(["G0", wo("Z", p.R, orgZ)]);
+}
 function onCycle() {
   startPreamble();
   restorePlane();            // M11.2 A: a cycle drills along G17's Z
@@ -457,6 +691,23 @@ function onCycle() {
   else if (p.CycleType === "TAP") g = "G84";
   else if (p.CycleType === "BORE") g = "G86";
   else if (p.CycleType === "BACKBORE") g = "G89";
+  else if (p.CycleType === "REAM") g = "G85";   // #1445: feed in, feed out at F, no dwell
+  else {
+    // #1445: a cycle kind this post does not know is refused by name,
+    // never posted as the G81 default (a rapid out it never asked for).
+    msg("canned cycle " + p.CycleType + " is not known to this post - refused, not posted as another cycle");
+    return;
+  }
+  // #1357: a canned cycle feeds at its own F word. Without one the
+  // control drills at whatever feed was last modal (or alarms on a zero
+  // feed), so a cycle the stream gives no positive feed is refused by name.
+  if (!(has(p.FeedRate) && p.FeedRate > 0)) {
+    msg("canned cycle " + g + " has no feed rate - refused: without F the control drills at whatever feed was last modal");
+    return;
+  }
+  if (spindleStopped("canned cycle " + g)) return;
+  if (!xyFirst(p.X, p.Y, p.R, false)) return;  // #1633: refused - the move is not written
+  cycleSeat(p);
   var words = [g, wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ), wo("R", p.R, orgZ)];
   if ((p.CycleType === "PECK" || p.CycleType === "DEEP") && has(p.Q) && p.Q > 0) {
     words.push(w("Q", p.Q)); // an increment (peck depth): no origin shift
@@ -464,6 +715,8 @@ function onCycle() {
   if (ms > 0 && g !== "G73" && g !== "G84") words.push("P" + ms);
   words.push(fw(p.FeedRate));
   block(words);
+  cycX = p.X; cycY = p.Y; cycR = p.R;
+  seatKnown = true;
   inCycle = true;
 }
 
@@ -481,8 +734,8 @@ function onCycle() {
 // measure air. A measured trip k is kept in R(50+3k)..R(52+3k) and the
 // deviations in R90.., inside R0..R99 (the R parameters every 840D
 // carries; more are a machine-data option). The back-off is incremental
-// (G91). G58/G59 are axial programmable offsets
-// on this control, not settable frames: setting one is refused by name.
+// (G91). The fifth and sixth work offsets are the settable frames
+// G505/G506 here (workOffsetName, #934/#931), so a probe sets those frames.
 // Arming the probe is the machine's own.
 var probeBase = 50;
 function axisIx(a) { return a === "X" ? 0 : (a === "Y" ? 1 : 2); }
@@ -499,7 +752,9 @@ function stopAlarm(cond, n, text) {  // message, alarm and stop when cond holds
 }
 function onProbeMove() {
   startPreamble();
+  probeSeat();               // #1028
   compRefuse("a probing move");
+  if (!xyFirst(properties.StartX, properties.StartY, properties.StartZ, true)) return;  // #1633: refused - the move is not written
   var p = properties;
   block(["MEAS=1", "G1", wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ), fw(p.Feed)]);
   stopAlarm("$AC_MEA[1]==0", 65000, "PROBE NO CONTACT");
@@ -512,6 +767,7 @@ function onProbeMove() {
   }
 }
 function onProbeRetreat() {
+  probeSeat();               // #1028
   var p = properties;
   block(["G91", "G1", w("X", p.DeltaX), w("Y", p.DeltaY), w("Z", p.DeltaZ), fw(p.Feed)]);
   block(["G90"]);
@@ -528,17 +784,18 @@ function onProbeRetreat() {
 // written on a trip, so it is meaningless when the move ran clear.
 function onProbeGuard() {
   startPreamble();
+  probeSeat();               // #1028
   compRefuse("a protected probe move");
+  if (!xyFirst(properties.StartX, properties.StartY, properties.StartZ, true)) return;  // #1633: refused - the move is not written
   var p = properties;
   block(["MEAS=1", "G1", wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ), fw(p.Feed)]);
   stopAlarm("$AC_MEA[1]==1", 65002, "PROBE HIT ON POSITIONING");
 }
-function frameOf(word) {  // "G54".."G57" -> 1..4, G505..G599 -> 5..99; 0 none
-  var n = Number(String(word).replace(/[^0-9]/g, ""));
-  if (n >= 54 && n <= 57) return n - 53;
-  if (n >= 505 && n <= 599) return n - 500;
-  return 0;
-}
+// #934/#931: on the 840D the settable zero offsets are G54..G57 and
+// then G505..G599 (840D sl Fundamentals, "settable zero offset"); G58/G59
+// are axial programmable offsets that select no frame. Offset n is
+// settable frame n - $P_UIFR[n] - written by workOffsetName: offsets 5
+// and 6 are G505/G506.
 function onProbeResult() {
   var p = properties;
   var org = [orgX, orgY, orgZ];
@@ -558,9 +815,9 @@ function onProbeResult() {
     stopAlarm("ABS(R" + (dev + i) + ")>" + fu(p.Tolerance), 65001, "PROBE " + a.Axis + " OUT OF TOLERANCE");
   }
   if (has(p.SetWorkOffset) && p.SetWorkOffset >= 0) {
-    var want = "G" + (54 + Number(p.SetWorkOffset));
-    var to = frameOf(want), from = frameOf(wcsWord);
-    if (!to || !from) {
+    var to = Number(p.SetWorkOffset) + 1, from = wcsIndex;  // SetWorkOffset is 0-based
+    var want = workOffsetName(to) || ("work offset " + to);
+    if (!workOffsetName(to) || !workOffsetName(from)) {
       msg("probing: setting " + want + " from " + wcsWord + " - only the settable frames G54..G57 / G505..G599 can be set on this control");
       return;
     }

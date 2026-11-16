@@ -164,7 +164,10 @@ pub(crate) fn probe_problems(world: &World) -> Vec<String> {
         .map(|(_, _, path, width)| BladeLeg { path, width: *width })
         .collect();
     let mut out = Vec::new();
-    for w in turning::blade_program_warnings(&material.facets, &refs, budget) {
+    // #904: on a model imported coarser than promised the composed
+    // scan's gouge clause gives the excess back; an ask the excess uses
+    // up is refused by name at the fidelity clause (`floor_of`).
+    for w in turning::blade_program_warnings_excess(&material.facets, &refs, budget, material.excess) {
         match w {
             // The part's deviation, whichever clause was worse - a
             // probe reads the surface off the model either way.

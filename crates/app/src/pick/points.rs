@@ -10,6 +10,9 @@
 //! part alignment, handed to `AlignPartToSetup::new`; the work offset is
 //! never touched.
 //!
+//! #738: the setup's move composes on the part as held now
+//! ([`lay_on_points_in`]), like the face pick's [`super::plane`].
+//!
 //! Provenance: our own design over the 3-2-1 (three-point primary datum)
 //! fixture practice taught in fixture-design and coordinate-metrology
 //! handbooks; the plane through three points is the cross product of two
@@ -25,7 +28,7 @@ use crate::schema::Location;
 use crate::setup_align;
 
 use super::align::{cross, dot, gone, norm, scale, sub};
-use super::plane::{Datum, PlaneLay, axes_of, axis_words, lay_datum, target_normal};
+use super::plane::{Datum, PlaneLay, axes_of, axis_words, lay_datum, onto_held, target_normal};
 
 /// Two picked points closer than this (mm) are one point.
 pub const COINCIDENT_MM: f64 = 1e-3;
@@ -53,13 +56,33 @@ pub struct PointsLay {
 /// names what to re-pick. Absolute, like the face pick: the same points
 /// in an aligned setup give the same answer.
 pub fn lay_on_points(world: &World, picks: &[GeoSel], pl: PointsLay) -> Result<Location, String> {
+    lay_step(world, picks, pl, Location::default())
+}
+
+/// #738: the setup's new part alignment from three points - the lay read
+/// on the part as `setup` holds it NOW, composed onto that alignment. The
+/// same points again are a zero step: the held alignment comes back.
+pub fn lay_on_points_in(world: &World, setup: &str, picks: &[GeoSel], pl: PointsLay) -> Result<Location, String> {
+    let held = setup_align::stored(world, setup).unwrap_or_default();
+    Ok(onto_held(lay_step(world, picks, pl, held)?, held))
+}
+
+/// The lay as a step in the frame `held` puts the part in (the identity:
+/// the document frame, and the step is the alignment itself).
+fn lay_step(world: &World, picks: &[GeoSel], pl: PointsLay, held: Location) -> Result<Location, String> {
     let (datum, [p1, p2, _]) = datum_of(world, picks)?;
+    let datum = datum.through(held);
+    let at = |p: [f64; 3]| {
+        let q = transform_point(p3(p), held.pos, held.rot);
+        [q.x, q.y, q.z]
+    };
+    let (p1, p2) = (at(p1), at(p2));
     if !pl.frame {
-        return lay_datum(world, &datum, pl.lay);
+        return lay_datum(world, &datum, pl.lay, held);
     }
     // 3-2-1: lay first (the shared path), then turn about the plane's
     // normal so 1 -> 2 runs along its first axis, then point 1 to 0.
-    let laid = lay_datum(world, &datum, PlaneLay { place: false, ..pl.lay })?;
+    let laid = lay_datum(world, &datum, PlaneLay { place: false, ..pl.lay }, held)?;
     let t3 = target_normal(pl.lay);
     let (x_t, _) = axes_of(pl.lay.plane);
     let v_t = cross(t3, x_t);
@@ -107,12 +130,20 @@ fn datum_of(world: &World, picks: &[GeoSel]) -> Result<(Datum, [[f64; 3]; 3]), S
         if !setup_align::is_part(world, &e) {
             return Err(format!("'{}' is not the part - pick points of the model", g.entity));
         }
-        let what = match g.feature {
+        match g.feature {
             FeatureSel::Vertex(_) => continue,
-            FeatureSel::Face(_) | FeatureSel::Patch(_) => "a face",
-            FeatureSel::Chain(_) => "an edge",
-        };
-        return Err(format!("{} of '{}' is {what} - pick three points (corners of the model)", g.feature, g.entity));
+            // #692: a round edge stands for its centre; any other edge is
+            // refused by name.
+            FeatureSel::Chain(_) => {
+                super::centre::centre_point(world, g)?;
+                continue;
+            }
+            FeatureSel::Face(_) | FeatureSel::Patch(_) => {}
+        }
+        return Err(format!(
+            "{} of '{}' is a face - pick three points (corners of the model or circle centres)",
+            g.feature, g.entity
+        ));
     }
     let [g1, g2, g3] = picks else {
         return Err(format!("pick three points - {} picked", picks.len()));

@@ -12,7 +12,7 @@
 //!
 //! Gate map (M11.5): covers app::operation (boundary, boundary_turn,
 //! boundary_ctx, contour_open, footprint, stamp, generate), app::commands
-//! (EditOperationParams), app::project (area), app::verify,
+//! (EditOperationParams), app::project (area), sim::verify,
 //! motion::machining2d (contour_chain, lead_ext).
 
 mod area_support;
@@ -229,6 +229,30 @@ fn a_contour_rides_its_open_boundary_offset_to_the_chosen_side() {
     assert!(!cut.is_empty());
     assert!(cut.iter().all(|p| (p.y - (20.0 - R)).abs() < EPS), "one radius south of the edge: {cut:?}");
     assert!(warns > 0, "a pass inside the part must be flagged");
+}
+
+/// #1555: the open pass keeps the material on its RIGHT under climb (M3):
+/// north of the block's north edge that is west to east; conventional
+/// runs it east to west. The chain's own order (west to east here) says
+/// nothing - the side does.
+#[test]
+fn the_open_pass_runs_climb_with_the_material_on_its_right() {
+    let world = block_world();
+    let top = top_face(&world, "part", 10.0);
+    let north = rim_edge(&world, |q| (q[1] - 20.0).abs() < 1e-9);
+    for climb in [true, false] {
+        let a = AreaControls { extension: 3.0, open: Some(OpenBoundary { picks: pick("part", north), side: ChainSide::Outside }), ..Default::default() };
+        let mut p = contour(10.0, 5.0, Side::Auto);
+        if let OpParams::Contour { climb: c, .. } = &mut p {
+            *c = climb;
+        }
+        let (t, warns) = run(&world, &op(sel("part", top), p, a)).expect("open contour");
+        assert_eq!(warns, 0, "{:?}", t.notes);
+        let level = t.moves.iter().filter(|m| m.kind == MoveKind::Feed && m.to.z < 10.0 - EPS && m.from.z == m.to.z);
+        let dx: f64 = level.map(|m| m.to.x - m.from.x).sum();
+        assert!(dx != 0.0, "the pass moves along the edge");
+        assert_eq!(dx > 0.0, climb, "climb={climb}: net travel {dx} (climb runs west to east north of the block)");
+    }
 }
 
 /// The viewport's fill of an open Contour (M11.5 owed): the band its

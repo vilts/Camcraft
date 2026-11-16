@@ -47,7 +47,8 @@ fn an_inverted_axis_is_noted_beside_its_triad_letter() {
 #[test]
 fn a_standard_machine_adds_no_triad_label() {
     assert_eq!(texts(&mounted(&[])), texts(&State::new()));
-    assert_eq!(texts(&State::new()), ["X", "Y", "Z"]);
+    // #727: the fresh world's set is the dimmed world axes, named.
+    assert_eq!(texts(&State::new()), ["World", "X", "Y", "Z"]);
     let both = texts(&mounted(&["X", "Y"]));
     assert!(both.iter().any(|t| t == "Machine Y+ moves toward the front (inverted axis)"), "{both:?}");
 }

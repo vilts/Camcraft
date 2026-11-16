@@ -8,8 +8,9 @@
 //! Phase 1 keeps `carry`'s scope: the eight lattice turns (`LatticeTurn`,
 //! Z kept on +-Z), so a vertical column in the new frame is a vertical
 //! column (perhaps reversed) in the field's own - the verdict march
-//! stays exact. Every other turn is refused upstream by
-//! `CARRY_TURN_REFUSAL`.
+//! stays exact. A side-on quarter turn is refused on this arm by
+//! `FIELD_SIDE_CARRY_REFUSAL` (#874), every turn off the quarter
+//! upstream by `CARRY_TURN_REFUSAL`.
 //!
 //! Provenance: rigid-motion invariance of the Euclidean distance (any
 //! geometry text); our own design after #637's research comment.

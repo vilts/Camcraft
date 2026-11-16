@@ -27,6 +27,7 @@ OPTIONS:
     --machine <mch>   machine definition (.mch JSON)
     --log <file>      write the warning list here instead of stderr
     --trace <file>    write the block-by-block trace here (stage D)
+    --units <mm|inch> the program's unit (#902; default mm)
     -h, --help        print this text
     --version         print the version
 ";
@@ -36,6 +37,7 @@ fn main() -> ExitCode {
     let mut machine: Option<String> = None;
     let mut log: Option<String> = None;
     let mut trace: Option<String> = None;
+    let mut units: Option<String> = None;
     let mut positional: Vec<String> = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -48,10 +50,11 @@ fn main() -> ExitCode {
                 println!("post {} (boa_engine)", env!("CARGO_PKG_VERSION"));
                 return ExitCode::SUCCESS;
             }
-            "--machine" | "--log" | "--trace" => {
+            "--machine" | "--log" | "--trace" | "--units" => {
                 let slot = match a.as_str() {
                     "--machine" => &mut machine,
                     "--log" => &mut log,
+                    "--units" => &mut units,
                     _ => &mut trace,
                 };
                 match it.next() {
@@ -80,7 +83,23 @@ fn main() -> ExitCode {
         machine.as_deref(),
         log.as_deref(),
         trace.as_deref(),
+        units.as_deref(),
     )
+}
+
+/// The machine value the engine posts with (#996): a vendor kinematics
+/// tree (`kinematics.default.parts`, every shipped `.mch`) is read the
+/// way the app reads it - parsed, then mirrored into the static grammar
+/// the script's `machine` global and the invert pass walk
+/// (`post::machine::mirror`, which carries the file's inverted axes as
+/// `invertedAxes`). A file already in the static grammar has no tree to
+/// mirror and posts as written, as it always did.
+fn script_machine(raw: Value, parsed: &camcraft_post::machine::Machine) -> Value {
+    if raw.pointer("/kinematics/default/parts").is_some() {
+        post::machine::mirror(parsed)
+    } else {
+        raw
+    }
 }
 
 fn die(msg: String) -> ExitCode {
@@ -95,6 +114,7 @@ fn run(
     machine: Option<&str>,
     log: Option<&str>,
     trace: Option<&str>,
+    units: Option<&str>,
 ) -> ExitCode {
     let cps = match std::fs::read_to_string(config) {
         Ok(s) => s,
@@ -114,22 +134,27 @@ fn run(
             // post cannot translate (Z, any letter but X/Y), or a garbled
             // direction, refuses by name - never standard-sign code for it.
             // An inverted X/Y posts: the engine mirrors the stream.
-            match camcraft_post::machine::parse_mch(&text) {
+            let parsed = match camcraft_post::machine::parse_mch(&text) {
                 Ok(m) => {
                     if let Some(why) = m.inverted_post_refusal() {
                         return die(why);
                     }
+                    m
                 }
                 Err(e) => return die(format!("{path}: {e}")),
-            }
-            match post::machine::from_json(&text) {
+            };
+            let raw = match post::machine::from_json(&text) {
                 Ok(v) => v,
                 Err(e) => return die(format!("cannot parse {path}: {e}")),
-            }
+            };
+            script_machine(raw, &parsed)
         }
         None => Value::Null,
     };
-    match engine::run(&cps, &mch, &stream) {
+    // #902: the document's unit, stated the way the app states it; the
+    // engine refuses a word that is not mm or inch by name.
+    let options = units.map_or(Value::Null, |u| serde_json::json!({ "Units": u }));
+    match engine::run_with(&cps, &mch, &stream, &options) {
         Ok(out) => {
             if let Err(e) = std::fs::write(Path::new(output), &out.program) {
                 return die(format!("cannot write {output}: {e}"));

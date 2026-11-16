@@ -1,12 +1,15 @@
 //! The per-move judgment helpers the machine checks share (#669 split
 //! them out of `mod.rs` when the plasma check became their second
 //! reader): a move's extreme points, the axis a feed ceiling belongs
-//! to, the C-letter gate, the tool-pose gate (#797), and the capped reporter.
+//! to, the C-letter gate, the rigid-tap gate (#786), the tool-pose gate
+//! (#797), and the capped reporter.
 //!
 //! Provenance: general machine-tool practice (an arc bulges to its
 //! quarter points; a coordinated feed is capped by its slowest driven
-//! axis), our own code moved from `machine/mod.rs`; the 4th-axis pose
-//! reading from RS-274's A as a rotation about X and our `cl::pose` law.
+//! axis; a rigid tap needs a spindle the control can synchronise the
+//! feed to - RS-274 G84), our own code moved from `machine/mod.rs` plus
+//! the tap gate; the 4th-axis pose reading from RS-274's A as a rotation
+//! about X and our `cl::pose` law.
 
 use super::{AxisLimits, Machine, MachineCheck, REPORT_CAP};
 use crate::geometry::Point3;
@@ -181,4 +184,20 @@ pub(super) fn c_letter_problem(machine: &Machine, i: usize, c: f64) -> Option<St
     let (lo, hi) = ax.travel?;
     (c < lo - 1e-9 || c > hi + 1e-9)
         .then(|| format!("move {i} commands C {c:.3} deg, the travel is {lo:.3}..{hi:.3}"))
+}
+
+/// The rigid-tap gate (#786): a path that carries a tap cycle, on a
+/// machine whose file says its spindle cannot rigid-tap
+/// (`spindle.rigid_tapping: false`), is refused by name - whatever post
+/// is chosen, and never converted to another cycle. Unstated reads as
+/// "not limited" (the unstated-limit law): nothing is said then.
+pub(super) fn tap_gate(out: &mut MachineCheck, machine: &Machine, name: &str, path: &crate::cl::Toolpath) {
+    if machine.rigid_tapping != Some(false) {
+        return;
+    }
+    let taps = path.cycles.iter().filter(|c| c.kind == crate::cl::CycleKind::Tap).count();
+    if taps > 0 {
+        let m = &machine.model;
+        say(out, format!("{name}: {taps} tap cycle(s) need rigid tapping, which {m} cannot do - use a tapping head or thread milling"));
+    }
 }

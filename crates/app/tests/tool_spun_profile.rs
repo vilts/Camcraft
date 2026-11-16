@@ -4,7 +4,7 @@
 //! fixture laws, it saves/loads/undoes, refuses nonsense by name, and
 //! the parametric profile changes nothing for an existing tool.
 //!
-//! Gate map (M4.4): covers app::commands, app::tool_body, app::tool_body_view, app::project, app::schema, app::tools.
+//! Gate map (M4.4): covers app::commands, app::tool_body, app::tool_body_view, app::project, app::schema, tools::tools.
 
 use camcraft_app::commands::{AddTool, CommandError, CreateOperation, GenerateOperation, History, SetStock, SetToolBody, TagFixture};
 use camcraft_app::geometry::{Point3, Triangle};
@@ -127,7 +127,7 @@ fn a_drawn_holder_lands_with_its_bands_exact() {
         &[HolderBand { above: z0, len: 20.0, r: 15.0 }, HolderBand { above: z0 + 20.0, len: 15.0, r: 40.0 }]
     );
     let g = catalog_tool(TOOL).geom();
-    assert_eq!(tool_body::stack(&g, Some(profile)), HolderStack { bands: profile.bands().to_vec(), top: z0 + 35.0 });
+    assert_eq!(tool_body::stack(&g, Some(profile)), HolderStack { bands: profile.bands().to_vec(), top: z0 + 35.0, neck: Vec::new() });
     // The display assembly carries the revolve of the drawn outline.
     let asm = tool_body_view::assembly(&catalog_tool(TOOL), &body);
     let top = asm.iter().flat_map(|t| [t.a.z, t.b.z, t.c.z]).fold(0.0f64, f64::max);

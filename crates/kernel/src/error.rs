@@ -30,6 +30,14 @@ pub enum KernelError {
         /// The engine's diagnostic.
         detail: String,
     },
+    /// The caller's time bound ended the operation before it finished.
+    #[error("{op}: stopped at its time bound ({stage})")]
+    TimedOut {
+        /// Operation name.
+        op: &'static str,
+        /// What was running when the bound was reached.
+        stage: &'static str,
+    },
     /// The engine produced a result that is not a usable closed solid.
     #[error("{kernel}: {op} produced an invalid result: {detail}")]
     InvalidResult {

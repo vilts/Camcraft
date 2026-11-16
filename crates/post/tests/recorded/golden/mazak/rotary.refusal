@@ -1,0 +1,2 @@
+; mazak.cps refused rotary: 1 warning(s), the program is never released
+warning: tilted move - Mazak post has no RTCP output

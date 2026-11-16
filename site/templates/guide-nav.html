@@ -1,0 +1,20 @@
+{#- Guide navigation by job stage (#1903). Provenance: CamCraft's own Zola sections. -#}
+{% set guide = get_section(path="guide/_index.md") %}
+<nav class="guide-nav" aria-label="User guide">
+  <a href="{{ guide.permalink }}"{% if active_permalink == guide.permalink %} aria-current="page"{% endif %}>User guide</a>
+  <ul class="guide-groups">
+    {% for path in guide.subsections %}
+    {% set group = get_section(path=path) %}
+    <li>
+      <details{% if group.permalink in active_permalink %} open{% endif %}>
+        <summary><a class="guide-group-link" href="{{ group.permalink }}"{% if active_permalink == group.permalink %} aria-current="page"{% endif %}>{{ group.title }}</a></summary>
+        <ul>
+          {% for p in group.pages %}
+          <li><a href="{{ p.permalink }}"{% if active_permalink == p.permalink %} aria-current="page"{% endif %}>{{ p.title }}</a></li>
+          {% endfor %}
+        </ul>
+      </details>
+    </li>
+    {% endfor %}
+  </ul>
+</nav>

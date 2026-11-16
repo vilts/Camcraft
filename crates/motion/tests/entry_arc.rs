@@ -373,6 +373,7 @@ fn the_wall_side_enters_on_a_tangent_arc_in_the_air_beside_the_wall() {
 
 fn pp() -> PocketParams {
     PocketParams {
+        blend_radius: None,
         links: camcraft_motion::links::Links::PLANAR,
         tool_diameter: 6.0,
         stepover: 3.0,

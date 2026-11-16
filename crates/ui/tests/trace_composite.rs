@@ -40,7 +40,7 @@ fn p(x: f64, y: f64, z: f64) -> Point3 {
 fn field_view() -> Arc<FieldView> {
     let f = cube(p(0.0, 0.0, 0.0), p(10.0, 10.0, 5.0));
     let stock = Stock::from_facets(Backend::Field { band: FIELD_BAND }, &f.facets, 0.5).unwrap();
-    Arc::new(FieldView { stock, target: None, target_note: Some("test".into()), cell: 0.5, packed: None })
+    Arc::new(FieldView { stock, target: None, target_note: Some("test".into()), cell: 0.5, tol: camcraft_app::stock_sim::DEV_TOL, packed: None })
 }
 
 fn verts(lo: Point3, hi: Point3) -> Vec<[f32; 3]> {

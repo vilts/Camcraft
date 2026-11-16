@@ -8,7 +8,7 @@
 //! in `crates/sim/tests/wall_slack.rs`; this file is the issue's jobs,
 //! driven through the MCP tools and the commands as reported.
 //!
-//! Gate map (M4.4): covers app::mcp, app::posting_sim, app::stock_sim.
+//! Gate map (M4.4): covers app::mcp, app::posting_sim, app::stock_sim, sim::stock_sim.
 
 use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, ImportModel, SetStock};
 use camcraft_app::geometry::Point3;

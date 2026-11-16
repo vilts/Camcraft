@@ -49,7 +49,11 @@ state, the cut order and each contour's nesting pinned with the moves.
 ## Naming
 
 By operation and shape: `face_<shape>.cl`, `contour_<shape>.cl`,
-`pocket_<strategy>_<shape>.cl`, `slot_<shape>.cl`, `trace_<shape>.cl`.
+`pocket_<strategy>_<shape>.cl`, `slot_<shape>.cl`, `trace_<shape>.cl`,
+`wire_contour_<side>.cl` (#532: one profile cut as a die and as a punch -
+plain v1 files, a vertical wire cut states no pose and no feed),
+`wire_4axis_punch.cl` (#537: a square-bottom / round-top punch, a pose
+on every move).
 (G-code goldens `post_<op>_<machine>.ngc` join the directory when the
 post arrives, M1.5.)
 

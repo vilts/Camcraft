@@ -5,11 +5,11 @@
 //! crossing puts both chords' boxes over one point, so no crossing pair
 //! is missed, and each pair is tested once, in the first cell their
 //! boxes share (the lowest-corner rule). The predicate is the law's own
-//! (`proper_cross` at a shared depth), unchanged; the pair set it
+//! (`proper_cross_touch` at a shared depth), unchanged; the pair set it
 //! reports is the all-pairs law's exactly ([`crossed_pairs_all`], kept
 //! as the reference the equivalence tests hold it to).
 
-use super::laws::proper_cross;
+use super::laws::proper_cross_touch;
 use super::types::{Mode, VerifyContext, Warning};
 
 use crate::cl::{MoveKind, Toolpath};
@@ -96,7 +96,9 @@ fn crosses(a: &Chord, b: &Chord) -> bool {
     } else {
         za0.max(za1).min(zb0.max(zb1)) - za0.min(za1).max(zb0.min(zb1)) > 0.0
     };
-    z_hit && proper_cross(a0, a1, b0, b1)
+    // A shared vertex a rounding apart (within `CROSSING_TOUCH`) is a
+    // touch, as an exact one always was (#1129).
+    z_hit && proper_cross_touch(a0, a1, b0, b1)
 }
 
 /// The crossing move pairs, ascending and deduped, testing all chord

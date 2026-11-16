@@ -27,6 +27,7 @@ USAGE:
     camcraft-cli mcp      [--connect <host:port>]
     camcraft-cli help
     camcraft-cli version
+    camcraft-cli <command> --help    the flags of one command
 
 COMMANDS:
     script    run a job script through the cam verbs (assets/scripts/
@@ -41,6 +42,78 @@ COMMANDS:
 A clean run prints its logs, then the last verb's JSON answer on
 stdout; refusals print on stderr. Exit: 0 stood, 1 refused, 2 usage.
 ";
+
+/// Per-command usage (`camcraft-cli <command> --help` or `-h`): printed
+/// to stdout, exit 0, and the command never runs - `mcp --help` does
+/// not start the server.
+const SCRIPT_USAGE: &str = "\
+camcraft-cli script <job.js>
+
+    run a job script through the cam verbs (assets/scripts/cam.d.ts
+    types them; every world write rides the commands)
+
+ARGUMENTS:
+    <job.js>          the job file; must end in .js
+
+OPTIONS:
+    -h, --help        print this usage and exit 0
+
+Exit: 0 stood, 1 refused, 2 usage.
+";
+
+const PROCESS_USAGE: &str = "\
+camcraft-cli process <job.camproj> [-o <out.nc>] [--cps <name|file.cps>]
+
+    headless project processing: load, generate, and - with -o - post;
+    verify's verdict is the exit code
+
+ARGUMENTS:
+    <job.camproj>     the project to bring current
+
+OPTIONS:
+    -o, --out <out.nc>      post the program to this file
+    --cps <name|file.cps>   the post to use (takes effect with -o)
+    -h, --help              print this usage and exit 0
+
+Exit: 0 stood, 1 refused, 2 usage.
+";
+
+const MCP_USAGE: &str = "\
+camcraft-cli mcp [--connect <host:port>]
+
+    a Model Context Protocol server on stdio (JSON-RPC 2.0): an AI agent
+    drives one headless document through tools. Stdout carries the
+    protocol, so --help prints here and does not start the server.
+
+OPTIONS:
+    --connect <host:port>   bridge stdio to a running app started with
+                            --mcp-port (the agent drives the open window)
+    -h, --help              print this usage and exit 0
+
+Exit: 0 stood, 1 session ended with an error, 2 usage.
+";
+
+/// Every lane that takes `--help`: its name paired with its usage
+/// text. The one list `command_usage` reads and the help test walks,
+/// so a lane added here is checked and a lane added elsewhere is
+/// caught by the test's cross-check against the top-level COMMANDS.
+pub const HELP_LANES: [(&str, &str); 3] = [
+    ("script", SCRIPT_USAGE),
+    ("process", PROCESS_USAGE),
+    ("mcp", MCP_USAGE),
+];
+
+/// The top-level usage text (`camcraft-cli help`).
+pub const TOP_USAGE: &str = USAGE;
+
+/// The usage text for a lane that takes `--help`, or `None` for any
+/// other word. Keeps the flag list next to the parser it describes.
+fn command_usage(cmd: &str) -> Option<&'static str> {
+    HELP_LANES
+        .iter()
+        .find(|(name, _)| *name == cmd)
+        .map(|(_, text)| *text)
+}
 
 /// The process lane's generated job: the verbs a headless project
 /// run always means, spelled exactly as a hand-written script would.
@@ -102,13 +175,23 @@ pub fn run(args: &[String]) -> i32 {
             println!("camcraft-cli {} (boa_engine)", env!("CARGO_PKG_VERSION"));
             0
         }
-        "script" => lane_script(&args[1..]),
-        "process" => lane_process(&args[1..]),
-        "mcp" => lane_mcp(&args[1..]),
-        other => {
-            eprintln!("camcraft-cli: unknown command {other:?} (try help)");
-            2
-        }
+        // Any position: `process x.camproj --help` answers too. Checked
+        // before the lane parses, so no lane starts (or reads stdin).
+        lane => match command_usage(lane) {
+            Some(text) if args[1..].iter().any(|a| a == "--help" || a == "-h") => {
+                print!("{text}");
+                0
+            }
+            _ => match lane {
+                "script" => lane_script(&args[1..]),
+                "process" => lane_process(&args[1..]),
+                "mcp" => lane_mcp(&args[1..]),
+                other => {
+                    eprintln!("camcraft-cli: unknown command {other:?} (try help)");
+                    2
+                }
+            },
+        },
     }
 }
 

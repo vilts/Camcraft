@@ -153,3 +153,129 @@ fn a_post_that_refuses_exits_one_and_says_why() {
     assert!(err.contains("post:"), "the verb names itself: {err}");
     assert!(!o.stdout.contains(&b'{'), "a stopped script parks no answer: {}", String::from_utf8_lossy(&o.stdout));
 }
+
+/// Spawns the CLI with `stdin` piped in: a lane that starts serving
+/// (mcp) would answer the JSON-RPC line written here on stdout.
+fn cli_with_stdin(args: &[&str], stdin: &str) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_camcraft-cli"))
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the CLI binary runs");
+    if let Some(mut pipe) = child.stdin.take() {
+        // A lane that exits before reading closes the pipe: not a failure here.
+        let _ = pipe.write_all(stdin.as_bytes());
+    }
+    child.wait_with_output().expect("the CLI finishes")
+}
+
+/// The flag and argument names a usage text lists under ARGUMENTS /
+/// OPTIONS: the first column of each entry, split on ", " and spaces.
+fn listed_names(usage: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut inside = false;
+    for line in usage.lines() {
+        if line == "ARGUMENTS:" || line == "OPTIONS:" {
+            inside = true;
+            continue;
+        }
+        if !line.starts_with(' ') {
+            inside = false;
+        }
+        let entry = line.trim_start();
+        if inside && (entry.starts_with('-') || entry.starts_with('<')) {
+            // The first column ends at the first run of two spaces.
+            let col = entry.split("  ").next().unwrap_or(entry);
+            for part in col.split(", ") {
+                if let Some(w) = part.split_whitespace().next() {
+                    names.push(w.to_string());
+                }
+            }
+        }
+    }
+    names
+}
+
+#[test]
+fn every_subcommand_answers_help_and_names_its_flags() {
+    // Driven from the lane list the CLI itself dispatches on: a lane
+    // added there is checked here with no edit to this test.
+    for (cmd, usage) in camcraft_app::cli::HELP_LANES {
+        let names = listed_names(usage);
+        assert!(names.contains(&"--help".to_string()), "{cmd} usage lists --help");
+        for flag in ["--help", "-h"] {
+            let o = cli_str(&[cmd, flag]);
+            let text = String::from_utf8_lossy(&o.stdout);
+            assert_eq!(code(&o), 0, "{cmd} {flag} exits 0: {text}");
+            assert!(text.contains(&format!("camcraft-cli {cmd}")), "{cmd} {flag} names its command: {text}");
+            assert_eq!(text, usage, "{cmd} {flag} prints the lane's usage");
+            for name in &names {
+                assert!(text.contains(name.as_str()), "{cmd} {flag} names {name}: {text}");
+            }
+            assert!(o.stderr.is_empty(), "{cmd} {flag} is quiet on stderr");
+        }
+    }
+}
+
+#[test]
+fn every_listed_command_is_a_help_lane() {
+    // A command named in the top-level COMMANDS block without a
+    // HELP_LANES entry fails here; `help`/`version` take no flags.
+    let mut cmds = Vec::new();
+    let mut inside = false;
+    for line in camcraft_app::cli::TOP_USAGE.lines() {
+        if line == "COMMANDS:" {
+            inside = true;
+            continue;
+        }
+        if inside
+            && line.starts_with("    ")
+            && !line.starts_with("     ")
+            && let Some(w) = line.split_whitespace().next()
+        {
+            cmds.push(w.to_string());
+        }
+    }
+    assert!(!cmds.is_empty(), "the COMMANDS block was parsed");
+    for c in cmds {
+        assert!(
+            camcraft_app::cli::HELP_LANES.iter().any(|(n, _)| *n == c),
+            "command {c} is listed but has no HELP_LANES entry"
+        );
+    }
+}
+
+#[test]
+fn help_flag_answers_anywhere_in_the_argv() {
+    // The project does not exist: the help answer must not read it.
+    let o = cli_str(&["process", "/no/such/project.camproj", "--help"]);
+    assert_eq!(code(&o), 0);
+    assert!(String::from_utf8_lossy(&o.stdout).contains("--cps"), "process help names --cps");
+}
+
+#[test]
+fn mcp_help_does_not_start_the_server() {
+    // A live server would answer this initialize line on stdout.
+    let init = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}\n";
+    let o = cli_with_stdin(&["mcp", "--help"], init);
+    assert_eq!(code(&o), 0);
+    let text = String::from_utf8_lossy(&o.stdout);
+    assert!(!text.contains("jsonrpc"), "help must not speak the protocol: {text}");
+    assert!(text.contains("--connect"), "mcp help names --connect");
+    // Control: the same line, no help, is answered - so the check above can fail.
+    let served = cli_with_stdin(&["mcp"], init);
+    assert!(String::from_utf8_lossy(&served.stdout).contains("jsonrpc"), "a plain mcp answers the line");
+}
+
+#[test]
+fn unknown_flags_still_refuse_with_a_two_and_help_lists_per_command() {
+    assert_eq!(code(&cli_str(&["process", "p.camproj", "--bogus"])), 2);
+    assert_eq!(code(&cli_str(&["script", "--bogus"])), 2);
+    assert_eq!(code(&cli_str(&["mcp", "--bogus"])), 2);
+    let o = cli_str(&["help"]);
+    assert!(String::from_utf8_lossy(&o.stdout).contains("<command> --help"), "top-level help points at per-command help");
+}

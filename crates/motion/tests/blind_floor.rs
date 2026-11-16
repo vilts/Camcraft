@@ -144,6 +144,7 @@ fn silent(facets: &[Triangle], region: &Region, t: &camcraft_motion::cl::Toolpat
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(t, &cx)
 }

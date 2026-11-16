@@ -15,9 +15,9 @@
 //! ours (M8.1's engagement study, the waterline tiling from the
 //! pocket's own law).
 //!
-//! Gate map (M4.4): covers app::commands, app::geometry, app::machining2d,
-//! app::machining3d, app::model, app::operation, app::schema, app::stock,
-//! app::tools, app::world.
+//! Gate map (M4.4): covers app::commands, app::geometry, motion::machining2d,
+//! motion::machining3d, app::model, app::operation, app::schema, geometry::geometry::stock,
+//! tools::tools, app::world.
 
 mod common;
 
@@ -110,6 +110,7 @@ fn text_hsm(params: OpParams, tag: &str) -> String {
 /// whatever the pin replaces.
 fn pocket(strategy: PocketStrategy, eng: f64) -> OpParams {
     OpParams::Pocket {
+        blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 3.0,
         stock_to_leave: 0.0,
@@ -132,6 +133,7 @@ fn pocket(strategy: PocketStrategy, eng: f64) -> OpParams {
 
 fn adaptive(eng: f64) -> OpParams {
     OpParams::Adaptive2D {
+        blend_radius: None, blend_turns: false,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 3.0,
         stock_to_leave: 0.0,
@@ -146,12 +148,15 @@ fn adaptive(eng: f64) -> OpParams {
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
         optimal_load: camcraft_app::load::load_of_degrees(eng),
+        method: camcraft_app::machining2d::AdaptiveMethod::Spiral,
+        troch: camcraft_app::machining2d::AdaptiveTrochParams::default(),
         tilt: None,
     }
 }
 
 fn offset() -> OpParams {
     OpParams::Offset2D {
+        blend_radius: None, blend_turns: false,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 3.0,
         stock_to_leave: 0.0,

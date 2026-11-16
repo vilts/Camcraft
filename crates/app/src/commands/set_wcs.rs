@@ -70,6 +70,121 @@ impl SetWcsOrigin {
     pub fn entity_name(&self) -> &str {
         &self.entity_name
     }
+
+    /// Place a NAMED setup's WCS (#771): the same validation as
+    /// [`SetWcsOrigin::new`], but the setup is named rather than the
+    /// active one - the Setups pages place each setup's origin from
+    /// its own rows. `None` keeps the active-setup behaviour.
+    pub fn for_setup(
+        world: &World,
+        setup: Option<&str>,
+        location: Location,
+    ) -> Result<Self, CommandError> {
+        let mut location = location;
+        let label = crate::setup::wcs_label(world, setup);
+        if !location.rot.iter().all(|v| v.is_finite()) {
+            return Err(CommandError::Invalid(format!(
+                "{label}: rotation must be finite (check the angle inputs)"
+            )));
+        }
+        location.rot = normalize_quat(location.rot).ok_or_else(|| {
+            CommandError::Invalid(format!("{label}: rotation is degenerate (zero norm)"))
+        })?;
+        if !location.pos.is_finite() {
+            return Err(CommandError::Invalid(format!("{label}: origin must be finite")));
+        }
+        let entity_name = crate::setup::wcs_entity_name(world, setup);
+        let prev = match model::find_by_name(world, &entity_name) {
+            Some(entity) => {
+                if !model::is_wcs(world, &entity) {
+                    return Err(CommandError::NameConflict(entity_name));
+                }
+                model::transform_of(world, &entity)
+            }
+            None => None,
+        };
+        Ok(SetWcsOrigin {
+            entity_name,
+            location,
+            prev,
+        })
+    }
+}
+
+/// Which box point names the origin (#771): the min corner or the
+/// centre - the two readings a shop takes off a block.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BoxPoint {
+    Corner,
+    Centre,
+}
+
+impl BoxPoint {
+    /// The short label the UI shows.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            BoxPoint::Corner => "corner",
+            BoxPoint::Centre => "centre",
+        }
+    }
+}
+
+/// Where a setup's WCS origin is placed from (#771): a picked vertex,
+/// or a box reading - the parts' bounds or the setup's stock.
+#[derive(Clone, Debug, PartialEq)]
+pub enum OriginAt {
+    /// A picked vertex, world-placed.
+    Vertex(crate::operation::GeoSel),
+    /// The parts' bounds in this setup's frame.
+    ModelBox(BoxPoint),
+    /// The setup's stock bounds.
+    StockBox(BoxPoint),
+}
+
+/// Resolve `at` to the origin point for `setup`, keeping the WCS's
+/// current rotation (the frame comes from the plane side, #771; the
+/// point only moves the origin). Refused by name, never a guessed
+/// point.
+pub fn place_setup_origin(world: &World, setup: &str, at: &OriginAt) -> Result<Location, CommandError> {
+    let label = crate::setup::wcs_label(world, Some(setup));
+    let wcs = crate::setup::wcs_entity_name(world, Some(setup));
+    let rot = model::find_by_name(world, &wcs)
+        .and_then(|e| model::transform_of(world, &e))
+        .map(|l| l.rot)
+        .unwrap_or_else(|| Location::default().rot);
+    let pos = match at {
+        OriginAt::Vertex(g) => crate::pick::align::vertex_with_pose(world, g, |world, entity| {
+            crate::setup_align::pose_in(world, entity, Some(setup))
+        }).map_err(CommandError::Invalid),
+        OriginAt::ModelBox(point) => box_point(
+            crate::setup_align::solid_aabb_in(world, Some(setup)),
+            *point,
+            "there is no model to read a box from - import one first",
+        ),
+        OriginAt::StockBox(point) => box_point(
+            model::stock_world_aabb_for(world, Some(setup)),
+            *point,
+            &format!("setup '{setup}' has no stock placed - place one on the Stock page"),
+        ),
+    }?;
+    let pos = crate::geometry::Point3::new(pos[0], pos[1], pos[2]);
+    if !pos.is_finite() {
+        return Err(CommandError::Invalid(format!("{label}: origin must be finite")));
+    }
+    Ok(Location { pos, rot })
+}
+
+fn box_point(aabb: Option<crate::geometry::Aabb>, point: BoxPoint, empty: &str) -> Result<[f64; 3], CommandError> {
+    let b = aabb.ok_or_else(|| CommandError::Invalid(empty.to_string()))?;
+    Ok(match point {
+        BoxPoint::Corner => [b.min.x, b.min.y, b.min.z],
+        BoxPoint::Centre => [
+            (b.min.x + b.max.x) / 2.0,
+            (b.min.y + b.max.y) / 2.0,
+            (b.min.z + b.max.z) / 2.0,
+        ],
+    })
 }
 
 impl Command for SetWcsOrigin {

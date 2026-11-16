@@ -10,7 +10,7 @@
 //! Provenance: our own golden programs, engines and parity law - the
 //! M7.1 C parity suite (camcraft-sim) generalized to the goldens.
 //!
-//! Gate map (M4.4): covers app::stock_sim (both arms of the seam).
+//! Gate map (M4.4): covers app::stock_sim, sim::stock_sim (both arms of the seam).
 
 mod common;
 

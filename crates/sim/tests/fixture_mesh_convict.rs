@@ -149,9 +149,9 @@ fn a_mesh_top_face_keeps_the_strict_dip_and_a_dip_convicts() {
         feed(p(-50.0, 0.0, 19.999), p(50.0, 0.0, 19.999)),
     ]);
     let (boxed, meshed) = judge(&path, &f);
-    for i in 0..3 {
+    for (i, m) in path.moves.iter().enumerate().take(3) {
         assert_eq!(hit_at(&boxed, i), None, "flush is silent ({i}): {boxed:?}");
-        assert!(!penetrates(&f, &path.moves[i], 1e-6), "and the mesh agrees nothing goes in ({i})");
+        assert!(!penetrates(&f, m, 1e-6), "and the mesh agrees nothing goes in ({i})");
     }
     assert_eq!(hit_at(&meshed, 3), Some(FixturePart::Rapid), "{meshed:?}");
     assert_eq!(hit_at(&meshed, 4), Some(FixturePart::Flute), "{meshed:?}");

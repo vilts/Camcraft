@@ -34,6 +34,7 @@ pub fn plan_operation(world: &World, p: &Pocket, tool: &str, name: Option<&str>)
     let mut base = operation::seed_params(kind);
     if let Some(t) = model::find_by_name(world, tool).and_then(|e| model::tool_of(world, &e)) {
         operation::seed_helix_for_tool(&mut base, t.diameter);
+        crate::cutting_rows::seed_feed_for_tool(world, &mut base, &t);
     }
     let (src, params) = operation_for(p, &base)?;
     let label = KindInfo::ALL.get(kind).map_or("Operation", |k| k.label);

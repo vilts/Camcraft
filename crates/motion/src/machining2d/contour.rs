@@ -9,9 +9,9 @@ use crate::geo2d::{Loop, Point2, Region};
 use crate::geometry::{Point3, Triangle};
 use crate::links::{Link, LinkTally};
 
-use super::arcs::{fit_arcs, push_segs};
+use super::arcs::{fit_arcs_sided, push_segs};
 use super::contour_depth::{Ladder, ladder};
-use super::contour_entry::{Engage, crosses, say, seam_leads, wall_arc, wall_arc_top};
+use super::contour_entry::{Engage, crosses, flatten, say, seam_leads, wall_arc, wall_arc_top};
 use super::contour_comp::{self, SpanCtx};
 use super::contour_link::{plan_links, push_stay, ring_link};
 use super::contour_step::{Said, Step, engage_level};
@@ -20,8 +20,8 @@ use super::ring::Ring;
 use super::face::GenError;
 use super::fillet::{Legal, fillet_corners};
 use super::fillet_tally::{FilletTally, fillet_floor};
-use super::lead_ext::{axis_reseat, extend_leads, push_lead_down, retrace};
-use super::lead_fit::reseat;
+use super::contour_start;
+use super::lead_ext::{extend_leads, push_lead_down, retrace};
 
 pub use super::contour_params::{ContourParams, Lead, Side};
 
@@ -33,11 +33,13 @@ pub use super::contour_params::{ContourParams, Lead, Side};
 /// `- (r - leave)`; that is the same curve written from the void side -
 /// here the region is material, so both outer walls and island/hole
 /// walls come out of one positive offset. [`Side::Inside`] negates that
-/// one term - the region erodes and each loop traverses reversed, so the
-/// cutter rides the boundary from the void side with material still on
-/// the left (Auto is this Outside law inside the generator). Loop order
-/// is deterministic (largest absolute area first, canonically oriented,
-/// and traversed per the climb/side XOR).
+/// one term - the region erodes and each loop traverses the other way, so
+/// the cutter rides the boundary from the void side with the material on
+/// the same side of travel (Auto is this Outside law inside the
+/// generator). Climb keeps the material on the right (M3, #1555): outside
+/// rings run clockwise, inside rings counter-clockwise. Loop order is
+/// deterministic (largest absolute area first, canonically oriented, and
+/// traversed per the climb/side rule).
 ///
 /// Between subpaths (tab hops) and between loops of one level the tool
 /// retracts to the hop plane - `retract_z`, clamped to `clearance_z` so
@@ -113,6 +115,9 @@ fn contour_impl(
     let flat = p.levels()?;
     let mut loops: Vec<&Loop> = center.loops().iter().collect();
     loops.sort_by(|a, b| b.area().abs().total_cmp(&a.area().abs()));
+    // #1448: the ring the user's start point re-sequences, or its refusal.
+    let pick = contour_start::pick_ring(&loops, p)?;
+    let exit = contour_start::pick_exit(&loops, p)?; // #1473
 
     // The rings every level plans to walk, as closed polylines - the
     // link chords of M8.1's plan law get proven against these. Tabbed
@@ -121,11 +126,7 @@ fn contour_impl(
     let plan: Vec<Vec<Point2>> = loops
         .iter()
         .map(|l| {
-            let mut v: Vec<Point2> = if p.climb != inside {
-                l.points().to_vec()
-            } else {
-                l.points().iter().rev().copied().collect()
-            };
+            let mut v: Vec<Point2> = super::ring::walked(l.points(), p.climb == inside, inside);
             if v.len() > 1 {
                 let (first, last) = (v[0], v[v.len() - 1]);
                 if first.x != last.x || first.y != last.y {
@@ -145,10 +146,10 @@ fn contour_impl(
         .with_links(p.links, p.helix_radius);
     let mut said = Said::default();
     let cert = Cert::Region(&center);
-    // Climb travel keeps the part on the left on both sides (see the
-    // per-loop flip below), so the air - the only side a fillet may
-    // stand on - is right for climb, left for conventional.
-    let legal = Legal { region: &center, inside, air_left: Some(!p.climb) };
+    // Climb travel keeps the part on the RIGHT on both sides (#1555, see
+    // the per-loop flip below), so the air - the only side a fillet may
+    // stand on - is left for climb, right for conventional.
+    let legal = Legal { region: &center, inside, air_left: Some(p.climb) };
     let mut tally = FilletTally::default();
     // Lead shrinks, refusals and reseated starts, each said once.
     let mut lead_notes: Vec<String> = Vec::new();
@@ -178,6 +179,9 @@ fn contour_impl(
     // The dive links cut on one plane (the bore side's descents): planar
     // feeds a keep-down ring link at that plane must not cross.
     let mut dives: (f64, Vec<Vec<Point2>>) = (f64::NAN, Vec::new());
+    // The last ring's leads: a keep-down link proves itself against them
+    // and the next ring's, cut paths too (#1555: climb's leads cross it).
+    let mut last_leads: Vec<Vec<Point2>> = Vec::new();
     let is_tabbed = |z: f64| p.tab_count > 0 && z < p.bottom_z + p.tab_height;
     // The cut order, and where the stay-down link joins it (contour_link).
     let (sched, stay) = plan_links(p, lad, &plan, &mut lead_notes);
@@ -201,26 +205,25 @@ fn contour_impl(
         // last cut at, whatever another ring's floor added.
         let rz = lad.ring(li);
         let rzi = rz.iter().position(|q| q.to_bits() == z.to_bits()).unwrap_or(0);
-        // Canonical orientation is material-on-the-left travel;
-        // conventional climbing reverses it. An Inside region was
-        // eroded, not grown, so its stored winding puts the (outside)
-        // material on the right - flip with the sign and the rule.
-        let pts: Vec<Point2> = if p.climb != inside {
-            l.points().to_vec()
-        } else {
-            l.points().iter().rev().copied().collect()
-        };
+        // #1555: with the M3 spindle every 2D op posts, climb milling
+        // keeps the material on the RIGHT of travel (down milling: the
+        // tooth meets the stock at full chip and leaves it thin) - an
+        // outside ring runs clockwise, an inside one counter-clockwise;
+        // conventional reverses it. A stored ring keeps its area on the
+        // left: grown (Outside), that area is the part, so climb walks
+        // it reversed; eroded (Inside), it is the bore's air and the
+        // material already stands right of the stored walk.
+        let pts: Vec<Point2> = super::ring::walked(l.points(), p.climb == inside, inside);
         // A closed ring whose start leaves the lead no room (a bore
         // inset's corner) starts mid-run instead; tabbed levels keep the
         // start their windows are measured from.
         // M11.3 C: an axis-aligned start first (an arc entry tangent to
         // it posts as a true G18/G19), then the lead room's own reseat.
+        // A control-compensated ring seams mid-run (contour_comp). #1448:
+        // the user's start point re-sequences its ring instead.
         let ap = &p.links.approach;
-        let pts = if !tabbed && ap.axis_start { axis_reseat(&pts, ap.axis_tol).unwrap_or(pts) } else { pts };
-        // A control-compensated ring seams mid-run (contour_comp).
-        let pts = if prog.is_some() && !tabbed { contour_comp::seam_mid_run(&pts) } else { pts };
-        let pts = if tabbed { pts } else { reseat(&pts, p, &legal, &mut lead_notes).unwrap_or(pts) };
-        let ring = Ring::new(pts);
+        let picked = pick.filter(|&(pi, _)| pi == li).map(|(_, q)| q);
+        let ring = Ring::new(contour_start::seat(pts, picked, tabbed, prog.is_some(), p, &legal, &mut lead_notes));
         // The overlap past the start on closed rings (M11.3 C): not on
         // tabbed levels (their windows are the tab law's) and not under a
         // keep-down level link (the next level descends from the seam).
@@ -242,7 +245,7 @@ fn contour_impl(
             if poly.len() < 2 {
                 continue;
             }
-            let mut walk = fit_arcs(&poly, p.tolerance);
+            let mut walk = fit_arcs_sided(&poly, p.tolerance, legal.air_left);
             if p.blend_turns {
                 let (w, t) = fillet_corners(&walk, poly[0], r, p.tolerance, &legal);
                 walk = w;
@@ -254,11 +257,17 @@ fn contour_impl(
             // extensions ride the same room (lead_ext).
             let (entry, lead, lead_off) = seam_leads(&walk, &poly, p, &legal, &mut lead_notes);
             let (entry, lead, lead_off) = extend_leads(entry, lead, lead_off, &walk, &poly, p, &legal, &mut lead_notes);
+            if picked.is_some() {
+                contour_start::lead_held(p, poly[0], &lead)?;
+            }
             // The overlap (M11.3 C): the walk retraces its own first
             // moves - the same segments, so the same chords, never a new
             // crossing - and the lead-out leaves from where that ends.
             let mut window = (poly, walk, entry, lead, lead_off);
-            if ov > 0.0 {
+            if let Some((_, q)) = exit.filter(|&(ei, _)| ei == li) {
+                // #1473: on past the seam to the user's exit point.
+                window = contour_start::exit_at(window, q, p, &legal, &mut lead_notes)?;
+            } else if ov > 0.0 {
                 let (rpoly, rwalk) = retrace(&window.0, &window.1, ov);
                 let (en, li, lo) = seam_leads(&rwalk, &rpoly, p, &legal, &mut lead_notes);
                 let (en, li, lo) = extend_leads(en, li, lo, &rwalk, &rpoly, p, &legal, &mut lead_notes);
@@ -271,6 +280,8 @@ fn contour_impl(
             }
             let (poly, walk, entry, lead, lead_off) = window;
             let e2 = Point2::new(entry.x, entry.y);
+            let here = vec![flatten(e2, &lead), flatten(poly.last().copied().unwrap_or(e2), &lead_off)];
+            let link_leads: Vec<Vec<Point2>> = std::mem::replace(&mut last_leads, here.clone()).into_iter().chain(here).collect();
             let lf = ap.lead_feed(p.feed);
             // The vertical lead-in's top (M11.3 C): a dive at the lead's
             // start stops this high and the lead descends along itself.
@@ -335,7 +346,7 @@ fn contour_impl(
                 // Ring to ring within one level: the pass link, proved
                 // against the rings and this level's dive links.
                 let cut = if dives.0.to_bits() == z.to_bits() { dives.1.as_slice() } else { &[] };
-                ring_link(&mut b, p, &legal, &[&plan, cut], e2, z, hop_z, tabbed, &mut lifted);
+                ring_link(&mut b, p, &legal, &[&plan, cut, &link_leads], e2, z, hop_z, tabbed, &mut lifted);
             } else if k == 0 {
                 // The level's first engagement: a crossing, or the path's
                 // first entry (prev_z falls back to clearance there).
@@ -383,9 +394,12 @@ fn contour_impl(
                         e2.x,
                         e2.y,
                         lead_notes.join("; ")
-                    )));
+                    ))
+                    .with_ghost_moves(b.moves()));
                 }
-                contour_comp::push_span(&mut b, &SpanCtx { prog, p }, walk_at - 1, out_at)?;
+                // #871: a part-way refusal hands back the rings so far.
+                contour_comp::push_span(&mut b, &SpanCtx { prog, p }, walk_at - 1, out_at)
+                    .map_err(|e| e.with_ghost_moves(b.moves()))?;
             }
         }
     }
@@ -411,13 +425,13 @@ fn contour_impl(
 }
 
 
-/// Which side of travel is air: canonical (climb) travel keeps material on
-/// the left, so air is right; reversed travel flips both.
+/// Which side of travel is air: climb travel (M3, #1555) keeps the
+/// material on the right, so air is left; conventional flips both.
 pub(super) fn air_side(t: Point2, climb: bool) -> Point2 {
     if climb {
-        Point2::new(t.y, -t.x)
-    } else {
         Point2::new(-t.y, t.x)
+    } else {
+        Point2::new(t.y, -t.x)
     }
 }
 

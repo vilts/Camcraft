@@ -308,7 +308,7 @@ fn cross_drill_refuses_nonsense_by_name() {
         "a NaN stock Z top is refused at the door, not flown blind over"
     );
     let ok_list = [ok];
-    for c in [CycleChoice::Tap, CycleChoice::Bore, CycleChoice::BackBore] {
+    for c in [CycleChoice::Tap, CycleChoice::Bore, CycleChoice::BackBore, CycleChoice::Ream] {
         let mut p = xparams(&dt, &ok_list);
         p.cycle = c;
         assert!(matches!(cross_drill(&p), Err(GenError::Invalid(_))), "{c:?} is not radial-capable in v1");

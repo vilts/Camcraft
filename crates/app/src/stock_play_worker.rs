@@ -30,19 +30,24 @@
 //!   last frame the UI took (unioned over any it never took) as a
 //!   patch; a checkpoint restore, a broken chain, or a patch as big as
 //!   the layer sends the whole layer instead.
+//! - **The move in flight is a fraction, not a move (#1516).** A
+//!   request names the move and how far along it the tool is drawn;
+//!   the worker cuts whole moves as above, and on landing cuts the
+//!   travelled part on a copy (`FieldPlay::seek_to`). A fraction-only
+//!   change costs one stock copy and one partial sweep - no re-cut.
 //! - **Refuse, never crash.** A build or cut failure is published as
 //!   `Err` and the worker ends; a poisoned lock reads as a lost worker
 //!   by name. Dropping the handle stops and joins the thread: no
 //!   playback outlives its document.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use crate::clock::Instant;
 use std::time::Duration;
 
-use crate::stock_play::{FieldPlay, PlayIndex, PlaySeed};
+use crate::stock_play::{settle_frac, FieldPlay, PlayIndex, PlaySeed};
 use crate::stock_view::{CutLayer, FieldView, Packed, PackedBase};
 use crate::stock_sim::preview::{pack_cut, pack_cut_patch, LatticeMeta};
 
@@ -63,16 +68,20 @@ pub const JUMP_MOVES: usize = CHUNK_MAX;
 /// The publication floor while jumping: progress once a second.
 pub const JUMP_PUBLISH: Duration = Duration::from_secs(1);
 
-/// One published picture: the view and the moves it is cut by.
+/// One published picture: the view, the moves it is cut by, and how
+/// far along move `at` the tool is shown (#1516).
 #[derive(Clone, Debug)]
 pub struct PlayFrame {
     pub at: usize,
+    pub frac: f64,
     pub view: Arc<FieldView>,
 }
 
 #[derive(Default)]
 struct Req {
     target: usize,
+    /// The travelled fraction of move `target` (#1516).
+    frac: f64,
     stop: bool,
 }
 
@@ -99,6 +108,8 @@ pub struct PlayWorker {
     /// Moves cut in the newest frame `take` handed out (`usize::MAX`:
     /// none yet).
     shown: AtomicUsize,
+    /// The fraction of that frame, as `f64` bits.
+    shown_frac: AtomicU64,
 }
 
 fn lock<T>(m: &Mutex<T>) -> Option<MutexGuard<'_, T>> {
@@ -116,7 +127,7 @@ impl PlayWorker {
             .name("camcraft-playback".into())
             .spawn(move || run(&inner, seed))
             .map_err(|e| format!("playback worker would not start: {e}"))?;
-        Ok(PlayWorker { shared, index, handle: Some(handle), shown: AtomicUsize::new(usize::MAX) })
+        Ok(PlayWorker { shared, index, handle: Some(handle), shown: AtomicUsize::new(usize::MAX), shown_frac: AtomicU64::new(0) })
     }
 
     /// The move table the playhead maps onto.
@@ -127,10 +138,17 @@ impl PlayWorker {
 
     /// Ask for the stock cut to `k` moves; the newest request wins.
     pub fn request(&self, k: usize) {
+        self.request_at(k, 0.0);
+    }
+
+    /// Ask for the stock cut to `k` moves plus fraction `frac` of move
+    /// `k`'s travel (#1516); the newest request wins.
+    pub fn request_at(&self, k: usize, frac: f64) {
         if let Some(mut g) = lock(&self.shared.req)
-            && g.target != k
+            && (g.target != k || g.frac.to_bits() != frac.to_bits())
         {
             g.target = k;
+            g.frac = frac;
             self.shared.wake.notify_one();
         }
     }
@@ -144,6 +162,7 @@ impl PlayWorker {
                 let r = g.latest.take().or_else(|| self.lost());
                 if let Some(Ok(f)) = &r {
                     self.shown.store(f.at, Ordering::Relaxed);
+                    self.shown_frac.store(f.frac.to_bits(), Ordering::Relaxed);
                 }
                 r
             }
@@ -179,8 +198,13 @@ impl PlayWorker {
     /// A paused playhead at its displayed target needs no redraw timer.
     #[must_use]
     pub fn needs_poll(&self) -> bool {
-        let target = lock(&self.shared.req).map(|g| g.target.min(self.index.total()));
-        if target.is_none() || self.shown_at() != target {
+        let total = self.index.total();
+        let target = lock(&self.shared.req).map(|g| {
+            let k = g.target.min(total);
+            (k, settle_frac(k, total, g.frac).to_bits())
+        });
+        let shown = self.shown_at().map(|k| (k, self.shown_frac.load(Ordering::Relaxed)));
+        if target.is_none() || shown != target {
             return true;
         }
         lock(&self.shared.out).is_none_or(|g| g.latest.is_some())
@@ -202,7 +226,7 @@ impl Drop for PlayWorker {
         if let Some(h) = self.handle.take()
             && h.join().is_err()
         {
-            eprintln!("playback worker: the thread ended abnormally");
+            tracing::error!("playback worker: the thread ended abnormally");
         }
     }
 }
@@ -217,15 +241,16 @@ fn publish(shared: &Shared, r: Result<PlayFrame, String>) {
 
 /// The next target, or `None` to stop; waits while there is nothing
 /// to do (the cut stands at the target and that state was published).
-fn next_target(shared: &Shared, at: usize, published: Option<usize>, total: usize) -> Option<usize> {
+fn next_target(shared: &Shared, pos: (usize, f64), published: Option<(usize, f64)>, total: usize) -> Option<(usize, f64)> {
     let mut g = lock(&shared.req)?;
     loop {
         if g.stop {
             return None;
         }
         let k = g.target.min(total);
-        if k != at || published != Some(at) {
-            return Some(k);
+        let f = settle_frac(k, total, g.frac);
+        if (k, f.to_bits()) != (pos.0, pos.1.to_bits()) || published.map(|p| (p.0, p.1.to_bits())) != Some((pos.0, pos.1.to_bits())) {
+            return Some((k, f));
         }
         g = shared.wake.wait(g).ok()?;
     }
@@ -289,7 +314,7 @@ fn snapshot(shared: &Shared, play: &mut FieldPlay, base: Option<&Arc<PackedBase>
         chain.last = Some(last);
         view.packed = Some(Packed { base: Arc::clone(base), seq, cut });
     }
-    PlayFrame { at: play.at(), view: Arc::new(view) }
+    PlayFrame { at: play.at(), frac: play.frac(), view: Arc::new(view) }
 }
 
 fn run(shared: &Shared, seed: PlaySeed) {
@@ -303,7 +328,7 @@ fn run(shared: &Shared, seed: PlaySeed) {
     };
     let (mut published, mut last, mut chunk) = (None, None::<Instant>, 64usize);
     let mut chain = Chain::default();
-    while let Some(k) = next_target(shared, play.at(), published, play.total()) {
+    while let Some((k, f)) = next_target(shared, (play.at(), play.frac()), published, play.total()) {
         // A jump (the module law) cuts checkpoint to checkpoint with
         // the ledger off, and stays one until it lands (the last stride
         // is not a play step); a play step cuts a frame's worth of moves.
@@ -337,10 +362,16 @@ fn run(shared: &Shared, seed: PlaySeed) {
             // The landing picture is the whole upload the next play
             // step's patches are relative to: the ledger restarts here.
             play.set_batched(false);
+            // The move in flight, as far as the tool has travelled.
+            if let Err(e) = play.seek_to(k, f) {
+                return publish(shared, Err(e));
+            }
         }
-        if published != Some(play.at()) && (landed || due) {
+        let pos = (play.at(), play.frac());
+        let fresh = published.is_none_or(|p: (usize, f64)| (p.0, p.1.to_bits()) != (pos.0, pos.1.to_bits()));
+        if fresh && (landed || due) {
             publish(shared, Ok(snapshot(shared, &mut play, base.as_ref(), &mut chain)));
-            published = Some(play.at());
+            published = Some(pos);
             last = Some(Instant::now());
         }
     }

@@ -12,7 +12,9 @@
 //! ## The turning tool frame (tip at the origin)
 //!
 //! - **+x radial**: away from the spindle axis, in the meridian half
-//!   plane the tool works in (the side its moves stand on).
+//!   plane the holder stands in (the side its moves stand on - a front
+//!   or a rear post alike; #1102). A rigid holder never flips through
+//!   the axis, so +x keeps that direction while a tip runs past centre.
 //! - **+z along the spindle**: the lathe's +Z, the way the turning
 //!   station grows (from the chuck toward the free end facing faces).
 //! - **+y = z x x**, normal to that plane. The part is a solid of
@@ -22,7 +24,9 @@
 //!
 //! A body point (x, y, z) with the tip at signed radius X and station
 //! S stands sqrt((X + x)^2 + y^2) from the spindle axis at station
-//! S + z.
+//! S + z, where X is signed along the holder's own +x: positive on its
+//! side, negative only for a tip run past centre. A caller whose frame
+//! counts the other side positive passes -X (#1102).
 //!
 //! ## Conservative by construction
 //!
@@ -161,7 +165,8 @@ pub struct Reach {
 
 impl Reach {
     /// The least and greatest distance from the spindle axis these
-    /// spans reach with the tip at signed radius `x_tip`: |X + x| over
+    /// spans reach with the tip at radius `x_tip` signed along the
+    /// holder's +x (the module's frame, #1102): |X + x| over
     /// the x span (0 when it crosses the axis), combined with the |y|
     /// span - y only ever adds distance, so the least |y| raises the
     /// floor and the greatest raises the ceiling.

@@ -39,7 +39,12 @@ impl State {
         match posting::post_per_op(&self.world, &dir, &program) {
             Ok(files) => {
                 let lines: usize = files.iter().map(|f| f.posted.lines).sum();
-                self.status = format!("posted {} file(s), one per operation, {lines} lines to {}", files.len(), dir.display());
+                self.status = format!(
+                    "posted {} file(s), one per operation, {lines} lines in {} to {}",
+                    files.len(),
+                    posting::unit_word(self.units()),
+                    dir.display()
+                );
                 if let Some(line) = files.first().and_then(|f| f.posted.not_judged.clone()) {
                     self.status = format!("{} - WARNING: {line}", self.status);
                 }
@@ -71,7 +76,7 @@ impl State {
                 format!("{file} ({})", f.mount.setups.join(", "))
             })
             .collect();
-        self.status = format!("posted {} file(s), one per machine and post: {}", files.len(), names.join("; "));
+        self.status = format!("posted {} file(s) in {}, one per machine and post: {}", files.len(), posting::unit_word(self.units()), names.join("; "));
         if let Some(line) = files.first().and_then(|f| f.posted.not_judged.clone()) {
             self.status = format!("{} - WARNING: {line}", self.status);
         }
@@ -95,6 +100,12 @@ impl State {
     pub(super) fn post_program_dialog(&mut self) {
         // #258: both pickers open where this document last posted, else
         // beside the saved project (`post_file::for_document`).
+        if self.browser_build {
+            // #1431: the browser downloads the one combined program (a
+            // per-op post was refused before it got here).
+            self.download_program();
+            return;
+        }
         let target = crate::post_file::for_document(self);
         if posting::post_options(&self.world).per_op {
             let mut picker = crate::file_dialog::FileDialog::new().set_title("Post one file per operation into");

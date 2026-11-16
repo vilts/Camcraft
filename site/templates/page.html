@@ -4,6 +4,13 @@
 {% block description %}{{ page.description | default(value=config.description) }}{% endblock description %}
 {% block content %}
 {% set parent = get_section(path=page.ancestors | last) %}
+{% set is_guide = "guide/_index.md" in page.ancestors %}
+{% if is_guide %}
+{% set active_permalink = page.permalink %}
+<div class="guide-layout">
+  {% include "guide-nav.html" %}
+  <div class="guide-content">
+{% endif %}
 <p class="crumbs"><a href="{{ parent.permalink }}">{{ parent.title }}</a></p>
 <article class="doc">
   <h1>{{ page.title }}</h1>
@@ -18,4 +25,8 @@
   {% if page.lower %}<a href="{{ page.lower.permalink }}">&larr; {{ page.lower.title }}</a>{% else %}<span></span>{% endif %}
   {% if page.higher %}<a href="{{ page.higher.permalink }}">{{ page.higher.title }} &rarr;</a>{% endif %}
 </nav>
+{% if is_guide %}
+  </div>
+</div>
+{% endif %}
 {% endblock content %}

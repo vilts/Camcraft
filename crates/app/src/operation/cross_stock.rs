@@ -24,8 +24,9 @@ use crate::drilling::CrossHole;
 use crate::geometry::{Point3, Triangle};
 use crate::machining2d::GenError;
 use crate::tools::Tool;
+use crate::units::{self, Unit};
 
-use super::cross_entry::{Line, StockMesh, entry};
+use super::cross_entry::{Line, StockMesh, entry_grown};
 
 /// What the cross drill stands off, measured about world Z through the
 /// spindle origin `(ox, oy)` (already the kernel's frame).
@@ -42,6 +43,8 @@ pub(super) struct Standoff {
     /// own line first meets either (#85) - a part poking out of the
     /// stock (a modelling error) still counts as material on its line.
     pub mesh: StockMesh,
+    /// Standoff and slab growth for a reduced-fidelity model (#1053).
+    pub grow: f64,
 }
 
 fn reach(facets: &[Triangle], ox: f64, oy: f64) -> (f64, Option<f64>) {
@@ -57,15 +60,17 @@ fn reach(facets: &[Triangle], ox: f64, oy: f64) -> (f64, Option<f64>) {
 /// part - today's reading, said so in the doc comment, not guessed.
 /// The stock counts only when it reaches past the part, so a stock
 /// equal to the part keeps the part-only chain bit for bit.
-pub(super) fn standoff(part: &[Triangle], stock: Option<&[Triangle]>, ox: f64, oy: f64) -> Standoff {
+pub(super) fn standoff(part: &[Triangle], stock: Option<&[Triangle]>, ox: f64, oy: f64, excess: f64) -> Standoff {
+    let grow = super::fidelity_law::band_growth(excess);
     let (part_r, part_z) = reach(part, ox, oy);
     let Some((stock_r, stock_z)) = stock.filter(|s| !s.is_empty()).map(|s| reach(s, ox, oy)) else {
-        return Standoff { r: part_r, z_max: part_z, raw: None, mesh: StockMesh::default() };
+        let g = if part.is_empty() { 0.0 } else { grow };
+        return Standoff { r: part_r + g, z_max: part_z.map(|z| z + g), raw: None, mesh: StockMesh::default(), grow: g };
     };
-    let raw = (stock_r > part_r + 1e-9).then_some(stock_r);
+    let raw = (stock_r > part_r + 1e-9).then_some(stock_r + grow);
     let z_max = match (part_z, stock_z) {
-        (Some(a), Some(b)) if b > a + 1e-9 => Some(b),
-        (a, b) => a.or(b),
+        (Some(a), Some(b)) if b > a + 1e-9 => Some(b + grow),
+        (a, b) => a.or(b).map(|z| z + grow),
     };
     let shift = |p: Point3| Point3::new(p.x - ox, p.y - oy, p.z);
     let frame = |s: &[Triangle]| StockMesh::new(s.iter().map(|t| Triangle::new(shift(t.a), shift(t.b), shift(t.c))).collect());
@@ -77,7 +82,7 @@ pub(super) fn standoff(part: &[Triangle], stock: Option<&[Triangle]>, ox: f64, o
         }
         _ => StockMesh::default(),
     };
-    Standoff { r: raw.unwrap_or(part_r), z_max, raw, mesh }
+    Standoff { r: raw.unwrap_or(part_r + grow), z_max, raw, mesh, grow }
 }
 
 /// The hole line through `p` plunging along the XY axis-aligned `dir`
@@ -136,6 +141,7 @@ pub(super) fn to_raw_mouths(
     st: &Standoff,
     raw: f64,
     tool: &Tool,
+    unit: Unit,
 ) -> Result<(Vec<CrossHole>, Vec<f64>), GenError> {
     let (d, rim) = (tool.diameter, body_rim(tool));
     let mouths: Vec<CrossHole> = holes
@@ -147,15 +153,17 @@ pub(super) fn to_raw_mouths(
             if c * dc > 0.0 {
                 return Err(GenError::invalid_at(
                     format!(
-                        "cross hole at ({:.3}, {:.3}, {:.3}) plunges away from the spindle - a cross \
+                        "cross hole at ({}, {}, {}) plunges away from the spindle - a cross \
                          drill feeds toward the bar's axis; flip the hole's direction",
-                        h.origin.x, h.origin.y, h.origin.z
+                        units::len(h.origin.x, unit, 3),
+                        units::len(h.origin.y, unit, 3),
+                        units::len(h.origin.z, unit, 3)
                     ),
                     h.origin,
                 ));
             }
             let line = hole_line(h.origin, h.dir);
-            let shift = entry(&st.mesh, raw, line, 0.5 * d).unwrap_or(0.0) - c.abs();
+            let shift = entry_grown(&st.mesh, raw, line, 0.5 * d, st.grow).unwrap_or(0.0) - c.abs();
             if !(shift.is_finite() && shift > 0.0) {
                 return Ok(*h);
             }
@@ -176,7 +184,7 @@ pub(super) fn to_raw_mouths(
         .iter()
         .map(|m| {
             let line = hole_line(m.origin, m.dir);
-            let added = entry(&st.mesh, raw, line, rim).map_or(0.0, |s| s - line.u(m.origin).abs());
+            let added = entry_grown(&st.mesh, raw, line, rim, st.grow).map_or(0.0, |s| s - line.u(m.origin).abs());
             if added.is_finite() { added.max(0.0) } else { 0.0 }
         })
         .collect();
@@ -246,7 +254,7 @@ fn slab_approach(a: Point3, b: Point3, axis: [f64; 3], w: f64) -> f64 {
 /// behind the flutes, a wider shank's - outside the raw stock when
 /// there is one; every other rapid keeps the body's rim outside
 /// `st.r`. Anything else is a rapid through material, refused by name.
-pub(super) fn rapids_clear(t: &Toolpath, st: &Standoff, tool: &Tool) -> Result<(), GenError> {
+pub(super) fn rapids_clear(t: &Toolpath, st: &Standoff, tool: &Tool, unit: Unit) -> Result<(), GenError> {
     let tol = 1e-6;
     let (d, rim) = (tool.diameter, body_rim(tool));
     let mut kerf: Option<(Point3, [f64; 3])> = None;
@@ -270,10 +278,10 @@ pub(super) fn rapids_clear(t: &Toolpath, st: &Standoff, tool: &Tool) -> Result<(
                 // outside where it first meets the stock on that line -
                 // the face of a box, not its corner radius.
                 let tip = line.u(m.from).min(line.u(m.to));
-                let mut short = entry(&st.mesh, raw, line, 0.5 * d).map(|e| (tip, e));
+                let mut short = entry_grown(&st.mesh, raw, line, 0.5 * d, st.grow).map(|e| (tip, e));
                 if tool.shank_d.is_finite() && tool.shank_d > d && tool.flute_len.is_finite() {
                     let fl = tool.flute_len.max(0.0);
-                    let s = entry(&st.mesh, raw, line, 0.5 * tool.shank_d).map(|e| (tip + fl, e));
+                    let s = entry_grown(&st.mesh, raw, line, 0.5 * tool.shank_d, st.grow).map(|e| (tip + fl, e));
                     short = match (short, s) {
                         (Some(a), Some(b)) => Some(if b.1 - b.0 > a.1 - a.0 { b } else { a }),
                         (a, b) => a.or(b),
@@ -282,9 +290,13 @@ pub(super) fn rapids_clear(t: &Toolpath, st: &Standoff, tool: &Tool) -> Result<(
                 let Some((got, need)) = short else { continue };
                 if got.is_nan() || got < need - tol {
                     return Err(GenError::Invalid(format!(
-                        "cross-drill rapid {i} stops {got:.3} mm out along its hole's line, inside where \
-                         the tool body meets the stock ({need:.3} mm) - a rapid through material; raise \
-                         the clearance or retract height, or turn the bar to size first"
+                        "cross-drill rapid {i} stops {} {} out along its hole's line, inside where \
+                         the tool body meets the stock ({}, {}) - a rapid through material; raise \
+                         the clearance or retract height, or turn the bar to size first",
+                        units::len(got, unit, 3),
+                        unit.suffix(),
+                        units::len(need, unit, 3),
+                        unit.suffix()
                     )));
                 }
                 continue;
@@ -301,9 +313,13 @@ pub(super) fn rapids_clear(t: &Toolpath, st: &Standoff, tool: &Tool) -> Result<(
         };
         if got.is_nan() || got < need - tol {
             return Err(GenError::Invalid(format!(
-                "cross-drill rapid {i} passes {got:.3} mm from the spindle, inside the stock's \
-                 {what} ({need:.3} mm) - a rapid through material; raise the clearance or \
-                 retract height, or turn the bar to size first"
+                "cross-drill rapid {i} passes {} {} from the spindle, inside the stock's \
+                 {what} ({}, {}) - a rapid through material; raise the clearance or \
+                 retract height, or turn the bar to size first",
+                units::len(got, unit, 3),
+                unit.suffix(),
+                units::len(need, unit, 3),
+                unit.suffix()
             )));
         }
     }

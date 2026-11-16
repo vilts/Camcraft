@@ -8,10 +8,11 @@
 //! microARC 4 / 770MX numbers from Tormach's published spec sheets.
 //!
 //! Gate map (M4.4): covers app::posting (index_swing, verification_gate),
-//! post::machine (nose_to_axis, turns_part), project (swing_note, #813).
+//! post::machine (nose_to_axis, turns_part, axis_to_table), project
+//! (swing_note, #813), app::posting::swing_standing (#1107).
 
 use camcraft_app::commands::{
-    AddTool, CreateOperation, GenerateOperation, History, ImportModel, LoadMachine, SelectPost, SetStock,
+    AddTool, CreateOperation, GenerateOperation, History, ImportModel, LoadMachine, SelectPost, SetFixtureFixed, SetStock,
     TagFixture,
 };
 use camcraft_app::geometry::{Point3, cube};
@@ -83,6 +84,8 @@ fn doc(machine: Machine, len: f64, a: Option<f64>) -> World {
         helix_radius: 1.0,
         links: camcraft_app::links::Links::PLANAR,
         tilt,
+        extend_start: 0.0,
+        extend_end: 0.0,
     };
     h.execute(&world, ok(CreateOperation::new(&world, "FLAT", "EM 1/4", SrcRef::Stock, flat), "op"));
     h.execute(&world, ok(GenerateOperation::new(&world, "FLAT"), "generate"));
@@ -242,4 +245,91 @@ fn a_project_saved_before_804_names_its_unjudged_table_a_on_load() {
     let text = ok(serde_json::to_string_pretty(&camcraft_app::project::collect(&plain)), "save");
     let notes = ok(camcraft_app::project::open_noted(&camcraft_app::world::new_world(), &text), "opens");
     assert!(notes.iter().all(|n| !n.contains("index-swing")), "{notes:?}");
+}
+
+// ---- #1107: the swept work against what stands still ----
+
+/// The gate lines of the standing-steel half (#1107).
+fn standing_lines(world: &World) -> Vec<String> {
+    verification_gate(world).into_iter().filter(|p| p.contains("swings the work into")).collect()
+}
+
+/// The shipped microARC with its centre height over the table set to `h` mm.
+fn arc4_at(h: Option<f64>) -> Machine {
+    let mut m = shipped(ARC4);
+    for a in m.axes.iter_mut().filter(|a| a.rotary) {
+        a.axis_to_table = h;
+    }
+    m
+}
+
+/// A fixed (standing) box fixture `name` from `lo` to `hi`.
+fn stand(world: &World, name: &str, lo: Point3, hi: Point3) {
+    let mut h = History::default();
+    h.execute(world, ImportModel::from_mesh(name, cube(lo, hi)));
+    h.execute(world, ok(TagFixture::new(world, name, None), "tag"));
+    h.execute(world, ok(SetFixtureFixed::new(world, name, true), "fixed"));
+}
+
+#[test]
+fn the_shipped_microarc_states_its_centre_height_over_the_table() {
+    let a = shipped(ARC4).axes.into_iter().find(|a| a.name == "A").expect("an A");
+    let h = a.axis_to_table.expect("stated");
+    assert!((h - 3.15 * IN).abs() < 1e-9, "{h}");
+}
+
+#[test]
+fn work_swinging_into_the_face_the_rotary_stands_on_is_refused_by_name() {
+    // A rotary too low for the bar: the corner sweeps 2 mm inside the margin.
+    let world = doc(arc4_at(Some(bar_swept() + MARGIN_MM - 2.0)), 3.0 * IN, Some(90.0));
+    let lines = standing_lines(&world);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    let l = &lines[0];
+    assert!(l.starts_with("FLAT: the A90.000 index swings the work into the face the rotary stands on"), "{l}");
+    assert!(l.contains(&format!("sweep {:.3} mm", bar_swept())), "{l}");
+    assert!(l.contains("a clearance of 3.000 mm against the 5.0 mm needed"), "{l}");
+    assert!(swing_lines(&world).is_empty(), "the short tool itself clears: {lines:?}");
+    let out = std::env::temp_dir().join(format!("camcraft_swing_table_{}.nc", std::process::id()));
+    let err = camcraft_app::posting::post_setup(&world, &out).expect_err("work that hits the table must not post");
+    assert!(err.contains("swings the work into the face"), "{err}");
+    assert!(!out.exists(), "a refused post writes nothing");
+    // The same bar with 2 mm to spare clears.
+    let world = doc(arc4_at(Some(bar_swept() + MARGIN_MM + 2.0)), 3.0 * IN, Some(90.0));
+    assert!(standing_lines(&world).is_empty(), "{:?}", verification_gate(&world));
+}
+
+#[test]
+fn a_standing_fixture_under_the_work_is_judged_by_its_distance_from_the_line() {
+    let world = doc(shipped(ARC4), 3.0 * IN, Some(90.0));
+    // A plate 25 mm under the line, under the bar: the corner (13.5 mm) clears.
+    stand(&world, "low plate", Point3::new(-30.0, -50.0, -35.0), Point3::new(-10.0, 50.0, -25.0));
+    // A block whose top is 15 mm under the line, but beside the bar in X.
+    stand(&world, "beside", Point3::new(5.0, -50.0, -35.0), Point3::new(30.0, 50.0, -15.0));
+    // A block that only touches the bar's end face (x = 0) is beside it too.
+    stand(&world, "touching", Point3::new(0.0, -50.0, -35.0), Point3::new(10.0, 50.0, -12.0));
+    assert!(standing_lines(&world).is_empty(), "{:?}", verification_gate(&world));
+    // A riser whose top is 15 mm under the line, under the bar: struck.
+    stand(&world, "riser", Point3::new(-30.0, -50.0, -35.0), Point3::new(-20.0, 50.0, -15.0));
+    let lines = standing_lines(&world);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    assert!(lines[0].starts_with("FLAT: the A90.000 index swings the work into standing fixture riser"), "{}", lines[0]);
+    assert!(lines[0].contains("riser stands 15.000 mm from it"), "{}", lines[0]);
+}
+
+#[test]
+fn standing_steel_the_swing_cannot_read_is_named_not_judged() {
+    // No centre height stated: posts, with the face named not judged.
+    let world = doc(arc4_at(None), 3.0 * IN, Some(90.0));
+    let report = camcraft_app::posting::verification_report(&world);
+    assert!(report.problems.iter().all(|p| !p.contains("swings the work into")), "{:?}", report.problems);
+    let line = report.not_judged.expect("named, never silent");
+    assert!(line.contains("index swing did not judge"), "{line}");
+    assert!(line.contains("states no axis_to_table for A"), "{line}");
+    // A tailstock reaching across the line over the bar cannot be judged by a radius.
+    let world = doc(shipped(ARC4), 3.0 * IN, Some(90.0));
+    let quiet = camcraft_app::posting::verification_report(&world).not_judged;
+    assert!(quiet.as_deref().is_none_or(|l| !l.contains("index swing")), "the stated figure judges it: {quiet:?}");
+    stand(&world, "tailstock", Point3::new(-5.0, -20.0, -80.0), Point3::new(20.0, 20.0, 3.0));
+    let line = camcraft_app::posting::verification_report(&world).not_judged.expect("named");
+    assert!(line.contains("standing fixture tailstock: it reaches across the A centerline"), "{line}");
 }

@@ -176,11 +176,12 @@ fn pause_and_home_entries_post_goldens_and_tormach_refuses_by_name() {
         assert!(t2 < home && home < end, "{name}: home after op 2, before the end: {}", out.program);
         common::write_golden(&format!("nc/program_entry/{file}_pause_home.nc"), &out.program);
     }
-    // Tormach's post reads no after-action: the entry refuses the way the
+    // Tormach's post writes no trip home (#1532: it reads the stops, the
+    // G30 spot is the operator's preset): the entry refuses the way the
     // per-op choice does - by name, never a silent drop.
     let out = post_with(&world, "Tormach PathPilot");
     assert!(
-        out.warnings.iter().any(|w| w.contains("afterModes")),
+        out.warnings.iter().any(|w| w.contains("trip home") && w.contains("in operation ")),
         "refused by name: {:?}",
         out.warnings
     );

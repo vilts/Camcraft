@@ -21,13 +21,15 @@ use super::super::cross_entry::{Line, StockMesh, Tube, tube_reach};
 const TOL: f64 = 1e-6;
 
 /// The part and the stock (when known) in the spindle frame, with the
-/// widest vertex radius about the spindle - the circumscribed reading.
+/// widest vertex radius about the spindle - the circumscribed reading -
+/// and any model excess-driven slab growth (`grow`).
 pub(super) struct Material {
     mesh: StockMesh,
     raw: f64,
+    grow: f64,
 }
 
-pub(super) fn material(part: &[Triangle], stock: Option<&[Triangle]>, (ox, oy): (f64, f64)) -> Material {
+pub(super) fn material(part: &[Triangle], stock: Option<&[Triangle]>, (ox, oy): (f64, f64), excess: f64) -> Material {
     let shift = |p: Point3| Point3::new(p.x - ox, p.y - oy, p.z);
     let frame = |s: &[Triangle]| -> Vec<Triangle> {
         s.iter().map(|t| Triangle::new(shift(t.a), shift(t.b), shift(t.c))).collect()
@@ -40,9 +42,10 @@ pub(super) fn material(part: &[Triangle], stock: Option<&[Triangle]>, (ox, oy): 
         .filter(|v| v.is_finite())
         .map(|v| v.x.hypot(v.y))
         .fold(0.0_f64, f64::max);
+    let grow = if p.is_empty() && s.is_empty() { 0.0 } else { super::super::fidelity_law::band_growth(excess) };
     let mut mesh = StockMesh::new(p);
     mesh.extend(StockMesh::new(s));
-    Material { mesh, raw }
+    Material { mesh, raw: raw + grow, grow }
 }
 
 /// A holder on one station: its pose `axis` (tip toward shank) a unit
@@ -74,5 +77,5 @@ pub(super) fn on_station(from: Point3, to: Point3, axis: [f64; 3], reach: f64, h
 /// The outermost outward coordinate of material in `tube`, `None` when
 /// the tube meets none.
 pub(super) fn reach_in(m: &Material, tube: Tube) -> Option<f64> {
-    tube_reach(&m.mesh, m.raw, tube)
+    tube_reach(&m.mesh, m.raw, tube, m.grow)
 }

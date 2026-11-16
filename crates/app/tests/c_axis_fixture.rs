@@ -7,7 +7,7 @@
 //! frame there and stayed silent. Generation and the post gate now
 //! both convict those moves.
 //!
-//! Gate map (M4.4): covers app::fixture, app::operation (rotary_gate's
+//! Gate map (M4.4): covers app::fixture, sim::fixture, app::operation (rotary_gate's
 //! C stamp, the workholding verdict at generation), app::posting (the
 //! fixture walk), sim::verify::c_steel.
 //! Lane shape (M4.4): all tests here run in seconds.

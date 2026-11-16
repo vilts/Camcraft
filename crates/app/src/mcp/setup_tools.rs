@@ -1,5 +1,5 @@
 //! The MCP setup tools (#181): declare and activate setups, place the
-//! active setup's work offset (WCS), pick its posted word, and mount a
+//! active setup's work offset (WCS), pick its offset index, and mount a
 //! machine. Each tool is exactly one existing command run through the
 //! session History, so `undo` walks it; every refusal is the command's
 //! own text, returned as a tool error.
@@ -9,12 +9,13 @@
 
 use super::tools::{opt_str, req_str, Tool};
 use crate::commands::{
-    ActivateSetup, CommandError, CreateSetup, LoadMachine, SetSetupMachine, SetSetupWorkOffset, SetWcsOrigin,
+    ActivateSetup, CommandError, CreateSetup, DeleteSetup, LoadMachine, SetOperationSetup, SetProgramInfo, SetSetupMachine, SetSetupPost,
+    SetSetupWorkOffset, SetStockSourceOnly, SetWcsOrigin,
 };
 use crate::geometry::{Point3, IDENTITY_Q};
 use crate::model;
-use crate::schema::{Location, WCS_SLOTS};
-use crate::script::{fnum, Env};
+use crate::schema::{Location, PostRef};
+use crate::script::{api, fnum, inventory, Env};
 use crate::setup;
 
 use serde_json::{json, Map, Value};
@@ -22,9 +23,14 @@ use serde_json::{json, Map, Value};
 pub(super) const TOOLS: &[Tool] = &[
     Tool { name: "add_setup", description: "Declare a new setup and make it active. With datum_from, it starts as a copy of that setup's stock and WCS placement. The first setup on a document without setups adopts the existing stock and G54.", schema: s_add_setup, run: add_setup },
     Tool { name: "activate_setup", description: "Make a declared setup the active one: where new operations, stock and WCS edits go.", schema: s_setup_name, run: activate_setup },
+    Tool { name: "set_operation_setup", description: "Move an operation into another declared setup (setup null: the implicit first position). The stamp is kept, so the operation reads ok or stale by the staleness law. One undo step. Refused by name: an unknown operation or setup, a move to where it already is.", schema: s_set_operation_setup, run: set_operation_setup },
+    Tool { name: "delete_setup", description: "Delete a declared setup with its private stock and WCS; one undo restores them. Refused by name while an operation still machines in it (move or delete it first) or another setup is placed relative to it.", schema: s_setup_name, run: delete_setup },
     Tool { name: "set_wcs", description: "Place the active setup's work coordinate system: an absolute origin, or a point of the stock's bounding box (min/center/max per axis) plus an optional offset. Rotation is a unit quaternion [x, y, z, w]; omitted keeps the current one.", schema: s_set_wcs, run: set_wcs },
-    Tool { name: "set_work_offset", description: "Set the work offset (G54 to G59) the post uses for a declared setup's WCS; null clears it (posts G54). Moves no origin.", schema: s_work_offset, run: set_work_offset },
+    Tool { name: "set_work_offset", description: "Set the work offset the post uses for a declared setup's WCS: index is 1-based (G54-G59 accepted as aliases of 1-6), bounded by the setup's own post - an offset it cannot express is refused by setup name. null clears it (offset 1). Returns index and the post's name for it (word is an alias of name). Moves no origin.", schema: s_work_offset, run: set_work_offset },
+    Tool { name: "set_program", description: "State the document's program number (1 to 9999: the O-word O0001-O9999) and program comment (the program's name on Heidenhain and SINUMERIK). An omitted key keeps its value; null clears it (O0001 and the machine's name). One undo step.", schema: s_set_program, run: set_program },
+    Tool { name: "set_raw_stock_only", description: "For a stock made from a model (set_stock from_model): say whether that source model is raw stock only - a casting or blank you cut into, not the finished part - so the post's gouge verdict does not judge it (on), or is judged like every model (off, the default). An operation that machines the model judges it again. One undo step.", schema: s_raw_stock_only, run: set_raw_stock_only },
     Tool { name: "load_machine", description: "Mount a machine: a built-in by name or a .mch file, or clear it. With setup, the machine is that setup's own (clear: the setup follows the document's machine again); without, it is the document's.", schema: s_load_machine, run: load_machine },
+    Tool { name: "set_setup_post", description: "Give a declared setup its own post: a built-in post name or a .cps path; null clears it (the setup follows the document's post again). One undo step. This sets the field only - posting judges whether the post serves the setup's machine.", schema: s_setup_post, run: set_setup_post },
 ];
 
 // ---- shared readers (the fixture tools use them too) --------------------
@@ -92,6 +98,30 @@ fn activate_setup(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String
     Ok(json!({ "active": setup::active(&env.world) }))
 }
 
+fn set_operation_setup(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
+    let op = req_str(a, "operation")?;
+    let target = match a.get("setup") {
+        None => return Err("\"setup\" is required (a declared setup, or null for the first position)".into()),
+        Some(Value::Null) => None,
+        Some(Value::String(s)) => Some(s.as_str()),
+        Some(other) => return Err(format!("\"setup\" must be a string or null, got {other}")),
+    };
+    let cmd = SetOperationSetup::new(&env.world, op, target).map_err(cmd_err)?;
+    env.history.execute(&env.world, cmd);
+    let status = inventory(env)
+        .iter()
+        .find(|(k, e, _)| k == op || model::operation_label(&env.world, k, e) == op)
+        .map(|(_, _, s)| api::st_str(*s));
+    Ok(json!({ "operation": op, "setup": target, "status": status }))
+}
+
+fn delete_setup(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
+    let name = req_str(a, "name")?;
+    let cmd = DeleteSetup::new(&env.world, name).map_err(cmd_err)?;
+    env.history.execute(&env.world, cmd);
+    Ok(json!({ "deleted": name, "active": setup::active(&env.world), "setups": setup::names(&env.world) }))
+}
+
 /// One axis of a `stock_point`: where on the stock box's span it sits.
 fn pick(span: (f64, f64), word: Option<&str>, axis: &str) -> Result<f64, String> {
     match word {
@@ -144,31 +174,87 @@ fn set_wcs(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
     let mut out = loc_view(&placed);
     out["setup"] = json!(active);
     out["label"] = json!(setup::wcs_label(w, active.as_deref()));
-    out["word"] = json!(WCS_SLOTS.get(setup::wcs_slot(w, active.as_deref())).copied().unwrap_or("G54"));
+    out["index"] = json!(crate::setup_offsets::index(w, active.as_deref()));
+    out["name"] = json!(setup::wcs_name(w, active.as_deref()));
+    out["word"] = json!(setup::wcs_name(w, active.as_deref()));
     Ok(out)
 }
 
 fn set_work_offset(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
-    let slot = match a.get("word") {
-        None => return Err("\"word\" is required (G54 to G59, or null to clear)".into()),
-        Some(Value::Null) => None,
-        Some(Value::String(s)) => Some(
-            WCS_SLOTS
-                .iter()
-                .position(|w| w.eq_ignore_ascii_case(s.trim()))
-                .ok_or_else(|| format!("unknown work offset '{s}' - the words are {}", WCS_SLOTS.join(", ")))?,
-        ),
-        Some(other) => return Err(format!("\"word\" must be a string or null, got {other}")),
+    // #931: `index` is the 1-based offset; `word` (G54-G59) stays as an
+    // alias of 1-6 for callers written before it. null clears either.
+    let pick = |k: &str| -> Result<Option<Option<u32>>, String> {
+        match a.get(k) {
+            None => Ok(None),
+            Some(Value::Null) => Ok(Some(None)),
+            Some(v) => crate::setup_offsets::parse_index(v).map(|n| Some(Some(n))),
+        }
     };
+    let n = match (pick("index")?, pick("word")?) {
+        (None, None) => return Err("\"index\" is required (1-based work offset, G54-G59 as aliases of 1-6, or null to clear)".into()),
+        (Some(i), None) | (None, Some(i)) => i,
+        (Some(i), Some(w)) if i == w => i,
+        (Some(_), Some(_)) => return Err("\"index\" and \"word\" name different work offsets - give one".into()),
+    };
+    let slot = n.and_then(|n| usize::try_from(n).ok()).map(|n| n.saturating_sub(1));
     let name = setup_or_active(env, a)?
-        .ok_or("no setup is declared - add_setup first (a document without setups posts at G54)")?;
+        .ok_or("no setup is declared - add_setup first (a document without setups posts at work offset 1)")?;
     let cmd = SetSetupWorkOffset::new(&env.world, &name, slot).map_err(cmd_err)?;
     env.history.execute(&env.world, cmd);
     let w = &env.world;
+    let offset_name = setup::wcs_name(w, Some(&name));
     Ok(json!({
         "setup": name,
-        "word": WCS_SLOTS.get(setup::wcs_slot(w, Some(&name))).copied().unwrap_or("G54"),
+        "index": crate::setup_offsets::index(w, Some(&name)),
+        "name": offset_name,
+        "word": offset_name,
         "label": setup::wcs_label(w, Some(&name)),
+    }))
+}
+
+fn set_program(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
+    let mut next = crate::posting::program_info(&env.world);
+    match a.get("number") {
+        None => {}
+        Some(Value::Null) => next.number = None,
+        Some(v) => {
+            let n = v.as_u64().ok_or_else(|| format!("\"number\" must be a whole number 1 to 9999 or null, got {v}"))?;
+            next.number = Some(u32::try_from(n).map_err(|_| format!("program number {n} is outside 1 to 9999"))?);
+        }
+    }
+    match a.get("comment") {
+        None => {}
+        Some(Value::Null) => next.comment = None,
+        Some(Value::String(c)) => next.comment = Some(c.clone()),
+        Some(other) => return Err(format!("\"comment\" must be a string or null, got {other}")),
+    }
+    let cmd = SetProgramInfo::new(&env.world, next).map_err(cmd_err)?;
+    env.history.execute(&env.world, cmd);
+    let p = crate::posting::program_info(&env.world);
+    Ok(json!({ "number": p.number, "comment": p.comment }))
+}
+
+/// #1233: `SetSetupPost` through the session History, as the Setup pane runs it.
+fn set_setup_post(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
+    let next = match a.get("post") {
+        None => return Err("\"post\" is required (a post name or .cps path, or null to clear)".into()),
+        Some(Value::Null) => None,
+        Some(Value::String(s)) if s.trim().is_empty() => return Err("\"post\" must not be empty (null clears it)".into()),
+        Some(Value::String(s)) if s.trim().to_ascii_lowercase().ends_with(".cps") => Some(PostRef::File(s.trim().to_owned())),
+        Some(Value::String(s)) => Some(PostRef::Named(s.trim().to_owned())),
+        Some(other) => return Err(format!("\"post\" must be a string or null, got {other}")),
+    };
+    let name = setup_or_active(env, a)?
+        .ok_or("no setup is declared - add_setup first (the document's post is select_post's)")?;
+    let cmd = SetSetupPost::new(&env.world, &name, next).map_err(cmd_err)?;
+    env.history.execute(&env.world, cmd);
+    let w = &env.world;
+    let own = crate::setup_mount::own_post(w, Some(&name));
+    Ok(json!({
+        "setup": name,
+        "post": own.as_ref().map(crate::posting::post_ref_label),
+        "own_post": own.is_some(),
+        "posts_with": crate::posting::post_ref_label(&crate::setup_mount::post_of(w, Some(&name))),
     }))
 }
 
@@ -249,8 +335,30 @@ fn s_add_setup() -> Value {
     )
 }
 
+fn s_raw_stock_only() -> Value {
+    obj(json!({ "on": { "type": "boolean", "description": "true: the source model is raw stock only; false: judge it as the part (default)." } }), &["on"])
+}
+
+/// #1094: the stock page's checkbox, through the same command.
+fn set_raw_stock_only(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
+    let on = a.get("on").and_then(Value::as_bool).ok_or("\"on\" must be true or false")?;
+    let cmd = SetStockSourceOnly::new(&env.world, on).map_err(cmd_err)?;
+    env.history.execute(&env.world, cmd);
+    Ok(json!({ "raw_stock_only": on, "judged_out": crate::stock_source::stock_only_model(&env.world).and_then(|e| model::name_of(&env.world, &e)) }))
+}
+
 fn s_setup_name() -> Value {
     obj(json!({ "name": { "type": "string", "description": "A declared setup's name." } }), &["name"])
+}
+
+fn s_set_operation_setup() -> Value {
+    obj(
+        json!({
+            "operation": { "type": "string", "description": "The operation's name." },
+            "setup": { "type": ["string", "null"], "description": "A declared setup; null moves it to the implicit first position." }
+        }),
+        &["operation", "setup"],
+    )
 }
 
 fn s_set_wcs() -> Value {
@@ -271,13 +379,28 @@ fn s_set_wcs() -> Value {
 }
 
 fn s_work_offset() -> Value {
+    let pick = json!({ "type": ["integer", "string", "null"] });
+    let mut index = pick.clone();
+    index["description"] = json!("The 1-based work offset to post, up to the setup's post's maximum; the words G54-G59 are aliases of 1-6; null clears it (offset 1).");
+    let mut word = pick;
+    word["description"] = json!("Alias of index, kept for older callers: G54-G59 (or a number); null clears it.");
     obj(
         json!({
-            "word": { "type": ["string", "null"], "enum": ["G54", "G55", "G56", "G57", "G58", "G59", null],
-                "description": "The work offset to post (G54 to G59); null clears it." },
+            "index": index,
+            "word": word,
             "setup": { "type": "string", "description": "A declared setup; defaults to the active one." }
         }),
-        &["word"],
+        &[],
+    )
+}
+
+fn s_setup_post() -> Value {
+    obj(
+        json!({
+            "post": { "type": ["string", "null"], "description": "A built-in post name or a .cps path; null clears the setup's own post (it follows the document's)." },
+            "setup": { "type": "string", "description": "A declared setup; defaults to the active one." }
+        }),
+        &["post"],
     )
 }
 
@@ -288,6 +411,18 @@ fn s_load_machine() -> Value {
             "path": { "type": "string", "description": "A .mch machine file." },
             "clear": { "type": "boolean", "description": "true: no machine (with setup: follow the document's)." },
             "setup": { "type": "string", "description": "Mount on this declared setup only; omitted mounts the document's machine." }
+        }),
+        &[],
+    )
+}
+
+fn s_set_program() -> Value {
+    obj(
+        json!({
+            "number": { "type": ["integer", "null"], "minimum": 1, "maximum": 9999,
+                "description": "The program number; null clears it (O0001)." },
+            "comment": { "type": ["string", "null"],
+                "description": "The program comment, at most 40 printable ASCII characters without ( ) % ; *; null clears it (the machine's name)." }
         }),
         &[],
     )

@@ -31,6 +31,7 @@ fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Region {
 /// `adaptive_hsm`'s pocket: D10, two levels to Z -5, Helix R2.
 fn params() -> PocketParams {
     PocketParams {
+        blend_radius: None,
         tool_diameter: 10.0,
         stepover: 4.0,
         stock_to_leave: 0.0,

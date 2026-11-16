@@ -1,6 +1,7 @@
 //! The rotary facts the index-swing clause reads (#804): whether a
 //! rotary part turns the work or the spindle, and the stated height of
-//! the spindle nose above its centerline at the safe-retract Z.
+//! the spindle nose above its centerline at the safe-retract Z, and (#1107)
+//! the centerline's height above the face the rotary is bolted to.
 //!
 //! Provenance: our own reading of our own `.mch` grammar
 //! (`assets/machines/AGENTS.md`); a 4th-axis table turning the work
@@ -24,23 +25,36 @@ pub(super) fn turns_part(part: &serde_json::Value, rotary: bool) -> bool {
 }
 
 /// A part's `"nose_to_axis"` (#804), in mm (`f` is the file's length
-/// factor). Absent or null is unstated; a finite positive number on a
+/// factor) - see [`work_length`].
+pub(super) fn nose_to_axis(name: &str, part: &serde_json::Value, rotary: bool, f: f64) -> Result<Option<f64>, String> {
+    work_length("nose_to_axis", name, part, rotary, f)
+}
+
+/// A work-turning rotary's length figure `key` (`"nose_to_axis"`, #804;
+/// `"axis_to_table"`, #1107), in mm (`f` is the file's length factor).
+/// Absent or null is unstated; a finite positive number on a
 /// work-turning rotary states it; anything else, or the key on any other
 /// part, refuses naming the axis - a garbled clearance must never read
 /// as "unstated" or as a number nobody wrote.
-pub(super) fn nose_to_axis(name: &str, part: &serde_json::Value, rotary: bool, f: f64) -> Result<Option<f64>, String> {
-    let v = match part.get("nose_to_axis") {
+pub(super) fn work_length(
+    key: &str,
+    name: &str,
+    part: &serde_json::Value,
+    rotary: bool,
+    f: f64,
+) -> Result<Option<f64>, String> {
+    let v = match part.get(key) {
         None | Some(serde_json::Value::Null) => return Ok(None),
         Some(v) => v,
     };
     if !turns_part(part, rotary) {
         return Err(format!(
-            "machine file: axis {name} states nose_to_axis - only a rotary that turns the work states one"
+            "machine file: axis {name} states {key} - only a rotary that turns the work states one"
         ));
     }
     match v.as_f64() {
         Some(d) if d.is_finite() && d > 0.0 => Ok(Some(d * f)),
-        _ => Err(format!("machine file: axis {name} nose_to_axis must be a positive number, not {v}")),
+        _ => Err(format!("machine file: axis {name} {key} must be a positive number, not {v}")),
     }
 }
 
@@ -67,5 +81,12 @@ mod tests {
         assert!(nose_to_axis("A", &bad, true, 1.0).is_err_and(|e| e.contains("axis A")));
         let on_z = json!({ "type": "linear", "nose_to_axis": 5.0 });
         assert!(nose_to_axis("Z", &on_z, false, 1.0).is_err_and(|e| e.contains("axis Z")));
+        // #1107: the centre height reads by the same law, under its own key.
+        let a = json!({ "type": "rotary", "axis_to_table": 3.15 });
+        assert_eq!(work_length("axis_to_table", "A", &a, true, 25.4), Ok(Some(3.15 * 25.4)));
+        let bad = json!({ "type": "rotary", "axis_to_table": "low" });
+        assert!(work_length("axis_to_table", "A", &bad, true, 1.0).is_err_and(|e| e.contains("axis_to_table")));
+        let on_z = json!({ "type": "linear", "axis_to_table": 5.0 });
+        assert!(work_length("axis_to_table", "Z", &on_z, false, 1.0).is_err_and(|e| e.contains("axis Z")));
     }
 }

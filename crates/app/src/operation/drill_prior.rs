@@ -44,7 +44,7 @@ impl PriorCell {
         if let Some(plan) = self.plan.take() {
             match plan.simulate() {
                 Ok(d) => self.dex = Some(d),
-                Err(e) => eprintln!("camcraft: the program ahead could not be cut, the raw stock stands: {e}"),
+                Err(e) => tracing::warn!("the program ahead could not be cut, the raw stock stands: {e}"),
             }
         }
         self.dex.as_ref()

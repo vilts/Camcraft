@@ -43,6 +43,10 @@ use super::theme::Tokens;
 /// The full-texel uv of an uploaded image.
 const UV_FULL: Rect = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
 
+/// A calm steel-blue ink for the ribbon's command glyphs - picked for
+/// the light workbench ground, ours in colour and line weight.
+const RIBBON_ICON_INK: Color32 = Color32::from_rgb(0x1F, 0x4E, 0x79);
+
 /// One painted ribbon cell: fixed-size, the bundled glyph centered over a
 /// short caption, tinted background by state, dimmed ink when disabled
 /// (the imgui rule: a disabled cell stays hoverable and greys, it never
@@ -60,8 +64,9 @@ pub fn cell(
     enabled: bool,
     toggled: bool,
     icon: Option<&TextureHandle>,
+    icon_tint: Option<egui::Color32>,
 ) -> Response {
-    let resp = ui.interact(rect, id, Sense::click());
+    let resp = ui.interact(rect, id, Sense::click_and_drag());
     let bg = if !enabled {
         None
     } else if resp.clicked() || resp.is_pointer_button_down_on() {
@@ -88,26 +93,96 @@ pub fn cell(
             Pos2::new(rect.left() + (rect.width() - pal.glyph_px) * 0.5, rect.top()),
             Vec2::splat(pal.glyph_px),
         );
-        let ink = super::contrast::on_fill(bg.unwrap_or(pal.strip_fill()));
+        let ink = match bg {
+            // Hover/active/selected cells wear the family hue poorly -
+            // fall back to the on-fill ink there. Plain command glyphs
+            // carry our steel-blue tint, picked against the light strip.
+            Some(bg) => super::contrast::on_fill(bg),
+            None => icon_tint.unwrap_or(RIBBON_ICON_INK),
+        };
         let tint = if enabled { ink } else { Color32::from_rgba_unmultiplied(ink.r(), ink.g(), ink.b(), 115) };
         painter.image(tex.id(), r, UV_FULL, tint);
     }
     let ink = if enabled { pal.text } else { pal.text_faint };
-    // Truncate inside the cell instead of overflowing into the neighbour,
-    // so a long label reads as an ellipsis rather than colliding.
-    let max_w = (rect.width() - 4.0).max(0.0);
-    let mut job = LayoutJob {
-        wrap: TextWrapping::truncate_at_width(max_w),
-        ..LayoutJob::default()
-    };
-    job.append(label, 0.0, TextFormat::simple(FontId::proportional(pal.font_label), ink));
-    let galley = ui.painter().layout_job(job);
+    // The label shrinks to fit its cell (down to MIN_LABEL_PX) so a short
+    // word reads whole at the narrow 1280 px cell (#948); only a label
+    // that still does not fit at the floor truncates with an ellipsis, so
+    // it can never collide with the neighbour's.
+    let max_w = (rect.width() - 2.0).max(0.0);
+    let galley = fit_label(ui, label, pal.font_label, max_w, ink);
     painter.galley(
         Pos2::new(rect.center().x - galley.size().x * 0.5, rect.top() + pal.glyph_px + 2.0),
         galley,
         ink,
     );
     resp
+}
+
+/// The smallest ribbon label size (px); below it a label elides instead.
+pub const MIN_LABEL_PX: f32 = 10.0;
+
+/// Lay `label` out on one line at the largest whole size from `start_px`
+/// down to MIN_LABEL_PX whose width fits `max_w`; at the floor it truncates
+/// with an ellipsis (never overflows).
+fn fit_label(
+    ui: &Ui,
+    label: &str,
+    start_px: f32,
+    max_w: f32,
+    ink: Color32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut px = start_px.max(MIN_LABEL_PX);
+    loop {
+        let floor = px <= MIN_LABEL_PX;
+        let mut job = LayoutJob {
+            wrap: if floor {
+                TextWrapping::truncate_at_width(max_w)
+            } else {
+                TextWrapping::no_max_width()
+            },
+            ..LayoutJob::default()
+        };
+        job.append(label, 0.0, TextFormat::simple(FontId::proportional(px), ink));
+        let galley = ui.painter().layout_job(job);
+        if floor || galley.size().x <= max_w {
+            return galley;
+        }
+        px = (px - 1.0).max(MIN_LABEL_PX);
+    }
+}
+
+/// A group caption under its cells, centred on `mid_x` in the strip's
+/// bottom band, faint ink. Painted only when it fits inside `width` (the
+/// group's own span): a caption wider than its group would run under the
+/// neighbour's, so single-door groups - whose cell already names the
+/// section - skip it (#948). Returns whether it was painted.
+pub fn caption(
+    ui: &Ui,
+    mid_x: f32,
+    width: f32,
+    title: &str,
+    strip: Rect,
+    pal: &Tokens,
+    cell_bottom: f32,
+) -> bool {
+    let ink = pal.text_dim;
+    let mut job = LayoutJob {
+        wrap: TextWrapping::no_max_width(),
+        ..LayoutJob::default()
+    };
+    job.append(
+        &title.to_uppercase(),
+        0.0,
+        TextFormat::simple(FontId::proportional(MIN_LABEL_PX), ink),
+    );
+    let galley = ui.painter().layout_job(job);
+    if galley.size().x > width {
+        return false;
+    }
+    let y = (cell_bottom + 3.0).min(strip.bottom() - galley.size().y);
+    ui.painter()
+        .galley(Pos2::new(mid_x - galley.size().x * 0.5, y), galley, ink);
+    true
 }
 
 /// A group divider: one vertical hairline, ink only.
@@ -133,6 +208,8 @@ pub struct Row {
     /// no PNG - section headers - and for the placeholder rows; the
     /// painted `glyph` is the no-GPU twin of every real icon.
     pub icon: Option<Icon>,
+    /// An op row's status badge (#661), painted small over `icon`.
+    pub badge: Option<Icon>,
     /// Selection band - the WORLD's selection mirrored, never a local flag.
     pub selected: bool,
     pub hidden: bool,
@@ -169,7 +246,7 @@ const EYE_RESERVE: f32 = 24.0;
 
 /// Rows whose viewport visibility the user can toggle get the eye.
 pub(crate) fn has_eye(kind: Kind) -> bool {
-    matches!(kind, Kind::Model | Kind::Fixture | Kind::Stock | Kind::Wcs | Kind::Op)
+    matches!(kind, Kind::Model | Kind::Fixture | Kind::Stock | Kind::Wcs | Kind::Op | Kind::Setup(_))
 }
 
 /// Hit result for one frame of the tree.
@@ -226,10 +303,9 @@ pub fn tree(
             break; // scrolled past the pane: no row, no input, no ink
         }
         let rr = Rect::from_min_size(Pos2::new(rect.left(), top), Vec2::new(rect.width(), row_h));
-        // Row first, eye after: egui's last-wins interaction order plus the
-        // clicked() guard below means an eye pixel is one action, never
-        // row+eye (browser.rs reaches the same law by submitting the eye's
-        // invisible button before the Selectable).
+        // Row first, eye after: egui allocates topmost right-first by
+        // creation order; the eye pixel is created later so the eye
+        // claims the click, not the row.
         let row_resp = ui.interact(rr, ui.id().with(("tree-row", ix)), Sense::click_and_drag());
         let eye_rect = if has_eye(row.kind) {
             let er = Rect::from_center_size(
@@ -246,12 +322,26 @@ pub fn tree(
             None
         };
         let painter = ui.painter();
-        if row.selected {
-            painter.add(Shape::rect_filled(rr.shrink(1.0), pal.radius_widget, pal.selection_bg));
-        } else if row_resp.hovered() {
-            painter.add(Shape::rect_filled(rr.shrink(1.0), pal.radius_widget, pal.field_hover));
+        let is_header = row.depth == 0 && matches!(row.kind, Kind::Section | Kind::Parent(_));
+        if is_header && !row.selected {
+            painter.add(Shape::rect_filled(rr.shrink2(Vec2::new(0.0, 1.0)), 0.0, pal.ink_alt));
+            if top > rect.top() + 0.5 {
+                painter.line_segment(
+                    [Pos2::new(rr.left(), rr.top()), Pos2::new(rr.right(), rr.top())],
+                    Stroke::new(1.0, pal.border),
+                );
+            }
+            painter.line_segment(
+                [Pos2::new(rr.left(), rr.bottom() - 0.5), Pos2::new(rr.right(), rr.bottom() - 0.5)],
+                Stroke::new(1.0, pal.border),
+            );
         }
-        let gx = rr.left() + 10.0 + row.depth as f32 * 14.0;
+        if row.selected {
+            painter.add(Shape::rect_filled(rr.shrink2(Vec2::new(1.0, 1.0)), pal.radius_widget, pal.selection_bg));
+        } else if row_resp.hovered() {
+            painter.add(Shape::rect_filled(rr.shrink2(Vec2::new(1.0, 1.0)), pal.radius_widget, pal.field_hover));
+        }
+        let gx = rr.left() + 12.0 + row.depth as f32 * 16.0;
         if matches!(row.kind, Kind::Setup(_)) {
             let rr = Rect::from_center_size(Pos2::new(gx, rr.center().y), Vec2::splat(TREE_INK));
             if ui.interact(rr, ui.id().with(("tree-radio", ix)), Sense::click()).clicked() {
@@ -264,17 +354,10 @@ pub fn tree(
         // (#524), as the ribbon tints its icons, never a white wash
         // that vanishes on a light panel.
         let (icon_ink, eye_ink) = row_inks(pal, row.hidden, row.selected);
-        let tex = icons.and_then(|s| row.icon.map(|i| s.texture(i))).flatten();
-        if let Some(tex) = tex {
-            painter.image(
-                tex.id(),
-                Rect::from_center_size(Pos2::new(gx, rr.center().y), Vec2::splat(TREE_INK)),
-                UV_FULL,
-                icon_ink,
-            );
-        }
+        let ground = if row.selected { pal.selection_bg } else if row_resp.hovered() { pal.field_hover } else { ui.visuals().panel_fill };
+        let painted = super::tree_badges::row_glyph(painter, icons, row.icon, row.badge, Pos2::new(gx, rr.center().y), icon_ink, ground);
         let mut shapes = Vec::new();
-        if tex.is_none() {
+        if !painted {
             super::tree_glyphs::glyph(&mut shapes, Pos2::new(gx, rr.center().y), row.kind, pal);
         }
         if let Some(er) = eye_rect {
@@ -304,6 +387,12 @@ pub fn tree(
         // text column - everything right of it belongs to the eye, never
         // to overflowing ink (divergence 1's fix).
         let (ink, suffix_ink) = row_inks(pal, row.hidden, row.selected);
+        let label_ink = match row.kind {
+            // Section and parent rows are the tree's structure: keep them
+            // readable even when dimming would make the hierarchy muddy.
+            Kind::Section | Kind::Parent(_) if !row.hidden && !row.selected => pal.text,
+            _ => ink,
+        };
         let reserve = if has_eye(row.kind) { EYE_RESERVE } else { 6.0 };
         let max_w = (rr.right() - reserve - (gx + 12.0)).max(0.0);
         let mut job = LayoutJob {
@@ -313,7 +402,10 @@ pub fn tree(
         job.append(
             &row.label,
             0.0,
-            TextFormat::simple(FontId::proportional(pal.font_row), ink),
+            TextFormat::simple(
+                FontId::proportional(pal.font_row + if is_header { 0.5 } else { 0.0 }),
+                label_ink,
+            ),
         );
         if !row.suffix.is_empty() {
             job.append(

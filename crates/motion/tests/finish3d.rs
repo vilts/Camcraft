@@ -313,6 +313,7 @@ fn verify_finish(
         finish_tol: Some(TOL),
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(t, &cx)
 }

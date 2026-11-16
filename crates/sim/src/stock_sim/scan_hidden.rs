@@ -31,6 +31,7 @@
 use super::dexel::fy0;
 use super::scan_arc::{seg_dist, ScanArc};
 use super::scan_near::SegGrid;
+use super::scan_turned::TurnedBand;
 
 use crate::geo2d::Point2;
 use crate::geometry::{Point3, Triangle};
@@ -93,9 +94,28 @@ struct Frame<'a> {
     ny: usize,
     r: f64,
     floor: f64,
+    /// A turning path's spindle band (#1408, `scan_turned`); `None`
+    /// for a mill path.
+    band: Option<&'a TurnedBand<'a>>,
 }
 
 impl Frame<'_> {
+    /// The nearest ball-center distance to `q`, exact (`scan_near`),
+    /// or an early bound at or under `best` (the module law there).
+    fn nearest(&self, q: Point3, best: f64, hint: &mut Option<u32>, work: &mut usize) -> f64 {
+        match &self.grid {
+            Some(g) => g.nearest(q, (self.r, self.floor, best), hint, work),
+            None => {
+                *work = work.saturating_add(self.segs.len());
+                self.segs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| seg_dist(q, s, self.arcs.get(i).and_then(Option::as_ref)))
+                    .fold(f64::INFINITY, f64::min)
+            }
+        }
+    }
+
     /// A facet's span on the lattice, `None` for a non-finite facet
     /// or one wholly off it.
     fn span(&self, t: &Triangle) -> Span {
@@ -143,6 +163,7 @@ pub(super) fn hidden_rest(
     r: f64,
     floor: f64,
     budget: ScanBudget,
+    band: Option<&TurnedBand<'_>>,
 ) -> Result<(f64, Point2), HiddenRest> {
     if segs.is_empty() || facets.is_empty() || nx == 0 || ny == 0 {
         return Ok((0.0, Point2::new(0.0, 0.0))); // nothing swept, or nothing to hide: judged
@@ -152,7 +173,7 @@ pub(super) fn hidden_rest(
         return Err(HiddenRest::OverBudget { cells, claims: 0 }); // no ground to judge on
     }
     let grid = SegGrid::new(segs, arcs, r.max(cell * 4.0));
-    let f = Frame { facets, segs, arcs, grid, part, x0, y0, cell, nx, ny, r, floor };
+    let f = Frame { facets, segs, arcs, grid, part, x0, y0, cell, nx, ny, r, floor, band };
     let spans: Vec<Span> = facets.iter().map(|t| f.span(t)).collect();
     let mut work = 0usize;
     if cells <= budget.cells {
@@ -272,6 +293,9 @@ fn judge_rows(
     let mut best = 0.0;
     let mut at = Point2::new(0.0, 0.0);
     let mut hint = None;
+    // The band's reach (#1408): the ball, the floor, and the most an
+    // arc piece stands off the chord whose ends set the band.
+    let reach = f.r + f.floor + super::scan_arc::max_bulge(f.arcs);
     for iy in ja..jb {
         for ix in 0..nx {
             let bin = &bins[ix + (iy - ja) * nx];
@@ -289,27 +313,41 @@ fn judge_rows(
             };
             // Interval tops, high to low: the highest is the visible
             // surface; every lower one hides under a top above it.
-            for c in z.as_chunks::<2>().0 {
+            let chunks = z.as_chunks::<2>().0;
+            for (k, c) in chunks.iter().enumerate() {
                 let hi = c[1];
+                // The part's next surface over this top: its recess's
+                // roof (none known: infinite, and never an excuse).
+                let roof = chunks.get(k + 1).map_or(f64::INFINITY, |n| n[0]);
                 if hi >= t - f.floor {
                     continue; // not occluded: the ridge law already owns this top
                 }
                 let (cx, cy) = f.center(ix, iy);
+                let p = Point3::new(cx, cy, hi);
+                // #1408: a top out of every turning nose's reach, in a
+                // recess the pass never stood level with, is another
+                // op's floor (`scan_turned`); one the pass went into
+                // and stopped short of is its rest (PR #1429 review).
+                if f.band.is_some_and(|b| b.excuses(p, roof, reach)) {
+                    continue;
+                }
                 // The nearest ball center, exact (`scan_near`); a top
                 // that cannot raise the worst is let go at its first
-                // proof, which can never change the answer.
-                let dmin = match &f.grid {
-                    Some(g) => g.nearest(Point3::new(cx, cy, hi), (f.r, f.floor, best), &mut hint, work),
-                    None => {
-                        *work = work.saturating_add(f.segs.len());
-                        f.segs
-                            .iter()
-                            .enumerate()
-                            .map(|(i, s)| seg_dist(Point3::new(cx, cy, hi), s, f.arcs.get(i).and_then(Option::as_ref)))
-                            .fold(f64::INFINITY, f64::min)
-                    }
-                };
-                let rest = (dmin - f.r - f.floor).max(0.0);
+                // proof, which can never change the answer. A turning
+                // path reads the top on its orbit too (#1408).
+                let mut dmin = f.nearest(p, best, &mut hint, work);
+                for q in f.band.map(|b| b.turned(p)).unwrap_or_default() {
+                    dmin = dmin.min(f.nearest(q, best, &mut hint, work));
+                }
+                // A turning op's leave is its promise (#1408, `scan_turned`).
+                let leave = f.band.map_or(0.0, TurnedBand::leave);
+                let rest = (dmin - f.r - f.floor - leave).max(0.0);
+                // #1408: a crease narrower than a turning nose is no
+                // pass's of this insert (`scan_turned`), asked only
+                // where it could raise the worst.
+                if rest > best && f.band.is_some_and(|b| !b.touchable(p)) {
+                    continue;
+                }
                 if rest > best {
                     best = rest;
                     at = Point2::new(cx, cy);

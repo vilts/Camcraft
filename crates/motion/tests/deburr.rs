@@ -363,6 +363,7 @@ fn deburr_at_the_wall_corner_is_chamfer_byte_for_byte() {
         feed: 500.0,
         plunge_feed: 100.0,
         climb: true,
+        inside: false,
     };
     let c = chamfer(&rect(0.0, 0.0, 40.0, 20.0), &cp).expect("the chamfer twin");
     let (mut ka, mut kb) = (keys(&cut_points(&t)), keys(&cut_points(&c)));

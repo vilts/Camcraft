@@ -32,6 +32,7 @@ fn band(w: f64) -> Region {
 
 fn params() -> PocketParams {
     PocketParams {
+        blend_radius: None,
         tool_diameter: D,
         stepover: 4.0,
         stock_to_leave: 0.0,

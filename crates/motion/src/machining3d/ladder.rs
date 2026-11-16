@@ -93,6 +93,7 @@ pub(super) fn ladder(
     // (The previous level's dive link rides in it too: a planar cut at
     // that plane, which the Crossing law reads like any pass.)
     let mut lifted = LinkTally::default();
+    let mut too_narrow = false;
     for &z in zs {
         // The level law, in two region ops: the footprint minus the part
         // material standing above the plane - its cross-section and the
@@ -131,13 +132,16 @@ pub(super) fn ladder(
         // superset law reads exactly this set at exactly this plane).
         let center = target.offset(-(r + p.stock_to_leave))?;
         if center.is_empty() {
+            too_narrow = true;
             continue; // narrower than the tool at this level: the
                       // staircase (or a wall this tool cannot enter) -
                       // rest material's later problem, never a lie now
         }
         // The level's plan: the strategy's tiling, or the HSM plan
         // (M11.4, `hsm`) - whose entry bore the level's params carry.
-        let lp = hsm::plan_level(&mut b, &center, p, z, hop_z, rest.is_some(), shell, seam)?;
+        // #871: a part-way refusal hands back the levels so far.
+        let lp = hsm::plan_level(&mut b, &center, p, z, hop_z, rest.is_some(), shell, seam)
+            .map_err(|e| e.with_ghost_moves(b.moves()))?;
         let passes = &lp.passes;
         let level_p = lp.params(p);
         let Some(first_pass) = passes.first() else {
@@ -349,9 +353,15 @@ pub(super) fn ladder(
         return Err(GenError::Invalid(why).with_ghost(&path));
     }
     if path.moves.is_empty() {
-        return Err(GenError::Empty(
-            "nothing to cut: the model fills the pocket at every level".into(),
-        ));
+        let why = if too_narrow {
+            format!(
+                "nothing to cut: the open area is too narrow for the {} mm tool and {} mm stock to leave at every level",
+                p.tool_diameter, p.stock_to_leave,
+            )
+        } else {
+            "nothing to cut: the model fills the pocket at every level".into()
+        };
+        return Err(GenError::Empty(why));
     }
     if !path.all_finite() {
         return Err(GenError::Invalid("path left the finite horizon".into()));

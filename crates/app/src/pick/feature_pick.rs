@@ -161,7 +161,7 @@ fn along(o: [f64; 3], d: [f64; 3], t: f64) -> [f64; 3] {
     [o[0] + d[0] * t, o[1] + d[1] * t, o[2] + d[2] * t]
 }
 
-fn world_of(b: &PickBody, p: [f64; 3]) -> [f64; 3] {
+pub(super) fn world_of(b: &PickBody, p: [f64; 3]) -> [f64; 3] {
     a3(transform_point(p3(p), b.pose.pos, b.pose.rot))
 }
 
@@ -187,7 +187,7 @@ fn segment_near_ray(o: [f64; 3], d: [f64; 3], a: [f64; 3], b: [f64; 3]) -> [f64;
 
 /// Does any occluding facet cross the sight segment from `p` (world)
 /// back to the viewer before reaching `p`?
-fn occluded(bodies: &[PickBody], own: usize, ray: &PickRay, d: [f64; 3], p: [f64; 3]) -> bool {
+pub(super) fn occluded(bodies: &[PickBody], own: usize, ray: &PickRay, d: [f64; 3], p: [f64; 3]) -> bool {
     let eye = match ray.projection {
         Projection::Perspective => ray.origin,
         Projection::Ortho => along(p, d, -dot(sub(p, ray.origin), d)),
@@ -205,6 +205,22 @@ fn occluded(bodies: &[PickBody], own: usize, ray: &PickRay, d: [f64; 3], p: [f64
         e_l.is_finite()
             && dir.is_finite()
             && b.tris.iter().any(|t| ray_triangle(*t, e_l, dir).is_some_and(|hit| hit < cut))
+    })
+}
+
+/// At most this many samples of a round edge pay for a sight ray.
+const ARC_SAMPLES: usize = 8;
+
+/// Is any of the round edge's segments (sampled at their midpoints, up to
+/// [`ARC_SAMPLES`] spread around the run) in sight? A hidden rim offers no
+/// centre unless the caller picks through.
+fn arc_seen(bodies: &[PickBody], own: usize, arc: usize, ray: &PickRay, d: [f64; 3]) -> bool {
+    let Some(b) = bodies.get(own) else { return false };
+    let Some(a) = b.graph.arcs.get(arc) else { return false };
+    let step = a.edges.len().div_ceil(ARC_SAMPLES).max(1);
+    a.edges.iter().step_by(step).filter_map(|&e| b.graph.edge_ends(e)).any(|(p, r)| {
+        let mid = [(p[0] + r[0]) * 0.5, (p[1] + r[1]) * 0.5, (p[2] + r[2]) * 0.5];
+        !occluded(bodies, own, ray, d, world_of(b, mid))
     })
 }
 
@@ -287,11 +303,19 @@ pub fn pick_bodies(bodies: &[PickBody], q: &PickQuery) -> Option<FeaturePick> {
         }
     }
     for mut tier in tiers {
-        // Nearest the ray first, then nearest the eye; only the winners
-        // pay for the occlusion test.
-        tier.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        // Nearest the ray first (to the nanometre: two centres stacked on
+        // one axis tie, never split by float noise), then nearest the eye;
+        // only the winners pay for the occlusion test.
+        let nm = |perp: f64| (perp * 1e6).round();
+        tier.sort_by(|a, b| nm(a.0).total_cmp(&nm(b.0)).then(a.1.total_cmp(&b.1)));
         let tries = if q.through { usize::MAX } else { OCCLUSION_TRIES };
-        let found = tier.into_iter().take(tries).find(|c| q.through || !occluded(bodies, c.2, &q.ray, d, c.4));
+        let seen = |c: &Cand| match c.3 {
+            // A centre floats in the air of its hole: it is offered when
+            // its round EDGE is in sight (#692), not by its own position.
+            PickTarget::Centre { arc } => arc_seen(bodies, c.2, arc, &q.ray, d),
+            _ => !occluded(bodies, c.2, &q.ray, d, c.4),
+        };
+        let found = tier.into_iter().take(tries).find(|c| q.through || seen(c));
         if let Some((_, _, bi, target, at)) = found {
             let entity = bodies.get(bi)?.name.clone();
             return Some(FeaturePick { entity, target, at, surface });

@@ -80,6 +80,17 @@ pub fn resolve(
     }
 }
 
+/// The status line the app starts with. A browser build has no exe and
+/// no theme folder to look beside (#31): its built-in themes are all it
+/// ships, so a missing folder is not news there and it starts "ready".
+#[must_use]
+pub fn startup_status(found: &Result<PathBuf, String>, in_browser: bool) -> String {
+    match found {
+        Err(why) if !in_browser => why.clone(),
+        _ => String::from("ready"),
+    }
+}
+
 /// [`resolve`] wired to the running process: the real environment, the
 /// real exe path, this crate's manifest as the dev fallback, and the
 /// filesystem as the probe.
@@ -196,5 +207,14 @@ mod tests {
     fn the_dev_run_finds_the_shipped_folder() {
         let dir = from_process().unwrap_or_else(|why| panic!("dev run must find assets/themes: {why}"));
         assert!(dir.join("teal-night.json").is_file(), "{}", dir.display());
+    }
+
+    #[test]
+    fn the_browser_build_never_says_a_theme_folder_is_missing_beside_an_exe() {
+        let missing: Result<PathBuf, String> = Err(NOT_FOUND.to_owned());
+        assert_eq!(startup_status(&missing, false), NOT_FOUND, "the desktop app says it once");
+        assert_eq!(startup_status(&missing, true), "ready", "a browser has no exe to look beside");
+        assert_eq!(startup_status(&Ok(p("/themes")), false), "ready");
+        assert_eq!(startup_status(&Ok(p("/themes")), true), "ready");
     }
 }

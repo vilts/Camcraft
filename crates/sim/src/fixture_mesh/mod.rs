@@ -31,8 +31,12 @@
 //!   only the ray test skips them (they have no interior to cross).
 
 mod bvh;
+mod column;
 mod gjk;
+mod prism;
 mod ray;
+
+pub use prism::PrismReading;
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -182,19 +186,7 @@ impl FixtureMesh {
         r: f64,
         margin: f64,
     ) -> bool {
-        if !(p0.is_finite() && p1.is_finite() && lo.is_finite() && hi.is_finite() && r.is_finite()) {
-            return true;
-        }
-        let a = if axis == gjk::UP {
-            gjk::UP
-        } else {
-            let l = gjk::dot(axis, axis).sqrt();
-            if !(l.is_finite() && l > 1e-12) {
-                return true;
-            }
-            gjk::scale(axis, 1.0 / l)
-        };
-        let band = SweptBand { p0: v(p0), p1: v(p1), a, lo: lo.min(hi), hi: hi.max(lo), r: r.max(0.0) };
+        let Some(band) = swept_band(p0, p1, axis, lo, hi, r) else { return true };
         if !margin.is_finite() {
             return true;
         }
@@ -215,6 +207,53 @@ impl FixtureMesh {
     pub fn contains(&self, p: Point3) -> bool {
         ray::inside(self, v(p))
     }
+}
+
+/// The swept band the GJK search reads: the cylinder of radius `r`
+/// standing `lo..hi` along `axis` (normalized here) from the tip, the
+/// tip carried `p0`->`p1`. None on a zero or non-finite axis or any
+/// non-finite input - the caller fails closed.
+fn swept_band(p0: Point3, p1: Point3, axis: [f64; 3], lo: f64, hi: f64, r: f64) -> Option<SweptBand> {
+    if !(p0.is_finite() && p1.is_finite() && lo.is_finite() && hi.is_finite() && r.is_finite()) {
+        return None;
+    }
+    let a = if axis == gjk::UP {
+        gjk::UP
+    } else {
+        let l = gjk::dot(axis, axis).sqrt();
+        if !(l.is_finite() && l > 1e-12) {
+            return None;
+        }
+        gjk::scale(axis, 1.0 / l)
+    };
+    Some(SweptBand { p0: v(p0), p1: v(p1), a, lo: lo.min(hi), hi: hi.max(lo), r: r.max(0.0) })
+}
+
+/// Is the flat-ended band of [`FixtureMesh::band_meets_along`] PROVEN
+/// more than `margin` clear of the box (#1305)? The box law's twin of
+/// the mesh law's narrow phase: the same swept cylinder, the same GJK
+/// proof ([`gjk`]'s header - a separating plane or nothing). Anything
+/// else - contact, overlap, non-finite input, a zero axis, a search
+/// that ran out - is `false`: not proven, so the caller keeps its hit.
+#[must_use]
+#[allow(clippy::too_many_arguments)] // segment, axis, band, box, margin
+pub(crate) fn band_clear_of_box(
+    p0: Point3,
+    p1: Point3,
+    axis: [f64; 3],
+    lo: f64,
+    hi: f64,
+    r: f64,
+    b: &FixtureBox,
+    margin: f64,
+) -> bool {
+    let Some(band) = swept_band(p0, p1, axis, lo, hi, r) else { return false };
+    if !(margin.is_finite() && b.min.is_finite() && b.max.is_finite()) {
+        return false;
+    }
+    let (m, x) = (v(b.min), v(b.max));
+    let boxed = Boxed { lo: [0, 1, 2].map(|k| m[k].min(x[k])), hi: [0, 1, 2].map(|k| m[k].max(x[k])) };
+    gjk::separated(&band, &boxed, margin.max(0.0))
 }
 
 /// One fixture as the mesh law reads it: its world box (the very box

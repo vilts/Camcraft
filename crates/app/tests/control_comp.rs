@@ -12,8 +12,8 @@
 //! Regenerate after an intentional change:
 //! `WRITE_GOLDEN=1 cargo test -p camcraft-app --test control_comp`
 //!
-//! Gate map (M4.4): covers app::commands, app::links, app::machining2d,
-//! app::model, app::operation, app::post, app::posting, app::project.
+//! Gate map (M4.4): covers app::commands, motion::links, motion::machining2d,
+//! app::model, app::operation, post::post, app::posting, app::project.
 
 mod common;
 
@@ -100,7 +100,7 @@ fn in_computer_records_no_span_and_posts_a_centre_path_without_comp_words() {
 }
 
 #[test]
-fn in_control_posts_the_part_contour_under_g42_through_fanuc_to_the_golden() {
+fn in_control_posts_the_part_contour_under_g41_through_fanuc_to_the_golden() {
     let (world, _) = world_with(Compensation::Control);
     let e = model::find_by_name(&world, "Contour1").expect("op");
     let cache = model::toolpath_of(&world, &e).expect("cache");
@@ -118,16 +118,16 @@ fn in_control_posts_the_part_contour_under_g42_through_fanuc_to_the_golden() {
     let pe = model::find_by_name(&plain, "Contour1").expect("op");
     assert_eq!(cache.path.moves.len(), model::toolpath_of(&plain, &pe).expect("cache").path.moves.len());
     let text = stream(&world);
-    assert!(text.contains("COMP RIGHT 3000\n") && text.contains("COMP OFF\n"), "{text}");
+    assert!(text.contains("COMP LEFT 3000\n") && text.contains("COMP OFF\n"), "{text}");
     // The programmed contour is the part's 10 x 10 box - its corners
     // ride the stream verbatim, the centre's 13-off corners do not.
     assert!(text.contains("Feed X 10000 Y 10000 Z"), "{text}");
     let out = engine::run(&post_text("fanuc"), &posting::machine_value(&world), &text).unwrap();
     assert!(out.warnings.is_empty(), "{:?}", out.warnings);
-    assert_eq!(out.program.matches("G42 ").count(), levels.len(), "{}", out.program);
+    assert_eq!(out.program.matches("G41 ").count(), levels.len(), "{}", out.program);
     assert!(out.program.contains(" D01 "), "the tool's register: {}", out.program);
     assert_eq!(out.program.matches("G01 G40 ").count(), levels.len(), "{}", out.program);
-    assert!(out.program.contains("X10 Y10 "), "the part corner: {}", out.program);
+    assert!(out.program.contains("X10. Y10. "), "the part corner: {}", out.program);
     common::write_golden("nc/contour_control_comp.nc", &out.program);
     // The in-app gate releases it: no warning, the file written.
     let mut path = std::env::temp_dir();
@@ -141,9 +141,9 @@ fn in_control_posts_the_part_contour_under_g42_through_fanuc_to_the_golden() {
 /// engage block's leading words, the cancel block's, the D word - None
 /// where the tool call's own D selects the edge).
 const DIALECTS: &[(&str, &str, &str, Option<&str>)] = &[
-    ("haas", "G1 G42 ", "G1 G40 ", Some(" D1 ")),
-    ("mazak", "G01 G42 ", "G01 G40 ", Some(" D1 ")),
-    ("sinumerik", "G1 G42 ", "G1 G40 ", None),
+    ("haas", "G1 G41 ", "G1 G40 ", Some(" D1 ")),
+    ("mazak", "G01 G41 ", "G01 G40 ", Some(" D1 ")),
+    ("sinumerik", "G1 G41 ", "G1 G40 ", None),
 ];
 
 #[test]
@@ -160,7 +160,8 @@ fn haas_mazak_and_840d_post_the_part_contour_under_their_own_comp_words_to_the_g
         let p = &out.program;
         assert_eq!(p.matches(engage).count(), spans, "{stem}: {p}");
         assert_eq!(p.matches(cancel).count(), spans, "{stem}: {p}");
-        assert_eq!(p.matches("G41").count(), 0, "{stem}: {p}");
+        // #1555: climb outside (M3) is G41 - never G42.
+        assert_eq!(p.matches("G42").count(), 0, "{stem}: {p}");
         match d {
             Some(d) => assert_eq!(p.matches(d).count(), spans, "{stem}: the D word rides each engage: {p}"),
             None => assert!(
@@ -168,7 +169,9 @@ fn haas_mazak_and_840d_post_the_part_contour_under_their_own_comp_words_to_the_g
                 "{stem}: the tool call's D selects the edge: {p}"
             ),
         }
-        assert!(p.contains("X10 Y10 "), "{stem}: the part corner: {p}");
+        // #1836: the Fanuc family writes a whole length with its point.
+        let corner = if *stem == "sinumerik" { "X10 Y10 " } else { "X10. Y10. " };
+        assert!(p.contains(corner), "{stem}: the part corner: {p}");
         assert!(!p.contains("WEAR COMP"), "{stem}: no wear note under control: {p}");
         common::write_golden(&format!("nc/{stem}/contour_control_comp.nc"), p);
         let mut path = std::env::temp_dir();
@@ -186,7 +189,7 @@ fn the_lathe_and_the_other_mill_posts_refuse_a_control_op_by_name_and_the_gate_b
     let m = posting::machine_value(&world);
     let out = engine::run(&post_text("fanuc-lathe"), &m, &text).unwrap();
     assert!(out.warnings.iter().any(|w| w.contains("nose-radius compensation")), "{:?}", out.warnings);
-    for stem in ["heidenhain", "tormach"] {
+    for stem in ["heidenhain", "tormach", "grblhal", "tinyg"] {
         let out = engine::run(&post_text(stem), &m, &text).unwrap();
         assert!(out.warnings.iter().any(|w| w.contains("G41/G42) is not supported")), "{stem}: {:?}", out.warnings);
         let mut path = std::env::temp_dir();

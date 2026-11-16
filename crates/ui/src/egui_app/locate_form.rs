@@ -29,8 +29,7 @@ use super::layout::prop_row;
 /// when the page already knows the part.
 pub(super) fn arm_button(ui: &mut Ui, state: &mut State, label: &str, fixture: &str, part: Option<&str>) {
     let armed = armed_for(state, fixture, part);
-    if ui
-        .selectable_label(armed, if armed { "Stop locating" } else { label })
+    if super::pick_button::pick_button(ui, armed, if armed { "Stop locating" } else { label })
         .on_hover_text("Pick a part face or point, then the fixture face or point it sits on - up to three mates.")
         .clicked()
     {

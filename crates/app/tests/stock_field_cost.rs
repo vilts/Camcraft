@@ -9,7 +9,7 @@
 //! Provenance: our own golden programs and engines - nothing from
 //! vendor material.
 //!
-//! Gate map (M4.4): covers app::stock_sim (the field arm's simulate).
+//! Gate map (M4.4): covers app::stock_sim, sim::stock_sim (the field arm's simulate).
 
 mod common;
 

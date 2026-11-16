@@ -19,6 +19,7 @@ use camcraft_app::cl::ArcPlane;
 use camcraft_app::commands::AlignPartToSetup;
 use camcraft_app::pick::{self, PlaneLay, PointsLay};
 
+use crate::pick_words;
 use crate::state::{CommandKind, State};
 
 const PLANES: [ArcPlane; 3] = [ArcPlane::Xy, ArcPlane::Xz, ArcPlane::Yz];
@@ -54,8 +55,7 @@ pub(super) fn row(ui: &mut Ui, state: &mut State, setup: &str) {
     ui.horizontal(|ui| {
         ui.label("     ");
         let pick_text = if armed { "Stop picking points" } else { "Pick three points" };
-        if ui
-            .selectable_label(armed, pick_text)
+        if super::pick_button::pick_button(ui, armed, pick_text)
             .on_hover_text("Click three corners of the model in the viewport; the plane through them is laid on the plane.")
             .clicked()
         {
@@ -99,9 +99,12 @@ pub(super) fn row(ui: &mut Ui, state: &mut State, setup: &str) {
 /// The armed row: the three point prompts, Remove last, Clear, Apply.
 fn points_lines(ui: &mut Ui, state: &mut State, setup: &str, d: Draft) {
     let picks = state.points_pick.as_ref().map(|p| p.picks.clone()).unwrap_or_default();
+    // #738: the count, then each point where it is - never its id.
+    ui.label(RichText::new(format!("      {}", pick_words::selected(&picks))).weak());
+    let unit = camcraft_app::units::of(&state.world);
     for k in 0..3 {
         let text = match picks.get(k) {
-            Some(g) => format!("{} of '{}'", g.feature, g.entity),
+            Some(g) => crate::axis_pick::point_words(&state.world, g, unit),
             None if k == picks.len() => "click a corner in the viewport".to_owned(),
             None => "-".to_owned(),
         };
@@ -110,7 +113,7 @@ fn points_lines(ui: &mut Ui, state: &mut State, setup: &str, d: Draft) {
     let pl = PointsLay { lay: PlaneLay { plane: d.plane, flip: d.flip, place: d.place }, frame: d.frame };
     // The command's own check: a refused pick, or one that gives the
     // alignment the setup already holds, greys Apply out with the why.
-    let check = AlignPartToSetup::check_points(&state.world, setup, &picks, pl).map_err(|e| e.to_string());
+    let check = AlignPartToSetup::check_points(&state.world, setup, &picks, pl).map_err(|e| pick_words::plain(&e.to_string()));
     let side = pick::points_side(&state.world, &picks).ok();
     ui.horizontal(|ui| {
         ui.label("     ");
@@ -129,7 +132,10 @@ fn points_lines(ui: &mut Ui, state: &mut State, setup: &str, d: Draft) {
             crate::points_pick::clear(state);
         }
         let tip = match &check {
-            Ok(()) => format!("Turn the part so the three points' plane lies on {}.", pick::plane_label(d.plane)),
+            Ok(()) => format!(
+                "Turn the part from where it sits now so the three points' plane lies on {} (one undo step).",
+                pick::plane_label(d.plane)
+            ),
             Err(why) => why.clone(),
         };
         if ui

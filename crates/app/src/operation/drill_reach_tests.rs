@@ -112,9 +112,9 @@ fn box60() -> Vec<Triangle> {
 fn an_on_station_holder_reads_the_box_at_its_face_not_its_corner_circle() {
     let (b, p) = (box60(), Point3::new(50.0, 0.0, 0.0));
     let t = chain(p, [1.0, 0.0, 0.0], &[Point3::new(7.0, 0.0, 0.0), p]);
-    let r = cross_holder(&t, &[], Some(&b), (0.0, 0.0), &holder_tool(30.0), "T1");
+    let r = cross_holder(&t, &[], Some(&b), (0.0, 0.0), &holder_tool(30.0), None, "T1", Unit::Millimeters);
     assert!(r.is_ok(), "the holder clears the face: {:?}", r.err());
-    let e = cross_holder(&t, &[], Some(&b), (0.0, 0.0), &holder_tool(20.0), "T1").err().map(|e| e.to_string());
+    let e = cross_holder(&t, &[], Some(&b), (0.0, 0.0), &holder_tool(20.0), None, "T1", Unit::Millimeters).err().map(|e| e.to_string());
     let e = e.unwrap_or_else(|| panic!("a holder face at x27 sank into the r30 box face"));
     for s in ["T1's holder", "27.000 mm out along its hole's line", "inside material 30.000 mm out on that line", "stands 27.000 mm out"] {
         assert!(e.contains(s), "the refusal names '{s}': {e}");
@@ -122,7 +122,7 @@ fn an_on_station_holder_reads_the_box_at_its_face_not_its_corner_circle() {
     // A slide in Z on the station (a column, the holder's face at x32)
     // reads the same face.
     let col = chain(Point3::new(20.0, 0.0, 60.0), [1.0, 0.0, 0.0], &[Point3::new(20.0, 0.0, 0.0)]);
-    assert!(cross_holder(&col, &[], Some(&b), (0.0, 0.0), &holder_tool(12.0), "T1").is_ok(), "the column stands off the face");
+    assert!(cross_holder(&col, &[], Some(&b), (0.0, 0.0), &holder_tool(12.0), None, "T1", Unit::Millimeters).is_ok(), "the column stands off the face");
 }
 
 /// A swing round the bar keeps the corner radius: the quarter-turn
@@ -133,7 +133,7 @@ fn an_on_station_holder_reads_the_box_at_its_face_not_its_corner_circle() {
 fn a_swing_round_the_bar_keeps_the_corner_radius() {
     let b = box60();
     let t = chain(Point3::new(50.0, 0.0, 0.0), [1.0, 0.0, 0.0], &[Point3::new(0.0, 50.0, 0.0)]);
-    let e = cross_holder(&t, &[], Some(&b), (0.0, 0.0), &holder_tool(12.0), "T1").err().map(|e| e.to_string());
+    let e = cross_holder(&t, &[], Some(&b), (0.0, 0.0), &holder_tool(12.0), None, "T1", Unit::Millimeters).err().map(|e| e.to_string());
     let e = e.unwrap_or_else(|| panic!("the swing's holder passed inside the box corners"));
     assert!(e.contains("T1's holder") && e.contains("inside the stock's radius 42.426 at Z"), "{e}");
 }

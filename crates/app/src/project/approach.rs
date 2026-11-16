@@ -60,6 +60,9 @@ pub struct ApproachDto {
     /// The pocket's horizontal (G17) arc entry (M11.3).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arc_xy: Option<bool>,
+    /// Pre-drilled entry (#1449): written only when on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub predrilled: Option<bool>,
     /// Cutter compensation in the control (M13.11): written only when
     /// on; absent is in computer, every earlier file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -68,6 +71,14 @@ pub struct ApproachDto {
     /// wear, every earlier file. `control_comp` wins if both are set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wear_comp: Option<bool>,
+    /// The user's start point (#1448), `[x, y]` in mm: written only when
+    /// set; absent is the automatic seam, every earlier file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_point: Option<[f64; 2]>,
+    /// The user's exit point (#1473), `[x, y]` in mm: written only when
+    /// set; absent leaves at the seam, every earlier file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_point: Option<[f64; 2]>,
 }
 
 fn lead_dto(l: Lead) -> LeadDto {
@@ -119,8 +130,11 @@ pub fn approach_to_dto(a: &Approach) -> Option<ApproachDto> {
         axis_start: flag(a.axis_start, d.axis_start),
         axis_tol: num(a.axis_tol, d.axis_tol),
         arc_xy: flag(a.arc_xy, d.arc_xy),
+        predrilled: flag(a.predrilled, d.predrilled),
         control_comp: (a.compensation == Compensation::Control).then_some(true),
         wear_comp: (a.compensation == Compensation::Wear).then_some(true),
+        start_point: a.start_point.map(|q| [q.x, q.y]),
+        exit_point: a.exit_point.map(|q| [q.x, q.y]),
     };
     (dto != ApproachDto::default()).then_some(dto)
 }
@@ -156,6 +170,7 @@ pub fn approach_from_dto(d: Option<&ApproachDto>) -> Approach {
         axis_start: d.axis_start.unwrap_or(a.axis_start),
         axis_tol: d.axis_tol.unwrap_or(a.axis_tol),
         arc_xy: d.arc_xy.unwrap_or(a.arc_xy),
+        predrilled: d.predrilled.unwrap_or(a.predrilled),
         compensation: if d.control_comp == Some(true) {
             Compensation::Control
         } else if d.wear_comp == Some(true) {
@@ -163,6 +178,8 @@ pub fn approach_from_dto(d: Option<&ApproachDto>) -> Approach {
         } else {
             Compensation::Computer
         },
+        start_point: d.start_point.map(|[x, y]| crate::geo2d::Point2::new(x, y)),
+        exit_point: d.exit_point.map(|[x, y]| crate::geo2d::Point2::new(x, y)),
         center_cutting: true,
     }
 }

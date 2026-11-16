@@ -42,7 +42,7 @@ Icon=io.github.NeoTech.Camcraft
 Terminal=false
 Categories=Graphics;Engineering;
 EOF
-cp assets/ui/cube.png "$work/stage/io.github.NeoTech.Camcraft.png"
+cp assets/logo/icons/camcraft-256.png "$work/stage/io.github.NeoTech.Camcraft.png"
 cat > "$work/manifest.yml" <<'EOF'
 id: io.github.NeoTech.Camcraft
 runtime: org.freedesktop.Platform

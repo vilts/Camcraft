@@ -109,8 +109,8 @@ pub fn effective(world: &World, name: &str) -> Option<StockSource> {
 
 /// Why `name` cannot take the stock the setup before it leaves, if it
 /// cannot: the first setup, or a carry the sim refuses (a turn the
-/// lattice cannot carry exactly, a lathe or mill-turn machine) - named
-/// with both setups.
+/// lattice cannot carry exactly, or a machine that is not a mill, named by
+/// its kind) - named with both setups.
 #[must_use]
 pub fn carry_refusal(world: &World, name: &str) -> Option<String> {
     let Some(prev) = previous(world, name) else {

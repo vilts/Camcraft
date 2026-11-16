@@ -3,14 +3,21 @@
 //! the same `CommandKind`s as before; they land on the ACTIVE setup's own
 //! options (`SetSetupPostOptions`) when it owns them and on the document's
 //! (`SetPostOptions`) when it follows - the `state::setup_mount` routing
-//! law, worn by the options. Every arm is one undoable command. The tool
+//! law, worn by the options. With two or more setups (#1526, the #1515
+//! law) an edit on a setup that follows the document becomes THAT
+//! setup's own options instead: the document's are what every other
+//! following setup posts with, so writing them from one setup would
+//! silently change another setup's program. Every arm is one undoable
+//! command. The tool
 //! list export is a read of the document plus a file write: no command,
 //! no history (the setup-sheet law).
-//! Provenance: our own routing law (issue #389); no vendor material consulted.
+//! The setup's stated nose-to-rotary figure (#821) lands here too: one
+//! undoable `SetSetupNoseToAxis`.
+//! Provenance: our own routing law (issues #389, #1526); no vendor material consulted.
 
 use std::path::{Path, PathBuf};
 
-use camcraft_app::commands::{CommandError, SetPostOptions, SetSetupPostOptions};
+use camcraft_app::commands::{CommandError, SetPostOptions, SetSetupNoseToAxis, SetSetupPostOptions};
 use camcraft_app::schema::PostOptions;
 use camcraft_app::{setup, setup_post_options, tool_list_export};
 
@@ -25,10 +32,19 @@ impl State {
         setup_post_options::own(&self.world, Some(&active)).map(|_| active)
     }
 
-    /// Set the post options in force: the active setup's own when it has
-    /// them, else the document's. `done` is the status on success.
+    /// The setup an option edit writes: the active setup when it owns its
+    /// post options, or when the document has more than one setup (#1526 -
+    /// the edit becomes its own, so no other setup's program changes).
+    /// `None` - the document's options (no setups, or the only one).
+    #[must_use]
+    pub fn post_options_target(&self) -> Option<String> {
+        self.post_options_owner().or_else(|| self.shared_mount_target())
+    }
+
+    /// Set the post options in force on the setup [`Self::post_options_target`]
+    /// names, else the document's. `done` is the status on success.
     pub(super) fn route_post_options(&mut self, next: PostOptions, done: &str, refused: &str, scope: ErrorScope) {
-        let owner = self.post_options_owner();
+        let owner = self.post_options_target();
         let executed: Result<(), CommandError> = match &owner {
             Some(s) => SetSetupPostOptions::new(&self.world, s, Some(next)).map(|c| self.history.execute(&self.world, c)),
             None => SetPostOptions::new(&self.world, next).map(|c| self.history.execute(&self.world, c)),
@@ -60,6 +76,21 @@ impl State {
                 };
             }
             Err(err) => self.refuse(ErrorScope::Setup, format!("post options not changed: {err}")),
+        }
+    }
+
+    /// #821: `setup` states its own nose-to-rotary figure (mm), or clears it.
+    pub(super) fn set_setup_nose(&mut self, setup: &str, value: Option<f64>) {
+        match SetSetupNoseToAxis::new(&self.world, setup, value) {
+            Ok(c) => {
+                self.history.execute(&self.world, c);
+                self.doc_version += 1;
+                self.status = match value {
+                    Some(v) => format!("{setup} states nose_to_axis {v:.3} mm"),
+                    None => format!("{setup} judges its rotary from the machine's nose_to_axis less its stack"),
+                };
+            }
+            Err(err) => self.refuse(ErrorScope::Setup, format!("nose_to_axis not changed: {err}")),
         }
     }
 

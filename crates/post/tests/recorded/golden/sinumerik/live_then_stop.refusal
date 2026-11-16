@@ -1,0 +1,4 @@
+; sinumerik.cps refused live_then_stop: 3 warning(s), the program is never released
+warning: operation Cross drill: is C-axis live-tool work (the spindle turns as C under a radial live tool), but this post script does not declare liveTooling - use a lathe post that voices the C axis
+warning: machine TESTBENCH MILL-TURN LIVE does not state its safe Z retract - this post lifts Z with G53 for a home move and at the end, and where machine Z0 sits is the machine builder's choice on this control; state the Z axis's safe_retract (machine coordinates) in the machine file
+warning: tilted move - Sinumerik post has no RTCP output

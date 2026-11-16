@@ -93,8 +93,8 @@ pub(super) fn radial_rapids(path: &Toolpath, cx: &VerifyContext, rest: &Rest, wa
     let flute = cx.tool.flute_len;
     let body = if flute.is_finite() && flute > 0.0 { flute } else { 2.0 * r };
     let tol = cx.z_tol.max(0.0);
-    let top = cx.stock_top_z - tol;
-    let disc = (r - cx.gouge_tol.max(0.0)).max(0.5 * r);
+    let top = cx.stock_top_z + cx.band_growth() - tol;
+    let disc = (r - cx.tightened(cx.gouge_tol.max(0.0))).max(0.5 * r);
     let poses = midpose::poses(path);
     let kerfs = kerfs(path, &poses, body, r + tol, cx.gouge_tol.max(1e-3));
     let solid = cx.stock.unwrap_or(cx.region).bounds();

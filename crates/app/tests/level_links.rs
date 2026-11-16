@@ -9,7 +9,7 @@
 //! the helix entry posts as continuous helical G2/G3 words.
 //!
 //! Gate map (M11.2): covers app::operation (params, stamp, sane, links),
-//! app::project (links DTO, contour migration), app::commands, app::verify,
+//! app::project (links DTO, contour migration), app::commands, sim::verify,
 //! app::posting.
 
 use camcraft_app::cl::{Move, MoveKind, Toolpath};
@@ -131,71 +131,143 @@ fn top(ms: &[Move]) -> f64 {
     ms.iter().map(|m| m.to.z.max(m.from.z)).fold(f64::NEG_INFINITY, f64::max)
 }
 
-#[test]
-fn the_users_part_contours_clean_under_every_level_link() {
-    // Stock top 20: clearance 40.5, retract 33.5.
-    let cases = [
-        Links::PLANAR,
-        Links { level: Link::Retract, ..Links::PLANAR },
-        Links { level: Link::KeepDown, transition: Some(Entry3D::Ramp), ..Links::PLANAR },
-        Links { level: Link::KeepDown, transition: Some(Entry3D::Plunge), ..Links::PLANAR },
-        Links { level: Link::KeepDown, transition: Some(Entry3D::Helix), helix_pitch: 2.5, ..Links::PLANAR },
-        Links { level: Link::KeepDown, transition: Some(Entry3D::Arc), ..Links::PLANAR },
-        Links { pass: Link::KeepDown, ..Links::PLANAR },
-        Links { pass: Link::Clearance, level: Link::Retract, ..Links::PLANAR },
-    ];
-    for links in cases {
-        let (_w, _h, t, warns) = user_job(contour_op(links));
-        assert!(warns.is_empty(), "{links:?}: {warns:?} / {:?}", t.notes);
-        assert!(t.is_chained() && t.all_finite());
-        let tr = transitions(&t);
-        assert!(!tr.is_empty(), "{links:?}");
-        for (above, below, ms) in &tr {
-            if links.level == Link::Retract {
-                assert!(top(ms) < 40.5, "{links:?}: {above} -> {below} stays under clearance");
-            }
+// #1715: the three generating tests were each one loop over their
+// cases (a full generate per case, 74 s for the binary in debug). Each
+// case is its own test now, in a module with the old test's name, so
+// libtest runs the cases in parallel. Each case builds its own world.
+
+/// One contour case. Stock top 20: clearance 40.5, retract 33.5.
+fn contours_clean(links: Links) {
+    let (_w, _h, t, warns) = user_job(contour_op(links));
+    assert!(warns.is_empty(), "{links:?}: {warns:?} / {:?}", t.notes);
+    assert!(t.is_chained() && t.all_finite());
+    let tr = transitions(&t);
+    assert!(!tr.is_empty(), "{links:?}");
+    for (above, below, ms) in &tr {
+        if links.level == Link::Retract {
+            assert!(top(ms) < 40.5, "{links:?}: {above} -> {below} stays under clearance");
         }
-        if links.level == Link::KeepDown {
-            // Ring by ring: each ring's own ladder stays down (the only
-            // rise is the move to the next ring's top, or a level the
-            // notes name).
-            let stayed = tr.iter().filter(|(above, _, ms)| top(ms) <= above + 1e-9).count();
-            let rose = tr.len() - stayed;
-            let named = t.notes.iter().filter(|n| n.starts_with("level link")).count();
-            assert!(stayed >= 4, "{links:?}: the rings stay down: {stayed} of {}", tr.len());
-            assert!(rose <= 1 + named, "{links:?}: {rose} rises, {named} named: {:?}", t.notes);
+    }
+    if links.level == Link::KeepDown {
+        // Ring by ring: each ring's own ladder stays down (the only
+        // rise is the move to the next ring's top, or a level the
+        // notes name).
+        let stayed = tr.iter().filter(|(above, _, ms)| top(ms) <= above + 1e-9).count();
+        let rose = tr.len() - stayed;
+        let named = t.notes.iter().filter(|n| n.starts_with("level link")).count();
+        assert!(stayed >= 4, "{links:?}: the rings stay down: {stayed} of {}", tr.len());
+        assert!(rose <= 1 + named, "{links:?}: {rose} rises, {named} named: {:?}", t.notes);
+    }
+}
+
+mod the_users_part_contours_clean_under_every_level_link {
+    use super::*;
+
+    #[test]
+    fn planar() {
+        contours_clean(Links::PLANAR);
+    }
+
+    #[test]
+    fn level_retract() {
+        contours_clean(Links { level: Link::Retract, ..Links::PLANAR });
+    }
+
+    #[test]
+    fn level_keep_down_ramp() {
+        contours_clean(Links { level: Link::KeepDown, transition: Some(Entry3D::Ramp), ..Links::PLANAR });
+    }
+
+    #[test]
+    fn level_keep_down_plunge() {
+        contours_clean(Links { level: Link::KeepDown, transition: Some(Entry3D::Plunge), ..Links::PLANAR });
+    }
+
+    #[test]
+    fn level_keep_down_helix() {
+        contours_clean(Links { level: Link::KeepDown, transition: Some(Entry3D::Helix), helix_pitch: 2.5, ..Links::PLANAR });
+    }
+
+    #[test]
+    fn level_keep_down_arc() {
+        contours_clean(Links { level: Link::KeepDown, transition: Some(Entry3D::Arc), ..Links::PLANAR });
+    }
+
+    #[test]
+    fn pass_keep_down() {
+        contours_clean(Links { pass: Link::KeepDown, ..Links::PLANAR });
+    }
+
+    #[test]
+    fn pass_clearance_level_retract() {
+        contours_clean(Links { pass: Link::Clearance, level: Link::Retract, ..Links::PLANAR });
+    }
+}
+
+/// One pocket case on the bore.
+fn pockets_clean(entry: Entry3D, links: Links) {
+    let (_w, _h, t, warns) = user_job(pocket_op(entry, links));
+    assert!(warns.is_empty(), "{entry:?} {links:?}: {warns:?} / {:?}", t.notes);
+    assert!(t.is_chained() && t.all_finite() && !t.moves.is_empty());
+    if links.level == Link::Retract {
+        for (above, below, ms) in transitions(&t) {
+            assert!(top(&ms) <= 22.0 + 1e-9, "{above} -> {below}: retract plane 22, got {}", top(&ms));
+        }
+    }
+    if links.level == Link::KeepDown {
+        let said = t.notes.iter().any(|n| n.starts_with("link:"));
+        for (above, below, ms) in transitions(&t) {
+            assert!(top(&ms) <= above + 1e-9 || said, "{above} -> {below}: {:?}", t.notes);
         }
     }
 }
 
-#[test]
-fn the_users_part_pockets_its_bore_clean_under_every_choice() {
-    let cases = [
-        (Entry3D::Plunge, Links::ROUGH3D),
-        (Entry3D::Helix, Links::ROUGH3D),
-        (Entry3D::Plunge, Links { transition: Some(Entry3D::Helix), helix_pitch: 1.0, ..Links::ROUGH3D }),
-        (Entry3D::Plunge, Links { transition: Some(Entry3D::Ramp), ramp_angle: 5.0, ..Links::ROUGH3D }),
-        (Entry3D::Helix, Links { level: Link::Retract, ..Links::ROUGH3D }),
-        (Entry3D::Helix, Links { level: Link::KeepDown, ..Links::ROUGH3D }),
-        (Entry3D::Plunge, Links { level: Link::KeepDown, transition: Some(Entry3D::Arc), ..Links::ROUGH3D }),
-        (Entry3D::Plunge, Links { pass: Link::Retract, ..Links::ROUGH3D }),
-        (Entry3D::Plunge, Links { pass: Link::KeepDown, max_stay_down: 5.0, ..Links::ROUGH3D }),
-    ];
-    for (entry, links) in cases {
-        let (_w, _h, t, warns) = user_job(pocket_op(entry, links));
-        assert!(warns.is_empty(), "{entry:?} {links:?}: {warns:?} / {:?}", t.notes);
-        assert!(t.is_chained() && t.all_finite() && !t.moves.is_empty());
-        if links.level == Link::Retract {
-            for (above, below, ms) in transitions(&t) {
-                assert!(top(&ms) <= 22.0 + 1e-9, "{above} -> {below}: retract plane 22, got {}", top(&ms));
-            }
-        }
-        if links.level == Link::KeepDown {
-            let said = t.notes.iter().any(|n| n.starts_with("link:"));
-            for (above, below, ms) in transitions(&t) {
-                assert!(top(&ms) <= above + 1e-9 || said, "{above} -> {below}: {:?}", t.notes);
-            }
-        }
+mod the_users_part_pockets_its_bore_clean_under_every_choice {
+    use super::*;
+
+    #[test]
+    fn plunge() {
+        pockets_clean(Entry3D::Plunge, Links::ROUGH3D);
+    }
+
+    #[test]
+    fn helix() {
+        pockets_clean(Entry3D::Helix, Links::ROUGH3D);
+    }
+
+    #[test]
+    fn plunge_helix_transition() {
+        pockets_clean(Entry3D::Plunge, Links { transition: Some(Entry3D::Helix), helix_pitch: 1.0, ..Links::ROUGH3D });
+    }
+
+    #[test]
+    fn plunge_ramp_transition() {
+        pockets_clean(Entry3D::Plunge, Links { transition: Some(Entry3D::Ramp), ramp_angle: 5.0, ..Links::ROUGH3D });
+    }
+
+    #[test]
+    fn helix_level_retract() {
+        pockets_clean(Entry3D::Helix, Links { level: Link::Retract, ..Links::ROUGH3D });
+    }
+
+    #[test]
+    fn helix_level_keep_down() {
+        pockets_clean(Entry3D::Helix, Links { level: Link::KeepDown, ..Links::ROUGH3D });
+    }
+
+    #[test]
+    fn plunge_level_keep_down_arc() {
+        pockets_clean(Entry3D::Plunge, Links { level: Link::KeepDown, transition: Some(Entry3D::Arc), ..Links::ROUGH3D });
+    }
+
+    #[test]
+    fn plunge_pass_retract() {
+        pockets_clean(Entry3D::Plunge, Links { pass: Link::Retract, ..Links::ROUGH3D });
+    }
+
+    #[test]
+    fn plunge_pass_keep_down_max_5() {
+        pockets_clean(Entry3D::Plunge, Links { pass: Link::KeepDown, max_stay_down: 5.0, ..Links::ROUGH3D });
     }
 }
 
@@ -221,95 +293,20 @@ fn a_helix_entry_posts_continuous_helical_arcs() {
     assert!(helical >= helix.len(), "{helical} helical words for {} helix moves", helix.len());
 }
 
-fn roundtrip(params: OpParams, key: Option<&str>) -> OpParams {
-    let world = new_world();
-    let mut h = History::default();
-    h.execute(&world, SetStock::new(&world, StockShape::Box { dx: 60.0, dy: 60.0, dz: 20.0 }, Default::default()).expect("stock"));
-    let tool = catalog().into_iter().find(|(n, _)| *n == TOOL).map(|(_, t)| t).expect("catalog");
-    h.execute(&world, AddTool::new(&world, TOOL, tool).expect("tool"));
-    h.execute(&world, CreateOperation::new(&world, "Op1", TOOL, SrcRef::Stock, params).expect("create"));
-    let path = std::env::temp_dir().join(format!("camcraft-level-links-{}-{}.camproj", key.map_or(String::from("none"), |k| k.chars().filter(char::is_ascii_alphanumeric).collect::<String>()), std::process::id()));
-    project::save(&world, &path).expect("save");
-    let first = std::fs::read_to_string(&path).expect("read");
-    match key {
-        None => assert!(!first.contains("\"links\""), "a default links choice writes no key: {first}"),
-        Some(k) => assert!(first.contains(k), "{k} missing: {first}"),
-    }
-    let world2 = new_world();
-    project::load(&world2, &path).expect("load");
-    project::save(&world2, &path).expect("resave");
-    let second = std::fs::read_to_string(&path).expect("reread");
-    let _ = std::fs::remove_file(&path);
-    assert_eq!(first, second, "round-trips byte for byte");
-    let e = model::find_by_name(&world2, "Op1").expect("op");
-    model::operation_of(&world2, &e).expect("operation").params
-}
-
-#[test]
-fn links_round_trip_and_the_defaults_write_no_key() {
-    let pocket2d = |links: Links| OpParams::Pocket {
-        stepover: 3.0,
-        stock_to_leave: 0.0,
-        clearance_z: Height::fixed(25.0),
-        retract_z: Some(Height::fixed(22.0)),
-        top_z: Height::fixed(20.0),
-        bottom_z: Height::fixed(14.0),
-        stepdown: 2.0,
-        feed: 800.0,
-        plunge_feed: 200.0,
-        climb: true,
-        strategy: PocketStrategy::Waterline,
-        entry: Entry3D::Plunge,
-        helix_radius: 1.0,
-        optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
-        blend_turns: false,
-        tilt: None,
-        links,
+/// XY distance from `q` to the triangle's projection (0 inside it).
+fn to_tri(q: Point3, t: [Point3; 3]) -> f64 {
+    let seg = |a: Point3, b: Point3| {
+        let (dx, dy) = (b.x - a.x, b.y - a.y);
+        let l2 = dx * dx + dy * dy;
+        let s = if l2 > 0.0 { (((q.x - a.x) * dx + (q.y - a.y) * dy) / l2).clamp(0.0, 1.0) } else { 0.0 };
+        (a.x + s * dx - q.x).hypot(a.y + s * dy - q.y)
     };
-    let _ = roundtrip(pocket2d(Links::PLANAR), None);
-    let picked = Links {
-        transition: Some(Entry3D::Helix),
-        helix_pitch: 0.75,
-        level: Link::KeepDown,
-        pass: Link::KeepDown,
-        max_stay_down: 12.0,
-        ..Links::PLANAR
-    };
-    let back = roundtrip(pocket2d(picked), Some("\"level\": \"keep_down\""));
-    assert_eq!(back.links(), Some(&picked));
-    // The 3-D ladder's default is its own (pass links keep down): no key.
-    let _ = roundtrip(pocket_op(Entry3D::Plunge, Links::ROUGH3D), None);
-    let p3 = Links { pass: Link::Retract, ..Links::ROUGH3D };
-    let back = roundtrip(pocket_op(Entry3D::Plunge, p3), Some("\"pass\": \"retract\""));
-    assert_eq!(back.links(), Some(&p3));
-    // The contour's new choices ride the `links` object; the old stay-down
-    // ramp still writes the old keys (the previous build reads it right).
-    let c = Links { level: Link::Retract, transition: Some(Entry3D::Plunge), ..Links::PLANAR };
-    let back = roundtrip(contour_op(c), Some("\"links\""));
-    assert_eq!(back.links(), Some(&c));
-    let old = Links { level: Link::KeepDown, transition: Some(Entry3D::Ramp), ramp_angle: 4.0, ..Links::PLANAR };
-    let back = roundtrip(contour_op(old), Some("\"level_link\": \"stay_down_ramp\""));
-    assert_eq!(back.links(), Some(&old));
-}
-
-#[test]
-fn the_stamp_tells_the_choices_apart() {
-    let world = new_world();
-    let mut h = History::default();
-    h.execute(&world, SetStock::new(&world, StockShape::Box { dx: 60.0, dy: 60.0, dz: 20.0 }, Default::default()).expect("stock"));
-    let tool = catalog().into_iter().find(|(n, _)| *n == TOOL).map(|(_, t)| t).expect("catalog");
-    h.execute(&world, AddTool::new(&world, TOOL, tool).expect("tool"));
-    let stamp = |l: Links| operation::current_stamp(&world, TOOL, &SrcRef::Stock, &pocket_op(Entry3D::Plunge, l), "X", None);
-    let base = stamp(Links::ROUGH3D);
-    assert!(base.is_some());
-    for other in [
-        Links { level: Link::Retract, ..Links::ROUGH3D },
-        Links { pass: Link::Retract, ..Links::ROUGH3D },
-        Links { transition: Some(Entry3D::Ramp), ..Links::ROUGH3D },
-        Links { max_stay_down: 3.0, ..Links::ROUGH3D },
-    ] {
-        assert_ne!(stamp(other), base, "{other:?}");
+    let side = |a: Point3, b: Point3| (b.x - a.x) * (q.y - a.y) - (b.y - a.y) * (q.x - a.x);
+    let (s0, s1, s2) = (side(t[0], t[1]), side(t[1], t[2]), side(t[2], t[0]));
+    if (s0 >= 0.0 && s1 >= 0.0 && s2 >= 0.0) || (s0 <= 0.0 && s1 <= 0.0 && s2 <= 0.0) {
+        return 0.0;
     }
+    seg(t[0], t[1]).min(seg(t[1], t[2])).min(seg(t[2], t[0]))
 }
 
 /// Found while building M11.2 (pre-existing, not a links defect): the
@@ -322,32 +319,55 @@ fn the_stamp_tells_the_choices_apart() {
 /// (`machining3d::material_above`): under the closed floor no level
 /// exists, so no move of any entry arm goes below the bore floor inside
 /// the bore - nor anywhere under the part - and the path verifies clean.
-#[test]
-fn a_helix_under_the_bore_floor_is_never_silent() {
-    for entry in [Entry3D::Helix, Entry3D::Plunge, Entry3D::Ramp, Entry3D::Arc] {
-        let mut op = pocket_op(entry, Links::ROUGH3D);
-        if let OpParams::Pocket3D { bottom_z, .. } = &mut op {
-            *bottom_z = Height::of(HeightReference::BottomOfStock, 0.0);
-        }
-        let (_w, _h, t, warns) = user_job(op);
-        assert!(!t.moves.is_empty(), "{entry:?}: the bore is still cut");
-        let in_bore = |p: &Point3| p.x.hypot(p.y) < 12.5;
-        let under = t.moves.iter().find(|m| [m.from, m.to].iter().any(|q| in_bore(q) && q.z < -1e-6));
-        assert!(under.is_none(), "{entry:?}: a move under the bore floor: {under:?}");
-        let low = t.moves.iter().map(|m| m.to.z.min(m.from.z)).fold(f64::INFINITY, f64::min);
-        assert!(low >= -1e-6, "{entry:?}: the part shadows everything below Z 0, got {low}");
-        assert!(warns.is_empty(), "{entry:?}: {warns:?} / {:?}", t.notes);
+fn never_under_the_bore_floor(entry: Entry3D) {
+    let mut op = pocket_op(entry, Links::ROUGH3D);
+    if let OpParams::Pocket3D { bottom_z, .. } = &mut op {
+        *bottom_z = Height::of(HeightReference::BottomOfStock, 0.0);
+    }
+    let (w, _h, t, warns) = user_job(op);
+    assert!(!t.moves.is_empty(), "{entry:?}: the bore is still cut");
+    let in_bore = |p: &Point3| p.x.hypot(p.y) < 12.5;
+    let under = t.moves.iter().find(|m| [m.from, m.to].iter().any(|q| in_bore(q) && q.z < -1e-6));
+    assert!(under.is_none(), "{entry:?}: a move under the bore floor: {under:?}");
+    // #1774: the stock AROUND the part is cleared down to the stock's
+    // bottom (the 2D pocket's #12 reading); under the part's own
+    // shadow nothing goes below Z 0 - every lower move keeps its
+    // tool disc off the part's projected facets.
+    let part = model::find_by_name(&w, "Milling-test").and_then(|e| model::world_facets(&w, &e)).expect("part facets");
+    let low = t
+        .moves
+        .iter()
+        .flat_map(|m| [m.from, m.to])
+        .filter(|q| q.z < -1e-6)
+        .map(|q| part.iter().map(|f| to_tri(q, [f.a, f.b, f.c])).fold(f64::INFINITY, f64::min))
+        .fold(f64::INFINITY, f64::min);
+    assert!(low >= 5.0 - 0.02, "{entry:?}: a move below Z 0 is {low} from the part's footprint");
+    assert!(warns.is_empty(), "{entry:?}: {warns:?} / {:?}", t.notes);
+}
+
+mod a_helix_under_the_bore_floor_is_never_silent {
+    use super::*;
+
+    #[test]
+    fn helix() {
+        never_under_the_bore_floor(Entry3D::Helix);
+    }
+
+    #[test]
+    fn plunge() {
+        never_under_the_bore_floor(Entry3D::Plunge);
+    }
+
+    #[test]
+    fn ramp() {
+        never_under_the_bore_floor(Entry3D::Ramp);
+    }
+
+    #[test]
+    fn arc() {
+        never_under_the_bore_floor(Entry3D::Arc);
     }
 }
 
-#[test]
-fn nonsense_links_are_refused_at_the_door() {
-    for bad in [
-        Links { transition: Some(Entry3D::Ramp), ramp_angle: 0.0, ..Links::PLANAR },
-        Links { helix_pitch: f64::NAN, ..Links::PLANAR },
-        Links { max_stay_down: -1.0, ..Links::PLANAR },
-    ] {
-        assert!(!contour_op(bad).is_sane(), "{bad:?}");
-        assert!(!pocket_op(Entry3D::Plunge, bad).is_sane(), "{bad:?}");
-    }
-}
+#[path = "level_links/choices.rs"]
+mod choices;

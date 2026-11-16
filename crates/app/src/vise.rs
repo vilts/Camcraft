@@ -162,6 +162,17 @@ impl ViseParams {
         }
     }
 
+    /// How far above the vise floor the stock's bottom sits: a
+    /// self-centering grip jaw's ledge (#1274), else 0 (on the floor).
+    /// The frame's z = 0 is that seat, the floor this far below it.
+    #[must_use]
+    pub fn seat_height(&self) -> f64 {
+        match &self.style {
+            ViseStyle::SelfCentering(sc) => sc.seat(self.jaw_height),
+            ViseStyle::Standard => 0.0,
+        }
+    }
+
     /// The model name a fresh vise lands under (before the free-name
     /// suffix): "Vise 6 in".
     #[must_use]

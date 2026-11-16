@@ -6,16 +6,48 @@
 //! Provenance: our own tests over ISO 841's right-handed program frame
 //! and RS-274 comment syntax; fixture values are our own invention.
 //!
+//! The posted stream is post's inverted-axis fixture, recorded
+//! (`crates/post/tests/recorded/inputs/inverted_probe.cnc`, written and
+//! guarded by post's `inverted_post`, #926).
+//!
 //! Gate map (M4.4): covers app::setup_sheet, machine::direction, post::machine, assets/posts.
-
-mod inverted_support;
 
 use camcraft_app::commands::{CreateSetup, History, LoadMachine, SetSetupMachine};
 use camcraft_app::machine::{self, AxisDirection, AxisLimits, Machine};
 use camcraft_app::post::engine;
 use camcraft_app::setup_sheet;
 use camcraft_app::world::new_world;
-use inverted_support::{cps, machine as mch, probe_stream};
+use std::path::{Path, PathBuf};
+
+fn repo(rel: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../").join(rel)
+}
+
+fn read(rel: &str) -> String {
+    std::fs::read_to_string(repo(rel)).unwrap_or_else(|e| panic!("{rel}: {e}")).replace("\r\n", "\n")
+}
+
+fn cps(stem: &str) -> String {
+    read(&format!("assets/posts/{stem}.cps"))
+}
+
+/// The shipped 3-axis machine, stating `letters` inverted the way the
+/// mirror does (`invertedAxes`).
+fn mch(letters: &[&str]) -> serde_json::Value {
+    let mut m: serde_json::Value = serde_json::from_str(&read("assets/machines/3axis-vmc.mch")).expect("machine json");
+    if !letters.is_empty()
+        && let Some(o) = m.as_object_mut()
+    {
+        o.insert("invertedAxes".into(), serde_json::json!(letters));
+    }
+    m
+}
+
+/// The inverted-axis fixture stream (lines, arcs in all three planes,
+/// cutter compensation, a drilled hole, a work-offset origin).
+fn probe_stream() -> String {
+    read("crates/post/tests/recorded/inputs/inverted_probe.cnc")
+}
 
 fn mill(inverted: &[&str]) -> Machine {
     let axis = |n: &str| AxisLimits {

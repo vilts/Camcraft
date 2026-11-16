@@ -192,7 +192,10 @@ fn stamp_inner(
         kinds.push(kind);
         let lean = match kind {
             MoveKind::Rapid => None,
-            _ => cut_axis(s, &mesh, r, band, &st[k + 1..], c, ruling, shank, held, last_lean)?,
+            // #1015: a station refused hands back the plan before its
+            // move - world, as the stamp's input is, not yet posed.
+            _ => cut_axis(s, &mesh, r, band, &st[k + 1..], c, ruling, shank, held, last_lean)
+                .map_err(|e| e.with_ghost_moves(path.moves.get(..s.mv).unwrap_or_default()))?,
         };
         if lean.is_some_and(|a| !is_vertical(&a)) {
             leaned = true;

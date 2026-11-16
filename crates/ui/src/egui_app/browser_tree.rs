@@ -12,7 +12,6 @@
 
 use camcraft_app::model;
 use camcraft_app::operation;
-use camcraft_app::schema::WCS_SLOTS;
 use camcraft_app::tools::ToolKind;
 use camcraft_app::{setup, setup_mount};
 
@@ -20,7 +19,9 @@ use crate::state::{SetupPage, State, UiTarget};
 
 use super::icons::Icon;
 use super::painted;
-use super::panes::op_icon;
+use super::op_icons::op_icon;
+use super::tool_icons::tool_icon;
+use super::tree_badges::status_badge;
 
 /// The tree's collapsible top-level sections.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,7 +76,7 @@ pub(super) fn push_row(
     depth: usize,
     leaf: Leaf,
 ) {
-    rows.push(painted::Row { label, suffix, kind, icon, selected, hidden, depth });
+    rows.push(painted::Row { label, suffix, kind, icon, badge: None, selected, hidden, depth });
     leaves.push(leaf);
 }
 
@@ -122,6 +123,9 @@ pub(crate) fn kind_name(k: ToolKind) -> &'static str {
         ToolKind::Taper => "chamfer mill",
         ToolKind::Probe => "touch probe",
         ToolKind::Torch => "plasma torch",
+        ToolKind::Electrode => "sinker electrode",
+        ToolKind::ThreadMill => "thread mill",
+        ToolKind::ThreadMillSingle => "single-form thread mill",
     }
 }
 
@@ -134,11 +138,11 @@ pub(crate) fn browser_rows(state: &State) -> (Vec<painted::Row>, Vec<Leaf>) {
     let t = state.pane_target();
 
     let setup_open = state.browser_expanded[BrowserSection::Setup.index()];
-    push_row(&mut rows, &mut leaves, "Setup".into(), String::new(), painted::Kind::Parent(setup_open), None, false, false, 0, Leaf::Parent(BrowserSection::Setup));
+    push_row(&mut rows, &mut leaves, "SETUP".into(), String::new(), painted::Kind::Parent(setup_open), None, false, false, 0, Leaf::Parent(BrowserSection::Setup));
     if setup_open {
         // The manager row stands whenever the section is open (#322): its
         // page is where the FIRST setup is created.
-        push_row(&mut rows, &mut leaves, "Setups".to_owned(), String::new(), painted::Kind::Section, Some(Icon::Fixture), matches!(t, UiTarget::Setups), false, 1, Leaf::Setups);
+        push_row(&mut rows, &mut leaves, "Setups".to_owned(), String::new(), painted::Kind::Section, Some(Icon::Setup), matches!(t, UiTarget::Setups), false, 1, Leaf::Setups);
         let names = setup::names(&state.world);
         if names.is_empty() {
             setup_children(state, &t, "", 1, &mut rows, &mut leaves);
@@ -148,13 +152,13 @@ pub(crate) fn browser_rows(state: &State) -> (Vec<painted::Row>, Vec<Leaf>) {
             let is_active = active.as_deref() == Some(name.as_str());
             let selected = matches!(&t, UiTarget::SetupNode(n, SetupPage::Settings) if *n == name);
             let suffix = if is_active { "active".to_owned() } else { String::new() };
-            push_row(&mut rows, &mut leaves, name.clone(), suffix, painted::Kind::Setup(is_active), None, selected, false, 1, Leaf::Setup(name.clone()));
+            push_row(&mut rows, &mut leaves, name.clone(), suffix, painted::Kind::Setup(is_active), None, selected, !state.setup_displayed(&name), 1, Leaf::Setup(name.clone()));
             setup_children(state, &t, &name, 2, &mut rows, &mut leaves);
         }
     }
 
     let models_open = state.browser_expanded[BrowserSection::Models.index()];
-    push_row(&mut rows, &mut leaves, "Models".into(), String::new(), painted::Kind::Parent(models_open), None, false, false, 0, Leaf::Parent(BrowserSection::Models));
+    push_row(&mut rows, &mut leaves, "MODELS".into(), String::new(), painted::Kind::Parent(models_open), None, false, false, 0, Leaf::Parent(BrowserSection::Models));
     if models_open {
         let entities = model::model_entities(&state.world);
         if entities.is_empty() {
@@ -172,7 +176,7 @@ pub(crate) fn browser_rows(state: &State) -> (Vec<painted::Row>, Vec<Leaf>) {
     // The document's tool LIBRARY (decision #343 (b)): every setup's Tool
     // list is a view over these entries.
     let tools_open = state.browser_expanded[BrowserSection::Tools.index()];
-    push_row(&mut rows, &mut leaves, "Tools".into(), String::new(), painted::Kind::Parent(tools_open), None, false, false, 0, Leaf::Parent(BrowserSection::Tools));
+    push_row(&mut rows, &mut leaves, "TOOLS".into(), String::new(), painted::Kind::Parent(tools_open), None, false, false, 0, Leaf::Parent(BrowserSection::Tools));
     if tools_open {
         let tools: Vec<(String, camcraft_app::tools::Tool)> = model::named_entities(&state.world)
             .into_iter()
@@ -185,7 +189,7 @@ pub(crate) fn browser_rows(state: &State) -> (Vec<painted::Row>, Vec<Leaf>) {
         for (name, tool) in tools {
             let suffix = format!("Ø{} {}", tool.diameter, kind_name(tool.kind));
             let selected = matches!(&t, UiTarget::Tool(n) if *n == name);
-            push_row(&mut rows, &mut leaves, name.clone(), suffix, painted::Kind::Tool, Some(Icon::Tools), selected, false, 1, Leaf::Tool(name));
+            push_row(&mut rows, &mut leaves, name.clone(), suffix, painted::Kind::Tool, Some(tool_icon(tool.kind)), selected, false, 1, Leaf::Tool(name));
         }
     }
     (rows, leaves)
@@ -205,24 +209,27 @@ fn setup_children(
     let is_active = ctx.is_none() || setup::active(w).as_deref() == ctx;
     let page_open = |p: SetupPage| matches!(t, UiTarget::SetupNode(n, q) if n == name && *q == p);
     // #342: one WCS per setup - plain "WCS", the word its post writes beside it.
-    let word = WCS_SLOTS.get(setup::wcs_slot(w, ctx)).copied().unwrap_or("G54");
+    let word = setup::wcs_name(w, ctx);
     let wcs_hidden = state.hidden_offsets.contains(&setup::wcs_entity_name(w, ctx));
-    push_row(rows, leaves, "WCS".to_owned(), word.to_owned(), painted::Kind::Wcs, Some(Icon::WorkOffset), is_active && matches!(t, UiTarget::Wcs), wcs_hidden, depth, Leaf::Wcs(name.to_owned()));
+    push_row(rows, leaves, "WCS".to_owned(), word, painted::Kind::Wcs, Some(Icon::WorkOffset), is_active && matches!(t, UiTarget::Wcs), wcs_hidden, depth, Leaf::Wcs(name.to_owned()));
     let stock_hidden = state.hidden_stocks.contains(&setup::stock_entity_name(w, ctx));
-    push_row(rows, leaves, "Stock".to_owned(), String::new(), painted::Kind::Stock, Some(Icon::Stock), is_active && matches!(t, UiTarget::Stock), stock_hidden, depth, Leaf::Stock(name.to_owned()));
-    let own = |owns: bool| if owns { "  (own)" } else { "" };
-    let machine = format!(
-        "{}{}",
-        setup_mount::machine_label(&setup_mount::machine_of(w, ctx)),
-        own(setup_mount::own_machine(w, ctx).is_some()),
-    );
-    push_row(rows, leaves, "Machine".to_owned(), machine, painted::Kind::Section, Some(Icon::Simulate), page_open(SetupPage::Machine), false, depth, Leaf::Page(name.to_owned(), SetupPage::Machine));
-    let post = format!(
-        "{}{}",
-        camcraft_app::posting::post_ref_label(&setup_mount::post_of(w, ctx)),
-        own(setup_mount::own_post(w, ctx).is_some()),
-    );
-    push_row(rows, leaves, "Post".to_owned(), post, painted::Kind::Section, Some(Icon::Post), page_open(SetupPage::Post), false, depth, Leaf::Page(name.to_owned(), SetupPage::Post));
+    let stock_text = if model::stock_world_aabb_for(w, ctx).is_some() { String::new() } else { "not set".to_owned() };
+    push_row(rows, leaves, "Stock".to_owned(), stock_text, painted::Kind::Stock, Some(Icon::Stock), is_active && matches!(t, UiTarget::Stock), stock_hidden, depth, Leaf::Stock(name.to_owned()));
+    let ops = setup_ops(state, ctx);
+    let tools = count(distinct_tools(state, &ops), "tool");
+    // Operations first - the core CAM workflow stays near the top.
+    push_row(rows, leaves, "Operations".to_owned(), count(ops.len(), "operation"), painted::Kind::Section, Some(Icon::OpGroup), false, false, depth, Leaf::SetupOps(name.to_owned()));
+    if ops.is_empty() {
+        push_row(rows, leaves, "(no operations yet)".into(), String::new(), painted::Kind::Section, None, false, true, depth + 1, Leaf::Section);
+    }
+    for (key, entity) in &ops {
+        if camcraft_app::program_entry::is_entry(w, entity) {
+            super::tree_entry::entry_row(state, key, entity, depth + 1, rows, leaves);
+        } else {
+            op_row(state, t, key, entity, depth + 1, rows, leaves);
+        }
+    }
+    push_row(rows, leaves, "Tool list".to_owned(), tools, painted::Kind::Section, Some(Icon::Tools), page_open(SetupPage::Tools), false, depth, Leaf::Page(name.to_owned(), SetupPage::Tools));
     let fixtures = camcraft_app::fixture::tagged(w, ctx);
     push_row(rows, leaves, "Fixtures".to_owned(), count(fixtures.len(), "fixture"), painted::Kind::Section, Some(Icon::Fixture), page_open(SetupPage::Fixtures), false, depth, Leaf::Page(name.to_owned(), SetupPage::Fixtures));
     for (fixture, entity) in fixtures {
@@ -231,20 +238,19 @@ fn setup_children(
         let suffix = fixture_row_suffix(state.fixture_mesh_state(&fixture), hidden);
         push_row(rows, leaves, fixture.clone(), suffix, painted::Kind::Fixture, Some(Icon::Fixture), selected, hidden, depth + 1, Leaf::Model(fixture));
     }
-    let ops = setup_ops(state, ctx);
-    let tools = count(distinct_tools(state, &ops), "tool");
-    push_row(rows, leaves, "Tool list".to_owned(), tools, painted::Kind::Section, Some(Icon::Tools), page_open(SetupPage::Tools), false, depth, Leaf::Page(name.to_owned(), SetupPage::Tools));
-    push_row(rows, leaves, "Operations".to_owned(), String::new(), painted::Kind::Section, Some(Icon::Generate), false, false, depth, Leaf::SetupOps(name.to_owned()));
-    if ops.is_empty() {
-        push_row(rows, leaves, "(no operations yet)".into(), String::new(), painted::Kind::Section, None, false, true, depth + 1, Leaf::Section);
-    }
-    for (key, entity) in ops {
-        if camcraft_app::program_entry::is_entry(w, &entity) {
-            super::tree_entry::entry_row(state, &key, &entity, depth + 1, rows, leaves);
-        } else {
-            op_row(state, t, &key, &entity, depth + 1, rows, leaves);
-        }
-    }
+    let own = |owns: bool| if owns { "  (own)" } else { "" };
+    let machine = format!(
+        "{}{}",
+        setup_mount::machine_label(&setup_mount::machine_of(w, ctx)),
+        own(setup_mount::own_machine(w, ctx).is_some()),
+    );
+    push_row(rows, leaves, "Machine".to_owned(), machine, painted::Kind::Section, Some(Icon::Machine), page_open(SetupPage::Machine), false, depth, Leaf::Page(name.to_owned(), SetupPage::Machine));
+    let post = format!(
+        "{}{}",
+        camcraft_app::posting::post_ref_label(&setup_mount::post_of(w, ctx)),
+        own(setup_mount::own_post(w, ctx).is_some()),
+    );
+    push_row(rows, leaves, "Post".to_owned(), post, painted::Kind::Section, Some(Icon::Post), page_open(SetupPage::Post), false, depth, Leaf::Page(name.to_owned(), SetupPage::Post));
 }
 
 fn count(n: usize, word: &str) -> String {
@@ -299,7 +305,8 @@ fn op_row(
             (k.to_string(), op_icon(k))
         })
         .unwrap_or_else(|| (String::new(), Icon::Generate));
-    let tag = match operation::status_of(w, entity) {
+    let status = operation::status_of(w, entity);
+    let tag = match status {
         operation::OpStatus::Never => "never",
         operation::OpStatus::Ok => "ok",
         operation::OpStatus::Stale => "STALE",
@@ -322,7 +329,9 @@ fn op_row(
         }
         s
     });
-    let suffix = match operation::tool_gate::tool_problem_of(w, entity) {
+    let problem = operation::tool_gate::tool_problem_of(w, entity);
+    let badge = status_badge(status, problem.is_some(), warns);
+    let suffix = match problem {
         Some(why) => format!("{kind}  BLOCKED{warn_text}{flow}  {why}"),
         None => format!("{kind}  {tag}{warn_text}{flow}"),
     };
@@ -330,4 +339,7 @@ fn op_row(
     let selected = matches!(t, UiTarget::Operation(n) if n == name);
     let label = model::operation_label(w, name, entity);
     push_row(rows, leaves, label, suffix, painted::Kind::Op, Some(icon), selected, hidden, depth, Leaf::Op(name.to_owned()));
+    if let Some(row) = rows.last_mut() {
+        row.badge = Some(badge);
+    }
 }

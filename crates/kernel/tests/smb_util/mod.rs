@@ -77,6 +77,7 @@ pub fn port_verdict(r: Result<Brep, KernelError>, k: &mut SolidcoreKernel) -> St
         Err(KernelError::Failed { .. }) => "Err failed".into(),
         Err(KernelError::InvalidResult { .. }) => "Err invalid".into(),
         Err(KernelError::Unsupported { .. }) => "Err unsupported".into(),
+        Err(KernelError::TimedOut { .. }) => "Err timed out".into(),
         Ok(mut b) => match k.measure(&mut b) {
             Ok(m) => format!("Ok V={:.3}", m.volume),
             Err(_) => format!("Ok faces={} no measure", b.faces().len()),

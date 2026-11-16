@@ -390,6 +390,42 @@ fn stock_fit_without_models_is_a_polite_status() {
     assert!(!state.history.can_undo());
 }
 
+/// #1538: the Stock page's Fit to Models (box and cylinder) wraps the
+/// 50 x 50 x 6 part, not the 5 in vise closed on the stock.
+#[test]
+fn stock_fit_with_a_vise_wraps_the_part_not_the_vise() {
+    use camcraft_app::commands::{ImportModel, InsertVise, SetStock, VisePlacement};
+    use camcraft_app::geometry::{Point3, cube};
+    use camcraft_app::model;
+    use camcraft_app::schema::{Location, STOCK_NAME};
+    use camcraft_app::stock::StockShape;
+    use camcraft_ui::state::{CommandKind, State};
+
+    let mut state = State::new();
+    let block = ImportModel::from_mesh("block", cube(Point3::new(2.5, 2.5, 4.0), Point3::new(52.5, 52.5, 10.0)));
+    state.history.execute(&state.world, block);
+    let stock = SetStock::new(&state.world, StockShape::Box { dx: 55.0, dy: 55.0, dz: 11.0 }, Location::default());
+    state.history.execute(&state.world, stock.expect("stock"));
+    let p = camcraft_app::vise::size("5 in").expect("5 in").half_open();
+    let vise = InsertVise::new(&state.world, &p, None, VisePlacement::FitStock).expect("vise");
+    state.history.execute(&state.world, vise);
+
+    state.pending.push_back(CommandKind::StockFit { margin: 2.0, shape: 0 });
+    state.drain_actions();
+    assert_eq!(state.status, "stock fitted to models");
+    let b = model::stock_world_aabb(&state.world).expect("stock box");
+    let got = [b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z];
+    let want = [0.5, 0.5, 2.0, 54.5, 54.5, 12.0];
+    assert!(got.iter().zip(want).all(|(g, w)| (g - w).abs() < 1e-6), "box fit {got:?}, want {want:?}");
+
+    state.pending.push_back(CommandKind::StockFit { margin: 2.0, shape: 1 });
+    state.drain_actions();
+    let stock = model::find_by_name(&state.world, STOCK_NAME).and_then(|e| model::stock_def_of(&state.world, &e));
+    let Some(StockShape::Cylinder { diameter, height }) = stock else { panic!("a cylinder: {stock:?}") };
+    let d = 2.0 * (25.0 * 2f64.sqrt() + 2.0);
+    assert!((diameter - d).abs() < 1e-6 && (height - 10.0).abs() < 1e-6, "d {diameter} h {height}, want d {d} h 10");
+}
+
 #[test]
 fn set_wcs_creates_the_wcs_undo_removes_and_a_bad_rotation_refuses() {
     use camcraft_app::model;

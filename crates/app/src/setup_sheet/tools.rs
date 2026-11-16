@@ -49,6 +49,10 @@ pub(super) fn render_tool_list(world: &World, ctx: Option<&str>, out: &mut Strin
                 }
                 out.push_str(&geo);
                 out.push('\n');
+                if let Some(line) = catalog_line(&t.catalog) {
+                    out.push_str(&line);
+                    out.push('\n');
+                }
             }
             None => out.push_str(&format!("      (tool '{}' is no longer in the document)\n", row.tool)),
         }
@@ -63,4 +67,29 @@ pub(super) fn render_tool_list(world: &World, ctx: Option<&str>, out: &mut Strin
         mm(rapid),
         minutes(crate::tool_list::setup_minutes(world, ctx)),
     ));
+}
+
+/// The tool's stated catalog facts (#1063) as one display line, in the
+/// fixed order part number, vendor, coating, helix; unstated facts are
+/// left out whole, and `None` when nothing is stated. Display only.
+fn catalog_line(c: &camcraft_tools::catalog_fields::ToolCatalog) -> Option<String> {
+    let c = c.normalized();
+    let mut parts: Vec<String> = Vec::new();
+    if let Some(v) = &c.part_number {
+        parts.push(format!("PART {v}"));
+    }
+    if let Some(v) = &c.vendor {
+        parts.push(format!("VENDOR {v}"));
+    }
+    if let Some(v) = &c.coating {
+        parts.push(format!("COATING {v}"));
+    }
+    if let Some(h) = c.helix_deg {
+        parts.push(format!("HELIX {} deg", mm(h)));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(format!("      {}", parts.join("  ")))
+    }
 }

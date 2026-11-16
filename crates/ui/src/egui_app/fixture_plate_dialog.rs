@@ -13,7 +13,7 @@ use camcraft_app::units::Unit;
 
 use crate::state::{CommandKind, PlateDraft};
 
-use super::fields::{num, num_plain};
+use super::fields::{num_by, num_plain_by};
 use super::fixture_vise_dialog::ViseAct;
 
 /// The Place button's command for this draft.
@@ -31,8 +31,8 @@ pub(crate) fn place_command(d: &PlateDraft) -> CommandKind {
 fn grid(ui: &mut Ui, id: &str, u: Unit, rows: Vec<(&str, &mut f64)>) {
     egui::Grid::new(id).num_columns(2).show(ui, |ui| {
         for (label, v) in rows {
-            ui.label(label);
-            num(ui, u, v);
+            let l = ui.label(label);
+            num_by(ui, u, v, l.id);
             ui.end_row();
         }
     });
@@ -78,8 +78,8 @@ pub(crate) fn body(ui: &mut Ui, u: Unit, d: &mut PlateDraft) -> Option<ViseAct> 
         ],
     );
     ui.horizontal(|ui| {
-        ui.label("Thread");
-        ui.add(egui::TextEdit::singleline(&mut p.thread).desired_width(80.0));
+        let l = ui.label("Thread");
+        ui.add(egui::TextEdit::singleline(&mut p.thread).desired_width(80.0)).labelled_by(l.id);
     });
     ui.checkbox(&mut d.dowels_on, "Dowel holes");
     if d.dowels_on {
@@ -106,18 +106,18 @@ pub(crate) fn body(ui: &mut Ui, u: Unit, d: &mut PlateDraft) -> Option<ViseAct> 
     if !d.on_table {
         egui::Grid::new("plate-place").num_columns(2).show(ui, |ui| {
             for (k, axis) in ["Corner X", "Corner Y", "Top Z"].iter().enumerate() {
-                ui.label(*axis);
-                num(ui, u, &mut d.pos[k]);
+                let l = ui.label(*axis);
+                num_by(ui, u, &mut d.pos[k], l.id);
                 ui.end_row();
             }
-            ui.label("Turn about Z (yaw)");
-            num_plain(ui, &mut d.yaw_deg);
+            let l = ui.label("Turn about Z (yaw)");
+            num_plain_by(ui, &mut d.yaw_deg, l.id);
             ui.end_row();
         });
     }
     ui.label(RichText::new("The collision check sees the plate as a solid slab (holes drawn solid).").small());
     if let Some(err) = &d.error {
-        ui.colored_label(ui.visuals().error_fg_color, err);
+        super::error_text::error_text(ui, ui.visuals().error_fg_color, err);
     }
     ui.add_space(8.0);
     ui.horizontal(|ui| {

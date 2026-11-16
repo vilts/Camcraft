@@ -64,17 +64,54 @@ fn the_dialog_lists_the_self_centering_sizes_and_their_own_fields() {
     }
     assert!(h.query_by_label("Housing length").is_some(), "a standard size has its housing");
     assert!(h.query_by_label("Min opening").is_none(), "and no clamping-range floor");
+    assert!(h.query_by_label("Grip step depth").is_none(), "and no grip step (#1274)");
     h.get_by_label("80 mm self-centering").click();
     h.run();
     let Some(FixtureLibDialog::Vise(d)) = &h.state().fixture_lib else { panic!("still open") };
     assert_eq!(d.params.size, "80 mm self-centering");
-    for label in ["Min opening", "Dovetail lip height", "Dovetail lip depth", "Fit to the stock (centred, jaws closed on it)"] {
+    for label in [
+        "Min opening",
+        "Dovetail lip height",
+        "Dovetail lip depth",
+        "Grip step depth",
+        "Grip step width",
+        "Fit to the stock (centred, jaws closed on it)",
+    ] {
         assert!(h.query_by_label(label).is_some(), "a self-centering size shows {label}");
     }
     assert!(h.query_by_label("Housing length").is_none(), "and no screw housing");
     h.get_by_label("Fit to the stock (centred, jaws closed on it)").click();
     h.run();
     assert!(h.query_by_label("Centre X").is_some(), "a typed pose places its centre");
+}
+
+#[test]
+fn a_grip_jaw_seats_the_stock_on_its_steps_and_places_in_one_step() {
+    // #1274: the grip step's rows feed the fit line and Place.
+    let mut h = opened(with_stock(40.0));
+    h.get_by_label("80 mm self-centering").click();
+    h.run();
+    let Some(FixtureLibDialog::Vise(d)) = h.state_mut().fixture_lib.as_mut() else { panic!("open") };
+    if let camcraft_app::vise::ViseStyle::SelfCentering(sc) = &mut d.params.style {
+        sc.grip_depth = 3.0;
+        sc.grip_width = 1.5;
+    }
+    h.run();
+    h.run();
+    assert!(
+        h.query_all_by_label_contains("the stock sits on the grip steps").count() == 1,
+        "the fit line says where the stock sits"
+    );
+    h.get_by_label("Place").click();
+    h.run();
+    h.run();
+    assert!(h.state().fixture_lib.is_none(), "placed and closed: {:?}", h.state().fixture_lib);
+    let st = h.state();
+    let seat = model::find_by_name(&st.world, NAME)
+        .and_then(|e| fixture::def_of(&st.world, &e))
+        .and_then(|d| d.vise)
+        .map(|v| v.seat_height());
+    assert_eq!(seat, Some(12.0), "the placed vise carries the step");
 }
 
 #[test]
@@ -100,12 +137,15 @@ fn a_stock_outside_the_clamping_range_is_named_in_the_dialog() {
     let mut h = opened(with_stock(40.0));
     h.get_by_label("52 mm self-centering").click();
     h.run();
+    h.run();
+    // #1105: said up front, before Place (once), and again after it.
+    assert_eq!(h.query_all_by_label_contains("wider than its clamping range").count(), 1, "said before Place");
     h.get_by_label("Place").click();
     h.run();
     h.run();
     let Some(FixtureLibDialog::Vise(d)) = &h.state().fixture_lib else { panic!("stays open") };
     assert!(d.error.as_deref().is_some_and(|e| e.contains("wider than its clamping range")), "{:?}", d.error);
-    assert!(h.query_by_label_contains("wider than its clamping range").is_some(), "said in the dialog");
+    assert!(h.query_all_by_label_contains("wider than its clamping range").count() >= 1, "said in the dialog");
 }
 
 #[test]

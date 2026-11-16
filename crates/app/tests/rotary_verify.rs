@@ -12,7 +12,7 @@
 //! Provenance: our own fixtures (the operations suite's turned bar);
 //! the law is the Prime Directive's "correct, or visibly refused".
 //!
-//! Gate map (M4.4): covers app::operation, app::posting, app::verify, app::multiaxis.
+//! Gate map (M4.4): covers app::operation, app::posting, sim::verify, motion::multiaxis.
 
 use flecs_ecs::prelude::World;
 

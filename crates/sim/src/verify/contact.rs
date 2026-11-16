@@ -45,7 +45,8 @@ use super::midpose;
 use super::probe::{Cutter, Frame};
 use super::solid_index::SolidIndex;
 use super::types::Warning;
-use crate::cl::{is_vertical, normalize_axis, MoveKind, Toolpath};
+use super::upright::is_upright;
+use crate::cl::{normalize_axis, MoveKind, Toolpath};
 use crate::geometry::{Point3, Triangle};
 use crate::stock_sim::dist_seg_tri;
 use crate::tools::ToolGeom;
@@ -94,7 +95,7 @@ pub fn posed_contact(
             && let Some(ix) = index.get_or_insert_with(|| SolidIndex::build(facets)).as_mut()
         {
             let fr = Frame::new(Point3::new(c.x, c.y, c.z - r), None);
-            if ix.hits(&fr, [0.0, 0.0, 0.0], &body, 0.0, 0.0, false) {
+            if ix.hits(&fr, [0.0, 0.0, 0.0], &body, 0.0, 0.0, &[], &[]) {
                 return None;
             }
         }
@@ -104,7 +105,7 @@ pub fn posed_contact(
         if m.kind == MoveKind::Rapid || !m.to.is_finite() {
             continue;
         }
-        let Some(a) = m.axis.and_then(normalize_axis).filter(|a| !is_vertical(a)) else {
+        let Some(a) = m.axis.and_then(normalize_axis).filter(|a| !is_upright(a)) else {
             continue;
         };
         let mut gap = judge(m.to, a);
@@ -121,8 +122,8 @@ pub fn posed_contact(
         // it). Constant poses pay nothing.
         if m.kind == MoveKind::Feed
             && let Some((fa, fb)) = poses.get(i).and_then(|&(f, t)| midpose::change(f, t))
-            && !is_vertical(&fa)
-            && !is_vertical(&fb)
+            && !is_upright(&fa)
+            && !is_upright(&fb)
         {
             for iv in midpose::intervals(m, fa, fb, reach, CONTACT_BAND) {
                 if let Some(g) = judge(iv.pm, iv.am)

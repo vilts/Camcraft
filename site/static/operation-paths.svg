@@ -1,0 +1,268 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="600" height="240" viewBox="0 0 600 240">
+<!-- Provenance: original schematics from CamCraft operation semantics; no vendor artwork. -->
+<style>text{font:16px sans-serif;fill:#172b3a}.stock{fill:#e1e5e9;stroke:#7c8791;stroke-width:2}.cut{fill:none;stroke:#006ba6;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}.link{fill:none;stroke:#af5900;stroke-width:3;stroke-dasharray:7 5}.axis{fill:none;stroke:#263b4a;stroke-width:3}.center{fill:none;stroke:#7c8791;stroke-dasharray:3 5}</style>
+<view id="Face" viewBox="0 0 600 240"/>
+<g id="Face-diagram" transform="translate(0 0)" role="img" aria-labelledby="Face-title Face-desc">
+<title id="Face-title">Face - top view</title><desc id="Face-desc">Parallel passes sweep across the stock top.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Face - top view</text><rect class="stock" x="80" y="65" width="330" height="115" rx="8"/><path class="cut" d="M95 80 H395 V100 H95 V120 H395 V140 H95 V160 H395"/>
+<text x="20" y="225">Parallel passes over the top</text></g>
+<view id="Contour" viewBox="0 240 600 240"/>
+<g id="Contour-diagram" transform="translate(0 240)" role="img" aria-labelledby="Contour-title Contour-desc">
+<title id="Contour-title">2D Contour - top view</title><desc id="Contour-desc">The tool centre follows an offset outside one closed wall.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">2D Contour - top view</text><rect class="stock" x="80" y="65" width="330" height="115" rx="8"/><path class="cut" d="M65 50 H425 V195 H65 Z"/>
+<text x="20" y="225">One offset wall ride per level</text></g>
+<view id="Pocket" viewBox="0 480 600 240"/>
+<g id="Pocket-diagram" transform="translate(0 480)" role="img" aria-labelledby="Pocket-title Pocket-desc">
+<title id="Pocket-title">2D Pocket - top view</title><desc id="Pocket-desc">A zigzag pattern clears inside a closed pocket boundary.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">2D Pocket - top view</text><rect class="stock" x="80" y="65" width="330" height="115" rx="8"/><path class="cut" d="M95 80 H395 V100 H95 V120 H395 V140 H95 V160 H395"/>
+<text x="20" y="225">Example: Zigzag strategy</text></g>
+<view id="Adaptive2D" viewBox="0 720 600 240"/>
+<g id="Adaptive2D-diagram" transform="translate(0 720)" role="img" aria-labelledby="Adaptive2D-title Adaptive2D-desc">
+<title id="Adaptive2D-title">2D Adaptive - top view</title><desc id="Adaptive2D-desc">Looping adaptive cuts advance through a pocket at low engagement.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">2D Adaptive - top view</text><rect class="stock" x="80" y="65" width="330" height="115" rx="8"/><ellipse class="cut" cx="125" cy="125" rx="45" ry="30"/><ellipse class="cut" cx="170" cy="125" rx="45" ry="30"/><ellipse class="cut" cx="215" cy="125" rx="45" ry="30"/><ellipse class="cut" cx="260" cy="125" rx="45" ry="30"/><ellipse class="cut" cx="305" cy="125" rx="45" ry="30"/><ellipse class="cut" cx="350" cy="125" rx="45" ry="30"/>
+<text x="20" y="225">Example: adaptive looping passes</text></g>
+<view id="Offset2D" viewBox="0 960 600 240"/>
+<g id="Offset2D-diagram" transform="translate(0 960)" role="img" aria-labelledby="Offset2D-title Offset2D-desc">
+<title id="Offset2D-title">2D Offset - top view</title><desc id="Offset2D-desc">Nested offset rings clear inward from the pocket boundary.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">2D Offset - top view</text><rect class="stock" x="80" y="65" width="330" height="115" rx="8"/><rect class="cut" x="95" y="75" width="300" height="100" rx="12"/><rect class="cut" x="113" y="85" width="264" height="80" rx="12"/><rect class="cut" x="131" y="95" width="228" height="60" rx="12"/><rect class="cut" x="149" y="105" width="192" height="40" rx="12"/>
+<text x="20" y="225">Concentric offset rings</text></g>
+<view id="Slot" viewBox="0 1200 600 240"/>
+<g id="Slot-diagram" transform="translate(0 1200)" role="img" aria-labelledby="Slot-title Slot-desc">
+<title id="Slot-title">Slot - top view</title><desc id="Slot-desc">Straight passes clear a slot between the two authored endpoints.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Slot - top view</text><rect class="stock" x="80" y="95" width="330" height="60" rx="8"/><path class="cut" d="M95 112 H395 M395 140 H95"/>
+<text x="20" y="225">Straight passes between A and B</text></g>
+<view id="TrochoidalSlot" viewBox="0 1440 600 240"/>
+<g id="TrochoidalSlot-diagram" transform="translate(0 1440)" role="img" aria-labelledby="TrochoidalSlot-title TrochoidalSlot-desc">
+<title id="TrochoidalSlot-title">Trochoidal slot - top view</title><desc id="TrochoidalSlot-desc">Overlapping loops advance along the length of a wider slot.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Trochoidal slot - top view</text><rect class="stock" x="80" y="80" width="330" height="90" rx="8"/><ellipse class="cut" cx="125" cy="125" rx="45" ry="30"/><ellipse class="cut" cx="170" cy="125" rx="45" ry="30"/><ellipse class="cut" cx="215" cy="125" rx="45" ry="30"/><ellipse class="cut" cx="260" cy="125" rx="45" ry="30"/><ellipse class="cut" cx="305" cy="125" rx="45" ry="30"/><ellipse class="cut" cx="350" cy="125" rx="45" ry="30"/>
+<text x="20" y="225">Loops advance along the channel</text></g>
+<view id="Trace" viewBox="0 1680 600 240"/>
+<g id="Trace-diagram" transform="translate(0 1680)" role="img" aria-labelledby="Trace-title Trace-desc">
+<title id="Trace-title">Trace - top view</title><desc id="Trace-desc">A centreline pass follows an open picked chain without cutter offset.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Trace - top view</text><path class="stock" d="M80 160 L180 75 L270 145 L405 85"/><path class="cut" d="M80 160 L180 75 L270 145 L405 85"/>
+<text x="20" y="225">Tool centre follows the picked chain</text></g>
+<view id="Engrave" viewBox="0 1920 600 240"/>
+<g id="Engrave-diagram" transform="translate(0 1920)" role="img" aria-labelledby="Engrave-title Engrave-desc">
+<title id="Engrave-title">Engrave - top view</title><desc id="Engrave-desc">The tool centre traces letter strokes at the engraving depth.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Engrave - top view</text><rect class="stock" x="80" y="65" width="330" height="115" rx="8"/><path class="cut" d="M135 160 L175 85 L215 160 M150 135 H200 M265 85 V160 H345"/>
+<text x="20" y="225">Example: centreline letter strokes</text></g>
+<view id="Chamfer2D" viewBox="0 2160 600 240"/>
+<g id="Chamfer2D-diagram" transform="translate(0 2160)" role="img" aria-labelledby="Chamfer2D-title Chamfer2D-desc">
+<title id="Chamfer2D-title">2D Chamfer - section</title><desc id="Chamfer2D-desc">The cone flank contacts the top edge along the chamfer ride.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">2D Chamfer - section</text><path class="stock" d="M80 115 H260 L285 140 V190 H80 Z"/><path class="axis" d="M240 65 L300 140 L360 65 Z"/><path class="cut" d="M260 115 L285 140"/>
+<text x="20" y="225">Section: cone flank on the edge</text></g>
+<view id="Circular" viewBox="0 2400 600 240"/>
+<g id="Circular-diagram" transform="translate(0 2400)" role="img" aria-labelledby="Circular-title Circular-desc">
+<title id="Circular-title">Circular - top view</title><desc id="Circular-desc">Concentric circular passes clear a pocket about the authored centre.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Circular - top view</text><ellipse class="stock" cx="245" cy="125" rx="65" ry="65"/><ellipse class="cut" cx="245" cy="125" rx="55" ry="55"/><ellipse class="cut" cx="245" cy="125" rx="40" ry="40"/><ellipse class="cut" cx="245" cy="125" rx="25" ry="25"/><ellipse class="cut" cx="245" cy="125" rx="10" ry="10"/>
+<text x="20" y="225">Rings about the stated centre</text></g>
+<view id="Thread" viewBox="0 2640 600 240"/>
+<g id="Thread-diagram" transform="translate(0 2640)" role="img" aria-labelledby="Thread-title Thread-desc">
+<title id="Thread-title">Thread milling - oblique view</title><desc id="Thread-desc">A helical cutter path descends around an internal thread wall.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Thread milling - oblique view</text><ellipse class="stock" cx="240" cy="85" rx="100" ry="32"/><path class="cut" d="M185 80 C315 40 315 120 185 105 C100 80 120 155 265 135 C350 125 320 185 185 170"/>
+<text x="20" y="225">Helix: one pitch of depth per turn</text></g>
+<view id="Drill" viewBox="0 2880 600 240"/>
+<g id="Drill-diagram" transform="translate(0 2880)" role="img" aria-labelledby="Drill-title Drill-desc">
+<title id="Drill-title">Drill - section</title><desc id="Drill-desc">The drill feeds axially into the hole and retracts above it.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Drill - section</text><path class="stock" d="M100 95 H215 V185 H265 V95 H390 V200 H100 Z"/><path class="cut" d="M240 55 V180"/><path class="link" d="M252 180 V45"/>
+<text x="20" y="225">Example: axial drilling cycle</text></g>
+<view id="Bore" viewBox="0 3120 600 240"/>
+<g id="Bore-diagram" transform="translate(0 3120)" role="img" aria-labelledby="Bore-title Bore-desc">
+<title id="Bore-title">Bore - top view</title><desc id="Bore-desc">An end mill smaller than the hole circles its inside wall.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Bore - top view</text><ellipse class="stock" cx="245" cy="125" rx="65" ry="65"/><ellipse class="cut" cx="245" cy="125" rx="43" ry="43"/><ellipse class="axis" cx="288" cy="125" rx="20" ry="20"/>
+<text x="20" y="225">End mill interpolates inside the hole</text></g>
+<view id="Pocket3D" viewBox="0 3360 600 240"/>
+<g id="Pocket3D-diagram" transform="translate(0 3360)" role="img" aria-labelledby="Pocket3D-title Pocket3D-desc">
+<title id="Pocket3D-title">3D Pocket - oblique view</title><desc id="Pocket3D-desc">Successive levels clear around the model while leaving its central island.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">3D Pocket - oblique view</text><rect class="stock" x="80" y="65" width="330" height="115" rx="8"/><path class="stock" d="M205 105 H285 V155 H205 Z"/><rect class="cut" x="95" y="75" width="300" height="100" rx="12"/><rect class="cut" x="113" y="85" width="264" height="80" rx="12"/>
+<text x="20" y="225">Level-by-level clearing around an island</text></g>
+<view id="Finish3D" viewBox="0 3600 600 240"/>
+<g id="Finish3D-diagram" transform="translate(0 3600)" role="img" aria-labelledby="Finish3D-title Finish3D-desc">
+<title id="Finish3D-title">3D Finish - oblique view</title><desc id="Finish3D-desc">Parallel finishing passes follow the height of a curved model surface.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">3D Finish - oblique view</text><path class="stock" d="M80 165 Q180 35 280 100 T425 130 L425 190 H80 Z"/><path class="cut" d="M95 140 Q180 40 275 95 T410 120"/><path class="cut" d="M95 150 Q180 50 275 105 T410 130"/><path class="cut" d="M95 160 Q180 60 275 115 T410 140"/><path class="cut" d="M95 170 Q180 70 275 125 T410 150"/>
+<text x="20" y="225">Example: Parallel finishing pattern</text></g>
+<view id="Deburr" viewBox="0 3840 600 240"/>
+<g id="Deburr-diagram" transform="translate(0 3840)" role="img" aria-labelledby="Deburr-title Deburr-desc">
+<title id="Deburr-title">Deburr - oblique view</title><desc id="Deburr-desc">An edge break follows the exposed curved edge of the model.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Deburr - oblique view</text><path class="stock" d="M80 165 Q180 35 280 100 T425 130 L425 190 H80 Z"/><path class="cut" d="M80 165 Q180 35 280 100 T425 130"/>
+<text x="20" y="225">Ride along an exposed edge</text></g>
+<view id="Contour5D" viewBox="0 4080 600 240"/>
+<g id="Contour5D-diagram" transform="translate(0 4080)" role="img" aria-labelledby="Contour5D-title Contour5D-desc">
+<title id="Contour5D-title">5-Axis Contour - oblique view</title><desc id="Contour5D-desc">Waterline rings descend around the wall with changing tool axes.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">5-Axis Contour - oblique view</text><path class="stock" d="M80 165 Q180 35 280 100 T425 130 L425 190 H80 Z"/><ellipse class="cut" cx="245" cy="130" rx="120" ry="25"/><ellipse class="cut" cx="245" cy="145" rx="108" ry="25"/><ellipse class="cut" cx="245" cy="160" rx="96" ry="25"/><path class="axis" d="M140 110 l-25 -45 M255 100 l10 -48 M365 130 l30 -42"/>
+<text x="20" y="225">Waterline rings with tool axis samples</text></g>
+<view id="Parallel5D" viewBox="0 4320 600 240"/>
+<g id="Parallel5D-diagram" transform="translate(0 4320)" role="img" aria-labelledby="Parallel5D-title Parallel5D-desc">
+<title id="Parallel5D-title">5-Axis Parallel - oblique view</title><desc id="Parallel5D-desc">Parallel passes follow surface height while the tool axis leans.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">5-Axis Parallel - oblique view</text><path class="stock" d="M80 165 Q180 35 280 100 T425 130 L425 190 H80 Z"/><path class="cut" d="M95 140 Q180 40 275 95 T410 120"/><path class="cut" d="M95 150 Q180 50 275 105 T410 130"/><path class="cut" d="M95 160 Q180 60 275 115 T410 140"/><path class="cut" d="M95 170 Q180 70 275 125 T410 150"/><path class="axis" d="M140 110 l-25 -45 M255 100 l10 -48 M365 130 l30 -42"/>
+<text x="20" y="225">Raster passes with tool axis samples</text></g>
+<view id="Flow5D" viewBox="0 4560 600 240"/>
+<g id="Flow5D-diagram" transform="translate(0 4560)" role="img" aria-labelledby="Flow5D-title Flow5D-desc">
+<title id="Flow5D-title">5-Axis Flow - oblique view</title><desc id="Flow5D-desc">Curved finishing passes follow the surface flow with leaning tool axes.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">5-Axis Flow - oblique view</text><path class="stock" d="M80 165 Q180 35 280 100 T425 130 L425 190 H80 Z"/><path class="cut" d="M100 170 Q110 95 185 90"/><path class="cut" d="M160 170 Q170 95 235 90"/><path class="cut" d="M220 170 Q230 95 285 90"/><path class="cut" d="M280 170 Q290 95 335 90"/><path class="axis" d="M140 110 l-25 -45 M255 100 l10 -48 M365 130 l30 -42"/>
+<text x="20" y="225">Passes follow the surface flow</text></g>
+<view id="MultiAxisContour" viewBox="0 4800 600 240"/>
+<g id="MultiAxisContour-diagram" transform="translate(0 4800)" role="img" aria-labelledby="MultiAxisContour-title MultiAxisContour-desc">
+<title id="MultiAxisContour-title">Multi-Axis Contour - oblique view</title><desc id="MultiAxisContour-desc">The ball follows a picked three dimensional edge with a changing axis.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Multi-Axis Contour - oblique view</text><path class="stock" d="M80 165 Q180 35 280 100 T425 130 L425 190 H80 Z"/><path class="cut" d="M80 165 Q180 35 280 100 T425 130"/><path class="axis" d="M140 110 l-25 -45 M255 100 l10 -48 M365 130 l30 -42"/>
+<text x="20" y="225">Picked 3D edge with tool axis samples</text></g>
+<view id="Swarf" viewBox="0 5040 600 240"/>
+<g id="Swarf-diagram" transform="translate(0 5040)" role="img" aria-labelledby="Swarf-title Swarf-desc">
+<title id="Swarf-title">Swarf - oblique view</title><desc id="Swarf-desc">Straight passes follow the ruling with the cutter flank against the wall.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Swarf - oblique view</text><path class="stock" d="M100 165 L180 75 L410 100 L330 190 Z"/><path class="cut" d="M110 165 L180 85"/><path class="cut" d="M165 170 L235 90"/><path class="cut" d="M220 175 L290 95"/><path class="cut" d="M275 180 L345 100"/><path class="axis" d="M220 160 L280 75"/>
+<text x="20" y="225">Straight ruling passes; flank contact</text></g>
+<view id="AdvancedSwarf" viewBox="0 5280 600 240"/>
+<g id="AdvancedSwarf-diagram" transform="translate(0 5280)" role="img" aria-labelledby="AdvancedSwarf-title AdvancedSwarf-desc">
+<title id="AdvancedSwarf-title">Advanced Swarf - oblique view</title><desc id="AdvancedSwarf-desc">Successive swarf stages approach the nominal ruled surface.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Advanced Swarf - oblique view</text><path class="stock" d="M100 165 L180 75 L410 100 L330 190 Z"/><path class="cut" d="M110 165 L180 85"/><path class="cut" d="M165 170 L235 90"/><path class="cut" d="M220 175 L290 95"/><path class="cut" d="M275 180 L345 100"/><path class="cut" d="M105 158 L175 78 M100 151 L170 71"/>
+<text x="20" y="225">Coarse stage followed by finish stage</text></g>
+<view id="RotaryContour" viewBox="0 5520 600 240"/>
+<g id="RotaryContour-diagram" transform="translate(0 5520)" role="img" aria-labelledby="RotaryContour-title RotaryContour-desc">
+<title id="RotaryContour-title">Rotary Contour - axis shown horizontally</title><desc id="RotaryContour-desc">Circumferential passes form rings around the fitted rotation axis.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Rotary Contour - axis shown horizontally</text><rect class="stock" x="80" y="85" width="330" height="85" rx="8"/><ellipse class="stock" cx="80" cy="127" rx="25" ry="42"/><ellipse class="stock" cx="410" cy="127" rx="25" ry="42"/><path class="center" d="M45 127 H455"/><ellipse class="cut" cx="140" cy="127" rx="18" ry="48"/><ellipse class="cut" cx="210" cy="127" rx="18" ry="48"/><ellipse class="cut" cx="280" cy="127" rx="18" ry="48"/><ellipse class="cut" cx="350" cy="127" rx="18" ry="48"/>
+<text x="20" y="225">Rings around the fitted axis</text></g>
+<view id="RotaryParallel" viewBox="0 5760 600 240"/>
+<g id="RotaryParallel-diagram" transform="translate(0 5760)" role="img" aria-labelledby="RotaryParallel-title RotaryParallel-desc">
+<title id="RotaryParallel-title">Rotary Parallel - oblique view</title><desc id="RotaryParallel-desc">Axial finishing passes step around a horizontally mounted turned bar.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Rotary Parallel - oblique view</text><rect class="stock" x="80" y="85" width="330" height="85" rx="8"/><ellipse class="stock" cx="80" cy="127" rx="25" ry="42"/><ellipse class="stock" cx="410" cy="127" rx="25" ry="42"/><path class="center" d="M45 127 H455"/><path class="cut" d="M95 100 H400 M95 125 H400 M95 150 H400"/>
+<text x="20" y="225">Passes along the fitted axis</text></g>
+<view id="RotaryOffset" viewBox="0 6000 600 240"/>
+<g id="RotaryOffset-diagram" transform="translate(0 6000)" role="img" aria-labelledby="RotaryOffset-title RotaryOffset-desc">
+<title id="RotaryOffset-title">Rotary Offset - oblique view</title><desc id="RotaryOffset-desc">Wrapped roughing rings peel successive radial layers from the work.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Rotary Offset - oblique view</text><rect class="stock" x="80" y="85" width="330" height="85" rx="8"/><ellipse class="stock" cx="80" cy="127" rx="25" ry="42"/><ellipse class="stock" cx="410" cy="127" rx="25" ry="42"/><path class="center" d="M45 127 H455"/><ellipse class="cut" cx="160" cy="127" rx="18" ry="48"/><ellipse class="cut" cx="160" cy="127" rx="18" ry="34"/><ellipse class="cut" cx="270" cy="127" rx="18" ry="48"/><ellipse class="cut" cx="270" cy="127" rx="18" ry="34"/><ellipse class="cut" cx="360" cy="127" rx="18" ry="48"/><ellipse class="cut" cx="360" cy="127" rx="18" ry="34"/>
+<text x="20" y="225">Wrapped paths at successive radial depths</text></g>
+<view id="MultiAxisRough" viewBox="0 6240 600 240"/>
+<g id="MultiAxisRough-diagram" transform="translate(0 6240)" role="img" aria-labelledby="MultiAxisRough-title MultiAxisRough-desc">
+<title id="MultiAxisRough-title">Multi-Axis Rough - oblique view</title><desc id="MultiAxisRough-desc">Pocket levels clear around the model with tool axes leaning near walls.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Multi-Axis Rough - oblique view</text><rect class="stock" x="80" y="65" width="330" height="115" rx="8"/><rect class="cut" x="95" y="75" width="300" height="100" rx="12"/><rect class="cut" x="113" y="85" width="264" height="80" rx="12"/><rect class="cut" x="131" y="95" width="228" height="60" rx="12"/><rect class="cut" x="149" y="105" width="192" height="40" rx="12"/><path class="axis" d="M140 110 l-25 -45 M255 100 l10 -48 M365 130 l30 -42"/>
+<text x="20" y="225">Pocket levels with tool axis samples</text></g>
+<view id="Facing" viewBox="0 6480 600 240"/>
+<g id="Facing-diagram" transform="translate(0 6480)" role="img" aria-labelledby="Facing-title Facing-desc">
+<title id="Facing-title">Turning Facing - axial section</title><desc id="Facing-desc">Radial cutting passes remove material from the end of the rotating bar.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Turning Facing - axial section</text><path class="stock" d="M85 110 H175 V135 H300 L390 100 V190 H85 Z"/><path class="center" d="M65 190 H440"/><path class="cut" d="M400 95 V185 M415 95 V185 M430 95 V185"/>
+<text x="20" y="225">Radial passes across the bar end</text></g>
+<view id="ProfileRough" viewBox="0 6720 600 240"/>
+<g id="ProfileRough-diagram" transform="translate(0 6720)" role="img" aria-labelledby="ProfileRough-title ProfileRough-desc">
+<title id="ProfileRough-title">Profile Rough - axial section</title><desc id="ProfileRough-desc">Axial roughing passes remove radial shells above the final profile.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Profile Rough - axial section</text><path class="stock" d="M85 110 H175 V135 H300 L390 100 V190 H85 Z"/><path class="center" d="M65 190 H440"/><path class="cut" d="M95 65 H390 M95 80 H365 M95 95 H325"/>
+<text x="20" y="225">Successive radial shells</text></g>
+<view id="ProfileFinish" viewBox="0 6960 600 240"/>
+<g id="ProfileFinish-diagram" transform="translate(0 6960)" role="img" aria-labelledby="ProfileFinish-title ProfileFinish-desc">
+<title id="ProfileFinish-title">Profile Finish - axial section</title><desc id="ProfileFinish-desc">One finish pass follows the external turned profile with a nose offset.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Profile Finish - axial section</text><path class="stock" d="M85 110 H175 V135 H300 L390 100 V190 H85 Z"/><path class="center" d="M65 190 H440"/><path class="cut" d="M95 100 H185 V125 H295 L390 90"/>
+<text x="20" y="225">One ride along the external profile</text></g>
+<view id="GrooveRough" viewBox="0 7200 600 240"/>
+<g id="GrooveRough-diagram" transform="translate(0 7200)" role="img" aria-labelledby="GrooveRough-title GrooveRough-desc">
+<title id="GrooveRough-title">Groove Rough - axial section</title><desc id="GrooveRough-desc">Blade plunges at several axial stations rough a groove to depth.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Groove Rough - axial section</text><path class="stock" d="M85 100 H205 V160 H280 V100 H405 V190 H85 Z"/><path class="center" d="M65 190 H440"/><path class="cut" d="M220 75 V125 M245 75 V125 M270 75 V125 M220 125 V150 M245 125 V150 M270 125 V150"/>
+<text x="20" y="225">Repeated radial plunges across the band</text></g>
+<view id="GrooveFinish" viewBox="0 7440 600 240"/>
+<g id="GrooveFinish-diagram" transform="translate(0 7440)" role="img" aria-labelledby="GrooveFinish-title GrooveFinish-desc">
+<title id="GrooveFinish-title">Groove Finish - axial section</title><desc id="GrooveFinish-desc">Full depth blade plunges finish the groove at each axial station.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Groove Finish - axial section</text><path class="stock" d="M85 100 H205 V160 H280 V100 H405 V190 H85 Z"/><path class="center" d="M65 190 H440"/><path class="cut" d="M215 75 V155 M245 75 V155 M275 75 V155"/>
+<text x="20" y="225">Full-depth plunges finish the band</text></g>
+<view id="Part" viewBox="0 7680 600 240"/>
+<g id="Part-diagram" transform="translate(0 7680)" role="img" aria-labelledby="Part-title Part-desc">
+<title id="Part-title">Part - axial section</title><desc id="Part-desc">A blade plunges at one station through the rotation axis to sever the bar.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Part - axial section</text><path class="stock" d="M85 110 H175 V135 H300 L390 100 V190 H85 Z"/><path class="center" d="M65 190 H440"/><path class="cut" d="M340 65 V195"/>
+<text x="20" y="225">One station; cut through the axis</text></g>
+<view id="Threading" viewBox="0 7920 600 240"/>
+<g id="Threading-diagram" transform="translate(0 7920)" role="img" aria-labelledby="Threading-title Threading-desc">
+<title id="Threading-title">Threading - developed surface</title><desc id="Threading-desc">Spindle synchronized axial passes follow the thread at increasing radial depths.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Threading - developed surface</text><rect class="stock" x="80" y="65" width="330" height="115" rx="8"/><path class="cut" d="M110 160 L180 85 M180 160 L250 85 M250 160 L320 85 M320 160 L390 85"/>
+<text x="20" y="225">Developed surface: successive helical turns</text></g>
+<view id="Chamfering" viewBox="0 8160 600 240"/>
+<g id="Chamfering-diagram" transform="translate(0 8160)" role="img" aria-labelledby="Chamfering-title Chamfering-desc">
+<title id="Chamfering-title">Turning Chamfer - axial section</title><desc id="Chamfering-desc">The insert nose crosses a short modeled cone at the bar edge.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Turning Chamfer - axial section</text><path class="stock" d="M85 100 H345 L390 145 V190 H85 Z"/><path class="cut" d="M340 90 L400 150"/>
+<text x="20" y="225">One ride across the modeled chamfer</text></g>
+<view id="TaperTurning" viewBox="0 8400 600 240"/>
+<g id="TaperTurning-diagram" transform="translate(0 8400)" role="img" aria-labelledby="TaperTurning-title TaperTurning-desc">
+<title id="TaperTurning-title">Taper - axial section</title><desc id="TaperTurning-desc">The insert follows the modeled cone between the two stated diameters.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Taper - axial section</text><path class="stock" d="M85 95 L390 155 V190 H85 Z"/><path class="cut" d="M85 85 L395 147"/>
+<text x="20" y="225">One ride along the modeled taper</text></g>
+<view id="MultiPassTurning" viewBox="0 8640 600 240"/>
+<g id="MultiPassTurning-diagram" transform="translate(0 8640)" role="img" aria-labelledby="MultiPassTurning-title MultiPassTurning-desc">
+<title id="MultiPassTurning-title">Multi-Pass - axial section</title><desc id="MultiPassTurning-desc">Roughing shells precede successively closer rides of the final profile.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Multi-Pass - axial section</text><path class="stock" d="M85 110 H175 V135 H300 L390 100 V190 H85 Z"/><path class="center" d="M65 190 H440"/><path class="cut" d="M95 60 H390 M95 80 H365 M95 90 H195 V115 H295 L390 80 M95 100 H185 V125 H295 L390 90"/>
+<text x="20" y="225">Rough shells followed by finish rides</text></g>
+<view id="FormTurning" viewBox="0 8880 600 240"/>
+<g id="FormTurning-diagram" transform="translate(0 8880)" role="img" aria-labelledby="FormTurning-title FormTurning-desc">
+<title id="FormTurning-title">Form - axial section</title><desc id="FormTurning-desc">A shaped tool plunges radially to reproduce the modeled formed surface.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Form - axial section</text><path class="stock" d="M85 100 H180 Q240 185 300 100 H405 V190 H85 Z"/><path class="axis" d="M180 65 Q240 150 300 65"/><path class="cut" d="M180 100 Q240 185 300 100"/>
+<text x="20" y="225">Form tool plunges to the model surface</text></g>
+<view id="BoringTurning" viewBox="0 9120 600 240"/>
+<g id="BoringTurning-diagram" transform="translate(0 9120)" role="img" aria-labelledby="BoringTurning-title BoringTurning-desc">
+<title id="BoringTurning-title">Turning Bore - axial section</title><desc id="BoringTurning-desc">A boring bar enters the open hole then finishes its inside wall.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Turning Bore - axial section</text><path class="stock" d="M85 75 H400 V105 H150 V155 H400 V190 H85 Z"/><path class="cut" d="M420 130 H170 V115 H400"/><path class="link" d="M400 115 H430"/>
+<text x="20" y="225">Axial entry; inside wall finish ride</text></g>
+<view id="Probe" viewBox="0 9360 600 240"/>
+<g id="Probe-diagram" transform="translate(0 9360)" role="img" aria-labelledby="Probe-title Probe-desc">
+<title id="Probe-title">Probe - section</title><desc id="Probe-desc">The stylus approaches a face and measures contact without cutting stock.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Probe - section</text><rect class="stock" x="80" y="160" width="330" height="40" rx="8"/><path class="axis" d="M240 50 V140"/><ellipse class="axis" cx="240" cy="148" rx="10" ry="10"/><path class="cut" d="M280 100 V157"/><path class="link" d="M295 157 V95"/>
+<text x="20" y="225">Measurement stroke and back-off; no cutting</text></g>
+<view id="PlasmaProfile" viewBox="0 9600 600 240"/>
+<g id="PlasmaProfile-diagram" transform="translate(0 9600)" role="img" aria-labelledby="PlasmaProfile-title PlasmaProfile-desc">
+<title id="PlasmaProfile-title">Plasma Profile - top view</title><desc id="PlasmaProfile-desc">A lead from the pierce point joins a closed through cut around the sheet profile.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Plasma Profile - top view</text><rect class="stock" x="80" y="65" width="330" height="115" rx="8"/><path class="cut" d="M55 125 L95 125 V80 H395 V165 H95 V125"/><ellipse class="cut" cx="55" cy="125" rx="4" ry="4"/>
+<text x="20" y="225">Pierce, lead-in, then through-cut profile</text></g>
+<view id="WireContour" viewBox="0 9840 600 240"/>
+<g id="WireContour-diagram" transform="translate(0 9840)" role="img" aria-labelledby="WireContour-title WireContour-desc">
+<title id="WireContour-title">Wire Contour - top view</title><desc id="WireContour-desc">A straight lead joins a closed die cut from a start hole inside the slug.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Wire Contour - top view</text><rect class="stock" x="80" y="65" width="330" height="115" rx="8"/><path class="cut" d="M245 125 L110 125 V85 H380 V160 H110 V125 L245 125"/><ellipse class="cut" cx="245" cy="125" rx="4" ry="4"/>
+<text x="20" y="225">Example: die cut from an internal start hole</text></g>
+<view id="SinkerBurn" viewBox="0 10080 600 240"/>
+<g id="SinkerBurn-diagram" transform="translate(0 10080)" role="img" aria-labelledby="SinkerBurn-title SinkerBurn-desc">
+<title id="SinkerBurn-title">Sinker Burn - section</title><desc id="SinkerBurn-desc">The electrode feeds down into the cavity and then retracts vertically.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Sinker Burn - section</text><path class="stock" d="M95 100 H180 V180 H310 V100 H410 V205 H95 Z"/><path class="axis" d="M195 60 H295 V135 H195 Z"/><path class="cut" d="M245 85 V165"/><path class="link" d="M330 165 V65"/>
+<text x="20" y="225">Example: plain plunge without orbit</text></g>
+<view id="SinkerSideBurn" viewBox="0 10320 600 240"/>
+<g id="SinkerSideBurn-diagram" transform="translate(0 10320)" role="img" aria-labelledby="SinkerSideBurn-title SinkerSideBurn-desc">
+<title id="SinkerSideBurn-title">Sinker Side Burn - section</title><desc id="SinkerSideBurn-desc">After the plunge the electrode moves toward one wall and returns.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Sinker Side Burn - section</text><path class="stock" d="M95 100 H180 V180 H310 V100 H410 V205 H95 Z"/><path class="axis" d="M195 60 H295 V135 H195 Z"/><path class="cut" d="M245 85 V160 H285 H245"/><path class="link" d="M330 160 V65"/>
+<text x="20" y="225">Plunge, lateral burn, return and retract</text></g>
+</svg>

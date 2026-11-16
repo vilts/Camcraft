@@ -41,38 +41,40 @@ pub fn axis_label(axis: [f64; 3]) -> Option<&'static str> {
     AXIS_CHOICES.iter().find(|(_, d)| dot(a, *d) > 1.0 - 1e-9).map(|(n, _)| *n)
 }
 
-/// What loading a body from disk found: the source name, its facets, and
-/// the auto-alignment from ISO 13399 coordinate systems (#370) if present.
+/// What loading a body from disk found: the source name, its facets,
+/// the auto-alignment from ISO 13399 coordinate systems (#370) if present,
+/// and all named coordinate systems carried by the file.
 pub struct LoadedBody {
     pub source: String,
     pub facets: Vec<Triangle>,
     /// `Ok((axis, offset))` when aligned from ISO 13399 coordinate
     /// systems; `Err(why)` when falling back to numeric placement.
     pub alignment: Result<([f64; 3], f64), String>,
+    pub csys: Vec<crate::tool_body_assembly::BodyCsys>,
 }
 
 /// Read a STEP / STL / OBJ for a tool body: its file name, its
 /// model-frame facets, and automatic placement from ISO 13399 coordinate
 /// systems (#370) if present.
 pub fn load_aligned(path: &Path) -> Result<LoadedBody, String> {
-    let mesh = crate::geometry::import::load_model(path).map_err(|e| e.to_string())?;
-    if mesh.facets.is_empty() {
-        return Err("the file holds no facets".into());
-    }
-    let source = path.file_name().map_or_else(|| path.display().to_string(), |f| f.to_string_lossy().into_owned());
+    // #361: the one body-file door (a reduced-fidelity mesh is refused).
+    let crate::tool_body_file::BodyFile { source, facets } = crate::tool_body_file::read(path)?;
     let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
-    let alignment = if ext == "step" || ext == "stp" {
+    let (alignment, csys) = if ext == "step" || ext == "stp" {
         match std::fs::read(path) {
             Ok(data) => match crate::geometry::import::step_csys::read_tool_csys(&data) {
-                Ok(report) => report.align_tool_body(),
-                Err(e) => Err(format!("coordinate systems unreadable: {e}")),
+                Ok(report) => {
+                    let csys = report.systems.iter().map(crate::tool_body_assembly::BodyCsys::from_named).collect();
+                    (report.align_tool_body(), csys)
+                }
+                Err(e) => (Err(format!("coordinate systems unreadable: {e}")), Vec::new()),
             },
-            Err(e) => Err(format!("I/O error: {e}")),
+            Err(e) => (Err(format!("I/O error: {e}")), Vec::new()),
         }
     } else {
-        Err("not a STEP file (no coordinate systems)".into())
+        (Err("not a STEP file (no coordinate systems)".into()), Vec::new())
     };
-    Ok(LoadedBody { source, facets: mesh.facets.to_vec(), alignment })
+    Ok(LoadedBody { source, facets, alignment, csys })
 }
 
 /// Read a STEP / STL / OBJ for a tool body: its file name and its
@@ -103,6 +105,7 @@ pub fn spun_preview(tool: &Tool, points: &[SpunPoint]) -> Result<SpunProfile, St
         frame: tool_body::BodyFrame::Spindle { axis: [0.0, 0.0, 1.0], offset: 0.0, profile: spun.holder_profile() },
         spun: None,
         machine_default: false,
+        pieces: Vec::new(),
     };
     tool_body::fits(tool, &probe)?;
     Ok(spun)

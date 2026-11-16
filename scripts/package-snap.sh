@@ -30,7 +30,7 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/stage" "$work/snap/gui"
 tar -xzf "${archives[0]}" -C "$work/stage" --strip-components=1
 test -x "$work/stage/camcraft-ui"
-cp assets/ui/cube.png "$work/snap/gui/icon.png"
+cp assets/logo/icons/camcraft-256.png "$work/snap/gui/icon.png"
 cat > "$work/snap/gui/camcraft.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application

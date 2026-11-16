@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "camcraft-app"
-version = "0.18.0"
+version = "0.21.0"
 dependencies = [
  "boa_engine",
  "camcraft-cl",
@@ -743,14 +743,14 @@ dependencies = [
 
 [[package]]
 name = "camcraft-cl"
-version = "0.18.0"
+version = "0.21.0"
 dependencies = [
  "camcraft-geometry",
 ]
 
 [[package]]
 name = "camcraft-geometry"
-version = "0.18.0"
+version = "0.21.0"
 dependencies = [
  "clipper2-rust",
  "thiserror 2.0.21",
@@ -758,19 +758,28 @@ dependencies = [
 
 [[package]]
 name = "camcraft-kernel"
-version = "0.18.0"
+version = "0.21.0"
 dependencies = [
  "camcraft-kernel",
+ "flate2",
+ "ruststep",
+ "serde_json",
  "solidcore",
+ "solidcore-convert",
+ "solidcore-record",
+ "solidcore-step",
+ "solidcore-tess",
  "thiserror 2.0.21",
  "truck-meshalgo",
  "truck-modeling",
  "truck-shapeops",
+ "truck-stepio",
+ "truck-topology",
 ]
 
 [[package]]
 name = "camcraft-motion"
-version = "0.18.0"
+version = "0.21.0"
 dependencies = [
  "camcraft-cl",
  "camcraft-geometry",
@@ -783,7 +792,7 @@ dependencies = [
 
 [[package]]
 name = "camcraft-post"
-version = "0.18.0"
+version = "0.21.0"
 dependencies = [
  "boa_engine",
  "camcraft-cl",
@@ -796,7 +805,7 @@ dependencies = [
 
 [[package]]
 name = "camcraft-sim"
-version = "0.18.0"
+version = "0.21.0"
 dependencies = [
  "camcraft-cl",
  "camcraft-geometry",
@@ -808,7 +817,7 @@ dependencies = [
 
 [[package]]
 name = "camcraft-tools"
-version = "0.18.0"
+version = "0.21.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -816,7 +825,7 @@ dependencies = [
 
 [[package]]
 name = "camcraft-ui"
-version = "0.18.0"
+version = "0.21.0"
 dependencies = [
  "camcraft-app",
  "chrono",
@@ -835,6 +844,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "winit",
+ "winresource",
 ]
 
 [[package]]
@@ -4114,9 +4124,63 @@ dependencies = [
 [[package]]
 name = "solidcore"
 version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51fbd775ff48a4b0034d1541097f9a3f35b14f53a25bf62a8820c0fe0f6c9823"
+source = "git+https://github.com/NeoTech/solidcore?rev=55d0e7638b9e1ebbf91ab8c10657e595c114ecda#55d0e7638b9e1ebbf91ab8c10657e595c114ecda"
 dependencies = [
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "solidcore-convert"
+version = "0.1.0"
+source = "git+https://github.com/NeoTech/solidcore?rev=55d0e7638b9e1ebbf91ab8c10657e595c114ecda#55d0e7638b9e1ebbf91ab8c10657e595c114ecda"
+dependencies = [
+ "solidcore",
+ "solidcore-record",
+]
+
+[[package]]
+name = "solidcore-ops"
+version = "0.1.0"
+source = "git+https://github.com/NeoTech/solidcore?rev=55d0e7638b9e1ebbf91ab8c10657e595c114ecda#55d0e7638b9e1ebbf91ab8c10657e595c114ecda"
+dependencies = [
+ "solidcore",
+ "solidcore-convert",
+ "solidcore-record",
+]
+
+[[package]]
+name = "solidcore-record"
+version = "0.1.0"
+source = "git+https://github.com/NeoTech/solidcore?rev=55d0e7638b9e1ebbf91ab8c10657e595c114ecda#55d0e7638b9e1ebbf91ab8c10657e595c114ecda"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "solidcore-step"
+version = "0.1.0"
+source = "git+https://github.com/NeoTech/solidcore?rev=55d0e7638b9e1ebbf91ab8c10657e595c114ecda#55d0e7638b9e1ebbf91ab8c10657e595c114ecda"
+dependencies = [
+ "solidcore",
+ "solidcore-convert",
+ "solidcore-ops",
+ "solidcore-record",
+]
+
+[[package]]
+name = "solidcore-tess"
+version = "0.1.0"
+source = "git+https://github.com/NeoTech/solidcore?rev=55d0e7638b9e1ebbf91ab8c10657e595c114ecda#55d0e7638b9e1ebbf91ab8c10657e595c114ecda"
+dependencies = [
+ "rayon",
+ "serde",
+ "solidcore",
+ "solidcore-convert",
+ "solidcore-record",
+ "spade",
  "thiserror 2.0.21",
 ]
 
@@ -5563,6 +5627,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "winresource"
+version = "0.1.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2bc6d36480b829272a5bdabf08e6dca8004761c1da7e35efef800540c66221b"
+dependencies = [
+ "version_check",
+]
+
+[[package]]
 name = "wit-bindgen"
 version = "0.57.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5657,7 +5730,7 @@ checksum = "0637d3a5566a82fa5214bae89087bc8c9fb94cd8e8a3c07feb691bb8d9c632db"
 
 [[package]]
 name = "xtask"
-version = "0.18.0"
+version = "0.21.0"
 dependencies = [
  "regex",
  "resvg",

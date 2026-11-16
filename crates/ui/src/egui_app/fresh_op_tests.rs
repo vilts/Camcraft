@@ -96,3 +96,18 @@ fn a_bottom_on_the_g54_plane_is_refused_when_g54_sits_on_the_part_top() {
         .unwrap_or_default();
     assert!(err.contains("must cut downward"), "{err}");
 }
+
+/// #1409: a ribbon quick-add of a lathe Facing faces the stock's
+/// allowance down to the part's top - the same heights the MCP seed
+/// (`operation::seed_params`) gives - never the mill fold's Top/Bottom
+/// of Model, whose floor made the facing plane the part's own bottom.
+#[test]
+fn a_quick_add_facing_runs_from_the_stock_top_to_the_part_top() {
+    let kind = camcraft_app::operation::OpType::Facing.ordinal();
+    let OpParams::Facing { top_z, bottom_z, .. } = quick_params(kind) else {
+        panic!("the Facing row quick-adds a Facing");
+    };
+    assert_eq!((top_z.reference, top_z.offset), (HeightReference::TopOfStock, 0.0));
+    assert_eq!((bottom_z.reference, bottom_z.offset), (HeightReference::TopOfModel, 0.0));
+    assert_eq!(quick_params(kind), camcraft_app::operation::seed_params(kind), "quick-add and MCP seed agree");
+}

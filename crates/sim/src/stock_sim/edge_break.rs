@@ -31,7 +31,36 @@ use crate::geometry::{Point3, Triangle};
 /// credits nothing - the verdict then stands as it was, never looser.
 pub fn credit_breaks(dev: &mut Deviation, dex: &Dexel, facets: &[Triangle], breaks: &[EdgeBreak]) -> usize {
     let breaks: Vec<&EdgeBreak> = breaks.iter().filter(|b| b.is_sane()).collect();
-    if breaks.is_empty() || dev.gouge_cells == 0 {
+    if breaks.is_empty() {
+        return 0;
+    }
+    credit_floors(dev, dex, facets, |ix, iy, p, tol| {
+        let c = dex.center(ix, iy);
+        breaks
+            .iter()
+            .filter_map(|b| b.floor_at(c.x, c.y))
+            .filter(|&(_, edge_z)| p <= edge_z + tol)
+            .map(|(f, _)| f)
+            .fold(f64::INFINITY, f64::min)
+    })
+}
+
+/// The one re-judging walk the declared credits share (the breaks here,
+/// the marks of [`super::mark`]): every column the verdict convicted on
+/// its own top is judged against `floor_of(ix, iy, part top, tol)` - the
+/// finished surface some operation declared there, `+inf` for none -
+/// instead of the model's top. Cut down to the floor (within `tol`) it
+/// is the finished part; below it, a gouge charged at its depth under
+/// the floor. A credit never deepens a verdict and never touches rest.
+/// Returns how many columns changed; a lattice that does not match
+/// `dev` credits nothing.
+pub(super) fn credit_floors(
+    dev: &mut Deviation,
+    dex: &Dexel,
+    facets: &[Triangle],
+    floor_of: impl Fn(usize, usize, f64, f64) -> f64,
+) -> usize {
+    if dev.gouge_cells == 0 {
         return 0;
     }
     if dev.cells_x != dex.nx || dev.cells_y != dex.ny || dev.cell != dex.cell || dev.dev.len() != dex.nx * dex.ny {
@@ -49,19 +78,13 @@ pub fn credit_breaks(dev: &mut Deviation, dex: &Dexel, facets: &[Triangle], brea
                 continue;
             }
             let (sim, p) = (dex.top_at(k), part[k]);
-            // Only the top verdict is the bevel's to answer: a column
-            // whose value came from elsewhere (a carried body's floor)
-            // keeps it.
+            // Only the top verdict is a declared floor's to answer: a
+            // column whose value came from elsewhere (a carried body's
+            // floor) keeps it.
             if !(sim.is_finite() && p.is_finite()) || (v - (sim - p)).abs() > 1e-9 {
                 continue;
             }
-            let c = dex.center(ix, iy);
-            let floor = breaks
-                .iter()
-                .filter_map(|b| b.floor_at(c.x, c.y))
-                .filter(|&(_, edge_z)| p <= edge_z + tol)
-                .map(|(f, _)| f)
-                .fold(f64::INFINITY, f64::min);
+            let floor = floor_of(ix, iy, p, tol);
             if !floor.is_finite() {
                 continue;
             }

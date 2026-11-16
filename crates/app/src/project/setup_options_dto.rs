@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::schema::{EndUnits, PostOptions, ThreadingOutput};
+use crate::schema::{BetweenSetups, EndUnits, PostOptions, ThreadingOutput};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SetupPostOptionsDto {
@@ -26,6 +26,14 @@ pub struct SetupPostOptionsDto {
     /// before it read the same.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub smoothing: bool,
+    /// #1386's Explain G-code: absent is off, so files written before
+    /// it read the same.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub explain: bool,
+    /// #1532's between-setups choice: absent is the default pause, so
+    /// files written before it read the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub between_setups: Option<String>,
 }
 
 impl SetupPostOptionsDto {
@@ -44,6 +52,8 @@ impl SetupPostOptionsDto {
                 EndUnits::Millimeters => Some("mm".to_owned()),
             },
             smoothing: o.smoothing,
+            explain: o.explain,
+            between_setups: (o.between_setups != BetweenSetups::default()).then(|| o.between_setups.word().to_owned()),
         }
     }
 
@@ -61,6 +71,19 @@ impl SetupPostOptionsDto {
             Some("mm") => EndUnits::Millimeters,
             Some(other) => return Err(format!("setup '{setup}' names an unknown end-of-program unit {other:?}")),
         };
-        Ok(PostOptions { threading, skip_stops: self.skip_stops, per_op: self.per_op_files, end_units, smoothing: self.smoothing })
+        let between_setups = match self.between_setups.as_deref() {
+            None => BetweenSetups::default(),
+            Some(w) => BetweenSetups::from_word(w)
+                .ok_or_else(|| format!("setup '{setup}' names an unknown between-setups choice {w:?}"))?,
+        };
+        Ok(PostOptions {
+            threading,
+            skip_stops: self.skip_stops,
+            per_op: self.per_op_files,
+            end_units,
+            smoothing: self.smoothing,
+            explain: self.explain,
+            between_setups,
+        })
     }
 }

@@ -1,6 +1,8 @@
 //! The adaptive "Optimal load (% of D)" field (M11.4 B): edits the
 //! ae/D ratio the params store as a percentage of the tool diameter and
-//! quotes the derived contact angle `acos(1 - 2 ae/D)` as a hint.
+//! quotes the derived contact angle `acos(1 - 2 ae/D)` as a hint. Where
+//! it shows, the Stepover row does not: one radial-step field per
+//! strategy (`PocketStrategy::steps_by_load`, #1512).
 //! Provenance: straight-wall radial-engagement geometry of peripheral
 //! milling (machining handbooks; `camcraft_app::load` carries the law).
 
@@ -35,4 +37,10 @@ pub(super) fn optimal_load_field(ui: &mut Ui, load: &mut f64) {
             degrees_of_load(*load)
         ),
     );
+    super::layout::hint(ui, LOAD_SETS_STEP);
 }
+
+/// Said under every Optimal load field (#1512): the load is the step, so
+/// the page shows no Stepover beside it.
+pub(super) const LOAD_SETS_STEP: &str =
+    "this load sets the step between passes - Stepover is not used here (it spaces Zigzag, Waterline and Auto)";

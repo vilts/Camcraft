@@ -196,6 +196,11 @@ impl Raster {
         Point2::new(self.x0 + ((i % self.nx) as f64 + 0.5) * self.h, self.y0 + ((i / self.nx) as f64 + 0.5) * self.h)
     }
 
+    /// Does a cell stand here that `other` has cleared (two cuts compared)?
+    pub(super) fn stands_over(&self, other: &Raster) -> bool {
+        self.cells.len() != other.cells.len() || self.cells.iter().zip(&other.cells).any(|(&a, &b)| a && !b)
+    }
+
     /// Material cells standing (the progress yardstick of a round).
     pub(super) fn standing(&self) -> usize {
         self.cells.iter().filter(|&&c| c).count()

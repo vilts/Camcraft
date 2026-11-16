@@ -7,7 +7,7 @@
 //! Provenance: machine-tool handbook tooling practice read against our
 //! own generators' tool doors; no vendor material consulted.
 //!
-//! Gate map (M4.4): covers app::operation (kinds table, tool_law), app::tools.
+//! Gate map (M4.4): covers app::operation (kinds table, tool_law), tools::tools.
 
 use camcraft_app::operation::{tool_law, KindInfo, OpType, Section};
 use camcraft_app::tools::ToolKind;
@@ -30,6 +30,9 @@ fn every_tool_kind() -> Vec<ToolKind> {
         ToolKind::Taper,
         ToolKind::Probe,
         ToolKind::Torch,
+        ToolKind::Electrode,
+        ToolKind::ThreadMill,
+        ToolKind::ThreadMillSingle,
     ];
     for k in &all {
         match k {
@@ -45,7 +48,10 @@ fn every_tool_kind() -> Vec<ToolKind> {
             | ToolKind::Form
             | ToolKind::Taper
             | ToolKind::Probe
-            | ToolKind::Torch => {}
+            | ToolKind::Torch
+            | ToolKind::Electrode
+            | ToolKind::ThreadMill
+            | ToolKind::ThreadMillSingle => {}
         }
     }
     all
@@ -54,6 +60,13 @@ fn every_tool_kind() -> Vec<ToolKind> {
 #[test]
 fn every_kind_names_a_tool_set() {
     for row in KindInfo::ALL {
+        // #532: a wire EDM kind mounts no library tool - its wire is the
+        // machine's condition - and is the one family with an empty set.
+        if row.family() == camcraft_app::operation::Family::WireEdm {
+            assert!(row.tool_kinds.is_empty() && !row.mounts_tool(), "{:?} mounts a tool", row.ty);
+            continue;
+        }
+        assert!(row.mounts_tool(), "{:?} names no tool kind", row.ty);
         assert!(!row.tool_kinds.is_empty(), "{:?} names no tool kind", row.ty);
         for (i, k) in row.tool_kinds.iter().enumerate() {
             assert!(

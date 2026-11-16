@@ -5,7 +5,7 @@
 //! tap-drill size the sim must find no gouge; a tap whose core is wider
 //! than the hole under it must still be a gouge.
 //!
-//! Gate map (M4.4): covers app::stock_sim (plan_program's tap atom), app::operation (tool_law::cutting_radius).
+//! Gate map (M4.4): covers app::stock_sim, sim::stock_sim (plan_program's tap atom), app::operation (tool_law::cutting_radius, tap_core).
 //! Lane shape (M4.4): all tests here run in seconds.
 
 use flecs_ecs::prelude::World;
@@ -19,7 +19,7 @@ use camcraft_app::operation::{Height, OpParams, SrcRef};
 use camcraft_app::schema::Location;
 use camcraft_app::stock::StockShape;
 use camcraft_app::stock_sim::simulate_document;
-use camcraft_app::tools::{Tool, catalog};
+use camcraft_app::tools::{Tool, ToolKind, catalog};
 use camcraft_app::world::new_world;
 
 const TOP: f64 = 20.0;
@@ -137,4 +137,123 @@ fn a_tap_wider_than_its_hole_is_still_a_gouge() {
     let sim = simulate_document(&world).expect("a fresh tap program simulates");
     assert!(sim.dev.gouge_cells > 0, "the tap's core cuts below the model around a Ø3 hole");
     assert!(sim.dev.max_gouge > 1.0, "the gouge runs down the hole wall: {:.3} mm", sim.dev.max_gouge);
+}
+
+
+/// The catalog M6 tap's Tap cycle over a hole of `half_width` whose
+/// floor is `floor`, cut to `bottom` (a tap deeper than its hole when
+/// `bottom` is below `floor`).
+fn tapped_to(half_width: f64, bottom: f64) -> (World, History) {
+    let tool = catalog().into_iter().find(|(n, _)| *n == TAP).map(|(_, t)| t).expect("catalog tap");
+    let params = OpParams::Drill {
+        clearance_z: Height::fixed(TOP + 10.0),
+        retract_z: None,
+        top_z: Height::fixed(TOP),
+        bottom_z: Some(Height::fixed(bottom)),
+        cycle: CycleChoice::Tap,
+        peck: 0.0,
+        dwell: 0.0,
+        feed: 600.0,
+        plunge_feed: 600.0,
+        holes: vec![Hole { floor_z: bottom, ..hole(half_width) }],
+        cross: vec![],
+    };
+    world_with_op(half_width, TAP, tool, params)
+}
+
+#[test]
+fn a_tap_in_a_tap_drill_hole_carries_no_blocking_warning() {
+    // #266, the generator's half: its cutting laws judged the M6 tap's
+    // feed in and out at the full Ø6 against a Ø5 hole wall
+    // ("move 1/2 cuts past the finish surface"), which blocked the post
+    // after the sim had been fixed. At the Ø4.917 core they are clean.
+    let (world, _history) = tapped_world(2.5);
+    assert_eq!(blocking_warnings(&world), Vec::<String>::new(), "a tap on its tap-drill hole posts");
+}
+
+#[test]
+fn a_tap_in_a_hole_under_its_minor_diameter_is_still_convicted() {
+    // Ø4.6: under M6 x 1's basic minor diameter (Ø4.917) by more than
+    // the gouge tolerance. The tap cannot cut its own pilot.
+    let (world, _history) = tapped_world(2.3);
+    let warns = blocking_warnings(&world);
+    assert!(warns.iter().any(|w| w.contains("cuts past the finish surface")), "convicted: {warns:?}");
+    let sim = simulate_document(&world).expect("a fresh tap program simulates");
+    assert!(sim.dev.gouge_cells > 0, "the core cuts the undersized wall");
+}
+
+#[test]
+fn a_tap_deeper_than_its_hole_is_still_convicted() {
+    // The Ø5 hole stops at z 8; the tap goes on to z 5, into solid
+    // metal under the floor. The core re-read must not excuse that.
+    let (world, _history) = tapped_to(2.5, HOLE_FLOOR - 3.0);
+    let warns = blocking_warnings(&world);
+    assert!(warns.iter().any(|w| w.contains("cuts past the finish surface")), "a tap past the hole's floor is convicted: {warns:?}");
+    let sim = simulate_document(&world).expect("a fresh tap program simulates");
+    assert!(sim.dev.gouge_cells > 0, "the tap cuts below the hole's floor");
+}
+
+#[test]
+fn a_tap_with_no_hole_under_it_is_still_convicted() {
+    // A hole record over solid metal (the model's hole is elsewhere,
+    // here: a 0.5 mm slit): the tap would have to cut its own pilot.
+    let (world, _history) = tapped_world(0.25);
+    let warns = blocking_warnings(&world);
+    assert!(warns.iter().any(|w| w.contains("cuts past the finish surface")), "a tap into solid metal is convicted: {warns:?}");
+}
+
+#[test]
+fn a_tap_whose_shank_rides_into_the_hole_is_still_convicted() {
+    // #1289 review: an M6 tap with a Ø6 shank and a 4 mm thread length
+    // (DIN 371 style) fed 12 mm into the Ø5 hole. The hole record says
+    // Ø6 (the thread's nominal), so the reach law's shank check passes
+    // it; the full-diameter run reports each feed move as a `Gouge`,
+    // which hides its shank verdict. The core re-read drops the
+    // `Gouge` and must carry the shank rubbing the thread crests in.
+    let tap = catalog().into_iter().find(|(n, _)| *n == TAP).map(|(_, t)| t).expect("catalog tap");
+    let tool = Tool { flute_len: 4.0, shank_d: 6.0, ..tap };
+    let params = OpParams::Drill {
+        clearance_z: Height::fixed(TOP + 10.0),
+        retract_z: None,
+        top_z: Height::fixed(TOP),
+        bottom_z: None,
+        cycle: CycleChoice::Tap,
+        peck: 0.0,
+        dwell: 0.0,
+        feed: 600.0,
+        plunge_feed: 600.0,
+        holes: vec![hole(3.0)],
+        cross: vec![],
+    };
+    let (world, _history) = world_with_op(2.5, "TAP-M6-SHANK", tool, params);
+    let warns = blocking_warnings(&world);
+    assert!(warns.iter().any(|w| w.contains("shank/holder at move")), "a shank rubbing the thread crests blocks the post: {warns:?}");
+}
+
+#[test]
+fn a_drill_at_its_own_diameter_keeps_the_full_verdict() {
+    // The re-read is the Tap kind's only: a Ø6 drill in the same Ø5
+    // hole is a real gouge and stays convicted.
+    let tap = catalog().into_iter().find(|(n, _)| *n == TAP).map(|(_, t)| t).expect("catalog tap");
+    let tool = Tool { kind: ToolKind::Drill, diameter: 6.0, pitch: 0.0, tip_angle: 118.0, ..tap };
+    drill_case("DRILL-6", tool);
+}
+
+fn drill_case(name: &str, tool: Tool) {
+    let params = OpParams::Drill {
+        clearance_z: Height::fixed(TOP + 10.0),
+        retract_z: None,
+        top_z: Height::fixed(TOP),
+        bottom_z: None,
+        cycle: CycleChoice::Auto,
+        peck: 0.0,
+        dwell: 0.0,
+        feed: 600.0,
+        plunge_feed: 600.0,
+        holes: vec![hole(2.5)],
+        cross: vec![],
+    };
+    let (world, _history) = world_with_op(2.5, name, tool, params);
+    let warns = blocking_warnings(&world);
+    assert!(warns.iter().any(|w| w.contains("cuts past the finish surface")), "a Ø6 drill in a Ø5 hole gouges: {warns:?}");
 }

@@ -8,6 +8,7 @@
 //! accepted only within a stated deviation; no vendor material consulted.
 
 use super::*;
+use crate::units::{self, Unit};
 
 /// The deviation every contour vertex may stand from the fitted circle:
 /// a tessellated rim puts its vertices ON the surface, so anything past a
@@ -49,7 +50,7 @@ fn fit_loop(l: &Loop) -> Option<(Point2, f64, f64, Point2)> {
 /// The circle a picked region stands for: its single outer contour when
 /// that is round, else its single round hole (a face picked around a
 /// bore). Refused by name with the outer contour's worst deviation.
-pub fn circle_of_region(region: &Region) -> Result<(Point2, f64), GenError> {
+pub fn circle_of_region(region: &Region, unit: Unit) -> Result<(Point2, f64), GenError> {
     let outers: Vec<&Loop> = region.loops().iter().filter(|l| l.is_ccw()).collect();
     let holes: Vec<&Loop> = region.loops().iter().filter(|l| !l.is_ccw()).collect();
     let fits = |l: &Loop| fit_loop(l).filter(|f| f.2 <= CIRCLE_FIT_TOL);
@@ -64,7 +65,13 @@ pub fn circle_of_region(region: &Region) -> Result<(Point2, f64), GenError> {
     }
     let worst = outers.first().and_then(|o| fit_loop(o));
     let detail = match worst {
-        Some((_, _, dev, at)) => format!("deviation {dev:.3} mm at ({:.3}, {:.3})", at.x, at.y),
+        Some((_, _, dev, at)) => format!(
+            "deviation {} {} at ({}, {})",
+            units::len(dev, unit, 3),
+            unit.suffix(),
+            units::len(at.x, unit, 3),
+            units::len(at.y, unit, 3)
+        ),
         None => format!("{} separate areas, no single round contour", outers.len()),
     };
     Err(GenError::Invalid(format!(
@@ -84,7 +91,7 @@ pub fn circular_fit_of(world: &World, op: &Operation) -> Option<Result<(Point2, 
         return None;
     }
     Some(match region_of(world, op) {
-        Some(r) => circle_of_region(&r).map_err(|e| e.to_string()),
+        Some(r) => circle_of_region(&r, crate::units::of(world)).map_err(|e| e.to_string()),
         None => Err("the selection resolves no closed region".into()),
     })
 }

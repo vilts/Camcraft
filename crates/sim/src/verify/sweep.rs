@@ -21,34 +21,31 @@
 //! through a Z window that is the union (a superset) of the two
 //! endpoints' windows. This law names what meets steel in between.
 
-use crate::cl::{Move, MoveKind, Toolpath, angles_to_axis, axis_to_angles, is_vertical, normalize_axis};
+use crate::cl::{Move, MoveKind, Toolpath, axis_to_angles, normalize_axis};
 use crate::geo2d::Point2;
-use crate::geometry::Point3;
 
-use super::laws::dist2_seg;
 use super::rest::Steps;
+use super::turn_cells::{Cell, push_cells};
+use super::turn_hidden::backstop_asks;
 use super::types::Warning;
 
-/// Path fractions sampled INSIDE the move (its endpoints are law (c)'s
-/// domain - the to-point at the to-pose is (c) verbatim, and the
-/// from-point was the previous move's to-point). Four points: the
-/// same coarse-by-design sampling the rest of verify lives with, and
-/// no fewer on a straight move, where (c) otherwise sees only the
-/// endpoint. A pure-Z move keeps its XY and these become its Z
-/// stations - the sliding-window case above.
-const PATH_FRACS: [f64; 4] = [0.2, 0.4, 0.6, 0.8];
-/// Pose fractions through the turn, endpoints INCLUDED: the head may
-/// finish its arc before the table arrives (its leg is the short one
-/// on a coordinated move), so "at the to-pose but not yet at the
-/// to-point" is reachable, and on a straight move law (c) - which
-/// samples the to-point only - would otherwise never see it.
+/// The turn fractions #1303's span floors are read at, endpoints
+/// INCLUDED (the sampled sweep's poses before #1313): the cells holding
+/// one read no higher than its floor ([`band_floors`]).
 const POSE_FRACS: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
+
+/// The overhang backstop's ask ([`super::hidden`]'s `hidden_in_cover`):
+/// (box, lowest plane, footprint probes - built on demand -, the
+/// footprint's membership and the heights its bottom takes over a
+/// point, judged move).
+pub(super) type Hidden<'a> =
+    dyn Fn((Point2, Point2), f64, &dyn Fn() -> Vec<Point2>, &super::hidden::Heights<'_>, usize) -> bool + 'a;
 
 /// The reachable-set sweep of one path: for every cut move that
 /// CHANGES the commanded pose (the modal law threaded through the
 /// path itself - rapids hold, an unposed cut is home), test the band
-/// stack's law-(c) column over a grid of (path position, turn
-/// fraction). Moves law (c) already convicted are skipped: their
+/// stack's law-(c) column over the whole rectangle of (path position,
+/// turn fraction) - swept cells, not a grid (#1313). Moves law (c) already convicted are skipped: their
 /// same-band verdict is spoken, and this law exists for what (c)
 /// finds clean. One [`Warning::SweepHit`] per move; part material
 /// outranks stock, like (c)'s worst-offender rule.
@@ -67,19 +64,21 @@ const POSE_FRACS: [f64; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
 /// answer. The memo cannot move a verdict: it is the same float, the
 /// same bool, and the max-severity rule (part outranks stock outranks
 /// clean) does not care what order the pairs are seen in.
+/// `gouge_tol` is the kerf slack about the tip and `grow` the band
+/// growth, both as law (c) reads them on a coarse model (#904).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn mid_turn_sweeps(
     path: &Toolpath,
     bands: &[(f64, f64, f64)],
     r: f64,
-    gouge_tol: f64,
+    (gouge_tol, grow): (f64, f64),
     chord_tol: f64,
     shanked: &[usize],
     samples: &[Point2],
     in_stock: &dyn Fn(Point2) -> bool,
     surface: &dyn Fn(Point2) -> Steps,
     part_at: &dyn Fn(Point2) -> bool,
-    hidden: &dyn Fn(Point2, Point2, f64, f64, f64, usize) -> bool,
+    hidden: &Hidden<'_>,
 ) -> Vec<Warning> {
     let mut warns = Vec::new();
     // The column memo, one per path (see the module law above): a
@@ -106,7 +105,7 @@ pub(super) fn mid_turn_sweeps(
             && held != next
             && !shanked.contains(&i)
             && let Some(part) = swing_hit(
-                m, i + 1, held, next, bands, r, gouge_tol, chord_tol, samples, &mut reach, in_stock, surface, part_at, hidden,
+                m, i + 1, held, next, bands, r, (gouge_tol, grow), chord_tol, samples, &mut reach, in_stock, surface, part_at, hidden,
             )
         {
             warns.push(Warning::SweepHit { at: i, part });
@@ -118,19 +117,23 @@ pub(super) fn mid_turn_sweeps(
 
 /// Does the swing's reachable set meet steel? `Some(true)`: part
 /// material (worst offender, search ended); `Some(false)`: stock
-/// only; `None`: clean. The column stands at the sampled tip with
-/// the lerped-pose lean - law (c)'s enclosure formula, pose by pose.
+/// only; `None`: clean.
 ///
-/// The 40 placements (4 path stations x 5 turn fractions x the live
-/// bands) are enumerated once into a state list, and the list's own
-/// bounding box filters the sample columns first: a band can only
-/// touch a column its state's disc covers, and on a real fixture the
-/// far-field majority of samples is outside every disc at once. The
-/// grid's price is then 20x law (c)'s reach, not 20x its sample
-/// count - which is what lets (c3) run for the Envelope programs,
-/// where the posed kinds live. The columns' own answers ride the
-/// path-wide `reach` memo (see [`mid_turn_sweeps`]): read once per
-/// near column, never recomputed for the other 39 states that ask.
+/// The reachable set is every tip position of the move under every
+/// pose of the turn (either family may arrive first). Each band's
+/// law-(c) column is enclosed over it by [`super::turn_cells`]: one
+/// cell per tip chord and interval of the turn, holding every column
+/// between its end poses with a stated sag (at most
+/// [`super::turn_cells::SAG`] until the cell cap). A sample column
+/// convicts when some position of a cell puts the band over it,
+/// outside the flutes' kerf at that same tip position, with the
+/// band's bottom under the column's surface. Nothing between two
+/// samples of the turn is left unread (#1313: five poses at four
+/// stations let a band cross a wall between them).
+///
+/// The cells' union box filters the sample columns first, and the
+/// columns' own answers ride the path-wide `reach` memo (see
+/// [`mid_turn_sweeps`]): read once per near column.
 #[allow(clippy::too_many_arguments)]
 fn swing_hit(
     m: &Move,
@@ -139,97 +142,56 @@ fn swing_hit(
     to_abc: [f64; 3],
     bands: &[(f64, f64, f64)],
     r: f64,
-    gouge_tol: f64,
+    (gouge_tol, grow): (f64, f64),
     chord_tol: f64,
     samples: &[Point2],
     reach: &mut std::collections::HashMap<(u64, u64), (bool, Steps, bool)>,
     in_stock: &dyn Fn(Point2) -> bool,
     surface: &dyn Fn(Point2) -> Steps,
     part_at: &dyn Fn(Point2) -> bool,
-    hidden: &dyn Fn(Point2, Point2, f64, f64, f64, usize) -> bool,
+    hidden: &Hidden<'_>,
 ) -> Option<bool> {
-    // (pc, tip, r2, h0): the band's column, the tip whose kerf the
-    // flutes cleared (law (c)'s inner edge - it stays at the tip when
-    // the band leans off it, #903), its outer reach squared, its
-    // bottom. Plus the union box of every disc, for the filter.
-    let mut states: Vec<(Point2, Point2, f64, f64)> = Vec::new();
-    let mut bands_at: Vec<(Point2, Point2, f64, f64)> = Vec::new();
-    let (mut x0, mut y0) = (f64::INFINITY, f64::INFINITY);
-    let (mut x1, mut y1) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
-    for &t in &PATH_FRACS {
-        // XY walks the chord sequence (an arc's sweep is its chords,
-        // the discretization every crossing/chord law lives with);
-        // Z rides the move's own from-to lerp at the same parameter.
-        let p = path_point(m, t, chord_tol);
-        for &g in &POSE_FRACS {
-            let abc = [
-                from_abc[0] + (to_abc[0] - from_abc[0]) * g,
-                from_abc[1] + (to_abc[1] - from_abc[1]) * g,
-                from_abc[2] + (to_abc[2] - from_abc[2]) * g,
-            ];
-            let lean = angles_to_axis(abc).filter(|a| !is_vertical(a));
-            for &(above, band_r, band_len) in bands {
-                // Law (c)'s skip, read the same way: a band within the
-                // cutter's radius is the flutes' kerf only upright (#903).
-                if band_len <= 0.0 || band_r <= 0.0 || (lean.is_none() && band_r <= r) {
-                    continue;
-                }
-                let (offx, offy, r_band, h0) = match lean {
-                    Some(a) => {
-                        let mid = above + band_len * 0.5;
-                        let spread = (band_len * 0.5) * (a[0] * a[0] + a[1] * a[1]).sqrt();
-                        let za = p.z + above * a[2];
-                        let zb = p.z + (above + band_len) * a[2];
-                        (mid * a[0], mid * a[1], band_r + spread, za.min(zb) - band_r)
-                    }
-                    None => (0.0, 0.0, band_r, p.z + above),
-                };
-                let pc = Point2::new(p.x + offx, p.y + offy);
-                let tip = Point2::new(p.x, p.y);
-                states.push((pc, tip, (r_band + 1e-9) * (r_band + 1e-9), h0));
-                bands_at.push((pc, tip, r_band, h0));
-                x0 = x0.min(pc.x - r_band);
-                x1 = x1.max(pc.x + r_band);
-                y0 = y0.min(pc.y - r_band);
-                y1 = y1.max(pc.y + r_band);
-            }
-        }
+    // The tip's own path: a straight move, or an arc's chords with
+    // their Z (the discretization every chord law lives with).
+    let pieces = m.segments3(chord_tol);
+    let mut cells: Vec<Cell> = Vec::new();
+    for &band in bands {
+        let floors = band_floors(from_abc, to_abc, band);
+        push_cells(&mut cells, &pieces, from_abc, to_abc, band, r, grow, &floors);
     }
-    if states.is_empty() {
+    if cells.is_empty() {
         return None; // every band upright within the tool's radius: nothing to sweep
     }
-    let near: Vec<Point2> = samples
-        .iter()
-        .copied()
-        .filter(|q| q.x >= x0 && q.x <= x1 && q.y >= y0 && q.y <= y1)
-        .collect();
-    // This move's near columns, answers read once: the memo has
-    // them, the three laws compute them on the first ask anywhere
-    // in the path. Eager for every near column where the old loop
-    // asked only after the annulus filter - legal because all three
-    // laws are pure in q, so the early ask is the same float, the
-    // same bool, the old lazy ask would have got. The state loop
-    // then costs a distance and three compares per pair whatever
-    // the column laws' own price; and reading `in_stock` before the
-    // annulus is a legal reordering of filters over one predicate
-    // set - the worst-offender max cannot see the difference.
-    let mut vals: Vec<(Point2, bool, f64, bool)> = Vec::with_capacity(near.len());
-    for q in near {
+    let (mut x0, mut y0) = (f64::INFINITY, f64::INFINITY);
+    let (mut x1, mut y1) = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+    for c in &cells {
+        x0 = x0.min(c.lo.x);
+        y0 = y0.min(c.lo.y);
+        x1 = x1.max(c.hi.x);
+        y1 = y1.max(c.hi.y);
+    }
+    // This move's near columns in the stock, answers read once: the
+    // memo has them, the three laws compute them on the first ask
+    // anywhere in the path (all three are pure in q).
+    let mut vals: Vec<(Point2, f64, bool)> = Vec::new();
+    for &q in samples.iter().filter(|q| q.x >= x0 && q.x <= x1 && q.y >= y0 && q.y <= y1) {
         let k = (q.x.to_bits(), q.y.to_bits());
         let v = reach.entry(k).or_insert_with(|| (in_stock(q), surface(q), part_at(q)));
-        vals.push((q, v.0, v.1.before(upto), v.2));
+        if v.0 {
+            vals.push((q, v.1.before(upto), v.2));
+        }
     }
-    let inner2 = (r + gouge_tol) * (r + gouge_tol);
+    let kerf2 = (r + gouge_tol) * (r + gouge_tol);
     let mut worst = None;
-    for &(pc, tip, r2, h0) in &states {
-        for &(q, instk, zq, part) in &vals {
-            if !instk {
-                continue; // outside the stock for every state's annulus
+    for c in &cells {
+        for &(q, zq, part) in &vals {
+            if q.x < c.lo.x || q.x > c.hi.x || q.y < c.lo.y || q.y > c.hi.y {
+                continue; // outside this cell's box
             }
-            if dist2_seg(q, pc, pc) > r2 || dist2_seg(q, tip, tip) <= inner2 {
-                continue; // outside this band's annulus
+            if worst.is_some() && !part {
+                continue; // a stock column cannot raise a stock verdict
             }
-            if h0 < zq {
+            if c.bottom_over(q, kerf2).is_some_and(|h| h < zq) {
                 if part {
                     return Some(true); // report the worst offender
                 }
@@ -240,48 +202,50 @@ fn swing_hit(
     // The overhang backstop (M13.7 B, [`super::hidden`]): stock hidden
     // under a ledge is in no column sample; asked only when the column
     // law found nothing, so it adds convictions, never removes one.
-    if worst.is_none() && bands_at.iter().any(|&(pc, tip, rb, h0)| hidden(pc, tip, r + gouge_tol, rb, h0, upto)) {
+    // Since #1316 it reads the same reachable set, on its own coarser
+    // cells and a stated plane budget ([`super::turn_hidden`]) - and
+    // every column over the whole range of heights the band's bottom
+    // takes there, because hidden stock is not monotone in the plane.
+    if worst.is_none()
+        && backstop_asks(&pieces, from_abc, to_abc, bands, r, grow)
+            .iter()
+            .any(|a| hidden((a.lo, a.hi), a.plane, &|| a.probes(), &|q, hit| a.heights(q, kerf2, hit), upto))
+    {
         worst = Some(false);
     }
     worst
 }
-
-/// The point `t` along the move: XY by cumulative chord walk, Z on
-/// the move's own linear ramp. A zero-XY move keeps its column and
-/// the Z lerp does the work - which is the whole point for a plunge
-/// that turns while it descends.
-fn path_point(m: &Move, t: f64, chord_tol: f64) -> Point3 {
-    // An XZ / YZ arc (M11.2 A) moves in Z along its sweep, not on the
-    // endpoints' lerp: its own exact point at the sweep fraction.
-    if let Some(a) = m.arc.filter(|a| !a.plane.is_xy())
-        && let Some(p) = a.point_at(m.from, m.to, t)
-    {
-        return p;
-    }
-    let chords = m.chords(chord_tol);
-    let mut total = 0.0;
-    for (a, b) in &chords {
-        total += ((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y)).sqrt();
-    }
-    let z = m.from.z + (m.to.z - m.from.z) * t;
-    // `!(total > 0.0)` in NaN-honest form: a non-positive OR
-    // non-finite walk parks the column at the move's start.
-    if total <= 0.0 || !total.is_finite() || chords.is_empty() {
-        return Point3::new(m.from.x, m.from.y, z);
-    }
-    let target = t * total;
-    let mut acc = 0.0;
-    for (a, b) in &chords {
-        let l = ((b.x - a.x) * (b.x - a.x) + (b.y - a.y) * (b.y - a.y)).sqrt();
-        if acc + l >= target {
-            let f = if l > 0.0 {
-                ((target - acc) / l).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            return Point3::new(a.x + (b.x - a.x) * f, a.y + (b.y - a.y) * f, z);
-        }
-        acc += l;
-    }
-    Point3::new(m.to.x, m.to.y, z)
+/// The letters at each of [`POSE_FRACS`], lerped from `from` to `to`.
+fn pose_letters(from: [f64; 3], to: [f64; 3]) -> [[f64; 3]; 5] {
+    POSE_FRACS.map(|g| {
+        [from[0] + (to[0] - from[0]) * g, from[1] + (to[1] - from[1]) * g, from[2] + (to[2] - from[2]) * g]
+    })
 }
+
+/// #1303's span floor at the pose `k` of `poses`, over the tip: the
+/// lowest the band can reach between that pose and either neighbour
+/// where the lerp can lean past both samples ([`super::tilt_span`]);
+/// `+inf` inside the cap, where the samples bound the span.
+fn span_floor_at(poses: &[[f64; 3]; 5], k: usize, (above, band_r, band_len): (f64, f64, f64)) -> f64 {
+    let span = |j: usize| super::tilt_span::span_floor(&poses[j], &poses[k], above, band_r, band_len);
+    [k.checked_sub(1), Some(k + 1).filter(|&j| j < poses.len())]
+        .into_iter()
+        .flatten()
+        .filter_map(span)
+        .fold(f64::INFINITY, f64::min)
+}
+
+/// The span floors of one band at the turn fractions [`POSE_FRACS`],
+/// `(g, floor over the tip)`: what the sampled sweep before #1313 read
+/// at those poses. A turn cell holding a fraction reads no higher
+/// ([`push_cells`]), so the cell law convicts all the sampled law did;
+/// the overhang backstop's coarser cells hold the same floors
+/// ([`super::turn_hidden`]), so it convicts all the sampled backstop did.
+pub(super) fn band_floors(from: [f64; 3], to: [f64; 3], band: (f64, f64, f64)) -> [(f64, f64); 5] {
+    let poses = pose_letters(from, to);
+    std::array::from_fn(|k| (POSE_FRACS[k], span_floor_at(&poses, k, band)))
+}
+
+#[cfg(test)]
+#[path = "sweep_tests.rs"]
+mod tests;

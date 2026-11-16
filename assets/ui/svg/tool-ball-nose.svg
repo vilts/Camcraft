@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>Ball Nose</title>
+  <rect fill="currentColor" x="6.75" y="1.5" width="10.5" height="3" rx="0.75"/><path d="M8.25 4.5V17.25A3.75 3.75 0 0 0 15.75 17.25V4.5"/><path stroke-width="1.5" d="M8.25 10.5L15.75 13.5"/>
+</svg>

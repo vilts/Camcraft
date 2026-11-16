@@ -21,7 +21,8 @@ pub trait Command {
 
 The history (`History` in `crates/app/src/commands/mod.rs`) is a linear
 undo/redo stack of executed commands, and it is the single source of
-truth for what undo (Ctrl+Z) and redo (Ctrl+Y) can do. Executing a new
+truth for what undo (Ctrl+Z, Cmd+Z on macOS) and redo (Ctrl+Y, Cmd+Y on
+macOS) can do. Executing a new
 command clears the redo stack. The history also tracks the depth at the
 last save, so undoing back to the saved point makes the document clean
 again.
@@ -42,10 +43,9 @@ history, and `apply` / `invert` are plain writes that cannot fail halfway.
 ## Commands ship with an MCP tool
 
 `camcraft-cli mcp` runs a Model Context Protocol server that lets an AI
-agent drive CamCraft headlessly: import models, set stock, add tools and
-operations, generate, verify and post. Its tools (in
-`crates/app/src/mcp/`) call the same undoable commands the GUI uses, so
-the history and every check hold the same way. A pull request that adds a
+agent drive CamCraft; its tools (in `crates/app/src/mcp/`) call the same
+undoable commands the GUI uses. How to run and use it is in the
+[AI agents (MCP) guide](@/guide/automate/mcp.md). A pull request that adds a
 user-facing command also adds its MCP tool, or files a follow-up issue for
 it.
 

@@ -6,6 +6,13 @@
 
 pub mod align;
 pub mod axis;
+pub mod cylinder;
+// #739: circle centre from a picked edge (WCS anchor, alignment, probing).
+pub mod circle;
+// #979: window / crossing box selection under the one pick rule.
+pub mod box_pick;
+// #692: round-edge centres as opt-in feature points.
+pub mod centre;
 pub mod face;
 pub mod feature_arc;
 pub mod feature_graph;
@@ -15,13 +22,20 @@ pub mod feature_sel;
 pub mod mate;
 pub mod plane;
 pub mod points;
+pub mod roles;
+pub mod wall_fit;
 pub mod winding;
 
 pub use align::{Alignment, align_321};
-pub use axis::{AxisPick, InPlaneAxes, InPlaneAxis, in_plane_turn_deg, pick_coords, turn_in_plane};
-pub use plane::{PlaneLay, lay_on_plane, plane_label, plane_side};
-pub use points::{PointsLay, lay_on_points, points_side};
+pub use axis::{AxisPick, InPlaneAxes, InPlaneAxis, align_from_axes, in_plane_turn_deg, pick_coords, turn_in_plane};
+pub use cylinder::{TargetAxis, align_from_cylinder};
+pub use plane::{PlaneLay, lay_on_plane, lay_on_plane_in, plane_label, plane_side};
+pub use points::{PointsLay, lay_on_points, lay_on_points_in, points_side};
+pub use circle::{Circle, CircleRefusal, circle_centre, circle_centre_in, circle_of_edge, circle_of_run};
+pub use centre::{centre_of, centre_point, centre_selection};
+pub use box_pick::{BoxMode, BoxQuery, box_bodies, box_select, box_select_top};
 pub use face::{FaceOrigin, face_origin, facets_centroid};
+pub use roles::{Role, align_roles};
 pub use feature_arc::ArcCentre;
 pub use feature_graph::{
     FeatureGraph, FeaturePoint, PointKind, WeldedFace, feature_graph, feature_graph_cached, feature_graph_shared,

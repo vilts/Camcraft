@@ -12,7 +12,7 @@
 //! Regenerate the golden after an intentional change:
 //! `WRITE_GOLDEN=1 cargo test -p camcraft-app --test tormach_fourth_axis`
 //!
-//! Gate map (M4.4): covers app::post (tormach.cps), post::machine (rotary
+//! Gate map (M4.4): covers post::post (tormach.cps), post::machine (rotary
 //! mirror), app::posting (MACHINES registry, post_setup).
 
 use camcraft_app::cl::MoveKind;
@@ -48,7 +48,7 @@ fn mirrored(name: &str) -> Value {
 
 fn run(mch: &Value, stream: &str) -> engine::PostOutput {
     let cps = read("assets/posts/tormach.cps");
-    engine::run(&cps, mch, stream).unwrap_or_else(|e| panic!("the engine runs: {e}"))
+    engine::run_with(&cps, mch, stream, &doc_units(mch)).unwrap_or_else(|e| panic!("the engine runs: {e}"))
 }
 
 fn mv(kind: MoveKind, p: [f64; 3], feed: Option<f64>, abc: Option<[f64; 3]>) -> cnc::Record {
@@ -100,6 +100,8 @@ fn face_local() -> Vec<(MoveKind, [f64; 3], Option<f64>)> {
 fn head() -> Vec<cnc::Record> {
     vec![
         cnc::Record::Param { name: "SpindleSpeed".into(), value: json!(6000) },
+        // #1614: a section states its clearance, as `post::dump` does.
+        cnc::Record::Param { name: "ClearancePlane".into(), value: json!(40.0) },
         cnc::Record::Param { name: "WorkOffset".into(), value: json!("G54") },
         cnc::Record::Param { name: "OriginX".into(), value: json!(ORIGIN[0]) },
         cnc::Record::Param { name: "OriginY".into(), value: json!(ORIGIN[1]) },
@@ -112,6 +114,10 @@ fn head() -> Vec<cnc::Record> {
 /// way every prismatic dump reads).
 fn face_section(recs: &mut Vec<cnc::Record>, name: &str, a: f64) {
     recs.push(cnc::Record::Param { name: "OperationName".into(), value: json!(name) });
+    // #1357: every section states its speed, as `post::dump` does - each
+    // section ends M5, and a cut with the spindle stopped is refused.
+    recs.push(cnc::Record::Param { name: "SpindleSpeed".into(), value: json!(6000) });
+    recs.push(cnc::Record::Param { name: "ClearancePlane".into(), value: json!(40.0) });
     recs.push(cnc::Record::Section { begin: true });
     for (k, l, f) in face_local() {
         let abc = (a != 0.0).then_some([a, 0.0, 0.0]);
@@ -440,4 +446,16 @@ fn a_same_tool_continuation_on_the_same_face_restates_a() {
         let a = s.iter().position(|l| *l == "G0 A90");
         assert!(a.is_some_and(|a| a > 0 && s[a - 1] == "G53 G0 Z0"), "section {i}: G53 G0 Z0 / G0 A90\n{nc}");
     }
+}
+
+/// #902: the program's unit is the document's, never the machine file's.
+/// These runs on an inch machine file stand for the inch document they
+/// posted before #902 (the file's own unit, through either door).
+fn doc_units(m: &serde_json::Value) -> serde_json::Value {
+    let word = m
+        .get("units")
+        .and_then(serde_json::Value::as_str)
+        .or_else(|| m.pointer("/kinematics/default/units/length").and_then(serde_json::Value::as_str));
+    let inch = matches!(word, Some("inch" | "inches"));
+    serde_json::json!({ "Units": if inch { "inch" } else { "mm" } })
 }

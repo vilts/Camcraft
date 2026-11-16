@@ -16,9 +16,9 @@
 //!   their products: the eight signed permutations that keep Z on +-Z)
 //!   maps every column centre onto a column centre of an image lattice
 //!   exactly. Such a carry moves numbers between cells and loses
-//!   nothing; every other rotation (a side-on turn, 30 degrees about Z)
-//!   would need a re-sample at the grid pitch, and is refused by name
-//!   ([`CARRY_TURN_REFUSAL`]), never guessed.
+//!   nothing. A side-on quarter turn is `carry_side`'s (#874); a turn
+//!   off the quarter (30 degrees about Z) would need a re-sample at an
+//!   angle, and is refused by name ([`CARRY_TURN_REFUSAL`]), never guessed.
 //! - **Two sides.** A column holds material from its floor up to its
 //!   top. Upright cuts only lower tops; a flip swaps the sides
 //!   (`top' = tz - floor`, `floor' = tz - top`). A column cut through
@@ -37,10 +37,10 @@ use super::kernel::{StockError, part_surface};
 
 use crate::geometry::{Point3, Triangle};
 
-/// The refusal for a turn the lattice cannot carry exactly.
-/// Plain words (#866): what the simulation can carry, and why this turn
-/// is not one of those - the caller says which turn and what to do.
-pub const CARRY_TURN_REFUSAL: &str = "the stock simulation can carry machined stock only through a flip over X or Y or a quarter turn about Z (turns that keep the tool axis vertical) - any other turn would have to re-sample the stock and lose its detail";
+/// The refusal for a turn no carry holds exactly (off the quarter turns).
+/// Plain words (#866, shortened by #874): what the simulation carries -
+/// the caller says which turn and what to do.
+pub const CARRY_TURN_REFUSAL: &str = "the stock simulation carries machined stock only through quarter turns (steps of 90° about X, Y or Z)";
 
 /// How close a rotation entry must sit to -1, 0 or 1 to be read as one.
 const UNIT_EPS: f64 = 1e-9;
@@ -54,7 +54,7 @@ pub struct LatticeTurn {
     t: [f64; 3],
 }
 
-fn unit(v: f64) -> Option<i8> {
+pub(super) fn unit(v: f64) -> Option<i8> {
     if (v - 1.0).abs() <= UNIT_EPS {
         Some(1)
     } else if (v + 1.0).abs() <= UNIT_EPS {
@@ -312,7 +312,23 @@ impl Body {
     /// # Errors
     /// A non-finite tolerance.
     pub fn deviate(&self, facets: &[Triangle], tol: f64) -> Result<Deviation, StockError> {
-        let top = deviate(&self.dex, facets, tol)?;
+        self.deviate_with_top_credit(facets, tol, |_, _| {})
+    }
+
+    /// Credit declared top cuts before combining the two face verdicts.
+    /// The underside keeps its own depths, locations and counts even when
+    /// a deeper top cut in the same column receives credit.
+    ///
+    /// # Errors
+    /// A non-finite tolerance.
+    pub fn deviate_with_top_credit(
+        &self,
+        facets: &[Triangle],
+        tol: f64,
+        credit: impl FnOnce(&mut Deviation, &Dexel),
+    ) -> Result<Deviation, StockError> {
+        let mut top = deviate(&self.dex, facets, tol)?;
+        credit(&mut top, &self.dex);
         if !self.floor_judged {
             return Ok(top);
         }

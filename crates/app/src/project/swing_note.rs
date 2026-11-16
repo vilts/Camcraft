@@ -1,5 +1,6 @@
-//! The load note for a machine embedded before #804 (#813): a rotary
-//! that may turn the work about X but carries no `turns_part` was saved
+//! The load note for a machine embedded before #804 (#813, #818): a
+//! rotary that may turn the work about a line that is not vertical (an
+//! A, a B, a leaning or unknown line) but carries no `turns_part` was saved
 //! before the index-swing clause read it, so that clause cannot judge
 //! it. Opening such a project names the machine and the rotary and asks
 //! for the machine to be reloaded - never a silent "not judged".
@@ -11,7 +12,8 @@ use super::ProjectFile;
 use crate::posting::index_swing::{RotaryLine, rotary_line};
 
 /// One note per embedded machine (the document's, then each setup's own)
-/// holding a rotary on, or possibly on, the X line whose kind - turning
+/// holding a rotary whose index could swing the work up (any line but a
+/// vertical one: a level, leaning or unknown line) whose kind - turning
 /// the work or the tool - the file never stated.
 pub(super) fn notes(file: &ProjectFile) -> Vec<String> {
     let mut machines: Vec<(String, &crate::machine::Machine)> = Vec::new();
@@ -29,7 +31,7 @@ pub(super) fn notes(file: &ProjectFile) -> Vec<String> {
             let unknown: Vec<&str> = m
                 .axes
                 .iter()
-                .filter(|a| a.rotary && a.turns_part.is_none() && rotary_line(a) != RotaryLine::OffX)
+                .filter(|a| a.rotary && a.turns_part.is_none() && rotary_line(a) != RotaryLine::Vertical)
                 .map(|a| a.name.as_str())
                 .collect();
             (!unknown.is_empty()).then(|| {

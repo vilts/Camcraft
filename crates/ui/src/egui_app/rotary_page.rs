@@ -142,8 +142,10 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                 hint(ui, "the radial infeed: what one wrap level peels off the skin");
             }
             if tab == SEC_PASSES {
-                prop_row(ui, "Stepover", |ui| num(ui, u, stepover));
-                hint(ui, "spacing around the bar, in developed arc length - the wrap's own ruler");
+                if !strategy.steps_by_load() {
+                    prop_row(ui, "Stepover", |ui| num(ui, u, stepover));
+                    hint(ui, "spacing around the bar, in developed arc length - the wrap's own ruler");
+                }
                 prop_row(ui, "Stock to leave", |ui| num(ui, u, stock_to_leave));
                 hint(ui, "the shelf the finishing kind is asked to take off");
                 let mut st_idx = match strategy {
@@ -165,7 +167,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                         _ => PocketStrategy::Zigzag,
                     };
                 }
-                if matches!(strategy, PocketStrategy::Adaptive | PocketStrategy::OffsetRings) {
+                if strategy.steps_by_load() {
                     super::load_field::optimal_load_field(ui, optimal_load);
                 }
                 prop_row(ui, "Tolerance", |ui| num(ui, u, tolerance));
@@ -238,7 +240,9 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                 });
             }
             if tab == SEC_PASSES {
-                prop_row(ui, "Stepover", |ui| num(ui, u, stepover));
+                if !strategy.steps_by_load() {
+                    prop_row(ui, "Stepover", |ui| num(ui, u, stepover));
+                }
                 prop_row(ui, "Stock to leave", |ui| num(ui, u, stock_to_leave));
                 let mut st_idx = match strategy {
                     PocketStrategy::Zigzag => 0,
@@ -259,7 +263,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                         _ => PocketStrategy::Zigzag,
                     };
                 }
-                if matches!(strategy, PocketStrategy::Adaptive | PocketStrategy::OffsetRings) {
+                if strategy.steps_by_load() {
                     super::load_field::optimal_load_field(ui, optimal_load);
                 }
                 hint(ui, "levels come from the mesh: each shelf cuts around the material standing above it");

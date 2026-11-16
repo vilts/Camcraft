@@ -89,8 +89,9 @@ pub fn rotary_contour(
     let local = f.local_facets(facets);
     let uz = if ax.dir.dot(UP) < 0.0 { -lean } else { lean };
     let q = stations(&local, p, &f, &|h| (h - ax.origin.z) / uz);
-    let base = finishing3d::waterline(&local, &q)?;
-    posed(&f, &base, &ax, c, p.tool_diameter * 0.5)
+    let r = p.tool_diameter * 0.5;
+    let base = finishing3d::waterline(&local, &q).map_err(|e| to_world(e, &f, &ax, c, r))?;
+    posed(&f, &base, &ax, c, r)
 }
 
 /// The rotary parallel: generatrix passes along the axis, stepping
@@ -137,23 +138,34 @@ pub fn rotary_parallel(
     // sloped-entry law.
     q.ramp = false;
     q.entry_ramp = false;
-    let base = finishing3d::swarf(&local, &q, 1.0, 0.0)?;
+    let r = p.tool_diameter * 0.5;
+    let base = finishing3d::swarf(&local, &q, 1.0, 0.0).map_err(|e| to_world(e, &f, &ax, c, r))?;
     // M13.8: the raster's Z lifts become radial links - out along the
     // radius to the retract cylinder, index, back in along the radius
     // ([`rotary_links`]); the planes read as radii in the laid frame.
-    let r = p.tool_diameter * 0.5;
     let hop = q.retract_z.map_or(q.clearance_z, |h| h.min(q.clearance_z));
     let rho = rotary_links::local_rho_max(&local);
     // #15: under the sloped-entry law (`entry_ramp`, the centre-cutting
     // guard's retry) each infeed ramps along the pass where the ramp is
     // proved clear of the part; off, every infeed stays a radial plunge.
     let ramp = p.entry_ramp.then_some(rotary_links::Ramp { deg: p.ramp_angle, facets: &local, tol: p.tolerance });
-    let base = rotary_links::radial_relink(&base, r, q.clearance_z, hop, rho, p.feed, p.plunge_feed, ramp)?;
+    let base = rotary_links::radial_relink(&base, r, q.clearance_z, hop, rho, p.feed, p.plunge_feed, ramp)
+        .map_err(|e| to_world(e, &f, &ax, c, r))?;
     let mut out = posed(&f, &base, &ax, c, r)?;
     if ramp.is_some() {
         out.notes.extend(base.notes.iter().filter(|n| n.starts_with("Rotary Parallel:")).cloned());
     }
     Ok(out)
+}
+
+/// #1015: a refusal raised in the planning frame, carried to the world
+/// the path would have gone to. Its ghost rides [`posed`] - the same
+/// pose law and world exit the finished path takes, so every point
+/// lands where the posted path's would - and its spot rides the
+/// frame's own `to_world`. A ghost that exit refuses (a cycle, nothing
+/// finite) is dropped, never drawn in the planning frame.
+fn to_world(e: GenError, f: &TiltedFrame, ax: &Axis, c: &AxisControl, r: f64) -> GenError {
+    e.map_location(|q| f.to_world(q)).map_ghost(|t| posed(f, t, ax, c, r).unwrap_or_default())
 }
 
 /// The contour frame: the axis as local z, the canonical foot as

@@ -85,6 +85,10 @@ fn a_plate_is_added_a_vise_placed_on_its_grid_and_undone_over_mcp() {
 
     let set = c.ok("set_fixture_plate", json!({ "name": plate, "dimensions": { "offset_x": 25.4 } }));
     assert_eq!(set["moved"], json!(["Vise 6 in"]), "{set}");
+    // #832 (the #833 review): the edit's warning field is always there -
+    // null when the re-seated vise and the new slab are clear (no stock,
+    // no part here); a warned edit is pinned in mcp_mod_vise.
+    assert_eq!(set.get("warning"), Some(&Value::Null), "{set}");
     let why = c.refused("detect_plate_grid", json!({ "name": "Vise 6 in" }));
     assert!(why.contains("no holes found"), "{why}");
 

@@ -6,3 +6,6 @@ docs/tester-kits/**/*.nc text eol=lf
 
 # Shell scripts run on macOS / Linux: a CR would break the shebang.
 *.sh text eol=lf
+
+# Solidcraft designs are ZIP containers: never touch their bytes.
+*.sc binary

@@ -108,14 +108,25 @@ pub struct ThreadCycle {
     pub first_depth: f64,
     /// The smallest depth increment a pass may take, radial.
     pub min_depth: f64,
-    /// Radial stock the finishing pass removes (0: the last roughing
-    /// rung is the root).
+    /// The depth the finishing pass - the first pass at the root -
+    /// takes below the roughing pass before it, radial (issue #417):
+    /// a control's cycle roughs to `height - finish_allowance`, then
+    /// finishes. Never 0 on a laid ladder: when the plan states no
+    /// allowance, the last roughing rung's own step is this depth.
     pub finish_allowance: f64,
     /// Included angle of the compound infeed, degrees; 0 is straight
     /// radial infeed (every pass plunges square to the axis).
     pub infeed_angle: f64,
     /// Extra passes at full depth after the finishing pass.
     pub spring_passes: u32,
+    /// The passes alternate flanks (issue #417): `infeed_angle` is the
+    /// included angle of each flank's line, the side flipping every
+    /// roughing pass - a single-flank cycle cannot state it.
+    pub alternating: bool,
+    /// Every roughing depth is cut twice before the next (issue #418):
+    /// the passes are not a cycle's one-cut-per-depth ladder, so a
+    /// cycle cannot state them.
+    pub repeat_each_depth: bool,
     /// Axial length of the angled pull-out at the thread's end (0: a
     /// square, radial retract).
     pub pull_out: f64,

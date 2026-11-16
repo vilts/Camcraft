@@ -91,7 +91,7 @@ pub(super) fn pieces(m: &Move, chord_tol: f64, floor: f64) -> Vec<Piece> {
 /// band's column into the leaning enclosure of law (c2): shifted to the
 /// band's mid-height point on the axis, widened by the half-length's
 /// spread, its z planes the axis reach at both window ends plus the
-/// disc's radius. Upright, the window is the bare z span. Either way
+/// disc rim's exact dip R·sin θ (#1303). Upright, the window is the bare z span. Either way
 /// the radius takes the piece's arc pad. A level straight piece
 /// reproduces the law's historical sums exactly.
 pub(super) fn band_struck(
@@ -107,16 +107,17 @@ pub(super) fn band_struck(
             let (offx, offy, r_use, bz0, bz1) = match lean {
                 None => (0.0, 0.0, r + pc.pad, pc.z_lo + above, pc.z_hi + above + len),
                 Some(a) => {
-                    let mid = above + len * 0.5;
-                    let spread = (len * 0.5) * (a[0] * a[0] + a[1] * a[1]).sqrt();
-                    let (za0, za1) = (pc.z_lo + above * a[2], pc.z_hi + above * a[2]);
-                    let (zb0, zb1) = (pc.z_lo + (above + len) * a[2], pc.z_hi + (above + len) * a[2]);
+                    // The one leaning column ([`super::tilt_band`],
+                    // #1303): the piece's z span (`z_lo <= z_hi`) takes
+                    // the band's axis reach at its low and high end,
+                    // then the rim's exact dip R·sin θ either way.
+                    let col = super::tilt_band::lean(&a, above, r, len);
                     (
-                        mid * a[0],
-                        mid * a[1],
-                        r + spread + pc.pad,
-                        za0.min(za1).min(zb0.min(zb1)) - r,
-                        za0.max(za1).max(zb0.max(zb1)) + r,
+                        col.off.0,
+                        col.off.1,
+                        col.r + pc.pad,
+                        pc.z_lo + col.lo - col.dip,
+                        pc.z_hi + col.hi + col.dip,
                     )
                 }
             };
@@ -144,7 +145,8 @@ pub(super) fn upper_bands(
     holder: &HolderStack,
     spindle: Option<(f64, f64)>,
 ) -> Vec<(FixturePart, f64, f64, f64)> {
-    let mut out = vec![(FixturePart::Shank, tool.flute_len, tool.shank_radius, tool.shank_len)];
+    // #852: the shank as swept - a drawn neck's bands, or the cylinder.
+    let mut out: Vec<_> = holder.shank_bands(tool).iter().map(|b| (FixturePart::Shank, b.above, b.r, b.len)).collect();
     out.extend(holder.bands.iter().map(|b| (FixturePart::Holder, b.above, b.r, b.len)));
     if let Some((sr, sl)) = spindle {
         out.push((FixturePart::Spindle, holder.top, sr, sl));

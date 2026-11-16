@@ -17,8 +17,10 @@ mod height;
 mod links;
 mod params;
 mod plasma;
+mod sinker;
 mod sane;
 mod sel;
+mod wire_edm;
 
 pub use area::{
     AREA_DISTANCE_MAX, AreaControls, BoundaryMode, BoundaryShape, ChainSide, Containment, CornerStyle,
@@ -32,4 +34,13 @@ pub use camcraft_post::post::AfterOperation;
 pub use height::{Height, HeightReference};
 pub use params::{OpParams, Tilt};
 pub use plasma::{PlasmaComp, PlasmaOp};
-pub use sel::{FeatureSel, GenStamp, GeoSel, OpStatus, OpType, SrcRef, WCS_SLOTS};
+pub use sinker::{
+    SinkerBurnOp, SinkerDatum, SinkerOrbit, SinkerOrbitKind, SinkerPass, SinkerSide,
+    SinkerSideBurnOp, SinkerSideDirection,
+};
+pub use wire_edm::{
+    WireContourOp, WireFourAxis, WirePairingRule, WireSide, WireSkim, WireSyncPair, WireTabs, CONDITION_ID_MAX,
+    DEFAULT_CLEARANCE, FOUR_AXIS_TOLERANCE, SKIMS_MAX, SYNC_PAIRS_MAX,
+};
+pub use sel::{FeatureSel, GenStamp, GeoSel, OpStatus, OpType, SrcRef};
+pub(crate) use sel::LEGACY_WCS_NAMES;

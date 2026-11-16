@@ -8,7 +8,7 @@
 //! refused by name - never a guess that could rapid the spindle down.
 //! Provenance: our own tests over our own post and machine files.
 //!
-//! Gate map (M4.4): covers app::post (sinumerik.cps safe retract),
+//! Gate map (M4.4): covers post::post (sinumerik.cps safe retract),
 //! post::machine (safeRetractZ, model).
 
 use camcraft_app::machine::parse_mch;
@@ -19,8 +19,8 @@ use std::path::Path;
 
 /// Two sections, the first asking for a home move after it: the post
 /// writes its G53 retract in both places (the home ask and the end).
-const STREAM: &str = "PARAM SpindleSpeed 2000\nPARAM AfterOperation home\nTOOL 1 T1\nSECTION\nRapid X 0 Y 0 Z 5000\nFeed X 1000 Y 0 Z -1000 F 500000\nENDSECTION\n\
-                      PARAM SpindleSpeed 2000\nTOOL 2 T2\nSECTION\nRapid X 0 Y 0 Z 5000\nFeed X 1000 Y 0 Z -1000 F 500000\nENDSECTION\n";
+const STREAM: &str = "PARAM SpindleSpeed 2000\nPARAM AfterOperation home\nPARAM ClearancePlane 5\nTOOL 1 T1\nSECTION\nRapid X 0 Y 0 Z 5000\nFeed X 1000 Y 0 Z -1000 F 500000\nENDSECTION\n\
+                      PARAM SpindleSpeed 2000\nPARAM ClearancePlane 5\nTOOL 2 T2\nSECTION\nRapid X 0 Y 0 Z 5000\nFeed X 1000 Y 0 Z -1000 F 500000\nENDSECTION\n";
 
 fn read(rel: &str) -> String {
     let p = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../").join(rel);

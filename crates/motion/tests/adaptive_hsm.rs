@@ -66,6 +66,7 @@ fn fixtures() -> Vec<(&'static str, Region)> {
 
 fn params(strategy: PocketStrategy) -> PocketParams {
     PocketParams {
+        blend_radius: None,
         tool_diameter: D,
         stepover: 4.0,
         stock_to_leave: 0.0,
@@ -166,6 +167,7 @@ fn verified(path: &Toolpath, reg: &Region, tool_d: f64) -> Vec<Warning> {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(path, &cx)
 }

@@ -1,6 +1,9 @@
-//! SetUnits: flip the document's display unit (M1.1).
+//! SetUnits: flip the document's unit (M1.1) - the display lens and,
+//! since #902, the unit every post writes the program in (G20 / G21 or
+//! the dialect's word; `posting::program_options`).
 //!
-//! A lens, not an edit: no geometry or parameter value changes, so the
+//! No geometry or parameter value changes (every stored number stays
+//! mm; the post converts at output), so the
 //! command writes only the world singleton and its inverse writes the
 //! previous value back - undo restores exactly what was on screen.
 //! Setting the unit the document already has is refused (a no-op does
@@ -22,7 +25,7 @@ impl SetUnits {
         let prev = units::of(world);
         if prev == next {
             return Err(CommandError::Invalid(format!(
-                "the document already displays {next:?}"
+                "the document is already in {next:?}"
             )));
         }
         Ok(Self { prev, next })

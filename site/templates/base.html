@@ -1,6 +1,8 @@
 {#- CamCraft docs site base layout (#688). Provenance: our own template, no third-party theme. -#}
 {%- set build = load_data(path="version.toml", required=false) -%}
 {%- if build and build.version -%}{%- set version = build.version -%}{%- else -%}{%- set version = "" -%}{%- endif -%}
+{#- #1103: `app = true` only when the release workflow put the browser build at app/. -#}
+{%- if build and build.app -%}{%- set app = true -%}{%- else -%}{%- set app = false -%}{%- endif -%}
 <!doctype html>
 <html lang="en">
 <head>
@@ -8,6 +10,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ config.title }}{% endblock title %}</title>
   <meta name="description" content="{% block description %}{{ config.description }}{% endblock description %}">
+  <link rel="icon" type="image/png" href="{{ get_url(path='favicon.png') }}">
   <link rel="stylesheet" href="{{ get_url(path='style.css') }}">
 </head>
 <body>
@@ -20,6 +23,13 @@
         <a href="{{ config.extra.repo }}/releases">Downloads</a>
         <a href="{{ config.extra.repo }}">Source</a>
       </nav>
+      {#- #1245: search box. Its results come from Zola's search index (search_index.<lang>.js) and the vendored elasticlunr (static/vendor/, MIT). -#}
+      <form class="search" role="search" action="{{ get_url(path='@/_index.md') }}" autocomplete="off">
+        <label for="site-search" class="visually-hidden">Search the docs</label>
+        <input id="site-search" name="q" type="search" placeholder="Search the docs"
+               aria-controls="site-search-results" aria-expanded="false" aria-autocomplete="list">
+        <ul id="site-search-results" class="search-results" hidden></ul>
+      </form>
     </div>
   </header>
   <main class="wrap">
@@ -36,5 +46,118 @@
       "HSMWorks" is a trademark of Autodesk; this project is independent and unaffiliated.
     </p>
   </footer>
+  {#- #1245: search scripts. Both are local files; links come from the index, which Zola builds from base_url. -#}
+  <script src="{{ get_url(path='vendor/elasticlunr.min.js') }}"></script>
+  <script src="{{ get_url(path='search_index.' ~ config.default_language ~ '.js') }}"></script>
+  <script>
+  (function () {
+    "use strict";
+    var form = document.querySelector("form.search");
+    var input = document.getElementById("site-search");
+    var list = document.getElementById("site-search-results");
+    if (!form || !input || !list) { return; }
+    var index = null;
+    try {
+      if (window.elasticlunr && window.searchIndex) {
+        index = window.elasticlunr.Index.load(window.searchIndex);
+      }
+    } catch (err) {
+      console.warn("search: index failed to load", err);
+    }
+    if (!index) {
+      input.placeholder = "Search unavailable";
+      input.disabled = true;
+      return;
+    }
+
+    function excerpt(doc) {
+      var text = (doc && (doc.description || doc.body)) || "";
+      return text.length > 140 ? text.slice(0, 140) + "..." : text;
+    }
+
+    function close() {
+      list.hidden = true;
+      list.innerHTML = "";
+      input.setAttribute("aria-expanded", "false");
+    }
+
+    function render(query) {
+      list.innerHTML = "";
+      var q = query.trim();
+      if (!q) { close(); return; }
+      var hits;
+      try {
+        hits = index.search(q, {
+          fields: { title: { boost: 3 }, description: { boost: 2 }, body: { boost: 1 } },
+          expand: true
+        }).slice(0, 8);
+      } catch (err) {
+        console.warn("search: query failed", err);
+        hits = [];
+      }
+      if (hits.length === 0) {
+        var none = document.createElement("li");
+        none.className = "search-empty";
+        none.textContent = "No pages match “" + q + "”.";
+        list.appendChild(none);
+      }
+      hits.forEach(function (hit) {
+        var doc = index.documentStore.getDoc(hit.ref) || {};
+        var li = document.createElement("li");
+        var a = document.createElement("a");
+        a.href = hit.ref; // the page URL Zola built from base_url (base path included)
+        a.textContent = doc.title || hit.ref;
+        var small = document.createElement("small");
+        small.textContent = excerpt(doc);
+        a.appendChild(small);
+        li.appendChild(a);
+        list.appendChild(li);
+      });
+      list.hidden = false;
+      input.setAttribute("aria-expanded", "true");
+    }
+
+    function links() { return Array.prototype.slice.call(list.querySelectorAll("a")); }
+
+    input.addEventListener("input", function () { render(input.value); });
+
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var first = links()[0];
+      if (first) { window.location.href = first.href; }
+    });
+
+    input.addEventListener("keydown", function (event) {
+      if (event.key === "ArrowDown" && !list.hidden && links().length) {
+        event.preventDefault();
+        links()[0].focus();
+      } else if (event.key === "Escape") {
+        input.value = "";
+        close();
+      }
+    });
+
+    list.addEventListener("keydown", function (event) {
+      var items = links();
+      var at = items.indexOf(document.activeElement);
+      if (at < 0) { return; }
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        items[Math.min(at + 1, items.length - 1)].focus();
+      } else if (event.key === "ArrowUp") {
+        event.preventDefault();
+        if (at === 0) { input.focus(); } else { items[at - 1].focus(); }
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        input.focus();
+        close();
+      }
+    });
+
+    document.addEventListener("click", function (event) {
+      if (!form.contains(event.target)) { close(); }
+    });
+  })();
+  </script>
 </body>
 </html>

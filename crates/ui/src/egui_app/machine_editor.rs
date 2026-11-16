@@ -19,7 +19,7 @@ use egui::{ComboBox, DragValue, TextEdit, Ui, Window};
 use camcraft_app::machine::{self, AxisDirection, Coolant, Kind, Machine};
 use camcraft_app::units::Unit;
 
-use super::pages;
+use super::{fields, pages};
 use crate::state::{CommandKind, State};
 
 /// The open window's whole state: the draft and where it was mounted
@@ -30,7 +30,15 @@ pub struct MachineEditor {
     pub machine: Machine,
 }
 
-const KIND_WORDS: [&str; 5] = ["auto (axis inventory)", "mill", "lathe", "mill-turn", "plasma"];
+const KIND_WORDS: [&str; 7] = [
+    "auto (axis inventory)",
+    "mill",
+    "lathe",
+    "mill-turn",
+    "plasma",
+    "wire_edm",
+    "sinker_edm",
+];
 
 pub(crate) fn window(ctx: &egui::Context, state: &mut State) {
     // Take the draft out for the frame: the draw wants `&mut` on it
@@ -53,17 +61,39 @@ pub(crate) fn window(ctx: &egui::Context, state: &mut State) {
         .show(ctx, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.label("Model");
-                ui.add(TextEdit::singleline(&mut ed.machine.model).desired_width(150.0));
+                fields::named(ui.add(TextEdit::singleline(&mut ed.machine.model).desired_width(150.0)), "Machine model");
                 ui.label("Vendor");
-                ui.add(TextEdit::singleline(&mut ed.machine.vendor).desired_width(110.0));
+                fields::named(ui.add(TextEdit::singleline(&mut ed.machine.vendor).desired_width(110.0)), "Machine vendor");
             });
-            draw_kind(ui, &mut ed.machine);
-            draw_spindle(ui, u, &mut ed.machine);
-            draw_axes(ui, u, &mut ed.machine);
-            draw_tooling(ui, u, &mut ed.machine);
-            draw_coolants(ui, &mut ed.machine);
-            ui.separator();
-            super::machine_grid::machine_grid(ui, "machine_editor_overview", &ed.machine, u, &[]);
+            // The fields scroll; Apply and Revert stay in reach (#535: the
+            // wire section makes the window taller than a short screen).
+            let max_h = (ctx.content_rect().height() * 0.7).max(200.0);
+            egui::ScrollArea::vertical().max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
+                draw_kind(ui, &mut ed.machine);
+                // #535: a wire EDM has no spindle, tool changer or coolant -
+                // its own section (the wire keys, codes and conditions) stands
+                // in their place.
+                // #548: a sinker EDM likewise (`Machine::edm_sane`: no
+                // spindle or coolant) - its keys, orbits, conditions and codes.
+                match machine::kind(Some(&ed.machine)) {
+                    Kind::WireEdm => {
+                        super::machine_edm::section(ui, u, &mut ed.machine);
+                        draw_axes(ui, u, &mut ed.machine);
+                    }
+                    Kind::SinkerEdm => {
+                        super::machine_edm_editor::draw(ui, u, &mut ed.machine);
+                        draw_axes(ui, u, &mut ed.machine);
+                    }
+                    _ => {
+                        draw_spindle(ui, u, &mut ed.machine);
+                        draw_axes(ui, u, &mut ed.machine);
+                        draw_tooling(ui, u, &mut ed.machine);
+                        draw_coolants(ui, &mut ed.machine);
+                    }
+                }
+                ui.separator();
+                super::machine_grid::machine_grid(ui, "machine_editor_overview", &ed.machine, u, &[]);
+            });
             ui.horizontal(|ui| {
                 if ui.button("Apply").clicked() {
                     apply = true;
@@ -104,16 +134,19 @@ fn draw_kind(ui: &mut Ui, m: &mut Machine) {
         Some(Kind::Lathe) => 2,
         Some(Kind::MillTurn) => 3,
         Some(Kind::Plasma) => 4,
+        Some(Kind::WireEdm) => 5,
+        Some(Kind::SinkerEdm) => 6,
         None => 0,
     };
     let before = idx;
-    ComboBox::from_id_salt("machine_kind")
+    let cb = ComboBox::from_id_salt("machine_kind")
         .selected_text(KIND_WORDS[idx.min(KIND_WORDS.len() - 1)])
         .show_ui(ui, |ui| {
             for (i, w) in KIND_WORDS.iter().enumerate() {
                 ui.selectable_value(&mut idx, i, *w);
             }
         });
+    fields::named(cb.response, "Machine kind");
     if idx != before {
         m.kind = match idx {
             0 => None,
@@ -132,18 +165,18 @@ fn draw_spindle(ui: &mut Ui, u: Unit, m: &mut Machine) {
     pages::field(ui, "Spindle (rpm)");
     ui.horizontal(|ui| {
         ui.label("min");
-        opt(ui, pages::num_plain, &mut m.spindle_min);
+        opt(ui, |ui, v| fields::num_plain_named(ui, v, "Spindle min rpm"), &mut m.spindle_min);
         ui.label("max");
-        opt(ui, pages::num_plain, &mut m.spindle_max);
+        opt(ui, |ui, v| fields::num_plain_named(ui, v, "Spindle max rpm"), &mut m.spindle_max);
     });
     ui.horizontal(|ui| {
         ui.label("motor power");
         ui.label("kW");
-        opt(ui, pages::num_plain, &mut m.spindle_power);
+        opt(ui, |ui, v| fields::num_plain_named(ui, v, "Spindle motor power (kW)"), &mut m.spindle_power);
         ui.label("· body");
-        opt(ui, |ui, v| pages::num(ui, u, v), &mut m.spindle_d);
+        opt(ui, |ui, v| fields::num_named(ui, u, v, "Spindle body diameter"), &mut m.spindle_d);
         ui.label("mm");
-        opt(ui, |ui, v| pages::num(ui, u, v), &mut m.spindle_len);
+        opt(ui, |ui, v| fields::num_named(ui, u, v, "Spindle body length above holder"), &mut m.spindle_len);
         ui.label("mm above holder");
     });
 }
@@ -154,26 +187,30 @@ fn draw_axes(ui: &mut Ui, u: Unit, m: &mut Machine) {
     for i in 0..m.axes.len() {
         let a = &mut m.axes[i];
         ui.horizontal(|ui| {
-            ui.add(TextEdit::singleline(&mut a.name).desired_width(16.0).char_limit(2));
+            fields::named(ui.add(TextEdit::singleline(&mut a.name).desired_width(16.0).char_limit(2)), &format!("Axis {} name", i + 1));
+            let ax = {
+                let t = a.name.trim();
+                if t.is_empty() { format!("#{}", i + 1) } else { t.to_owned() }
+            };
             if a.rotary {
                 ui.label("rotary");
             }
             ui.label("rapid");
-            opt(ui, |ui, v| pages::num_feed(ui, u, v), &mut a.rapid);
+            opt(ui, |ui, v| fields::num_feed_named(ui, u, v, &format!("Axis {ax} rapid")), &mut a.rapid);
             ui.label("feed");
-            opt(ui, |ui, v| pages::num_feed(ui, u, v), &mut a.feed);
+            opt(ui, |ui, v| fields::num_feed_named(ui, u, v, &format!("Axis {ax} feed")), &mut a.feed);
             ui.label("travel");
             let mut stated = a.travel.is_some();
             if ui.checkbox(&mut stated, "").changed() {
                 a.travel = if stated { Some((0.0, 1.0)) } else { None };
             }
             if let Some((lo, hi)) = &mut a.travel {
-                pages::num(ui, u, lo);
+                fields::num_named(ui, u, lo, &format!("Axis {ax} travel min"));
                 ui.label("..");
-                pages::num(ui, u, hi);
+                fields::num_named(ui, u, hi, &format!("Axis {ax} travel max"));
             }
             ui.label("res");
-            opt(ui, |ui, v| pages::num(ui, u, v), &mut a.resolution);
+            opt(ui, |ui, v| fields::num_named(ui, u, v, &format!("Axis {ax} resolution")), &mut a.resolution);
             if !a.rotary {
                 draw_direction(ui, i, a);
             }
@@ -202,13 +239,14 @@ fn draw_direction(ui: &mut Ui, i: usize, a: &mut machine::AxisLimits) {
     let (std_word, inv_word) = direction_words(&a.name);
     ui.label(format!("{}+ moves", a.name.trim()));
     let shown = if a.direction.is_standard() { std_word } else { inv_word };
-    ComboBox::from_id_salt(("axis-direction", i))
+    let cb = ComboBox::from_id_salt(("axis-direction", i))
         .selected_text(shown)
         .width(70.0)
         .show_ui(ui, |ui| {
             ui.selectable_value(&mut a.direction, AxisDirection::Standard, std_word);
             ui.selectable_value(&mut a.direction, AxisDirection::Inverted, inv_word);
         });
+    fields::named(cb.response, &format!("{}+ direction", a.name.trim()));
     if !a.direction.is_standard() {
         // #374: the post mirrors an inverted X / Y; anything else refuses.
         let note = if matches!(a.name.trim(), "X" | "Y") {
@@ -234,9 +272,9 @@ fn draw_tooling(ui: &mut Ui, u: Unit, m: &mut Machine) {
     pages::field(ui, "Tooling");
     ui.horizontal(|ui| {
         ui.label("max tool length");
-        opt(ui, |ui, v| pages::num(ui, u, v), &mut m.max_tool_length);
+        opt(ui, |ui, v| fields::num_named(ui, u, v, "Max tool length"), &mut m.max_tool_length);
         ui.label("· max diameter");
-        opt(ui, |ui, v| pages::num(ui, u, v), &mut m.max_tool_diameter);
+        opt(ui, |ui, v| fields::num_named(ui, u, v, "Max tool diameter"), &mut m.max_tool_diameter);
     });
     ui.horizontal(|ui| {
         ui.label("changer");
@@ -245,7 +283,7 @@ fn draw_tooling(ui: &mut Ui, u: Unit, m: &mut Machine) {
             m.tool_count = if stated { Some(1) } else { None };
         }
         if let Some(n) = &mut m.tool_count {
-            ui.add(DragValue::new(n).suffix(" slots"));
+            fields::named(ui.add(DragValue::new(n).suffix(" slots")), "Tool changer slots");
         } else {
             ui.label("unstated");
         }
@@ -259,7 +297,7 @@ fn draw_coolants(ui: &mut Ui, m: &mut Machine) {
         ui.horizontal(|ui| {
             coolant_name(ui, i, &mut c.name);
             ui.label("M-code");
-            ui.add(TextEdit::singleline(&mut c.m_code).desired_width(50.0));
+            fields::named(ui.add(TextEdit::singleline(&mut c.m_code).desired_width(50.0)), &format!("Coolant {} M-code", i + 1));
             if c.m_code.is_empty() {
                 ui.label("(named only - posts nothing)");
             }
@@ -288,7 +326,7 @@ fn draw_coolants(ui: &mut Ui, m: &mut Machine) {
 fn coolant_name(ui: &mut Ui, i: usize, name: &mut String) {
     let known = machine::COOLANT_KINDS.iter().any(|k| k.eq_ignore_ascii_case(name));
     let shown = if known { name.clone() } else { "custom".to_owned() };
-    ComboBox::from_id_salt(("coolant-kind", i))
+    let cb = ComboBox::from_id_salt(("coolant-kind", i))
         .selected_text(shown)
         .width(110.0)
         .show_ui(ui, |ui| {
@@ -301,8 +339,9 @@ fn coolant_name(ui: &mut Ui, i: usize, name: &mut String) {
                 name.clear();
             }
         });
+    fields::named(cb.response, &format!("Coolant {} kind", i + 1));
     if !known {
-        ui.add(TextEdit::singleline(name).desired_width(90.0).hint_text("name"));
+        fields::named(ui.add(TextEdit::singleline(name).desired_width(90.0).hint_text("name")), &format!("Coolant {} custom name", i + 1));
     }
 }
 

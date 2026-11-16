@@ -49,6 +49,18 @@ fn val(v: Option<&Value>, unit: &str) -> String {
     }
 }
 
+/// The rigid-tapping row (#786): what the stated capability does to a
+/// program, not a bare JSON boolean. Anything else shows as itself (the
+/// validator names it).
+fn tapping(v: Option<&Value>) -> String {
+    match v {
+        Some(Value::Bool(true)) => "yes".to_owned(),
+        Some(Value::Bool(false)) => "no - tap cycles are refused".to_owned(),
+        None | Some(Value::Null) => format!("{UNSTATED} - not limited"),
+        Some(other) => other.to_string(),
+    }
+}
+
 /// The sheet's groups: General, Axes, Spindle, Tool station, Coolants,
 /// Posts. `raw` is the file's JSON, `m` the reader's view of it.
 pub(crate) fn groups(raw: &Value, m: &Machine, k: Option<Kind>, posts: &[&str]) -> Vec<PropGroup> {
@@ -113,7 +125,7 @@ pub(crate) fn groups(raw: &Value, m: &Machine, k: Option<Kind>, posts: &[&str]) 
             );
         }
     }
-    g.row("Rigid tapping", val(sp.and_then(|s| s.get("rigid_tapping")), ""));
+    g.row("Rigid tapping", tapping(sp.and_then(|s| s.get("rigid_tapping"))));
     g.row("Body diameter", val(sp.and_then(|s| s.get("body_diameter")), len));
     g.row("Body length", val(sp.and_then(|s| s.get("body_length")), len));
     out.push(g);

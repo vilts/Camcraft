@@ -126,9 +126,11 @@ impl InsertFixture {
         self
     }
 
-    /// Mark the insert as built-in accessory `accessory` (#789).
+    /// Mark the insert as built-in accessory `accessory` (#789). A rotary
+    /// subplate (#821) stands still under the rotary: it lands fixed.
     #[must_use]
     pub fn with_accessory(mut self, accessory: crate::accessory::Accessory) -> Self {
+        self.def.fixed |= matches!(accessory, crate::accessory::Accessory::RotarySubplate { .. });
         self.def.accessory = Some(accessory);
         self
     }

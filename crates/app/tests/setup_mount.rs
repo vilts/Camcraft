@@ -11,7 +11,7 @@
 //!
 //! Gate map (#343): covers app::setup_mount, app::commands
 //! (SetSetupMachine, SetSetupPost, CreateSetup datum transfer),
-//! app::machine (of, document_of, kind_of, kind_of_setup), app::posting
+//! app::machine, post::machine (of, document_of, kind_of, kind_of_setup), app::posting
 //! (post_of, post_setup, post_mounts, verification_report),
 //! app::project (SetupDto v55).
 //! Lane shape (M4.4): all tests here run in seconds.

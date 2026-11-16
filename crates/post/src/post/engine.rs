@@ -6,7 +6,7 @@
 //! it reads. The control dialect lives in the script, never here.
 
 use super::cnc::{self, Record};
-use super::js::{is_false, Script};
+use super::js::{is_false, ProgramId, Script};
 use super::machine;
 use super::PostError;
 use crate::cl::MoveKind;
@@ -94,15 +94,45 @@ pub fn run_numbered_with(
     options: &Value,
     program: u32,
 ) -> Result<PostOutput, PostError> {
+    let id = ProgramId { number: program, ..ProgramId::default() };
+    run_program_with(cps, mch, stream, options, &id)
+}
+
+/// The whole seam with the document's program identity (#258): the
+/// number, whether it was stated, and the program comment - what the
+/// script reads as its `program` global.
+pub fn run_program_with(
+    cps: &str,
+    mch: &Value,
+    stream: &str,
+    options: &Value,
+    id: &ProgramId,
+) -> Result<PostOutput, PostError> {
     let records = super::normalize_program_order(cnc::parse(stream)?);
     let mut s = Script::load(cps)?;
+    // #902: an inch document on a script that cannot write inch.
+    if let Some(why) = super::units::refusal(&mut s, options)? {
+        return Err(PostError::Refused(why));
+    }
+    let wo = super::work_offset::Manifest::read(&mut s);
+    // #1386: Explain G-code on a script that states no comment form is
+    // refused by name here, before any hook runs.
+    let explain_form = super::explain::form(&mut s, options)?;
     // #374: an inverted machine axis - the one place the stream is
     // mirrored into the controller's frame, or refused by name.
     let records = super::invert::apply(records, mch, &s)?;
     s.set_machine(&machine::script_props(mch))?;
-    s.set_program_number(program)?;
+    // #542: whether the manifest's `serves` (#1266) names a sinker EDM -
+    // the one script that may voice a sinker section (below).
+    let serves_sinker = s
+        .words_global("serves")?
+        .is_some_and(|w| w.iter().any(|k| crate::machine::Kind::from_word(k) == Some(crate::machine::Kind::SinkerEdm)));
+    s.set_program(id)?;
     if options.is_object() {
         s.set_options(options)?;
+    }
+    if let Some(f) = explain_form {
+        s.arm_explain(f)?;
     }
     s.call("onOpen", "")?;
     let head = s.out_len()?;
@@ -126,7 +156,24 @@ pub fn run_numbered_with(
         let before = s.out_len()?;
         let mut swallow = false;
         match r {
-            Record::Param { name, value } => {
+            Record::Param { name, value } => 'param: {
+                // #931: the work offset reaches the script as its number
+                // (flagged) or its legacy word (1-6), or is refused by name.
+                let translated;
+                let value = if name == "WorkOffset" {
+                    match wo.translate(value, &base) {
+                        Ok(v) => {
+                            translated = v;
+                            &translated
+                        }
+                        Err(w) => {
+                            warnings.push(w);
+                            break 'param;
+                        }
+                    }
+                } else {
+                    value
+                };
                 base.insert(name.clone(), value.clone());
                 match name.as_str() {
                     "StartX" => pos.0 = value.as_f64().unwrap_or(0.0),
@@ -151,7 +198,20 @@ pub fn run_numbered_with(
                 // A post that does not declare `afterModes` would run
                 // straight on past an operator's stop or trip home (#110):
                 // refused by name, a counted warning, never silent.
-                if name == "AfterOperation" && !s.reads_after_operation() {
+                // #1532: the stop of a setup change (its PARAM SetupChange
+                // rides just ahead of the AfterOperation ask) is refused
+                // in the re-clamp's own words, once, not as an op's stop.
+                let setup_change = i > 0
+                    && matches!(records.get(i - 1), Some(Record::Param { name: n, .. }) if n == "SetupChange");
+                if name == "SetupChange" && !s.reads_after_operation() {
+                    let op = base.get("OperationName").and_then(Value::as_str).unwrap_or("");
+                    let who = if op.is_empty() { String::new() } else { format!("operation {op}: ") };
+                    warnings.push(format!(
+                        "{who}the program changes to setup '{}' after it, and this post script does not declare afterModes, so it cannot stop for the re-clamp - choose Run straight on or One file per setup under Between setups, or use a post that reads it",
+                        value.as_str().unwrap_or("")
+                    ));
+                }
+                if name == "AfterOperation" && !s.reads_after_operation() && !setup_change {
                     let op = base.get("OperationName").and_then(Value::as_str).unwrap_or("");
                     let who = if op.is_empty() { String::new() } else { format!("operation {op}: ") };
                     warnings.push(format!(
@@ -169,6 +229,22 @@ pub fn run_numbered_with(
                         "{who}is C-axis live-tool work (the spindle turns as C under a radial live tool), but this post script does not declare liveTooling - use a lathe post that voices the C axis"
                     ));
                 }
+                // A wire EDM section (#533) through a script that does not
+                // voice one would post the wire path as a cutting move.
+                if name == "EdmCondition" && !s.voices_wire_edm() {
+                    let op = base.get("OperationName").and_then(Value::as_str).unwrap_or("");
+                    let who = if op.is_empty() { String::new() } else { format!("operation {op}: ") };
+                    warnings.push(format!("{who}is wire EDM work, but this post script does not declare wireEdm - use a wire EDM post"));
+                }
+                // A sinker burn (#542) through a script that does not
+                // serve a sinker would post the burn as a cutting plunge.
+                if name == "SinkerCondition" && !serves_sinker {
+                    let op = base.get("OperationName").and_then(Value::as_str).unwrap_or("");
+                    let who = if op.is_empty() { String::new() } else { format!("operation {op}: ") };
+                    warnings.push(format!(
+                        "{who}is sinker EDM work, but this post script does not serve a sinker EDM (serves = [\"sinker_edm\"]) - use a sinker EDM post"
+                    ));
+                }
                 // A thread whose hand needs the spindle reversed (#629),
                 // posted through a script that cannot voice it, would
                 // come out under M03 - the other hand: refused by name.
@@ -177,6 +253,15 @@ pub fn run_numbered_with(
                     let who = if op.is_empty() { String::new() } else { format!("operation {op}: ") };
                     warnings.push(format!(
                         "{who}cuts a thread that needs the spindle reversed (M04) for its hand, but this post script does not declare threadHands - it would cut the other hand; use a lathe post that states the thread's hand"
+                    ));
+                }
+                // A left-hand-cut mill (#988) through a script that
+                // cannot start M04 would turn the cutter backwards.
+                if name == "MillSpindle" && value.as_str() == Some("reverse") && !s.voices_mill_spindle_reverse() {
+                    let op = base.get("OperationName").and_then(Value::as_str).unwrap_or("");
+                    let who = if op.is_empty() { String::new() } else { format!("operation {op}: ") };
+                    warnings.push(format!(
+                        "{who}runs a left-hand-cut mill that needs the spindle reversed (M04), but this post script does not declare millSpindleReverse - it would turn the cutter backwards"
                     ));
                 }
                 s.set_properties(&merged(&base, &BTreeMap::new(), pos))?;

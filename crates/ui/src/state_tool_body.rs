@@ -13,6 +13,7 @@ use std::sync::Arc;
 use camcraft_app::commands::{SetToolBody, ToolBodySpec};
 use camcraft_app::geometry::Triangle;
 use camcraft_app::schema::ToolBody;
+use camcraft_app::tool_body_assembly::BodyCsys;
 use camcraft_app::tool_body_view::{self, BodyPick};
 use camcraft_app::{model, tool_body};
 
@@ -28,6 +29,12 @@ pub enum BodyPickMode {
     Tip,
     /// The clicked facet's outward normal becomes the tool axis.
     Axis,
+    /// #361, a lathe draft: the clicked facet's outward normal becomes
+    /// the radial direction (away from the spindle axis).
+    Radial,
+    /// #361, a lathe draft: the clicked facet's outward normal becomes
+    /// the spindle direction (the lathe's +Z).
+    Along,
 }
 
 /// The editor's body draft for the tool it is open on.
@@ -45,6 +52,10 @@ pub struct ToolBodyUi {
     /// The model origin's height above the tip, along `axis`.
     pub offset: f64,
     pub pick: BodyPickMode,
+    /// #361: the turning-frame placement, when the draft is a lathe
+    /// body (a lathe steel always; a boring bar by choice). `axis` and
+    /// `offset` then go unread.
+    pub lathe: Option<super::tool_body_lathe_ui::LatheDraft>,
     /// Note on how the placement was determined (#370: auto-aligned by
     /// ISO 13399 coordinate systems, or why it fell back to numeric).
     pub align_note: Option<String>,
@@ -62,6 +73,13 @@ pub struct ToolBodyUi {
     seen: Option<Arc<[Triangle]>>,
     /// Placement preview, cached against the (mesh, axis, offset) it read.
     preview: Option<(PreviewKey, Result<ToolBody, String>)>,
+    /// #361 / #1040: named CSYS carried by the imported piece 0 (model frame
+    /// until Apply body, tool frame after mirroring).
+    pub csys: Vec<BodyCsys>,
+    /// Mirrored pieces in the same frame as `facets`; empty for a new import.
+    pub pieces: Vec<camcraft_app::tool_body_assembly::BodyPiece>,
+    /// Modular assembly attachment fields.
+    pub assembly: super::tool_body_assembly_ui::AssemblyUi,
 }
 
 type PreviewKey = (usize, [u64; 4]);
@@ -88,6 +106,8 @@ pub struct BodyDraft {
     pub facets: Arc<[Triangle]>,
     pub axis: [f64; 3],
     pub offset: f64,
+    pub csys: Vec<BodyCsys>,
+    pub pieces: Vec<camcraft_app::tool_body_assembly::BodyPiece>,
 }
 
 impl std::fmt::Debug for BodyDraft {
@@ -123,13 +143,19 @@ impl State {
     pub(crate) fn sync_tool_body_ui(&mut self) {
         let world = self.editor_tool_body();
         let facets = world.as_ref().map(|b| Arc::clone(&b.facets));
-        if self.tool_body_ui.tool == self.tool_ui.name && same(facets.as_ref(), self.tool_body_ui.seen.as_ref()) {
+        if self.tool_body_ui.tool == self.tool_ui.name
+            && same(facets.as_ref(), self.tool_body_ui.seen.as_ref())
+            && !self.body_draft_frame_stale()
+        {
             return;
         }
-        let mut d = ToolBodyUi { tool: self.tool_ui.name.clone(), axis: [0.0, 0.0, 1.0], ..ToolBodyUi::default() };
+        let lathe = self.lathe_draft_for(world.as_ref());
+        let mut d = ToolBodyUi { tool: self.tool_ui.name.clone(), axis: [0.0, 0.0, 1.0], lathe, ..ToolBodyUi::default() };
         if let Some(b) = world {
+            d.pieces = camcraft_app::tool_body_assembly::pieces_of(&b);
             d.source = b.source;
             d.facets = b.facets;
+            d.csys = b.pieces.first().map(|p| p.csys.clone()).unwrap_or_default();
         }
         d.seen = facets;
         self.tool_body_ui = d;
@@ -137,6 +163,9 @@ impl State {
 
     /// "Import body…": pick a mesh file, then read it into the draft.
     pub(crate) fn import_tool_body_dialog(&mut self) {
+        if self.refuse_in_browser(crate::browser_files::NEEDS_PICKER) {
+            return;
+        }
         if let Some(path) = super::pick_mesh_file() {
             self.import_tool_body_from(&path);
         }
@@ -148,10 +177,16 @@ impl State {
     pub(crate) fn import_tool_body_from(&mut self, path: &Path) {
         self.sync_tool_body_ui();
         match tool_body_view::load_aligned(path) {
+            Ok(loaded) if self.tool_body_ui.lathe.is_some() => {
+                self.tool_body_ui.csys = loaded.csys.clone();
+                self.import_lathe_body(loaded);
+            }
             Ok(loaded) => {
                 let d = &mut self.tool_body_ui;
+                d.pieces.clear();
                 d.source = loaded.source;
                 d.facets = Arc::from(loaded.facets);
+                d.csys = loaded.csys;
                 match loaded.alignment {
                     Ok((axis, offset)) => {
                         d.axis = axis;
@@ -184,7 +219,7 @@ impl State {
     /// The draft's placement as `SetToolBody` would read it, cached.
     pub(crate) fn tool_body_preview(&mut self) -> Option<&Result<ToolBody, String>> {
         let d = &mut self.tool_body_ui;
-        if d.facets.is_empty() {
+        if d.facets.is_empty() || d.lathe.is_some() {
             return None;
         }
         let key: PreviewKey = (
@@ -199,9 +234,12 @@ impl State {
 
     /// A click on the preview in a pick mode fills the numbers (ephemeral).
     pub(crate) fn apply_body_pick(&mut self, hit: BodyPick) {
+        if self.tool_body_ui.lathe.is_some() {
+            return self.apply_lathe_body_pick(hit);
+        }
         let d = &mut self.tool_body_ui;
         match d.pick {
-            BodyPickMode::Off => return,
+            BodyPickMode::Off | BodyPickMode::Radial | BodyPickMode::Along => return,
             BodyPickMode::Tip => match tool_body_view::tip_offset_at(hit.vertex, d.axis) {
                 Some(o) => {
                     d.offset = o;
@@ -256,7 +294,10 @@ impl State {
         if d.facets.is_empty() {
             return;
         }
-        let body = BodyDraft { source: d.source.clone(), facets: Arc::clone(&d.facets), axis: d.axis, offset: d.offset };
+        if d.lathe.is_some() {
+            return self.queue_apply_lathe_tool_body();
+        }
+        let body = BodyDraft { source: d.source.clone(), facets: Arc::clone(&d.facets), axis: d.axis, offset: d.offset, csys: d.csys.clone(), pieces: d.pieces.clone() };
         self.pending.push_back(CommandKind::SetToolBody { name: self.tool_ui.name.clone(), body: Some(body) });
     }
 
@@ -266,7 +307,8 @@ impl State {
         if self.editor_tool_body().is_some() {
             self.pending.push_back(CommandKind::SetToolBody { name: self.tool_ui.name.clone(), body: None });
         } else {
-            self.tool_body_ui = ToolBodyUi { tool: self.tool_ui.name.clone(), axis: [0.0, 0.0, 1.0], ..ToolBodyUi::default() };
+            let lathe = self.lathe_draft_for(None);
+            self.tool_body_ui = ToolBodyUi { tool: self.tool_ui.name.clone(), axis: [0.0, 0.0, 1.0], lathe, ..ToolBodyUi::default() };
         }
     }
 
@@ -274,8 +316,22 @@ impl State {
     /// lands on the Tool pane by name and the draft stays for correction.
     pub(crate) fn run_set_tool_body(&mut self, name: &str, body: Option<BodyDraft>) {
         let clearing = body.is_none();
-        let spec = body.map(|b| ToolBodySpec { source: b.source, facets: b.facets.to_vec(), axis: b.axis, offset: b.offset });
-        match SetToolBody::new(&self.world, name, spec) {
+        let res = match body {
+            None => SetToolBody::new(&self.world, name, None),
+            Some(b) if !b.pieces.is_empty() => {
+                let spec = ToolBodySpec { source: b.source, facets: b.facets.to_vec(), axis: b.axis, offset: b.offset };
+                SetToolBody::with_pieces(&self.world, name, spec, b.pieces)
+            }
+            Some(b) if b.csys.is_empty() => {
+                let spec = ToolBodySpec { source: b.source, facets: b.facets.to_vec(), axis: b.axis, offset: b.offset };
+                SetToolBody::new(&self.world, name, Some(spec))
+            }
+            Some(b) => {
+                let spec = ToolBodySpec { source: b.source, facets: b.facets.to_vec(), axis: b.axis, offset: b.offset };
+                SetToolBody::new_with_csys(&self.world, name, spec, b.csys)
+            }
+        };
+        match res {
             Ok(command) => {
                 self.history.execute(&self.world, command);
                 self.doc_version += 1;

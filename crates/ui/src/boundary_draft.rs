@@ -170,7 +170,7 @@ pub fn entries(state: &State) -> Vec<Entry> {
             BoundaryShape::Silhouette => (Vec::new(), None, "part silhouette, closed".to_owned()),
         };
         let issue = match &shape {
-            Some(PickShape::Open { .. }) => Some(format!(
+            Some(PickShape::Open { .. } | PickShape::Chains { .. }) => Some(format!(
                 "an {} must enclose an area and these picks are an open chain - Shift-click an edge or 'Extend to loop' to close it, or 'Use as open boundary'",
                 role.label()
             )),
@@ -207,7 +207,7 @@ pub fn role_block(state: &State, entry: &Entry, role: Role) -> Option<String> {
         }
         return None;
     }
-    if matches!(entry.shape, Some(PickShape::Open { .. })) {
+    if entry.shape.as_ref().is_some_and(PickShape::is_open) {
         return Some(format!(
             "these picks are an open chain ({}) - an {} must enclose an area; close it first (Shift-click / Extend to loop)",
             entry.summary,
@@ -321,7 +321,7 @@ pub fn extend(state: &mut State, at: EntryRef) -> Result<(), String> {
 /// How a viewport click reads while the group collects.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PickMods {
-    /// Ctrl: toggle the pick in or out of the entry.
+    /// Command (Cmd on macOS, Ctrl elsewhere): toggle the pick in or out of the entry.
     pub toggle: bool,
     /// Shift: add it and close the entry around its face loop.
     pub close: bool,

@@ -7,7 +7,6 @@ use flecs_ecs::prelude::World;
 use super::mm;
 use crate::fixture;
 use crate::model;
-use crate::schema::WCS_SLOTS;
 use crate::setup;
 use crate::stock::StockShape;
 
@@ -118,13 +117,10 @@ pub(super) fn render_wcs(world: &World, ctx: Option<&str>, out: &mut String) {
         }
         None => out.push_str(&format!("  {label}  (not placed - at the origin)\n")),
     }
-    // #196, #329: the one word the setup's program runs in: the setup's
-    // label, G54 when unset.
-    let slot = setup::wcs_slot(world, ctx);
-    out.push_str(&format!(
-        "  program offset: {}\n",
-        WCS_SLOTS.get(slot).copied().unwrap_or("G54")
-    ));
+    // #196, #329, #931: the one offset the setup's program runs in: the
+    // setup's label (offset 1 when unset), named by the setup's post -
+    // never another offset's name.
+    out.push_str(&format!("  program offset: {}\n", setup::wcs_name(world, ctx)));
     out.push('\n');
 }
 

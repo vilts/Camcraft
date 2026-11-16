@@ -1,0 +1,7 @@
+; sinker-iso.cps refused live_then_stop: 6 warning(s), the program is never released
+warning: operation Cross drill: asks an optional stop after it, but this post script does not declare afterModes (it does not read PARAM AfterOperation) - set the operation to Continue or use a post that reads it
+warning: operation Cross drill: is C-axis live-tool work (the spindle turns as C under a radial live tool), but this post script does not declare liveTooling - use a lathe post that voices the C axis
+warning: the generic sinker post writes sinker EDM blocks - TESTBENCH MILL-TURN LIVE is not declared a sinker EDM
+warning: operation Face one: states 1200 rpm - an electrode turns no spindle, and this post writes no spindle word
+warning: operation Cross drill: states 3000 rpm - an electrode turns no spindle, and this post writes no spindle word
+warning: operation Face two: states 1500 rpm - an electrode turns no spindle, and this post writes no spindle word

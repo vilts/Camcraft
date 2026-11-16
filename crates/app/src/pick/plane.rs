@@ -13,6 +13,13 @@
 //! #555: three picked points lay through the same [`lay_datum`]
 //! ([`super::points`]), so a face and three corners of it agree.
 //!
+//! #738: the setup's move composes on the part as the setup holds it now
+//! ([`lay_on_plane_in`]): the pick is read through the held alignment,
+//! the lay is the step from there, and the step is composed onto it - so
+//! a face lay keeps an earlier axis turn's heading instead of returning
+//! the part to its import pose first. [`lay_on_plane`] is that step from
+//! the import pose (the held alignment the identity).
+//!
 //! Provenance: our own design over plain fixture practice (lay a datum
 //! face on the table); the shortest-arc quaternion between two unit
 //! vectors is textbook rigid-body algebra (Shoemake, "Animating rotation with quaternion
@@ -91,14 +98,50 @@ pub(super) struct Datum {
 /// re-pick. The identity comes back as an identity `Location`; the
 /// command stores it as "as modelled".
 pub fn lay_on_plane(world: &World, picks: &[GeoSel], lay: PlaneLay) -> Result<Location, String> {
-    lay_datum(world, &datum_of(world, picks)?, lay)
+    lay_datum(world, &datum_of(world, picks)?, lay, Location::default())
+}
+
+/// #738: the setup's new part alignment from a face pick - the lay read
+/// on the part as `setup` holds it NOW, composed onto that alignment (one
+/// more move, not a fresh start from the import pose). The same pick
+/// again is a zero step and gives back the held alignment exactly.
+pub fn lay_on_plane_in(world: &World, setup: &str, picks: &[GeoSel], lay: PlaneLay) -> Result<Location, String> {
+    let held = setup_align::stored(world, setup).unwrap_or_default();
+    let step = lay_datum(world, &datum_of(world, picks)?.through(held), lay, held)?;
+    Ok(onto_held(step, held))
+}
+
+/// #738: a step (setup frame -> setup frame) composed onto the held
+/// alignment. A step within float noise of nothing is nothing: the held
+/// alignment comes back bit for bit, so "already holds the part that way"
+/// still reads for a re-applied pick.
+pub(super) fn onto_held(step: Location, held: Location) -> Location {
+    let still = |v: f64| v.abs() <= STILL_MM;
+    if setup_align::is_identity_rot(step.rot) && still(step.pos.x) && still(step.pos.y) && still(step.pos.z) {
+        return held;
+    }
+    setup_align::compose(step, held)
+}
+
+/// A step that moves the part less than this (mm) is no move (#738).
+const STILL_MM: f64 = 1e-9;
+
+impl Datum {
+    /// The datum as the alignment `held` (document -> setup frame) sees it.
+    pub(super) fn through(&self, held: Location) -> Datum {
+        let n = quat_rotate_point(held.rot, p3(self.normal));
+        let a = transform_point(p3(self.anchor), held.pos, held.rot);
+        Datum { normal: [n.x, n.y, n.z], anchor: [a.x, a.y, a.z] }
+    }
 }
 
 /// The one apply path (#330, #555): turn `datum`'s normal onto `lay`'s
 /// axis about the parts' centre, then (with `place`) set its anchor on
 /// the plane's level. A face and three points both land here, so the two
-/// modes cannot disagree on the same plane.
-pub(super) fn lay_datum(world: &World, datum: &Datum, lay: PlaneLay) -> Result<Location, String> {
+/// modes cannot disagree on the same plane. `datum` and the result are in
+/// the frame `held` puts the part in (#738): the centre is the parts'
+/// bounds centre as held there.
+pub(super) fn lay_datum(world: &World, datum: &Datum, lay: PlaneLay, held: Location) -> Result<Location, String> {
     let t3 = target_normal(lay);
     let rot = shortest_arc(datum.normal, t3, lay.plane).ok_or("the picks do not make a usable turn - re-pick them")?;
     // Prove the landing: a turn that misses the axis is refused, never
@@ -110,7 +153,7 @@ pub(super) fn lay_datum(world: &World, datum: &Datum, lay: PlaneLay) -> Result<L
     if !(dot(landed, t3) > 0.0 && norm(cross(landed, t3)) <= LAND_TOL_RAD) {
         return Err("the picks do not make a usable turn - re-pick them".into());
     }
-    let c = setup_align::part_centre(world).ok_or("there is no part to align - import a model first")?;
+    let c = crate::setup_turn::held_centre(world, held).ok_or("there is no part to align - import a model first")?;
     let rc = quat_rotate_point(rot, c);
     let mut pos = Point3::new(c.x - rc.x, c.y - rc.y, c.z - rc.z);
     if lay.place {
@@ -128,9 +171,8 @@ pub(super) fn lay_datum(world: &World, datum: &Datum, lay: PlaneLay) -> Result<L
     Ok(Location { pos, rot })
 }
 
-/// Read the pick as a datum, in the DOCUMENT frame (the alignment is
-/// absolute: picking the same face again in an aligned setup gives the
-/// same answer). Exactly one flat face; an edge is refused by name (#554).
+/// Read the pick as a datum, in the DOCUMENT frame ([`Datum::through`]
+/// carries it into a setup's frame, #738). Exactly one flat face; an edge is refused by name (#554).
 fn datum_of(world: &World, picks: &[GeoSel]) -> Result<Datum, String> {
     let mut faces = Vec::new();
     for g in picks {
@@ -143,7 +185,7 @@ fn datum_of(world: &World, picks: &[GeoSel]) -> Result<Datum, String> {
             FeatureSel::Chain(_) => {
                 return Err(format!(
                     "{} of '{}' is an edge - an edge cannot set a plane; pick a flat face \
-                     (edges set an axis: Axes in the plane)",
+                     (edges set an axis: Part axes)",
                     g.feature, g.entity
                 ));
             }
@@ -194,13 +236,15 @@ fn face_datum(world: &World, g: &GeoSel) -> Result<Datum, String> {
 }
 
 /// Which way the picks' outside faces before Apply, in plain words, e.g.
-/// "outside: +Z of Face 1a2b (away from the material)". Read in the
+/// "outside: +Z in the model of the picked face (away from the
+/// material)" - never the face's internal id (#738). Read in the
 /// document frame, like [`lay_on_plane`]; refuses as it does.
 pub fn plane_side(world: &World, picks: &[GeoSel]) -> Result<String, String> {
     let d = datum_of(world, picks)?;
     let dir = axis_words(d.normal);
     Ok(match picks.first() {
-        Some(g) => format!("outside: {dir} of {} (away from the material)", g.feature),
+        // #738: the kind, never the welded face's internal id.
+        Some(_) => format!("outside: {dir} of the picked face (away from the material)"),
         None => format!("outside: {dir}"),
     })
 }

@@ -1,8 +1,9 @@
 //! Deviation classes on the machined mesh (M13.1 owed, #25): each
 //! facet of the extracted stock judged against the model by the eye's
 //! own law - the target's signed distance at the facet's centroid,
-//! gated by `preview::gate_tol(DEV_TOL, cell)`. Provenance: the
-//! classes are `color_classes`' vocabulary (0 clean, 1 rest, 2 gouge,
+//! gated by `preview::gate_tol(tol, cell)` at the view's verdict
+//! tolerance (`DEV_TOL`, tightened on a reduced-fidelity model, #1056).
+//! Provenance: the classes are `color_classes`' vocabulary (0 clean, 1 rest, 2 gouge,
 //! 3 unjudged) read through the GPU eye's `DistanceLattice` (M7.2);
 //! our own code, nothing from vendor binaries.
 //!
@@ -20,7 +21,6 @@
 
 use crate::geometry::{Point3, Triangle};
 use crate::stock_sim::preview::{gate_tol, pack_target, DistanceLattice};
-use crate::stock_sim::DEV_TOL;
 use crate::stock_view::FieldView;
 
 /// Clean: within the gate of the model.
@@ -75,12 +75,13 @@ pub fn facet_classes(tris: &[Triangle], target: Option<&DistanceLattice>, tol: f
 #[must_use]
 pub fn mesh_classes(fv: &FieldView, tris: &[Triangle]) -> Vec<f32> {
     let lattice = fv.target.as_ref().and_then(|t| t.field()).and_then(pack_target);
-    facet_classes(tris, lattice.as_ref(), gate_tol(DEV_TOL, fv.cell))
+    facet_classes(tris, lattice.as_ref(), gate_tol(fv.tol, fv.cell))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::stock_sim::DEV_TOL;
     use crate::geometry::cube;
     use crate::stock_sim::{SdfField, FIELD_BAND};
 

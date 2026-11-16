@@ -86,10 +86,18 @@ impl Pocket3DParams {
         if self.tool_diameter <= 0.0 || self.stepdown <= 0.0 {
             return Err(GenError::Invalid("diameter and stepdown must be positive".into()));
         }
-        if self.stepover <= 0.0 || self.stepover > self.tool_diameter {
-            return Err(GenError::Invalid(
-                "stepover must be positive and within the tool diameter".into(),
-            ));
+        if self.stepover <= 0.0 {
+            return Err(GenError::Invalid("stepover must be positive".into()));
+        }
+        // The diameter bound is the reach law of the strategies that
+        // space by the stepover. Adaptive and Offset rings space by the
+        // optimal load (`tiling_step`) and the page hides the field, so a
+        // stale value left over from Zigzag must not refuse them (#1512).
+        if !self.strategy.steps_by_load() && self.stepover > self.tool_diameter {
+            return Err(GenError::Invalid(format!(
+                "stepover {} mm must be within the tool diameter ({} mm)",
+                self.stepover, self.tool_diameter
+            )));
         }
         if self.feed <= 0.0 || self.plunge_feed <= 0.0 {
             return Err(GenError::Invalid("feeds must be positive".into()));
@@ -136,9 +144,10 @@ impl Pocket3DParams {
     /// asks this one function, so a grid can never be coarser than the
     /// law's own bands.
     pub(super) fn tiling_step(&self) -> f64 {
-        match self.strategy {
-            PocketStrategy::Adaptive | PocketStrategy::OffsetRings => crate::load::load_step(self.tool_diameter, self.optimal_load),
-            _ => self.stepover,
+        if self.strategy.steps_by_load() {
+            crate::load::load_step(self.tool_diameter, self.optimal_load)
+        } else {
+            self.stepover
         }
     }
 }

@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <title>Boring Bar</title>
+  <rect fill="currentColor" x="6.75" y="1.5" width="10.5" height="3" rx="0.75"/><path d="M10.5 4.5V20.25H13.5V4.5"/><path fill="currentColor" d="M13.5 16.5L18 18.38L13.5 20.25Z"/>
+</svg>

@@ -76,7 +76,7 @@ fn has_word(line: &str, code: &str) -> bool {
     line.split_whitespace().any(|w| w.trim_end_matches('*') == code)
 }
 
-const MILLS: [&str; 5] = ["Fanuc", "Haas", "Siemens 840D", "Heidenhain", "Mazak"];
+const MILLS: [&str; 6] = ["Fanuc", "Haas", "Siemens 840D", "Heidenhain", "Mazak", "grblHAL"];
 
 fn script(name: &str) -> &'static str {
     posting::BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, s)| *s).expect("a built-in")
@@ -87,7 +87,7 @@ fn script(name: &str) -> &'static str {
 fn first_end_and_second_tool(lines: &[&str]) -> (usize, usize) {
     let stop = lines
         .iter()
-        .position(|l| has_word(l, "M5") || has_word(l, "MOTOFF"))
+        .position(|l| has_word(l, "M5"))
         .expect("the first section stops its spindle");
     let tool_word = |w: &str| {
         w.starts_with("TOOL") || (w.starts_with('T') && w[1..].starts_with(|c: char| c.is_ascii_digit() || c == '='))
@@ -155,12 +155,17 @@ fn go_home_retracts_z_then_homes_xy_in_each_dialect() {
 #[test]
 fn a_post_that_cannot_go_home_refuses_by_name() {
     let (world, _h) = two_faces(AfterOperation::GoHome);
-    let out = post_with(&world, script("Heidenhain"));
-    assert!(
-        out.warnings.iter().any(|w| w.contains("Heidenhain") && w.contains("home")),
-        "refused by name, never guessed: {:?}",
-        out.warnings
-    );
+    // #710: grblHAL's G28/G30 positions are controller settings too;
+    // TinyG's are set at the machine with G28.1 / G30.1 (its stops are
+    // pinned in tinyg_post.rs: a tool change writes an M0 of its own).
+    for name in ["Heidenhain", "grblHAL", "TinyG"] {
+        let out = post_with(&world, script(name));
+        assert!(
+            out.warnings.iter().any(|w| w.contains(name) && w.contains("home")),
+            "{name}: refused by name, never guessed: {:?}",
+            out.warnings
+        );
+    }
 }
 
 #[test]

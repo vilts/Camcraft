@@ -31,17 +31,23 @@ pub mod cnc;
 pub mod cnc_thread;
 pub mod cnc_torch;
 mod coolant;
+pub mod dialect;
 pub mod engine;
+pub mod explain;
 pub mod invert;
 pub mod js;
 pub mod machine;
 pub mod nose_tip;
 pub mod probe_rec;
 mod program;
+pub mod rotary_cap;
+pub mod work_offset;
+pub mod units;
 
 pub use after_op::AfterOperation;
 pub use coolant::CoolantMode;
 pub use engine::{LineInfo, PostOutput, TraceBlock};
+pub use js::ProgramId;
 
 use crate::cl::{MoveKind, Toolpath};
 use cnc::{CycleRec, MoveRec, Record};
@@ -96,7 +102,11 @@ pub struct Dump<'a> {
     pub clearance_z: f64,
     pub retract_z: f64,
     pub top_z: f64,
-    pub wcs: &'a str,
+    /// The setup's work offset as its 1-based index (#931: 1 is the
+    /// first offset, `G54` on most controls). The stream carries the
+    /// number; the post writes its own word for it. 0 is no offset and
+    /// the engine refuses it by name.
+    pub wcs: u32,
     pub origin: [f64; 3],
     /// Stock bounds in mm: left, right, front, back (XY), plus top Z.
     pub stock: [f64; 4],
@@ -146,6 +156,23 @@ pub struct Dump<'a> {
     /// CYCLE832, CYCL DEF 32). None writes nothing: every program a
     /// document posted before #616 is byte-identical.
     pub smoothing: Option<Smoothing>,
+    /// Constant surface speed (#891): `Some` only for a turning op whose
+    /// tool states turning data - the stream then carries `PARAM
+    /// SurfaceSpeed <m/min>` (and `PARAM MaxSpindleSpeed <rpm>` when the
+    /// tool states its own clamp) before the section, and a lathe post
+    /// that speaks CSS writes G96 under its G50 / D clamp. None writes
+    /// nothing: every program posted before #891 is byte-identical.
+    pub css: Option<Css>,
+}
+
+/// One turning op's constant-surface-speed ask (#891).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Css {
+    /// Surface speed, m/min.
+    pub vc: f64,
+    /// The tool's own rpm ceiling; the post takes the lower of it and
+    /// the machine's.
+    pub max_rpm: Option<f64>,
 }
 
 /// One operation's smoothing ask (#616): the contour deviation the
@@ -174,7 +201,7 @@ impl<'a> Default for Dump<'a> {
             clearance_z: 0.0,
             retract_z: 0.0,
             top_z: 0.0,
-            wcs: "G54",
+            wcs: 1,
             origin: [0.0; 3],
             stock: [0.0; 4],
             stock_top_z: 0.0,
@@ -187,8 +214,24 @@ impl<'a> Default for Dump<'a> {
             after: AfterOperation::None,
             probe_result: None,
             smoothing: None,
+            css: None,
         }
     }
+}
+
+/// Ask for a reverse (M04) spindle on one operation's records (#988: a
+/// left-hand-cut thread mill): the `MillSpindle reverse` PARAM goes in
+/// before the section opens, once. A post script that does not declare
+/// `millSpindleReverse` then refuses the section by name instead of
+/// turning the cutter backwards under M03. (The lathe's
+/// `SpindleDirection` states a turned thread's hand and is not this.)
+pub fn ask_reverse_spindle(records: &mut Vec<Record>) {
+    let said = records.iter().any(|r| matches!(r, Record::Param { name, .. } if name == "MillSpindle"));
+    if said {
+        return;
+    }
+    let at = records.iter().position(|r| matches!(r, Record::Section { begin: true })).unwrap_or(records.len());
+    records.insert(at, Record::Param { name: "MillSpindle".into(), value: json!("reverse") });
 }
 
 /// The generator side: a toolpath plus its resolved context, as
@@ -208,7 +251,9 @@ pub fn dump(t: &Toolpath, d: &Dump) -> Vec<Record> {
     out.push(Record::Param { name: "ToolDiameter".into(), value: json!(d.tool_diameter) });
     comment_params(d, &mut out);
     out.push(Record::Param { name: "SpindleSpeed".into(), value: json!(d.rpm) });
-    out.push(Record::Param { name: "WorkOffset".into(), value: json!(d.wcs) });
+    // #931: the stream carries the 1-based offset index; the post maps
+    // it to its word (and the engine refuses one it cannot express).
+    out.push(Record::Param { name: "WorkOffset".into(), value: json!(f64::from(d.wcs)) });
     out.push(Record::Param { name: "OriginX".into(), value: json!(d.origin[0]) });
     out.push(Record::Param { name: "OriginY".into(), value: json!(d.origin[1]) });
     out.push(Record::Param { name: "OriginZ".into(), value: json!(d.origin[2]) });
@@ -240,7 +285,7 @@ pub fn dump(t: &Toolpath, d: &Dump) -> Vec<Record> {
     // a C turn: the section says so before it opens, so a script can
     // engage C and the live spindle in its preamble - and the engine
     // refuses, by name, a script that does not declare `liveTooling`.
-    if t.moves.iter().any(|m| m.rotary.is_some()) {
+    if dialect::states_live_tool(t) {
         out.push(Record::Param { name: "LiveTool".into(), value: json!("radial") });
     }
     // A thread whose passes need the spindle reversed (#629): the
@@ -249,6 +294,14 @@ pub fn dump(t: &Toolpath, d: &Dump) -> Vec<Record> {
     // so the spindle starts the right way; forward (M03) is silent.
     if t.threads.iter().any(|c| c.is_sane(&t.moves) && c.reverse_spindle()) {
         out.push(Record::Param { name: "SpindleDirection".into(), value: json!("reverse") });
+    }
+    // #891: the CSS ask, only a finite positive one (a script never sees
+    // a speed it would have to guess about).
+    if let Some(c) = d.css.filter(|c| c.vc.is_finite() && c.vc > 0.0) {
+        out.push(Record::Param { name: "SurfaceSpeed".into(), value: json!(c.vc) });
+        if let Some(m) = c.max_rpm.filter(|m| m.is_finite() && *m > 0.0) {
+            out.push(Record::Param { name: "MaxSpindleSpeed".into(), value: json!(m) });
+        }
     }
     for w in &d.warnings {
         out.push(Record::Warn { text: w.clone() });

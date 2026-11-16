@@ -107,3 +107,31 @@ fn orthographic_picks_are_visible_first_too() {
     assert!(near(front, [10.0, 10.0, 10.0]), "{front:?}");
     back_corner_is_never_picked(state);
 }
+
+/// #692: round-edge centres are opt-in - the plain pick modes, the plane
+/// row and an axis by edge never snap to one; only the point takers that
+/// read a centre (three points, an axis by two points) ask for them.
+#[test]
+fn only_the_point_takers_that_read_a_centre_ask_for_centres() {
+    use crate::axis_pick::AxisBy;
+    use crate::feature_click::ask;
+    use crate::interact::Mods;
+    use crate::state::GeoPick;
+    use camcraft_app::pick::InPlaneAxis;
+
+    let mut state = cube_state(ProjectionMode::Perspective);
+    for mode in [GeoPick::Vertex, GeoPick::Edge, GeoPick::Face, GeoPick::Model] {
+        state.geo_pick = mode;
+        assert!(!ask(&state, Mods::default()).kinds.centres, "{mode:?}: the pick mode alone never asks");
+    }
+    crate::points_pick::arm(&mut state, "Setup1");
+    let k = ask(&state, Mods::default()).kinds;
+    assert!(k.points && k.centres && !k.edges, "three points opt in: {k:?}");
+    crate::points_pick::disarm(&mut state);
+    crate::axis_pick::set_by(&mut state, "Setup1", InPlaneAxis::Y, AxisBy::Points);
+    let k = ask(&state, Mods::default()).kinds;
+    assert!(k.points && k.centres, "an axis by two points opts in: {k:?}");
+    crate::axis_pick::set_by(&mut state, "Setup1", InPlaneAxis::Y, AxisBy::Edge);
+    let k = ask(&state, Mods::default()).kinds;
+    assert!(k.edges && !k.centres, "an axis by edge never snaps to a centre: {k:?}");
+}

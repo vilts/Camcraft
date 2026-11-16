@@ -69,6 +69,7 @@ fn bar_world() -> (World, History) {
         ..Default::default()
     };
     history.execute(&world, LoadMachine::new(&world, "lathe.mch".into(), Some(lathe)).expect("lathe"));
+    history.execute(&world, camcraft_app::commands::SelectPost::new(&world, camcraft_app::schema::PostRef::Named("Fanuc Lathe".into())).expect("lathe post"));
     let tool = catalog().into_iter().find(|(n, _)| *n == TN).map(|(_, t)| t).expect("catalog entry");
     history.execute(&world, AddTool::new(&world, TN, tool).expect("insert"));
     history.execute(&world, ImportModel::from_mesh("bar", revolve(&BAR, 16)));

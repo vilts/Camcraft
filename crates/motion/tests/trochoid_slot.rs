@@ -5,7 +5,7 @@
 //! returns landing on air, and the refusals by name.
 //!
 //! Gate map (M4.4): covers camcraft_motion::machining2d (trochoid_slot,
-//! trochoid_loops), camcraft_motion::quality.
+//! trochoid_loops, trochoid_bore), camcraft_motion::quality.
 
 use camcraft_motion::cl::{MoveKind, Toolpath};
 use camcraft_motion::geo2d::{Point2, Region};
@@ -13,7 +13,7 @@ use camcraft_motion::machining2d::{
     lifted_cut, plan_trochoidal_slot, slot, trochoidal_slot, GenError, SlotParams, TrochoidParams, TrochoidReturn,
     DEFAULT_MICROLIFT,
 };
-use camcraft_motion::quality::{measure, stock_for, PathQuality, QualitySpec};
+use camcraft_motion::quality::{measure, rest_area, stock_for, PathQuality, QualitySpec};
 use camcraft_motion::verify::{verify, Mode, ToolGeom, VerifyContext, Warning};
 
 const D: f64 = 10.0;
@@ -85,6 +85,7 @@ fn verified(path: &Toolpath, w: f64) -> Vec<Warning> {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(path, &cx)
 }
@@ -285,7 +286,29 @@ fn trochoid_bore_past_the_helix_turn_cap_is_refused() {
     p.bottom_z = -6200.0;
     p.stepdown = 6200.0;
     match trochoidal_slot(&line(), &p) {
-        Err(GenError::Invalid(m)) => assert!(m.contains("helix") && m.contains("1024 turns"), "{m}"),
+        // #871: the levels built before the refusal ride it as a ghost.
+        Err(GenError::Invalid(m) | GenError::Ghosted { msg: m, .. }) => {
+            assert!(m.contains("helix") && m.contains("1024 turns"), "{m}")
+        }
         other => panic!("expected the helix-turn refusal, got {other:?}"),
     }
+}
+
+/// #1589: a channel wider than twice the tool (band 8 mm, tool radius
+/// 5 mm) opens its bore, so no post of radius `b - r` stands at the
+/// start; the engagement limit still holds on the yardstick.
+#[test]
+fn trochoid_wide_channel_leaves_no_post_at_the_start() {
+    let w = 26.0;
+    let p = TrochoidParams { width: w, bottom_z: -3.0, ..params() };
+    let pl = plan(&p);
+    let spec = QualitySpec::new(D);
+    let Ok(mut dex) = stock_for(&channel(w), 0.0, -3.0, D, &spec) else { panic!("stock") };
+    let Ok(q) = measure(&pl.path, &mut dex, &spec) else { panic!("measure") };
+    // Where the post would stand: a disc of radius b - r - 0.5 about the start.
+    let Ok(core) = Region::sweep(&[vec![Point2::new(0.0, 0.0)]], 2.5) else { panic!("core") };
+    let Ok(rest) = rest_area(&dex, &core, -3.0) else { panic!("rest") };
+    eprintln!("wide trochoid: rest {rest:.3} mm2 at the start, max {:.1} deg, {} loops", q.max_deg, pl.loops);
+    assert!(rest < 0.5, "{rest:.2} mm2 left standing at the start");
+    assert!(q.max_deg <= 90.0 + 1e-9, "max {:.1} deg at {:?}", q.max_deg, q.max_at);
 }

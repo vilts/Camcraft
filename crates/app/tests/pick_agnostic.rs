@@ -10,7 +10,7 @@
 //! name - never cut into the part.
 //!
 //! Gate map (M11.4 A): covers app::operation (selection, area, stitch,
-//! job, generate), app::machining2d (pocket), app::verify, app::load.
+//! job, generate), motion::machining2d (pocket), sim::verify, motion::load.
 //!
 //! Lane shape (M13.8): the debug ladder runs every test here in seconds.
 //! The island law runs under Zigzag in debug; its `_full` twin carries
@@ -36,6 +36,7 @@ use flecs_ecs::prelude::World;
 
 fn pocket(strategy: PocketStrategy, top: f64, bottom: f64) -> OpParams {
     OpParams::Pocket {
+        blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 4.0,
         stock_to_leave: 0.0,
@@ -58,6 +59,7 @@ fn pocket(strategy: PocketStrategy, top: f64, bottom: f64) -> OpParams {
 
 fn adaptive2d(top: f64, bottom: f64) -> OpParams {
     OpParams::Adaptive2D {
+        blend_radius: None, blend_turns: false,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 4.0,
         stock_to_leave: 0.0,
@@ -72,6 +74,8 @@ fn adaptive2d(top: f64, bottom: f64) -> OpParams {
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
+        method: camcraft_app::machining2d::AdaptiveMethod::Spiral,
+        troch: camcraft_app::machining2d::AdaptiveTrochParams::default(),
         tilt: None,
     }
 }

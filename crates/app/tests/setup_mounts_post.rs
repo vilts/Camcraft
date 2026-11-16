@@ -8,7 +8,7 @@
 //!
 //! Gate map (#388): covers app::setup_mount (program_mounts),
 //! app::posting (post_mounts, post_mounts_script, post_per_op,
-//! machine_checks, verification_report, post_setup), app::machine
+//! machine_checks, verification_report, post_setup), app::machine, post::machine
 //! (kind_of_setup, check_ops), app::operation (job, spindle_law),
 //! app::commands (family gate per setup), app::script (cam.post files).
 //! Lane shape (M4.4): all tests here run in seconds.
@@ -315,6 +315,35 @@ fn the_script_post_writes_one_file_per_mount() {
         let _ = std::fs::remove_file(&path);
     }
     assert_eq!(out.result["mounts"][1]["post"], "Fanuc Lathe (built-in)", "{}", out.result);
+}
+
+/// #1224 row 7: `setup` posting through its own `post`, which does not
+/// serve its own machine, is refused naming `op`, and nothing is posted.
+fn unserved_post_is_refused(setup: &str, post: &str, op: &str) {
+    let (world, mut h) = mill_and_lathe();
+    h.execute(&world, SetSetupPost::new(&world, setup, Some(PostRef::Named(post.into()))).expect("own post"));
+    generate(&world, &mut h, "Face1");
+    generate(&world, &mut h, "Facing2");
+    let tag = format!("unserved-{setup}");
+    let why = post_mounts(&world, &tag).expect_err(&format!("{post} does not serve {setup}'s machine"));
+    assert!(why.contains(op), "{post} on {setup}: the refusal names {op}: {why}");
+    let p = tmp(&tag, "nc");
+    let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    for f in [p.clone(), p.with_file_name(format!("{stem}_01_Setup1.nc")), p.with_file_name(format!("{stem}_02_Setup2.nc"))] {
+        assert!(!f.exists(), "nothing is posted: {f:?}");
+    }
+}
+
+/// A lathe post for the mill setup's face: the #1190 door refuses it.
+#[test]
+fn an_own_lathe_post_on_a_mill_setup_is_refused_by_name() {
+    unserved_post_is_refused("Setup1", "Fanuc Lathe", "Face1");
+}
+
+/// A milling post for the lathe setup's turning op.
+#[test]
+fn an_own_milling_post_on_a_lathe_setup_is_refused_by_name() {
+    unserved_post_is_refused("Setup2", "Haas", "Facing2");
 }
 
 /// #438: the tool-number clash is judged per machine. Two machines are

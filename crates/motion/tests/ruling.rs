@@ -139,7 +139,7 @@ fn dome(radius: f64, polar_max: f64, n_lat: usize, n_lon: usize) -> Vec<Triangle
 
 fn err_text(e: GenError) -> String {
     match e {
-        GenError::Invalid(s) | GenError::Empty(s) => s,
+        GenError::Invalid(s) | GenError::Empty(s) | GenError::Model(s) => s,
         GenError::At { msg, .. } | GenError::Ghosted { msg, .. } => msg,
         GenError::Geo(g) => g.to_string(),
     }

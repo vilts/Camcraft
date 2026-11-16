@@ -1,0 +1,192 @@
+# PR test (#1420): the build-and-test step of a PR review, run on the
+# self-hosted runner (Linux or macOS) instead of a worktree on the reviewer's machine.
+# Started only by the PR-reviewer agent of a collaborator's session, after it
+# has read the diff (`.claude/agents/PR-reviewer.md` step 2b):
+#   gh workflow run pr-test.yml -f pr=<N> -f sha=<head sha the reviewer read>
+# It checks out refs/pull/<N>/head, refuses unless that is exactly <sha>,
+# trial-merges it with the current main (a local merge commit, never pushed),
+# runs `cargo xtask gate quick --base origin/main` (the suites the diff
+# touches) and clippy for the touched crates, and writes the gate summary
+# (pass/fail per binary) to the run summary; gate-logs/ is uploaded.
+# Safety (maintainer, 2026-11-13: "then that is the decision,
+# workflow_dispatch"): workflow_dispatch only - never push, pull_request,
+# pull_request_target or schedule - so a fork PR can never start a run by
+# itself; only accounts with write access can dispatch. Read-only token, no
+# secrets, no credentials left on disk while PR code runs. PRs the reviewer
+# classes "read, not built" (a new dependency, build.rs, scripts, .github)
+# are never sent here; this workflow refuses them too (defence in depth),
+# and the reviewer then decides as it does without a runner. Maintainer
+# decisions (2026-11-13): "Collaborators only" - the PR's author must have
+# push access, else the run refuses and the PR is built locally; and
+# "Separate runner/user" - the job targets the runner label camcraft-pr-test,
+# an OS user of its own with its own HOME, never the cut/release runner
+# (issue 1413); cargo home and sccache are under that runner's work dir.
+# Any runner carrying camcraft-pr-test takes the job, whatever its OS: the
+# steps are bash 3.2 / BSD-tool safe, and on macOS the UI suites open real
+# windows, so that runner needs a logged-in session.
+# Provenance: our own review and gate laws (AGENTS.md "Outside PRs are
+# reviewed", "Three gate tiers"); GitHub's public Actions documentation for
+# the workflow syntax.
+name: PR test
+run-name: 'pr-test #${{ inputs.pr }} ${{ inputs.sha }}'
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: 'Pull request number'
+        required: true
+        type: string
+      sha:
+        description: 'Head SHA the reviewer read (40 hex); the run refuses any other head'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# One run per PR at a time; a second start for the same PR waits instead of
+# cancelling (a cancelled run is never a pass). Runs of different PRs queue
+# on the runner by themselves: a runner takes one job at a time.
+concurrency:
+  group: pr-test-${{ inputs.pr }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  PR: ${{ inputs.pr }}
+  SHA: ${{ inputs.sha }}
+
+jobs:
+  test:
+    runs-on: [self-hosted, camcraft-pr-test]
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    steps:
+      - name: Inputs are a PR number and a full SHA
+        shell: bash
+        run: |
+          if ! [[ "$PR" =~ ^[0-9]+$ ]]; then echo "::error::pr must be a number, got '$PR'"; exit 1; fi
+          if ! [[ "$SHA" =~ ^[0-9a-f]{40}$ ]]; then echo "::error::sha must be 40 lowercase hex, got '$SHA'"; exit 1; fi
+      - name: Collaborators only (the PR author has push access)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          api() { curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/$REPO/$1"; }
+          author=$(api "pulls/$PR" | python3 -c 'import json,sys; print(json.load(sys.stdin)["user"]["login"])') || author=""
+          perm=""
+          if [[ "$author" =~ ^[A-Za-z0-9-]+$ ]]; then
+            perm=$(api "collaborators/$author/permission" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("permission",""))') || perm=""
+          fi
+          case "$perm" in
+            admin|maintain|write) echo "PR #$PR author '$author' has $perm access" ;;
+            *)
+              echo "::error::refused: PR #$PR author '${author:-unknown}' is not a collaborator with push access (permission '${perm:-unknown}', or the check failed) - build it locally in the reviewer's worktree"
+              { echo "### PR #$PR at $SHA: refused (author is not a collaborator with push access; built locally instead)"; } >> "$GITHUB_STEP_SUMMARY"
+              exit 1 ;;
+          esac
+      - name: Private cargo home and sccache dir (never shared with a release build)
+        shell: bash
+        run: |
+          # Own OS user, own HOME; these two dirs also sit under this
+          # runner's work dir, so no cache a release build could read is written.
+          echo "CARGO_HOME=$RUNNER_WORKSPACE/.pr-test-cache/cargo" >> "$GITHUB_ENV"
+          echo "SCCACHE_DIR=$RUNNER_WORKSPACE/.pr-test-cache/sccache" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_WORKSPACE/.pr-test-cache/cargo" "$RUNNER_WORKSPACE/.pr-test-cache/sccache"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: refs/pull/${{ inputs.pr }}/head
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The head is the one the reviewer read
+        shell: bash
+        run: |
+          set -euo pipefail
+          head=$(git rev-parse HEAD)
+          if [ "$head" != "$SHA" ]; then
+            echo "::error::PR #$PR head is $head, not $SHA: the PR moved after the reviewer read it - review the new head"; exit 1
+          fi
+          git rev-parse --verify -q origin/main >/dev/null || { echo "::error::origin/main was not fetched"; exit 1; }
+          echo "main=$(git rev-parse origin/main)" >> "$GITHUB_ENV"
+      - name: Not a read-only PR (dependency, build.rs, scripts, .github, cargo config, xtask)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mb=$(git merge-base origin/main HEAD)
+          # --no-renames: both sides of a rename are listed. xtask/ is the gate
+          # itself: a PR that changes it would run its own gate code.
+          hits=$(git diff --name-only --no-renames "$mb" HEAD | grep -E '(^|/)build\.rs$|^\.github/|^scripts/|(^|/)Cargo\.(toml|lock)$|(^|/)\.cargo/|(^|/)rust-toolchain(\.toml)?$|^xtask/' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::read, not built: the PR touches files the runner never builds - $(echo "$hits" | tr '\n' ' ')"
+            { echo "### PR #$PR at $SHA: refused (read, not built)"; echo '```'; echo "$hits"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+      - name: Trial merge with main (local only, never pushed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git -c user.name=pr-test -c user.email=pr-test@local merge --no-ff --no-edit origin/main; then
+            git merge --abort || true
+            echo "::error::PR #$PR at $SHA conflicts with main $main: nothing was built"
+            { echo "### PR #$PR at $SHA: conflicts with main $main - not built"; } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          git diff --name-only origin/main HEAD > "$RUNNER_TEMP/changed.txt"
+          echo "merged=true" >> "$GITHUB_ENV"
+          echo "PR #$PR at $SHA merged with main $main: $(wc -l < "$RUNNER_TEMP/changed.txt") file(s) differ from main"
+      - name: Quick gate on the merged tree
+        shell: bash
+        # The UI suites open windows: with no display they run inside
+        # xvfb-run when the runner has it (AGENTS.md "The PR test runner").
+        # sccache comes from the runner's own environment.
+        run: |
+          set -o pipefail
+          wrap=()
+          if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ] && command -v xvfb-run >/dev/null; then
+            wrap=(xvfb-run -a)
+          fi
+          echo "${wrap[*]} cargo xtask gate quick --base origin/main"
+          "${wrap[@]}" cargo xtask gate quick --base origin/main 2>&1 | tee "$RUNNER_TEMP/gate-output.txt"
+      - name: Clippy on the touched crates
+        if: ${{ !cancelled() && env.merged == 'true' }}
+        shell: bash
+        run: |
+          set -o pipefail
+          pkgs=()
+          for c in $(sed -n 's#^crates/\([^/]*\)/.*#\1#p' "$RUNNER_TEMP/changed.txt" | sort -u); do
+            name=$(sed -n 's/^name = "\(.*\)"$/\1/p' "crates/$c/Cargo.toml" 2>/dev/null | head -n 1)
+            if [ -n "$name" ]; then pkgs+=(-p "$name"); fi
+          done
+          if grep -q '^xtask/' "$RUNNER_TEMP/changed.txt"; then pkgs+=(-p xtask); fi
+          if [ ${#pkgs[@]} -eq 0 ]; then echo "no crate touched: clippy skipped" | tee "$RUNNER_TEMP/clippy-output.txt"; exit 0; fi
+          echo "cargo clippy ${pkgs[*]} --all-targets -- -D warnings"
+          cargo clippy "${pkgs[@]}" --all-targets -- -D warnings 2>&1 | tee "$RUNNER_TEMP/clippy-output.txt"
+      - name: Summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### PR #$PR at $SHA, merged with main ${main:-unknown}"
+            echo '```'
+            sed -n '/^== gate summary/,$p' "$RUNNER_TEMP/gate-output.txt" 2>/dev/null || echo "no gate output"
+            echo '```'
+            echo '```'
+            tail -n 5 "$RUNNER_TEMP/clippy-output.txt" 2>/dev/null || echo "no clippy output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Gate logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pr-test-${{ inputs.pr }}-${{ github.run_attempt }}
+          # gate-logs/ is written by the PR's own tests: PR-controlled content,
+          # so retention is capped (docs/decisions/1420-pr-test-pipeline.md).
+          retention-days: 7
+          path: |
+            gate-logs/
+            ${{ runner.temp }}/gate-output.txt
+            ${{ runner.temp }}/clippy-output.txt
+          if-no-files-found: warn

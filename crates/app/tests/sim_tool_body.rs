@@ -211,7 +211,7 @@ fn a_degenerate_outline_draws_nothing_and_names_itself() {
     let t = catalog_tool(TOOL);
     let stack = HolderStack::cylinder(&t.geom());
     assert!(JudgedOutline::new(&t, &stack).is_ok(), "the sane tool draws");
-    let band = |above: f64, len: f64, r: f64| HolderStack { bands: vec![HolderBand { above, len, r }], top: above + len };
+    let band = |above: f64, len: f64, r: f64| HolderStack { bands: vec![HolderBand { above, len, r }], top: above + len, neck: Vec::new() };
     assert_eq!(JudgedOutline::new(&Tool { diameter: f64::INFINITY, ..t.clone() }, &stack), Err(OutlineError::NonFinite));
     assert_eq!(JudgedOutline::new(&t, &band(50.0, f64::NAN, 5.0)), Err(OutlineError::NonFinite));
     assert_eq!(JudgedOutline::new(&t, &band(50.0, 10.0, -5.0)), Err(OutlineError::Negative));
@@ -220,10 +220,11 @@ fn a_degenerate_outline_draws_nothing_and_names_itself() {
     let crossing = HolderStack {
         bands: vec![HolderBand { above: 50.0, len: 20.0, r: 10.0 }, HolderBand { above: 60.0, len: 20.0, r: 15.0 }],
         top: 80.0,
+        neck: Vec::new(),
     };
     assert_eq!(JudgedOutline::new(&t, &crossing), Err(OutlineError::RunsBack));
     // No radius anywhere, and no length anywhere.
-    let none = HolderStack { bands: Vec::new(), top: 0.0 };
+    let none = HolderStack { bands: Vec::new(), top: 0.0, neck: Vec::new() };
     let thin = Tool { diameter: 0.0, shank_d: 0.0, ..t.clone() };
     assert_eq!(JudgedOutline::new(&thin, &none), Err(OutlineError::NoRadius));
     let flat = Tool { flute_len: 0.0, shank_len: 0.0, ..t.clone() };

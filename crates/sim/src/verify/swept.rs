@@ -127,31 +127,8 @@ pub(super) fn pen(b: &Body, atom: &Atom, cut_lo: f64, allow: f64, grow: f64, pts
     -best
 }
 
-/// The hole-wall excuse (containment kinds): a facet whose vertices all
-/// stand outside the atom's widest reach along the move enters it only
-/// by its edges' dip between them - the inscribed tessellation of a
-/// wall the region's exact rim already judged. The swept slice is a
-/// union of discs of radius rho, so a chord of horizontal length l with
-/// both ends outside dips at most rho - sqrt(rho^2 - l^2/4).
-pub(super) fn chord_dip(t: &[[f64; 3]; 3], d: [f64; 3], atom: &Atom, allow: f64, grow: f64) -> f64 {
-    let rho = atom.rho_max() + grow;
-    let out = t.iter().all(|p| seg_dist([p[0], p[1]], [0.0, 0.0], [d[0], d[1]]) >= rho - allow);
-    if !out {
-        return 0.0;
-    }
-    let mut dip = 0.0f64;
-    for k in 0..3 {
-        let (p, q) = (t[k], t[(k + 1) % 3]);
-        let half = 0.5 * (q[0] - p[0]).hypot(q[1] - p[1]);
-        if half < rho {
-            dip = dip.max(rho - (rho * rho - half * half).sqrt());
-        }
-    }
-    dip
-}
-
 /// Distance from `o` to segment p-q.
-fn seg_dist(o: [f64; 2], p: [f64; 2], q: [f64; 2]) -> f64 {
+pub(super) fn seg_dist(o: [f64; 2], p: [f64; 2], q: [f64; 2]) -> f64 {
     let (dx, dy) = (q[0] - p[0], q[1] - p[1]);
     let dd = dx * dx + dy * dy;
     let s = if dd > 0.0 { (((o[0] - p[0]) * dx + (o[1] - p[1]) * dy) / dd).clamp(0.0, 1.0) } else { 0.0 };

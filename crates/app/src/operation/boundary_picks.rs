@@ -4,7 +4,8 @@
 //! selection"). Three things live here, all on the world's features:
 //!
 //! - what an entry's picks SPELL ([`boundary_pick_shape`]): one open
-//!   chain (several picked runs joined end to end), or closed rings - the
+//!   chain (several picked runs joined end to end), separate chains
+//!   that stay apart (#1727), or closed rings - the
 //!   same walk generation takes (`picks_geom`), so the page's summary and
 //!   the generator can never disagree;
 //! - the door check ([`area_pick_issue`]): an include / exclude whose
@@ -20,6 +21,7 @@
 //! material consulted.
 
 use super::boundary::OpenGeom;
+use super::boundary_chains::{group_runs, touching_refusal};
 use super::*;
 
 /// What a boundary entry's picks spell.
@@ -27,6 +29,8 @@ use super::*;
 pub enum PickShape {
     /// One open chain, world XY in walk order.
     Open { picks: usize, chain: Vec<Point2> },
+    /// Two or more separate open chains (#1727): the area lies between them.
+    Chains { picks: usize, chains: Vec<Vec<Point2>> },
     /// Closed rings (`faces` of the picks were faces).
     Closed { picks: usize, faces: usize, rings: usize },
     /// The picks spell no boundary; the reason, named.
@@ -40,7 +44,7 @@ fn plural(n: usize, one: &str, many: &str) -> String {
 impl PickShape {
     #[must_use]
     pub fn is_open(&self) -> bool {
-        matches!(self, PickShape::Open { .. })
+        matches!(self, PickShape::Open { .. } | PickShape::Chains { .. })
     }
 
     #[must_use]
@@ -53,6 +57,9 @@ impl PickShape {
     pub fn summary(&self) -> String {
         match self {
             PickShape::Open { picks, .. } => format!("{}, open chain", plural(*picks, "edge", "edges")),
+            PickShape::Chains { picks, chains } => {
+                format!("{}, {} open chains", plural(*picks, "edge", "edges"), chains.len())
+            }
             PickShape::Closed { picks, faces, rings } => {
                 let mut parts = Vec::new();
                 if *faces > 0 {
@@ -69,43 +76,11 @@ impl PickShape {
     }
 }
 
-/// Join open runs end to end into one chain (either direction), or
-/// `None` when they do not form one connected walk.
-fn join_runs(mut runs: Vec<Vec<Point2>>) -> Option<Vec<Point2>> {
-    if runs.is_empty() {
-        return None;
-    }
-    let mut chain = runs.remove(0);
-    while !runs.is_empty() {
-        let (head, tail) = (qkey(chain.first()?), qkey(chain.last()?));
-        let j = runs.iter().position(|r| {
-            let (a, b) = (r.first().map(qkey), r.last().map(qkey));
-            a == Some(tail) || b == Some(tail) || a == Some(head) || b == Some(head)
-        })?;
-        let mut r = runs.remove(j);
-        let (a, b) = (r.first().map(qkey), r.last().map(qkey));
-        if a == Some(tail) {
-            chain.extend(r.into_iter().skip(1));
-        } else if b == Some(tail) {
-            r.reverse();
-            chain.extend(r.into_iter().skip(1));
-        } else {
-            if a == Some(head) {
-                r.reverse();
-            }
-            r.pop();
-            r.extend(chain);
-            chain = r;
-        }
-    }
-    Some(chain)
-}
-
 /// Picked boundary features in the operation's plane - world XY, or the
 /// 3+2 index's tilted plane through `frame` - through the selection
 /// walk every region runs (stitching, rim dedupe and every named
-/// refusal included): one open chain - its runs joined end to end - or
-/// closed rings, never a mix, never two separate chains.
+/// refusal included): one open chain - its runs joined end to end -,
+/// separate chains that stay apart (#1727), or closed rings, never a mix.
 pub(super) fn picks_geom(
     world: &World,
     setup: Option<&str>,
@@ -120,11 +95,18 @@ pub(super) fn picks_geom(
     match (loops.is_empty(), runs.len()) {
         (false, 0) => Ok(OpenGeom::Ring(Region::new(loops)?)),
         (true, 0) => Err(GenError::Empty("the boundary picks resolve to nothing".into())),
-        (true, n) => join_runs(runs).map(OpenGeom::Chain).ok_or_else(|| {
-            GenError::Invalid(format!(
-                "the boundary picks spell {n} separate open runs - an open boundary is one connected chain; pick the edges between them or remove the stray one"
-            ))
-        }),
+        (true, _) => {
+            // #1727: separate chains bound the area between them, unless
+            // they touch or cross (named, never guessed).
+            let mut chains = group_runs(runs);
+            if chains.len() == 1 {
+                return chains.pop().map(OpenGeom::Chain).ok_or_else(|| GenError::Empty("no open chain".into()));
+            }
+            match touching_refusal(&chains) {
+                Some(e) => Err(super::boundary_chain_error(e)),
+                None => Ok(OpenGeom::Chains(chains)),
+            }
+        }
         (false, n) => Err(GenError::Invalid(format!(
             "the boundary picks spell {} closed ring(s) and {n} open run(s) - a boundary is one open chain or closed rings; remove the open edges or close them",
             loops.len()
@@ -149,6 +131,7 @@ pub fn boundary_pick_shape(world: &World, setup: Option<&str>, picks: &[GeoSel],
     };
     match picks_geom(world, setup, picks, params, frame.as_ref()) {
         Ok(OpenGeom::Chain(chain)) => PickShape::Open { picks: picks.len(), chain },
+        Ok(OpenGeom::Chains(chains)) => PickShape::Chains { picks: picks.len(), chains },
         Ok(OpenGeom::Ring(r)) => PickShape::Closed { picks: picks.len(), faces, rings: r.loops().len() },
         Err(e) => PickShape::Invalid(e.to_string()),
     }
@@ -368,18 +351,21 @@ mod law {
         let a = vec![p(0.0, 0.0), p(10.0, 0.0)];
         let b = vec![p(10.0, 10.0), p(10.0, 0.0)];
         let c = vec![p(0.0, 10.0), p(0.0, 0.0)];
-        let j = join_runs(vec![a, b, c]).expect("one chain");
+        let mut one = group_runs(vec![a, b, c]);
+        assert_eq!(one.len(), 1, "one chain");
+        let j = one.pop().expect("one chain");
         assert_eq!(j.len(), 4);
         assert_eq!(qkey(&j[0]), qkey(&p(0.0, 10.0)));
         assert_eq!(qkey(&j[3]), qkey(&p(10.0, 10.0)));
         let far = vec![p(50.0, 50.0), p(60.0, 50.0)];
-        assert!(join_runs(vec![vec![p(0.0, 0.0), p(1.0, 0.0)], far]).is_none(), "two separate runs");
-        assert!(join_runs(Vec::new()).is_none());
+        assert_eq!(group_runs(vec![vec![p(0.0, 0.0), p(1.0, 0.0)], far]).len(), 2, "two separate runs");
+        assert!(group_runs(Vec::new()).is_empty());
     }
 
     #[test]
     fn the_summary_names_the_shape() {
         assert_eq!(PickShape::Open { picks: 3, chain: Vec::new() }.summary(), "3 edges, open chain");
+        assert_eq!(PickShape::Chains { picks: 2, chains: vec![Vec::new(), Vec::new()] }.summary(), "2 edges, 2 open chains");
         assert_eq!(PickShape::Closed { picks: 1, faces: 1, rings: 1 }.summary(), "1 face loop, closed");
         assert_eq!(PickShape::Closed { picks: 4, faces: 0, rings: 1 }.summary(), "4 edges, closed");
     }

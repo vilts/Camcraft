@@ -78,6 +78,21 @@ impl Ghost {
     }
 }
 
+impl Ghost {
+    /// #1015: this ghost with `outer` - the moves an enclosing generator
+    /// had built before the inner one refused - in front of it, so a
+    /// nested refusal shows the whole program up to where it stopped.
+    /// `None` when the joined path is not finite (the caller keeps the
+    /// inner ghost alone); the cap and its flag hold over the join.
+    #[must_use]
+    pub fn after(&self, outer: &[Move]) -> Option<Ghost> {
+        let all: Vec<Move> = outer.iter().chain(self.moves.iter()).take(Self::MAX_MOVES + 1).copied().collect();
+        let mut g = Ghost::of_moves(&all)?;
+        g.truncated |= self.truncated;
+        Some(g)
+    }
+}
+
 impl std::fmt::Debug for Ghost {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Ghost({} moves{})", self.moves.len(), if self.truncated { ", truncated" } else { "" })
@@ -127,5 +142,22 @@ mod tests {
             .expect("still finite");
         assert_eq!(shifted.moves()[1].from.x, 11.0);
         assert!(g.map_path(|_| Toolpath::default()).is_none());
+    }
+
+    #[test]
+    fn the_outer_moves_stand_in_front_and_a_bad_join_is_refused() {
+        // #1015: the nested refusal's merge - outer program first.
+        let inner = Ghost::of_moves(&[feed(10.0)]).expect("ghost");
+        let g = inner.after(&[feed(0.0), feed(1.0)]).expect("finite join");
+        let xs: Vec<f64> = g.moves().iter().map(|m| m.from.x).collect();
+        assert_eq!(xs, vec![0.0, 1.0, 10.0]);
+        assert!(!g.truncated());
+        let bad = Move::new(MoveKind::Feed, Point3::new(f64::NAN, 0.0, 0.0), Point3::new(1.0, 0.0, 0.0), Some(1.0));
+        assert!(inner.after(&[bad]).is_none(), "no NaN may reach the camera");
+        // The cap holds over the join, and says so.
+        let outer: Vec<Move> = (0..Ghost::MAX_MOVES).map(|i| feed(i as f64)).collect();
+        let capped = inner.after(&outer).expect("finite");
+        assert_eq!(capped.len(), Ghost::MAX_MOVES);
+        assert!(capped.truncated());
     }
 }

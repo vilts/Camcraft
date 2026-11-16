@@ -47,7 +47,10 @@ pub(super) fn seed_plasma_profile(c: &Carried) -> OpParams {
 }
 
 /// The generator's numbers from the op's and the world's.
-pub fn plasma_params(op: &PlasmaOp, tool: &Tool, hs: &ResolvedHeights) -> Result<PlasmaParams, GenError> {
+///
+/// `model_excess` is how much coarser than promised the model the part
+/// silhouette is read from is (#1053): the kerf law gives it back.
+pub fn plasma_params(op: &PlasmaOp, tool: &Tool, hs: &ResolvedHeights, model_excess: f64) -> Result<PlasmaParams, GenError> {
     if tool.kind != ToolKind::Torch {
         return Err(GenError::Invalid(format!(
             "a plasma profile mounts a plasma torch, not a {} - its diameter is the kerf width",
@@ -81,22 +84,24 @@ pub fn plasma_params(op: &PlasmaOp, tool: &Tool, hs: &ResolvedHeights) -> Result
         pierce_height: op.pierce_height,
         cut_height: op.cut_height,
         pierce_delay: op.pierce_delay,
+        model_excess,
     })
 }
 
 /// Generate: `picks` is the picked contours (closed rings, open runs)
 /// when the source is a selection; otherwise `base` - the model's
 /// through-silhouette - is cut whole, every ring of it a contour. The
-/// kerf may never reach `facets`' silhouette.
+/// kerf may never reach `facets`' silhouette, judged with that model's
+/// excess given back (#1053).
 pub(super) fn generate_plasma(
     op: &PlasmaOp,
     tool: &Tool,
     hs: &ResolvedHeights,
     picks: Option<(Vec<Loop>, Vec<Vec<Point2>>)>,
     base: impl FnOnce() -> Result<Region, GenError>,
-    facets: &[Triangle],
+    (facets, model_excess): (&[Triangle], f64),
 ) -> Result<(Toolpath, Vec<Warning>), GenError> {
-    let p = plasma_params(op, tool, hs)?;
+    let p = plasma_params(op, tool, hs, model_excess)?;
     let part = if facets.is_empty() {
         Region::empty()
     } else {

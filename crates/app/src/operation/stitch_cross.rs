@@ -45,7 +45,7 @@ pub(super) fn stitch_across(
         planar_check(runs, &seq)?;
         let pts = compose_ring(runs, &seq, rings.len(), consumed);
         let names = entities_of(runs, seq.iter().map(|(j, _)| *j));
-        rings.push((format!("the stitched rim of {}", name_list(&names)), pts, seq.len()));
+        rings.push((format!("{STITCHED_RIM} {}", name_list(&names)), pts, seq.len()));
     }
     Ok(())
 }

@@ -30,6 +30,11 @@ var currentPosition = { X: 0, Y: 0, Z: 0 };
 // per operation counts 1, 2, 3... in program order. A dialect that
 // writes an O-word reads it at onOpen.
 var programNumber = 1;
+// The document's program identity (#258): \`number\` is programNumber
+// again; \`numbered\` is true only when the document states a number
+// (a dialect whose default program writes none keeps writing none);
+// \`comment\` is the document's program comment, "" when it states none.
+var program = { number: 1, numbered: false, comment: "" };
 var postOptions = {};
 var machine = { name: "", rapidRate: 0, feedRateMax: 0, spindleMax: 0, coolants: [], rotaries: [], rtcp: false, units: "mm", spindleRanges: [], rigidTapping: true, safeRetractZ: null, model: "" };
 function _flushLine() { if (LINE !== "") { OUT.push(LINE); LINE = ""; } }
@@ -155,6 +160,23 @@ pub const HOOKS: &[&str] = &[
     "onClose",
 ];
 
+/// The program's identity a post writes (#258): its number (the
+/// O-word of a numbering dialect, 1 when the document states none),
+/// whether the document stated that number, and the document's
+/// program comment ("" for none - the dialect writes its own default).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProgramId {
+    pub number: u32,
+    pub numbered: bool,
+    pub comment: String,
+}
+
+impl Default for ProgramId {
+    fn default() -> Self {
+        Self { number: 1, numbered: false, comment: String::new() }
+    }
+}
+
 /// One loaded post script.
 pub struct Script {
     ctx: Context,
@@ -188,6 +210,15 @@ pub struct Script {
     /// Without it a thread that needs the spindle reversed is refused
     /// by name - the script would cut it the other hand under M03.
     thread_hands: bool,
+    /// The `millSpindleReverse = true` manifest flag (#988): the script
+    /// reads `PARAM MillSpindle reverse` and starts the spindle M04 for
+    /// a left-hand-cut mill. Without it such a section is refused.
+    mill_spindle_reverse: bool,
+    /// The `wireEdm = true` manifest flag (#533): the script voices a
+    /// wire EDM section (`PARAM EdmCondition`). Without it such a
+    /// section is refused by name - a cutting post would write a wire
+    /// path with no condition, threading or wire words.
+    wire_edm: bool,
 }
 
 impl Script {
@@ -195,7 +226,11 @@ impl Script {
     /// refusal, never a half-defined script.
     pub fn load(cps: &str) -> Result<Self, PostError> {
         let mut ctx = Context::default();
-        let src = format!("{PRELUDE}\n{cps}");
+        let src = format!(
+            "{PRELUDE}\n{}\n{}\n{cps}",
+            super::rotary_cap::ROTARY_CAP,
+            super::explain::EXPLAIN_JS
+        );
         if let Err(e) = ctx.eval(Source::from_bytes(src.as_bytes())) {
             return Err(PostError::Script(format!("{e}")));
         }
@@ -209,6 +244,8 @@ impl Script {
             axis_inversion: false,
             probe_axis_inversion: false,
             thread_hands: false,
+            mill_spindle_reverse: false,
+            wire_edm: false,
         };
         let mut present = Vec::new();
         for h in HOOKS {
@@ -235,6 +272,10 @@ impl Script {
             .eval("typeof floatingTapping !== \"undefined\" && floatingTapping === true")
             .map(|v| is_true(&v))
             .unwrap_or(false);
+        s.mill_spindle_reverse = s
+            .eval("typeof millSpindleReverse !== \"undefined\" && millSpindleReverse === true")
+            .map(|v| is_true(&v))
+            .unwrap_or(false);
         s.thread_hands = s
             .eval("typeof threadHands !== \"undefined\" && threadHands === true")
             .map(|v| is_true(&v))
@@ -247,11 +288,21 @@ impl Script {
             .eval("typeof probeAxisInversion !== \"undefined\" && probeAxisInversion === true")
             .map(|v| is_true(&v))
             .unwrap_or(false);
+        s.wire_edm = s
+            .eval("typeof wireEdm !== \"undefined\" && wireEdm === true")
+            .map(|v| is_true(&v))
+            .unwrap_or(false);
         Ok(s)
     }
 
     fn has(&self, name: &str) -> bool {
         self.present.iter().any(|(h, yes)| *h == name && *yes)
+    }
+
+    /// Evaluate a manifest read (#931, `work_offset`) in the script's
+    /// context.
+    pub(super) fn eval_src(&mut self, src: &str) -> Result<JsValue, PostError> {
+        self.eval(src)
     }
 
     fn eval(&mut self, src: &str) -> Result<JsValue, PostError> {
@@ -266,9 +317,11 @@ impl Script {
         Ok(())
     }
 
-    /// Publish the program's number (#111) before `onOpen` reads it.
-    pub fn set_program_number(&mut self, n: u32) -> Result<(), PostError> {
-        self.eval(&format!("programNumber = {n};"))?;
+    /// Publish the program's identity (#258) before `onOpen` reads it:
+    /// the `program` global and `programNumber` beside it.
+    pub fn set_program(&mut self, id: &ProgramId) -> Result<(), PostError> {
+        let obj = serde_json::json!({ "number": id.number, "numbered": id.numbered, "comment": id.comment });
+        self.eval(&format!("program = {obj}; programNumber = {};", id.number))?;
         Ok(())
     }
 
@@ -277,6 +330,45 @@ impl Script {
     pub fn string_global(&mut self, name: &str) -> Result<Option<String>, PostError> {
         let v = self.eval(&format!("(typeof {name} === \"string\") ? {name} : null"))?;
         Ok(v.as_string().map(|s| s.to_std_string_escaped()))
+    }
+
+    /// A top-level array of strings (or one string) the script states,
+    /// e.g. the manifest's `serves`; `None` when it states none. Any
+    /// non-string entry makes it `None` too (read as not stated is
+    /// wrong - it is returned as an error by the caller's word check),
+    /// so entries are stringified and the caller validates the words.
+    pub fn words_global(&mut self, name: &str) -> Result<Option<Vec<String>>, PostError> {
+        let v = self.eval(&format!(
+            "(typeof {name} === \"undefined\") ? null : (Array.isArray({name}) ? JSON.stringify({name}.map(function (w) {{ return String(w); }})) : \
+             ((typeof {name} === \"string\") ? JSON.stringify([{name}]) : null))"
+        ))?;
+        let Some(text) = v.as_string().map(|s| s.to_std_string_escaped()) else {
+            return Ok(None);
+        };
+        serde_json::from_str::<Vec<String>>(&text)
+            .map(Some)
+            .map_err(|e| PostError::Script(format!("{name}: {e}")))
+    }
+
+    /// A top-level number the script states (the manifest's
+    /// `capabilities` mask), or `None` when it states none.
+    pub fn number_global(&mut self, name: &str) -> Result<Option<f64>, PostError> {
+        let v = self.eval(&format!("(typeof {name} === \"number\") ? {name} : null"))?;
+        Ok(v.as_number())
+    }
+
+    /// Arm `explain()` (#1386) with the manifest's comment form; until
+    /// armed the helper says nothing.
+    pub fn arm_explain(&mut self, f: super::explain::Form) -> Result<(), PostError> {
+        self.eval(&format!("_explainForm = {{ semi: {}, max: {} }};", f.semi, f.max))?;
+        Ok(())
+    }
+
+    /// Why the script's own word meanings (#1399) cannot be used, or
+    /// `None` when they can (or it states none).
+    pub fn explain_refusal(&mut self) -> Result<Option<String>, PostError> {
+        let v = self.eval("_explainCheck()")?;
+        Ok(v.as_string().map(|s| s.to_std_string_escaped()).filter(|s| !s.is_empty()))
     }
 
     /// Publish the document's post options once (issue #34).
@@ -332,6 +424,17 @@ impl Script {
     /// `PARAM SpindleDirection` and voices a thread's hand (#629).
     pub fn voices_thread_hands(&self) -> bool {
         self.thread_hands
+    }
+
+    /// True when the script declares `millSpindleReverse = true` (#988).
+    pub fn voices_mill_spindle_reverse(&self) -> bool {
+        self.mill_spindle_reverse
+    }
+
+    /// True when the script declares `wireEdm = true` - it voices a
+    /// wire EDM section (#533).
+    pub fn voices_wire_edm(&self) -> bool {
+        self.wire_edm
     }
 
     /// True when the script declares `liveTooling = true` - it voices

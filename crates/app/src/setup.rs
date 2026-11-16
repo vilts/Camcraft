@@ -51,7 +51,7 @@ use flecs_ecs::core::{EntityViewGet, WorldGet}; // not in prelude (0.2.2)
 use flecs_ecs::prelude::World;
 
 use crate::model;
-use crate::schema::{SetupDef, STOCK_NAME, WCS_SLOTS};
+use crate::schema::{SetupDef, STOCK_NAME, LEGACY_WCS_NAMES};
 
 /// Every setup entity, name-sorted: the program's setup order.
 #[must_use]
@@ -86,22 +86,25 @@ pub fn def_of(world: &World, name: &str) -> Option<SetupDef> {
         .and_then(|e| e.entity_view(world).try_get::<&SetupDef>(|d| d.clone()))
 }
 
-/// The work-offset word a setup is LABELLED with (#196, #342), as a
-/// [`WCS_SLOTS`] index; `None` when it names none (the `G54` default,
-/// [`wcs_slot`]) or the
-/// name wears no setup. An out-of-range stored index reads as no pick -
-/// `SetSetupWorkOffset` and the loader refuse one, so it cannot arise.
+/// The work offset a setup is LABELLED with (#196, #342, #931), as its
+/// 0-based pick; `None` when it names none (offset 1, [`wcs_slot`]) or
+/// the name wears no setup. Returned as stored: a pick the setup's post
+/// cannot express is NEVER read as no pick (offset 1) - the post-time
+/// gate and the command refuse it by setup name
+/// ([`crate::setup_offsets`]).
 #[must_use]
 pub fn work_offset(world: &World, name: &str) -> Option<usize> {
-    def_of(world, name)?.work_offset.filter(|i| *i < WCS_SLOTS.len())
+    def_of(world, name)?.work_offset
 }
 
-/// THE work-offset word law (#196, #329, #342): the `WCS_SLOTS` index of
-/// the word every operation of the declared setup context posts - the
-/// setup's label, else `G54` (slot 0). It is only the word: the origin
-/// is the setup's one WCS ([`wcs_entity`]) whatever the word, so one
-/// setup is one program zero by construction. A document without setups
-/// (or a context naming no setup) has no label and reads `G54`.
+/// THE work-offset law (#196, #329, #342, #931): the 0-based pick every
+/// operation of the declared setup context posts at - the setup's label,
+/// else 0 (offset 1). The stream carries `pick + 1`
+/// ([`crate::setup_offsets::index`]); the post writes its word. It is
+/// only the offset: the origin is the setup's one WCS ([`wcs_entity`])
+/// whatever the offset, so one setup is one program zero by
+/// construction. A document without setups (or a context naming no
+/// setup) has no label and reads offset 1.
 #[must_use]
 pub fn wcs_slot(world: &World, setup: Option<&str>) -> usize {
     effective(world, setup)
@@ -215,17 +218,19 @@ pub fn wcs_entity_name(world: &World, declared: Option<&str>) -> String {
             .map(|d| d.wcs)
             .filter(|w| !w.is_empty())
             .unwrap_or_else(|| format!("{s}/{WCS_SUFFIX}")),
-        None => WCS_SLOTS[0].to_string(),
+        None => LEGACY_WCS_NAMES[0].to_string(),
     }
 }
 
-/// The WCS word a setup context posts, for display: `"WCS (G55)"` where
-/// the word matters (#342) - the tree says plain "WCS".
+/// The WCS offset a setup context posts, for display: `"WCS (G55)"`
+/// where the offset matters (#342) - the tree says plain "WCS". The
+/// name is the setup's post's (#931, [`wcs_name`]); display only.
 #[must_use]
 pub fn wcs_label(world: &World, declared: Option<&str>) -> String {
-    let word = WCS_SLOTS.get(wcs_slot(world, declared)).copied().unwrap_or("G54");
-    format!("WCS ({word})")
+    format!("WCS ({})", wcs_name(world, declared))
 }
+
+pub use crate::setup_offsets::{offset_name, wcs_name, work_offset_names};
 
 /// The stock ENTITY for a declared setup, when one exists.
 #[must_use]
@@ -267,7 +272,7 @@ pub fn is_furniture_shape(name: &str) -> bool {
         || name.ends_with(&format!("/{WCS_SUFFIX}"))
         || name
             .rsplit_once('/')
-            .is_some_and(|(_, slot)| WCS_SLOTS.contains(&slot))
+            .is_some_and(|(_, slot)| LEGACY_WCS_NAMES.contains(&slot))
 }
 
 /// The next free `SetupN` name (smallest N, up to a sane 99,999, with no

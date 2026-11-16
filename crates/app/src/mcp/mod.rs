@@ -17,25 +17,48 @@
 
 mod align_tools;
 mod area;
+mod body_tools;
 mod bridge;
+mod coolant_tools;
 // #93 slice 2: a milling tool's drawn cutter outline.
 mod cutter_tools;
+mod cutting_tools;
 mod edit;
 mod features;
 mod fixture_tools;
+mod holders;
 mod job;
 mod listen;
 mod live;
 mod model_tools;
+// #45: an operation's display name and its place in its setup.
+mod machine_tools;
+mod order_tools;
 mod pick;
+// #979: the box pick, the viewport's Ctrl+drag box select headless.
+mod box_pick;
 mod pockets;
+// #1534: document and per-setup post options (`SetPostOptions` / `SetSetupPostOptions`).
+mod post_options_tools;
 mod render;
 mod setup_tools;
+mod tool_delete;
+mod tool_edit;
 mod tools;
+mod wcs_circle;
 mod vise_tools;
 mod accessory_tools;
 mod plate_tools;
 mod modvise_tools;
+// #547: a sinker electrode generated from a cavity's picked faces.
+mod sinker_tools;
+mod units_tools;
+// #1538: Fit to Models over the parts, never the fixtures.
+mod stock_fit_tools;
+mod tool_number_tools;
+mod wcs_tools;
+mod rotary_tools;
+mod workholding_tools;
 
 // #183: the same tool table served live from inside the GUI, over a
 // loopback socket, against the app's own document and History.

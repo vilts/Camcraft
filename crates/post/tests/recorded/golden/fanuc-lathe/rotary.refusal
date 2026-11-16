@@ -1,0 +1,2 @@
+; fanuc-lathe.cps refused rotary: 1 warning(s), the program is never released
+warning: posed move (A/B/C words) on a 2-axis lathe - no rotary to command

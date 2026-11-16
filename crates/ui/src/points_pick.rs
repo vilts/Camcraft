@@ -26,7 +26,10 @@ pub struct PointsPick {
 /// the other alignment drafts stop (one draft collects at a time).
 pub fn arm(state: &mut State, setup: &str) {
     state.plane_pick = None;
+    state.cylinder_pick = None; // #771
+    state.origin_pick = None; // #771
     crate::axis_pick::disarm(state);
+    crate::wcs_pick::disarm(state); // #701: one draft collects at a time
     state.points_pick = Some(PointsPick { setup: setup.to_owned(), picks: Vec::new() });
     state.geo_pick = GeoPick::Vertex;
     state.status = format!("{setup}: pick point 1 of the plane");
@@ -53,18 +56,26 @@ pub fn clear(state: &mut State) {
     }
 }
 
-/// One viewport pick into the draft: a point joins as the next of three;
-/// anything else, or a fourth point, is refused by name and changes
-/// nothing.
+/// One viewport pick into the draft: a point (or, #692, a round edge's
+/// centre) joins as the next of three; anything else, or a fourth point,
+/// is refused by name and changes nothing.
 pub fn take(state: &mut State, pick: GeoSel) {
+    // #692: an edge is a point only as a round edge's centre.
+    let no_centre = match pick.feature {
+        FeatureSel::Chain(_) => camcraft_app::pick::centre_point(&state.world, &pick).err(),
+        _ => None,
+    };
     let Some(d) = state.points_pick.as_mut() else { return };
     let setup = d.setup.clone();
-    let words = format!("{} of '{}'", pick.feature, pick.entity);
+    let words = format!("that pick on '{}'", pick.entity); // #738: no internal id
     state.status = match pick.feature {
-        FeatureSel::Vertex(_) if d.picks.len() >= 3 => {
+        FeatureSel::Chain(_) if no_centre.is_some() => {
+            format!("{setup}: {} - this row takes three points", no_centre.as_deref().unwrap_or_default())
+        }
+        FeatureSel::Vertex(_) | FeatureSel::Chain(_) if d.picks.len() >= 3 => {
             format!("{setup}: three points are picked - Remove last or Clear to re-pick")
         }
-        FeatureSel::Vertex(_) => {
+        FeatureSel::Vertex(_) | FeatureSel::Chain(_) => {
             d.picks.push(pick);
             match d.picks.len() {
                 3 => format!("{setup}: three points picked for the plane"),
@@ -74,6 +85,5 @@ pub fn take(state: &mut State, pick: GeoSel) {
         FeatureSel::Face(_) | FeatureSel::Patch(_) => {
             format!("{setup}: {words} is a face - this row takes three points (the face row lays a face)")
         }
-        FeatureSel::Chain(_) => format!("{setup}: {words} is an edge - this row takes three points"),
     };
 }

@@ -156,7 +156,7 @@ fn build(world: &World, op: &Operation, tool_r: f64, material: &Material, part_s
                 OpenGeom::Ring(r) => r,
                 // The backstop: the page and the Apply door
                 // (`area_pick_issue`) catch this first.
-                OpenGeom::Chain(_) => {
+                OpenGeom::Chain(_) | OpenGeom::Chains(_) => {
                     return Err(GenError::Invalid(
                         "an include / exclude boundary must close - its picks spell an open chain; use it as the open boundary instead".into(),
                     ));
@@ -190,6 +190,8 @@ fn build(world: &World, op: &Operation, tool_r: f64, material: &Material, part_s
         islands,
         extra,
         open,
+        lane: if frame.is_none() { super::open_band::lane(world, op)? } else { None },
+        unit: crate::units::of(world),
     })
 }
 

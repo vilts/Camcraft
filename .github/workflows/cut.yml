@@ -1,0 +1,224 @@
+# Cut (#1413): the release gate tier of a cut, run on a self-hosted Linux
+# runner instead of the maintainer's checkout, then the tag and the release
+# build. Two manual starts per cut (AGENTS.md "A cut goes PR review -> merge
+# to main -> tag"):
+#   stage=gate  before the release PR merges: checks out release/vX.Y.0 and
+#               runs `cargo xtask gate release --no-snapshots`. gate-logs/ is
+#               always uploaded; a green, non-dry run also uploads the tested
+#               commit (cut-tip-vX.Y.0) for the tag stage. It tags nothing.
+#   stage=tag   after the release PR merged: takes the tip of the newest green
+#               gate run for the version, checks that main is the release PR's
+#               merge of exactly that tip with an empty `git diff $tip $m`
+#               (step 4's rule), tags $m and starts release.yml on the tag.
+# dry_run: the gate stage prints its plan (`--dry-run`) and runs nothing; the
+# tag stage runs every check and stops before the tag and the dispatch.
+# Safety: workflow_dispatch only - never push, pull_request or schedule
+# (maintainer, 2026-11-13: self-hosted only; a public repo's fork PR must
+# never run code on the maintainer's machine). Only accounts with write
+# access can dispatch. The gate job keeps no token on disk while the tests
+# run (persist-credentials: false); only the tag job can write.
+# A tag pushed with GITHUB_TOKEN starts no workflow, so the tag job starts
+# release.yml itself with `gh workflow run --ref vX.Y.0` (a workflow_dispatch
+# by GITHUB_TOKEN is allowed): on a tag ref, release.yml's publish and pages
+# jobs run exactly as on a pushed tag. release.yml is unchanged.
+# The UI pixel-snapshot lanes are left out (goldens made on Windows) and stay
+# a local step at the cut, as do the Windows arms of per-OS pinned readings.
+# Provenance: our own release law (AGENTS.md "Commits and Releases"); GitHub's
+# public Actions documentation for the workflow syntax.
+name: Cut
+run-name: cut ${{ inputs.stage }} v${{ inputs.version }}${{ inputs.dry_run && ' (dry run)' || '' }}
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Cut version X.Y.0 (no leading v); the gate checks out release/vX.Y.0'
+        required: true
+        type: string
+      stage:
+        description: 'gate: release gate on release/vX.Y.0 (before the release PR merges). tag: tag the merge and start release.yml (after it merges)'
+        required: true
+        type: choice
+        options: [gate, tag]
+        default: gate
+      dry_run:
+        description: 'Dry run: gate prints its plan only; tag checks everything but makes no tag and starts nothing'
+        required: false
+        type: boolean
+        default: false
+
+env:
+  CARGO_TERM_COLOR: always
+  VERSION: ${{ inputs.version }}
+  DRY_RUN: ${{ inputs.dry_run }}
+
+permissions:
+  contents: read
+
+# One cut at a time; a second start waits, never cancels a running gate.
+concurrency:
+  group: cut
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    if: ${{ inputs.stage == 'gate' }}
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 300
+    permissions:
+      contents: read
+    steps:
+      - name: Version is X.Y.0
+        shell: bash
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.0$ ]]; then
+            echo "::error::version must be X.Y.0 (a minor or major cut), got '$VERSION'"; exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: release/v${{ inputs.version }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: The release branch is ready to gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          ver=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          if [ "$ver" != "$VERSION" ]; then
+            echo "::error::Cargo.toml says $ver, not $VERSION: run the version bump (cargo xtask release --version $VERSION --no-tag --skip-gate) on release/v$VERSION and push it first"; exit 1
+          fi
+          if ! head -n 1 RELEASE_NOTES.md | grep -qF "$VERSION"; then
+            echo "::error::RELEASE_NOTES.md does not start with the $VERSION section"; exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::tag v$VERSION already exists"; exit 1
+          fi
+          echo "tip=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "release/v$VERSION at $(git rev-parse HEAD), version $ver"
+      - name: Release gate tier (no pixel snapshots)
+        shell: bash
+        # The UI suites open windows: under a runner service with no display
+        # they run inside xvfb-run when it is installed (AGENTS.md runner
+        # requirements). sccache comes from the runner's own environment.
+        run: |
+          set -o pipefail
+          args=(xtask gate release --no-snapshots)
+          if [ "$DRY_RUN" = true ]; then args+=(--dry-run); fi
+          wrap=()
+          if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ] && command -v xvfb-run >/dev/null; then
+            wrap=(xvfb-run -a)
+          fi
+          echo "${wrap[*]} cargo ${args[*]}"
+          "${wrap[@]}" cargo "${args[@]}" 2>&1 | tee gate-output.txt
+      - name: Gate summary
+        if: always()
+        shell: bash
+        run: |
+          note=""
+          if [ "$DRY_RUN" = true ]; then note=" (dry run: plan only)"; fi
+          {
+            echo "### Release gate v$VERSION at ${tip:-unknown}$note"
+            echo '```'
+            sed -n '/^== gate summary/,$p' gate-output.txt 2>/dev/null || echo "no gate output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Gate logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-logs-v${{ inputs.version }}-${{ github.run_attempt }}
+          path: |
+            gate-logs/
+            gate-output.txt
+          if-no-files-found: warn
+      - name: Record the tested tip for the tag stage
+        if: ${{ success() && !inputs.dry_run }}
+        shell: bash
+        run: |
+          printf '%s\n' "$tip" > cut-tip.txt
+          {
+            echo "Green. Tested tip: \`$tip\`."
+            echo "Next: open and merge the release PR without pushing again, then start this workflow with stage=tag, version $VERSION."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ success() && !inputs.dry_run }}
+        with:
+          name: cut-tip-v${{ inputs.version }}
+          path: cut-tip.txt
+          if-no-files-found: error
+
+  tag:
+    if: ${{ inputs.stage == 'tag' }}
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 20
+    permissions:
+      contents: write   # push the tag
+      actions: write    # read the gate run's artifact, start release.yml
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Version is X.Y.0
+        shell: bash
+        run: |
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.0$ ]]; then
+            echo "::error::version must be X.Y.0 (a minor or major cut), got '$VERSION'"; exit 1
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - name: Tip of the newest green gate run
+        shell: bash
+        run: |
+          set -euo pipefail
+          run=$(gh run list -R "$REPO" --workflow cut.yml --status success --limit 100 \
+            --json databaseId,displayTitle \
+            --jq "[.[] | select(.displayTitle == \"cut gate v$VERSION\")][0].databaseId // empty")
+          if [ -z "$run" ]; then
+            echo "::error::no green (non-dry) gate run for v$VERSION: start this workflow with stage=gate first"; exit 1
+          fi
+          dir=$(mktemp -d "$RUNNER_TEMP/cut-tip.XXXXXX")
+          gh run download "$run" -R "$REPO" -n "cut-tip-v$VERSION" -D "$dir"
+          tip=$(tr -d '[:space:]' < "$dir/cut-tip.txt")
+          if ! [[ "$tip" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::gate run $run recorded no commit ('$tip')"; exit 1
+          fi
+          echo "tip=$tip" >> "$GITHUB_ENV"
+          echo "gate run $run passed at $tip"
+      - name: Main is the release PR's merge of the tested tip (step 4)
+        shell: bash
+        run: |
+          set -euo pipefail
+          m=$(git rev-parse HEAD)
+          if git ls-remote --exit-code --tags origin "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::tag v$VERSION already exists on origin - a tag is never moved"; exit 1
+          fi
+          second=$(git rev-parse -q --verify "$m^2" || true)
+          if [ "$second" != "$tip" ]; then
+            echo "::error::main ($m) is not the release PR's merge of the gated tip $tip (its second parent is '${second:-none}'): something merged after the release PR, or the branch moved after the gate - start the cut again from a fresh release branch"; exit 1
+          fi
+          if ! git diff --quiet "$tip" "$m"; then
+            echo "::error::git diff $tip $m is not empty: the tagged tree would not be the gated tree"; git diff --stat "$tip" "$m"; exit 1
+          fi
+          ver=$(sed -n '/^\[workspace\.package\]/,/^\[/s/^version = "\(.*\)"$/\1/p' Cargo.toml)
+          if [ "$ver" != "$VERSION" ]; then
+            echo "::error::main's Cargo.toml says $ver, not $VERSION"; exit 1
+          fi
+          echo "m=$m" >> "$GITHUB_ENV"
+          echo "main $m = merge of $tip, empty diff, version $ver"
+      - name: Tag and start release.yml
+        if: ${{ !inputs.dry_run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v$VERSION" -m "CamCraft $VERSION" "$m"
+          git push origin "refs/tags/v$VERSION"
+          gh workflow run release.yml -R "$REPO" --ref "v$VERSION"
+          echo "Tagged v$VERSION at \`$m\` and started release.yml on it (Actions -> Release)." >> "$GITHUB_STEP_SUMMARY"
+      - name: Dry run stops here
+        if: ${{ inputs.dry_run }}
+        shell: bash
+        run: |
+          echo "Dry run: every check passed; would tag v$VERSION at \`$m\` and start release.yml. Nothing was tagged or started." >> "$GITHUB_STEP_SUMMARY"

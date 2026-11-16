@@ -24,8 +24,9 @@ cargo xtask gate quick --dry-run       # print the plan, run nothing
 ```
 
 Logs go to `gate-logs/<tier>-<timestamp>/`. The scripts
-`scripts/gate.ps1` and `scripts/gate.sh` are thin wrappers that forward to
-`cargo xtask gate`.
+`scripts/gate.ps1` (PowerShell) and `scripts/gate.sh` (bash) are thin
+wrappers that forward to `cargo xtask gate`. The `cargo xtask gate` command
+itself is the same on Windows, macOS and Linux.
 
 ## Test the change, not everything
 
@@ -52,5 +53,4 @@ suites from those maps.
 
 Nothing runs on push or pull request: Actions minutes are budgeted. GitHub
 runs only `release.yml`, on a pushed release tag, to build and publish the
-release (and this site). The CI and nightly workflows can be started by
-hand.
+release (and this site).

@@ -7,7 +7,7 @@
 //! the `.mch` layout of `assets/machines/AGENTS.md`.
 //! Provenance: our own tests, specced from the issue's validation list.
 //!
-//! Gate map (M4.4): covers app::machine, app::machine::library, app::machine::validate, app::machine::sheet, app::posting.
+//! Gate map (M4.4): covers app::machine, post::machine, app::machine, post::machine::library, app::machine, post::machine::validate, app::machine, post::machine::sheet, app::posting.
 
 use std::path::PathBuf;
 

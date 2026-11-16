@@ -13,7 +13,9 @@
 //! PCNC 1100 Series I, 31138 Rev B1-4 PCNC 1100 Series II, UM10087 1013A
 //! PCNC 1100 Series 3).
 //! Gate map (M4.4): covers post::machine (spindle ranges, rigid tapping),
-//! app::post (tormach.cps), app::posting (MACHINES registry).
+//! post::post (tormach.cps), app::posting (MACHINES registry).
+
+mod common;
 
 use camcraft_app::machine::{Machine, parse_mch};
 use camcraft_app::post::{engine, machine};
@@ -377,6 +379,9 @@ fn tap_on(name: &str) -> engine::PostOutput {
     let cps = read("assets/posts/tormach.cps");
     let stream =
         read("crates/app/tests/golden/tap_plate.cl").replace("DWELL0 AT1", "DWELL500 F1270000 AT1");
+    // #1357: a real program's tool and spindle - a tap with the spindle
+    // stopped is refused by name too.
+    let stream = common::legacy_program::as_program("tap_plate", &stream);
     engine::run(&cps, &mirrored(name), &stream).unwrap_or_else(|e| panic!("{name}: {e}"))
 }
 

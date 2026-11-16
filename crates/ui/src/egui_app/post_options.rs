@@ -4,12 +4,15 @@
 //! units (#596), each shown under the post picker while its post is the
 //! document's, and per-operation smoothing (#616) for every mill post. A
 //! pick queues the
-//! undoable `SetPostOptions`; the widget only reads the singleton.
+//! undoable `SetPostOptions`; the widget only reads the singleton. The
+//! document's unit (#902) - display and posted program - is one row
+//! shown on both the Stock page and the Post section, queuing `SetUnits`.
 //! Provenance: our own panel; the choice's meaning is the post's
 //! (assets/posts/fanuc-lathe.cps, assets/posts/tormach-lathe.cps).
 
 use camcraft_app::posting;
 use camcraft_app::schema::{EndUnits, PostOptions, PostRef, ThreadingOutput};
+use camcraft_app::units::Unit;
 use egui::Ui;
 
 use crate::state::{CommandKind, State};
@@ -107,4 +110,48 @@ pub(super) fn end_units_picker(ui: &mut Ui, state: &mut State) {
     if let Some(u) = pick {
         state.pending.push_back(CommandKind::SetPostOptions(PostOptions { end_units: u, ..now }));
     }
+}
+
+/// #1532: what the program does where it changes setup - pause (the
+/// default), an optional stop, run straight on, or one file per setup.
+/// Queues the same `SetPostOptions` command as the pickers above.
+pub(super) fn between_setups_picker(ui: &mut Ui, state: &mut State) {
+    let now = posting::post_options(&state.world);
+    let mut pick: Option<camcraft_app::schema::BetweenSetups> = None;
+    ui.horizontal(|ui| {
+        ui.label("Between setups");
+        egui::ComboBox::from_id_salt("post_between_setups")
+            .selected_text(now.between_setups.label())
+            .show_ui(ui, |ui| {
+                for b in camcraft_app::schema::BetweenSetups::ALL {
+                    if ui.selectable_label(now.between_setups == b, b.label()).clicked() && now.between_setups != b {
+                        pick = Some(b);
+                    }
+                }
+            })
+            .response
+            .on_hover_text("where the program moves on to the next setup the part has to be re-clamped: pause there with a comment naming the next setup, stop only with the optional-stop switch on, run straight on (several vises on one table), or write each setup as its own program");
+    });
+    if let Some(b) = pick {
+        state.pending.push_back(CommandKind::SetPostOptions(PostOptions { between_setups: b, ..now }));
+    }
+}
+
+/// The document's unit (#902), straight off the world singleton: one
+/// setting for every number shown and for the program every post
+/// writes (G21 / G20, Heidenhain G71 / G70, 840D G710 / G700). A click
+/// queues the undoable `SetUnits`; there is no mirror to keep in step.
+pub(super) fn units_row(ui: &mut Ui, state: &mut State, label: &str) {
+    let u = state.units();
+    ui.horizontal(|ui| {
+        ui.label(label);
+        for cand in [Unit::Millimeters, Unit::Inches] {
+            let r = ui.radio(u == cand, cand.label()).on_hover_text(
+                "the document's unit: every number shown, and the unit every post writes the program in (G21 mm / G20 inch, or the control's own word) - the machine file does not choose it",
+            );
+            if r.clicked() && u != cand {
+                state.pending.push_back(CommandKind::SetUnits(cand));
+            }
+        }
+    });
 }

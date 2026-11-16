@@ -43,7 +43,8 @@ interface PostOptions {
   /** The .nc (or .cnc) file to write. Required. */
   to: string;
   /** A built-in post name - "Fanuc", "Haas", "Siemens 840D",
-   *  "Heidenhain", "Mazak", "Tormach PathPilot" - or the path of a .cps file.
+   *  "Heidenhain", "Mazak", "Tormach PathPilot", "grblHAL", "TinyG" - or the
+   *  path of a .cps file.
    *  Omitted means the document's own post. */
   cps?: string;
   /** Also return the program text in the result. */
@@ -92,9 +93,9 @@ interface JobReport {
 interface CamApi {
   load(path: string): DocumentInfo;  // arity 1
   save(path?: string): { path: string };  // variadic
-  import(path: string, name?: string): { model: string; facets: number };  // variadic
+  import(path: string, name?: string | null, facetBudget?: number): { model: string; facets: number; facet_budget?: number; notes?: string[] };  // variadic
   exportTools(path: string): { path: string; tools: number };  // arity 1
-  importTools(path: string): { path: string; added: string[]; renamed: { from: string; to: string }[]; skipped: string[]; summary: string };  // arity 1
+  importTools(path: string, mode?: "add" | "update" | "replace", holders?: boolean): { path: string; mode: string; added: string[]; renamed: { from: string; to: string }[]; skipped: string[]; updated: string[]; replaced: string[]; removed: string[]; holders: number; holders_left_out: number; summary: string };  // variadic
   operations(): OperationInfo[];  // arity 0
   generate(...names: string[]): OperationInfo[];  // variadic
   verify(...names: string[]): VerifyReport;  // variadic

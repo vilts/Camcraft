@@ -22,7 +22,7 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
-use camcraft_app::stock_sim::{preview, Preview, PreviewCamera, DEV_TOL};
+use camcraft_app::stock_sim::{preview, Preview, PreviewCamera};
 use camcraft_app::stock_view::FieldView;
 
 use super::eye::Key;
@@ -166,7 +166,7 @@ fn run(shared: &Shared) {
         let frame = match job.fv.stock.field() {
             Some(stock) => {
                 let target = job.fv.target.as_ref().and_then(|t| t.field());
-                preview(stock, target, &job.cam, job.w, job.h, DEV_TOL)
+                preview(stock, target, &job.cam, job.w, job.h, job.fv.tol)
                     .map_err(|e| format!("the CPU march refused the frame: {e}"))
             }
             None => Err("the field view holds no field to march".into()),

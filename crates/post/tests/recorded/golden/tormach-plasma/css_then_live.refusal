@@ -1,0 +1,5 @@
+; tormach-plasma.cps refused css_then_live: 4 warning(s), the program is never released
+warning: operation Cross mill: is C-axis live-tool work (the spindle turns as C under a radial live tool), but this post script does not declare liveTooling - use a lathe post that voices the C axis
+warning: operation Face CSS: states 1200 rpm - a plasma torch turns no spindle (PathPilot plasma takes no S, M3, M4 or M5)
+warning: the Tormach 1300PL plasma post writes torch words (M200, G15, G16, M205) only a plasma table reads - TESTBENCH MILL-TURN LIVE is not declared a plasma machine
+warning: operation Cross mill: states 3000 rpm - a plasma torch turns no spindle (PathPilot plasma takes no S, M3, M4 or M5)

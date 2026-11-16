@@ -10,7 +10,7 @@ use std::f64::consts::TAU;
 
 use crate::geo2d::Point2;
 
-use super::arcs::{Seg, chord_dev, fit_arcs, lead_in, lead_out, walk_tangent};
+use super::arcs::{Seg, chord_dev, fit_arcs_sided, lead_in, lead_out, walk_tangent};
 use super::contour::{ContourParams, Lead, air_side};
 use super::fillet::Legal;
 use super::ring::{Ring, dist};
@@ -184,7 +184,7 @@ pub(super) fn reseat(
     let walked = |v: Vec<Point2>| {
         let ring = Ring::new(v.clone());
         let poly = ring.arc_between(0.0, ring.len);
-        let walk = fit_arcs(&poly, p.tolerance);
+        let walk = fit_arcs_sided(&poly, p.tolerance, legal.air_left);
         (v, poly, walk)
     };
     let n = pts.len();

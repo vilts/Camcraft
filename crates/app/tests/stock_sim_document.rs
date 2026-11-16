@@ -12,7 +12,7 @@
 //! that is clean, 20 an undercut (gouge), 16 a standing layer (rest),
 //! each 2 mm exactly, located.
 //!
-//! Gate map (M4.4): covers app::commands, app::geometry, app::machining2d, app::model, app::operation, app::posting, app::schema, app::stock, app::stock_sim, app::tools, app::world.
+//! Gate map (M4.4): covers app::commands, app::geometry, motion::machining2d, app::model, app::operation, app::posting, app::schema, geometry::geometry::stock, app::stock_sim, sim::stock_sim, tools::tools, app::world.
 
 use flecs_ecs::prelude::World;
 
@@ -77,7 +77,13 @@ fn faced_doc(at: Point3, model_top: f64) -> (World, History) {
     history.execute(&world, GenerateOperation::new(&world, "Face1").expect("generate face"));
     let e = model::find_by_name(&world, "Face1").expect("op");
     let cache = model::toolpath_of(&world, &e).expect("cache");
-    assert!(cache.warnings.is_empty(), "fixture must generate silent: {:?}", cache.warnings);
+    if model_top <= 18.0 {
+        assert!(cache.warnings.is_empty(), "fixture must generate silent: {:?}", cache.warnings);
+    } else {
+        // #1607: a stock-source face below the part's top is the op's own
+        // gouge too; the sim's verdict is what these tests read.
+        assert!(cache.warnings.iter().any(|w| w.blocks_post()), "the undercut is convicted on the op: {:?}", cache.warnings);
+    }
     (world, history)
 }
 

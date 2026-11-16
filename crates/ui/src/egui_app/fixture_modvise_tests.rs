@@ -3,8 +3,11 @@
 //! the way its jaw faces, soft jaws); "Place pair" queues one
 //! `PlaceModVisePair` that lands both jaw blocks on the plate (one undo
 //! takes both), and each block's row says which side it is and how far
-//! it slid; a refusal is named in the status. Driven through the real
-//! page code in a kittest harness - no pixels (the snapshot lane is release).
+//! it slid; a refusal is named in the status. #832: a block's row edits
+//! its figures ("Edit jaw block…", "Set figures" - one `SetModJaw`) and
+//! the adjustable block's row re-fits it to a changed stock ("Re-fit to
+//! stock" - one `RefitModVise`). Driven through the real page code in a
+//! kittest harness - no pixels (the snapshot lane is release).
 //! Provenance: our own tests over our own shell.
 
 use egui::Vec2;
@@ -115,4 +118,86 @@ fn the_placed_status_states_the_slide_in_document_units() {
     let st = h.state();
     assert!(st.status.contains("fixed at C3, adjustable at I5"), "{}", st.status);
     assert!(st.status.ends_with(" in to the stock") && !st.status.contains("mm"), "an inch document reads inches: {}", st.status);
+}
+
+/// The pair placed by the page (fixed at C3, adjustable at I5).
+fn placed() -> Harness<'static, State> {
+    let mut h = page(plated(true));
+    h.run();
+    h.get_by_label("Add mod vise pair…").click();
+    h.run();
+    h.get_by_label("1 in grid 3/8-16").click();
+    h.run();
+    h.get_by_label("Place pair").click();
+    h.run();
+    h.run();
+    assert!(h.state().status.contains("fixed at C3, adjustable at I5"), "{}", h.state().status);
+    h
+}
+
+fn jaw(st: &State, name: &str) -> camcraft_app::modvise::JawParams {
+    model::find_by_name(&st.world, name).and_then(|e| fixture::def_of(&st.world, &e)).and_then(|d| d.mod_jaw).expect("a jaw block")
+}
+
+#[test]
+fn a_jaw_block_row_edits_its_figures_in_one_undoable_step() {
+    let mut h = placed();
+    let headers = h.query_all_by_label("Edit jaw block…").count();
+    assert_eq!(headers, 2, "each block's row offers the edit");
+    for k in 0..2 {
+        h.query_all_by_label("Edit jaw block…").nth(k).expect("header").click();
+        h.run();
+    }
+    for label in ["Body height", "Jaw height", "Jaw thickness", "Face offset", "Slide", "Soft jaw", "Set figures"] {
+        assert!(h.query_all_by_label(label).next().is_some(), "the editor shows {label}");
+    }
+    assert_eq!(h.query_all_by_label("Slide").count(), 1, "only the adjustable block slides");
+    for n in names(h.state()) {
+        let cur = jaw(h.state(), &n);
+        h.state_mut().mod_jaw_draft(&n, &cur).jaw_height = 20.0;
+    }
+    h.query_all_by_label("Set figures").next().expect("button").click();
+    h.run();
+    h.run();
+    let st = h.state();
+    let set: Vec<String> = names(st).into_iter().filter(|n| (jaw(st, n).jaw_height - 20.0).abs() < 1e-12).collect();
+    assert_eq!(set.len(), 1, "one block set: {}", st.status);
+    assert!(st.status.contains(&format!("{}: jaw block figures set", set[0])), "{}", st.status);
+    let st = h.state_mut();
+    assert!(st.history.undo(&st.world));
+    assert!((jaw(st, &set[0]).jaw_height - 1.25 * 25.4).abs() < 1e-12, "one undo puts the figures back");
+}
+
+#[test]
+fn the_adjustable_row_re_fits_the_block_to_a_changed_stock() {
+    let mut h = placed();
+    assert_eq!(h.query_all_by_label("Re-fit to stock").count(), 1, "only the adjustable block re-fits");
+    // A 40 mm deep stock, its near side kept on the fixed jaw (y -30).
+    let st = h.state_mut();
+    let cmd = SetStock::new(&st.world, StockShape::Box { dx: 60.0, dy: 40.0, dz: 20.0 }, Location { pos: camcraft_app::geometry::Point3::new(0.0, -10.0, 0.0), ..Location::default() }).expect("stock");
+    st.history.execute(&st.world, cmd);
+    h.get_by_label("Re-fit to stock").click();
+    h.run();
+    h.run();
+    let st = h.state();
+    assert!(st.status.contains("mod vise re-fitted: Mod vise adjustable 1 in grid 3/8-16 at H5"), "{}", st.status);
+    assert!(st.status.ends_with(" mm to the stock"), "{}", st.status);
+    let st = h.state_mut();
+    assert!(st.history.undo(&st.world));
+    let at = model::find_by_name(&st.world, "Mod vise adjustable 1 in grid 3/8-16").and_then(|e| fixture::def_of(&st.world, &e)).and_then(|d| d.plate.mount).map(|m| m.at);
+    assert_eq!(at, Some(camcraft_app::plate::MountAt::Hole("I5".into())), "one undo puts it back");
+}
+
+#[test]
+fn a_refused_refit_is_named_in_the_status() {
+    let mut h = placed();
+    // The stock pushed into the fixed jaw.
+    let st = h.state_mut();
+    let cmd = SetStock::new(&st.world, StockShape::Box { dx: 60.0, dy: 60.0, dz: 20.0 }, Location { pos: camcraft_app::geometry::Point3::new(0.0, -5.0, 0.0), ..Location::default() }).expect("stock");
+    st.history.execute(&st.world, cmd);
+    h.get_by_label("Re-fit to stock").click();
+    h.run();
+    h.run();
+    let s = &h.state().status;
+    assert!(s.contains("mod vise not re-fitted") && s.contains("into the fixed jaw block at C3"), "{s}");
 }

@@ -11,7 +11,7 @@
 //! Provenance: our own fixtures (a faced block) over plain re-clamp
 //! practice; no vendor material consulted.
 //!
-//! Gate map (#317): covers app::stock_sim (simulate_document, carry,
+//! Gate map (#317): covers app::stock_sim, sim::stock_sim (simulate_document, carry,
 //! incoming_body), app::setup_relative (transform_between),
 //! app::setup_align, app::commands (AlignPartToSetup, SetSetupRelative,
 //! CreateSetup, SetSetupMachine), app::setup_mount (machine_of).

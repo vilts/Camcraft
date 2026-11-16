@@ -90,7 +90,10 @@ fn the_thread_path_carries_its_cycle_record() {
     assert!((t.major_diameter - 2.0 * MAJOR).abs() < 1e-9 && (t.minor_diameter - 2.0 * (MAJOR - DEPTH)).abs() < 1e-9);
     assert!((t.lead - 2.0).abs() < 1e-12 && (t.height - DEPTH).abs() < 1e-9);
     assert!((t.first_depth - 0.4).abs() < 1e-9 && (t.min_depth - 0.4).abs() < 1e-9);
-    assert_eq!((t.finish_allowance, t.infeed_angle, t.spring_passes, t.pull_out), (0.0, 0.0, 0, 0.0));
+    // #417: the finishing pass is the root pass, 0.4 below the 0.8 rung
+    // before it - the depth a control's cycle finishes with.
+    assert!((t.finish_allowance - 0.4).abs() < 1e-9, "{t:?}");
+    assert_eq!((t.infeed_angle, t.spring_passes, t.pull_out, t.alternating), (0.0, 0, 0.0, false));
     // The span is every pass: the moves before it and after it are the
     // approach and the out-rapid, and every arc lies inside it.
     assert!(path.moves[..t.first].iter().all(|m| m.kind == MoveKind::Rapid));

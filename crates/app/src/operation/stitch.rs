@@ -61,7 +61,13 @@ pub(super) type Rings = Vec<(String, Vec<Point2>, usize)>;
 type Stitched = (Rings, HashMap<usize, usize>);
 
 /// Every distinct picked open run, in the walk's frame.
-fn gather_runs(world: &World, items: &[GeoSel], frame: Option<&crate::cl::TiltedFrame>) -> Vec<Run> {
+pub(super) fn gather_runs(
+    world: &World,
+    setup: Option<&str>,
+    items: &[GeoSel],
+    frame: Option<&crate::cl::TiltedFrame>,
+) -> Vec<Run> {
+    let opframe = OpFrame::new(setup.map(str::to_owned), None);
     let mut runs: Vec<Run> = Vec::new();
     for (i, g) in items.iter().enumerate() {
         let FeatureSel::Chain(cid) = g.feature else {
@@ -83,7 +89,7 @@ fn gather_runs(world: &World, items: &[GeoSel], frame: Option<&crate::cl::Tilted
         if c.closed {
             continue;
         }
-        let loc = model::transform_of(world, &entity).unwrap_or_default();
+        let loc = opframe.pose_in_setup(world, &entity).unwrap_or_default();
         let local: Vec<Point3> = feature::chain_points(&features, &c)
             .iter()
             .map(|p| plane_local(transform_point(Point3::new(p[0], p[1], p[2]), loc.pos, loc.rot), frame))
@@ -138,10 +144,11 @@ pub(super) fn run_used(r: &Run, consumed: &HashMap<usize, usize>) -> bool {
 /// them.
 pub(super) fn stitch_open_runs(
     world: &World,
+    setup: Option<&str>,
     items: &[GeoSel],
     frame: Option<&crate::cl::TiltedFrame>,
 ) -> Result<Stitched, GenError> {
-    let runs = gather_runs(world, items, frame);
+    let runs = gather_runs(world, setup, items, frame);
     // Each committed ring carries the count of runs that spelled it, so
     // `selection_notes` can say what the stitching did.
     let mut rings: Rings = Vec::new();
@@ -154,7 +161,7 @@ pub(super) fn stitch_open_runs(
             continue;
         };
         let pts = compose_ring(&runs, &seq, rings.len(), &mut consumed);
-        rings.push((format!("the stitched rim of '{}'", runs[s].entity), pts, seq.len()));
+        rings.push((format!("{STITCHED_RIM} '{}'", runs[s].entity), pts, seq.len()));
     }
     stitch_across(&runs, &mut rings, &mut consumed)?;
     Ok((rings, consumed))

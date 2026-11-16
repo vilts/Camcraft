@@ -56,6 +56,10 @@ pub struct FieldView {
     /// Why `target` is empty, said so the status line can repeat it.
     pub target_note: Option<String>,
     pub cell: f64,
+    /// The verdict tolerance the eye's colours are gated at (#1056): the
+    /// program sim's own (`model_fidelity::program_tol`), so a reduced-
+    /// fidelity model's picture is tightened as its verdict is.
+    pub tol: f64,
     /// The GPU lattice already packed off the UI thread (playback):
     /// `None` and the eye packs `stock` itself.
     pub packed: Option<Packed>,
@@ -123,7 +127,7 @@ impl PackedBase {
         // playback cut layers only lift cells over it). A refusal keeps
         // the packed lattice as it was - a picture, never a verdict.
         if let Err(e) = lat.renormalize() {
-            eprintln!("camcraft: stock view kept the un-normalized band: {e}");
+            tracing::warn!("stock view kept the un-normalized band: {e}");
         }
         let target = target.and_then(Stock::field).and_then(pack_target);
         Some((PackedBase { meta: lat.meta, mesh: lat.mesh, target }, lat.cut))
@@ -156,8 +160,8 @@ pub fn field_view_with(world: &flecs_ecs::prelude::World, texels: f64) -> Result
         };
         cut.map_err(|e| format!("the field view could not cut the program: {e}"))?;
     }
-    let (target, target_note) = display_target(world, cell);
-    Ok(FieldView { stock, target: target.map(Arc::new), target_note, cell, packed: None })
+    let (target, target_note, tol) = judged_target(world, cell);
+    Ok(FieldView { stock, target: target.map(Arc::new), target_note, cell, tol, packed: None })
 }
 
 /// The uncut display stock, the plan it will be cut by, and its cell:
@@ -180,6 +184,10 @@ pub(crate) fn display_inputs(
         return Err(format!("the field view needs a positive texel budget, not {texels}"));
     }
     let planned = plan_program(world)?;
+    // #541: the field eye has no box atom - said, never cut as a disc.
+    if let Some(p) = planned.iter().find(|p| p.electrode.is_some()) {
+        return Err(format!("{}: {}", p.name, crate::stock_sim::ELECTRODE_FIELD_REFUSAL));
+    }
     let first = planned.first().and_then(|p| p.setup.clone());
     let eff = crate::setup::effective(world, first.as_deref());
     if planned.iter().any(|p| crate::setup::effective(world, p.setup.as_deref()) != eff) {
@@ -209,6 +217,20 @@ pub(crate) fn display_target(world: &flecs_ecs::prelude::World, cell: f64) -> (O
     match part_facets(world) {
         Ok(part) => build_target(&part, cell),
         Err(why) => (None, Some(why)),
+    }
+}
+
+/// [`display_target`] at the tolerance the program sim judges at
+/// (#1056). When the gate refuses to judge the program on a model too
+/// coarse for it, the picture is unjudged too, and says why - never
+/// coloured off the mesh the refusal names.
+pub(crate) fn judged_target(world: &flecs_ecs::prelude::World, cell: f64) -> (Option<Stock>, Option<String>, f64) {
+    match crate::model_fidelity::program_tol(world) {
+        Ok(tol) => {
+            let (target, note) = display_target(world, cell);
+            (target, note, tol)
+        }
+        Err(why) => (None, Some(why), crate::stock_sim::DEV_TOL),
     }
 }
 

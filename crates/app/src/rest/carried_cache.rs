@@ -97,6 +97,11 @@ fn key(world: &World, chain: &Chain, min_r: f64, through_consumer: bool) -> Opti
     crate::operation::write_setup_stock(world, origin.as_deref(), &mut h)?;
     f(&mut h, min_r);
     h.write_u8(u8::from(through_consumer));
+    // #637: a body is the engine's own read; the column key is unchanged.
+    if let crate::stock_sim::Backend::Field { band } = crate::stock_sim::carry_engine() {
+        h.write(b"field");
+        h.write_u32(band);
+    }
     let last = chain.segments.len().saturating_sub(1);
     for (i, s) in chain.segments.iter().enumerate() {
         h.write_u8(0xb0);

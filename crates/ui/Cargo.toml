@@ -7,6 +7,9 @@ rust-version.workspace = true
 
 [build-dependencies]
 chrono = "0.4"
+# #1461: embeds the logotype .ico in the Windows exe (a missing resource compiler only warns).
+[target.'cfg(windows)'.build-dependencies]
+winresource = { version = "0.1", default-features = false }
 
 [dependencies]
 camcraft-app = { workspace = true }

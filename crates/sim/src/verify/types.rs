@@ -134,6 +134,74 @@ pub struct VerifyContext<'a> {
     /// law only: against stock the housing still stands down by the
     /// same kerf reasoning as the holder band.
     pub spindle: Option<(f64, f64)>,
+    /// How much coarser than the importer's promise the judged model's
+    /// mesh is, mm (#864): the chord error the import actually kept less
+    /// the cap it promises. A facet of a curved wall stands inside the
+    /// true surface by up to its chord error, so on a convex wall a cut
+    /// that deep into the real part reads as clean against the mesh; the
+    /// gouge laws (b), (b2) and (f) give that much of their tolerance
+    /// back ([`VerifyContext::tightened`]), and - #904 - the collision
+    /// laws read it too: the reach law (c) and its sweep (c3) grow their
+    /// bands by it ([`VerifyContext::band_growth`]) and shrink the kerf
+    /// that excuses the flutes' own cut, and the rapid law (d) and its
+    /// posed reading shrink the slack of the footprint they march.
+    /// `0.0` - every model that met
+    /// the promise, and every context that never names a model - reads
+    /// each law exactly as it always did. Kept apart from `gouge_tol`,
+    /// which is also the budget moves are read into chords at and must
+    /// not shrink with the model.
+    pub model_excess: f64,
+    /// The declared circles `(centre, radius)` a containment kind's
+    /// region draws as rim loops (#1057): our own polygons of a hole the
+    /// operation names, not a model's facets, so law (b) reads a loop
+    /// that traces one at the untightened `gouge_tol`
+    /// ([`VerifyContext::loop_tol`]). Empty everywhere else.
+    pub rims: &'a [(crate::geo2d::Point2, f64)],
+    /// The spindle a turning nose path cuts about (#1408): given, the
+    /// envelope law (f) reads the hidden half as the turning work sees
+    /// it (`stock_sim::envelope_scan_turned`). `None` - every mill
+    /// path, and a turning one no axis fits - reads as it always did.
+    pub lathe_axis: Option<crate::stock_sim::LatheAxis>,
+}
+
+/// The inert tool of [`VerifyContext::default`].
+static NO_TOOL: ToolGeom = ToolGeom {
+    radius: 0.0,
+    nose_radius: 0.0,
+    flute_len: 0.0,
+    shank_radius: 0.0,
+    shank_len: 0.0,
+    holder_radius: 0.0,
+    holder_len: 0.0,
+};
+/// The empty region of [`VerifyContext::default`].
+static NO_REGION: std::sync::LazyLock<Region> = std::sync::LazyLock::new(Region::default);
+
+/// The base a context is written over (`..Default::default()`), so a new
+/// field with an inert reading (#864's `model_excess`) is not spelled out
+/// at every construction site. On its own it judges nothing.
+impl Default for VerifyContext<'_> {
+    fn default() -> Self {
+        VerifyContext {
+            region: &NO_REGION,
+            stock: None,
+            model: None,
+            tool: &NO_TOOL,
+            cutter: None,
+            mode: Mode::Area,
+            stock_top_z: 0.0,
+            clearance_z: 0.0,
+            stock_to_leave: 0.0,
+            gouge_tol: 0.0,
+            z_tol: 0.0,
+            finish_tol: None,
+            fixtures: &[],
+            spindle: None,
+            model_excess: 0.0,
+            rims: &[],
+            lathe_axis: None,
+        }
+    }
 }
 
 /// Which machine element struck a fixture (M3.2 stage B). Serde on it
@@ -198,7 +266,8 @@ pub enum Warning {
         at: usize,
         fixture_part: FixturePart,
     },
-    /// Defensive: a non-finite coordinate (generators gate this out).
+    /// Defensive: a non-finite coordinate, or a tool axis that is
+    /// non-finite or of zero length (#1312; generators gate both out).
     NonFinite { at: usize },
     /// A 3-D finish's measured ball envelope misses the model:
     /// `gouge_mm` below it (worst), `rest_mm` above it (worst),
@@ -231,6 +300,17 @@ pub enum Warning {
     /// its overtravel. Advisory like the scallop: shown and named, never
     /// binding - a stated probe distance is the operator's to choose.
     ProbeSearch { at: usize, mm: f64, limit_mm: f64 },
+    /// A sinker finish out of order (#543): the finish burn at move `at`
+    /// is undersized `finish_mm` per side, not less than the `rough_mm`
+    /// of the rough burn it follows - the finish electrode is no larger
+    /// than the rough, so it takes nothing off the walls the rough left.
+    /// Advisory: the finish's own size law already holds the cavity to
+    /// size, so the post is not held.
+    SinkerFinishOrder { at: usize, finish_mm: f64, rough_mm: f64 },
+    /// A stock-source 2D Chamfer whose solid-law check breaks into a
+    /// part (#1637): choosing the part as source instead of the stock
+    /// avoids cutting into the part edge. Blocking like `Gouge`.
+    StockChamferGouge { at: usize },
 }
 
 impl Warning {
@@ -238,7 +318,7 @@ impl Warning {
     /// reading (M13.9), which is a quality note - shown, never binding.
     #[must_use]
     pub fn blocks_post(&self) -> bool {
-        !matches!(self, Warning::Scallop { .. } | Warning::ProbeSearch { .. })
+        !matches!(self, Warning::Scallop { .. } | Warning::ProbeSearch { .. } | Warning::SinkerFinishOrder { .. })
     }
 
     /// The envelope report's unjudged hidden half, as the warning that
@@ -265,6 +345,12 @@ impl core::fmt::Display for Warning {
             ),
             Warning::Gouge { at } => {
                 write!(f, "move {at} cuts past the finish surface")
+            }
+            Warning::StockChamferGouge { at } => {
+                write!(
+                    f,
+                    "move {at} cuts past the finish surface (stock-source chamfer breaks into a part; chamfer with the part as source)"
+                )
             }
             Warning::HolderHit { at, part, short_mm } => write!(
                 f,
@@ -295,7 +381,7 @@ impl core::fmt::Display for Warning {
                     FixturePart::Flute => "flute",
                 }
             ),
-            Warning::NonFinite { at } => write!(f, "move {at} has a non-finite coordinate"),
+            Warning::NonFinite { at } => write!(f, "move {at} has a non-finite coordinate or tool axis"),
             Warning::Envelope {
                 at,
                 gouge_mm,
@@ -315,6 +401,10 @@ impl core::fmt::Display for Warning {
             Warning::ProbeSearch { at, mm, limit_mm } => write!(
                 f,
                 "probe distance {mm:.3} mm at move {at}: the search may run that far past the expected contact, beyond the {limit_mm:.3} mm a stylus is trusted to overtravel (the post is not held)"
+            ),
+            Warning::SinkerFinishOrder { at, finish_mm, rough_mm } => write!(
+                f,
+                "sinker finish at move {at}: its electrode's undersize {finish_mm:.3} mm per side is not smaller than the rough's {rough_mm:.3} mm - the finish electrode is no larger than the rough and takes nothing off its walls (the post is not held)"
             ),
         }
     }

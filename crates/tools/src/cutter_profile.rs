@@ -4,8 +4,9 @@
 //! numbers stay the truth: a drawn outline that states another cutting
 //! diameter, flute length or stickout, draws a shank wider than the
 //! laws judge, or folds back over itself is refused by name - so a drawn
-//! cutter can never change what a toolpath or a check computes. Our own
-//! design over elementary plane geometry; no vendor source consulted.
+//! cutter never changes what a toolpath computes, and a check reads it
+//! only where it is narrower than the stated shank (#852, `neck`). Our
+//! own design over elementary plane geometry; no vendor source consulted.
 
 use crate::spun::{SpunError, SpunPoint, SpunProfile};
 use crate::tools::{Tool, ToolKind};

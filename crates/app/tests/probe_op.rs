@@ -416,7 +416,7 @@ fn the_posted_g31_z_is_the_tip_at_the_expected_contact() {
         .expect("face");
     assert_eq!(measures(&face), vec![(0, Point3::new(10.0, 5.0, 20.0))], "the -Z trip is the face");
     let (zs, program) = g31_z(&face, true);
-    assert_eq!(zs, vec!["Z15", "Z15"], "seek and measure skip toward the face less the overtravel");
+    assert_eq!(zs, vec!["Z15.", "Z15."], "seek and measure skip toward the face less the overtravel");
     // The Z deviation is the measured trip against the face itself, so a
     // part exactly where the model says sets the offset by zero.
     assert!(program.lines().any(|l| l.starts_with("#19") && l.ends_with("-20")), "{program}");
@@ -425,5 +425,5 @@ fn the_posted_g31_z_is_the_tip_at_the_expected_contact() {
         .expect("bore");
     let (zs, _) = g31_z(&bore, true);
     assert_eq!(zs.len(), 8, "four touches, each a seek and a measure");
-    assert!(zs.iter().all(|z| z == "Z15"), "the tip rides r under the ball centre's Z 17: {zs:?}");
+    assert!(zs.iter().all(|z| z == "Z15."), "the tip rides r under the ball centre's Z 17: {zs:?}");
 }

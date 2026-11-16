@@ -87,11 +87,21 @@ impl MachineDraft {
     #[must_use]
     pub fn blank(kind: Kind) -> Self {
         let lin = |n: &str| json!({ "id": n.to_ascii_lowercase(), "name": n, "type": "linear" });
-        let head = json!({ "id": "head", "name": "head", "type": "head",
-            "spindle": {}, "tool_station": { "coolants": [ { "name": "Flood", "mCode": "M8" } ] } });
+        // #530: an EDM machine carries no spindle and no coolant; its
+        // head is the wire guides or the electrode ram.
+        let head = if matches!(kind, Kind::WireEdm | Kind::SinkerEdm) {
+            json!({ "id": "head", "name": "head", "type": "head" })
+        } else {
+            json!({ "id": "head", "name": "head", "type": "head",
+                "spindle": {}, "tool_station": { "coolants": [ { "name": "Flood", "mCode": "M8" } ] } })
+        };
         let mut parts: Vec<Value> = match kind {
             Kind::Lathe => vec![lin("X"), lin("Z")],
-            Kind::Mill | Kind::MillTurn | Kind::Plasma => vec![lin("X"), lin("Y"), lin("Z")],
+            Kind::Mill | Kind::MillTurn | Kind::Plasma | Kind::SinkerEdm => {
+                vec![lin("X"), lin("Y"), lin("Z")]
+            }
+            // #530: lower guide X/Y and upper guide U/V.
+            Kind::WireEdm => vec![lin("X"), lin("Y"), lin("U"), lin("V")],
         };
         if kind == Kind::MillTurn {
             parts.push(json!({ "id": "c", "name": "C", "type": "rotary", "axis": [0.0, 0.0, 1.0] }));
@@ -144,12 +154,19 @@ impl MachineDraft {
         Ok(())
     }
 
-    /// Add a named coolant (no code yet) to the first head's tool
-    /// station, the list the reader takes first.
-    pub fn add_coolant(&mut self, name: &str) -> Result<(), String> {
+    /// Add a coolant, name AND code (#869), to the first head's tool
+    /// station, the list the reader takes first. Refused by name when
+    /// either is empty: a coolant without its code posts nothing, so the
+    /// editor never adds one (a save would keep a coolant that is
+    /// silently ignored by every post).
+    pub fn add_coolant(&mut self, name: &str, code: &str) -> Result<(), String> {
         let name = name.trim();
         if name.is_empty() {
             return Err("coolant name is empty".to_owned());
+        }
+        let code = code.trim();
+        if code.is_empty() {
+            return Err(format!("coolant {name}: enter its M code (M7 air or mist, M8 flood) before adding it"));
         }
         let head = fields::heads(&self.value).into_iter().next().ok_or("this machine has no head to carry a coolant")?;
         let list = format!("{head}/tool_station/coolants");
@@ -157,10 +174,33 @@ impl MachineDraft {
             // Creates the station on the way; the placeholder is replaced at once.
             fields::set(&mut self.value, &list, FieldKind::Text, "-")?;
         }
+        let entry = json!({ "name": name, "mCode": code });
         match self.value.pointer_mut(&list) {
-            Some(Value::Array(a)) => a.push(json!({ "name": name })),
-            Some(slot) => *slot = json!([ { "name": name } ]),
+            Some(Value::Array(a)) => a.push(entry),
+            Some(slot) => *slot = json!([entry]),
             None => return Err(format!("{list}: not a coolant list")),
+        }
+        self.dirty = true;
+        Ok(())
+    }
+
+    /// Remove the coolant whose code field sits at `field_pointer`
+    /// (`<list>/<index>/mCode`, as the Coolant codes group states it) -
+    /// the seeded Flood of a blank machine included (#869). Refused by
+    /// name when the pointer names no coolant entry.
+    pub fn remove_coolant(&mut self, field_pointer: &str) -> Result<(), String> {
+        let not_one = || format!("{field_pointer}: not a coolant entry");
+        let entry = field_pointer.rsplit_once('/').map(|(e, _)| e).ok_or_else(not_one)?;
+        let (list, index) = entry.rsplit_once('/').ok_or_else(not_one)?;
+        let index: usize = index.parse().map_err(|_| not_one())?;
+        if !list.ends_with("/coolants") {
+            return Err(not_one());
+        }
+        match self.value.pointer_mut(list) {
+            Some(Value::Array(a)) if index < a.len() => {
+                a.remove(index);
+            }
+            _ => return Err(not_one()),
         }
         self.dirty = true;
         Ok(())
@@ -175,10 +215,14 @@ impl MachineDraft {
         s
     }
 
-    /// The validator's refusals for the file as it stands.
+    /// The validator's refusals for the file as it stands, plus the
+    /// editor's own (#869): every coolant it writes states its code, so
+    /// a save never keeps a coolant the posts silently ignore.
     #[must_use]
     pub fn refusals(&self) -> Vec<Refusal> {
-        validate_text(&self.text())
+        let mut out = validate_text(&self.text());
+        out.extend(codeless_coolants(&self.value));
+        out
     }
 
     /// Save over the file it came from. Refused for a shipped or
@@ -188,6 +232,10 @@ impl MachineDraft {
             (Some(p), false) => p.clone(),
             _ => return Err(SaveError::NeedsSaveAs),
         };
+        let refusals = self.refusals();
+        if !refusals.is_empty() {
+            return Err(SaveError::Refused(refusals));
+        }
         store::save_text(&path, &self.text())?;
         self.dirty = false;
         Ok(path)
@@ -211,4 +259,32 @@ impl MachineDraft {
         self.dirty = false;
         Ok(path)
     }
+}
+
+/// Every coolant in the file's lists that names itself but states no
+/// code (#869), refused by name: `coolant <name>` is the key the Coolant
+/// codes group shows the refusal under.
+fn codeless_coolants(v: &Value) -> Vec<Refusal> {
+    let mut lists: Vec<String> = fields::heads(v).iter().map(|h| format!("{h}/tool_station/coolants")).collect();
+    lists.push("/tooling/coolants".to_owned());
+    let mut out = Vec::new();
+    for list in lists {
+        let Some(arr) = v.pointer(&list).and_then(Value::as_array) else { continue };
+        for e in arr {
+            let Some(name) = e.get("name").and_then(Value::as_str).filter(|n| !n.trim().is_empty()) else { continue };
+            let code = e.get("mCode").or_else(|| e.get("mcode"));
+            let stated = match code {
+                Some(Value::String(s)) => !s.trim().is_empty(),
+                Some(Value::Number(_)) => true,
+                _ => false,
+            };
+            if !stated {
+                out.push(Refusal {
+                    key: format!("coolant {name}"),
+                    rule: "has no M code - enter its code (M7 air or mist, M8 flood) or remove the coolant".to_owned(),
+                });
+            }
+        }
+    }
+    out
 }

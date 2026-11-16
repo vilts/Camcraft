@@ -152,7 +152,8 @@ fn clear_toolpath_keeps_the_op_and_undo_restores_the_path_exactly() {
     let before = cache(&state, "Face1").expect("generated");
     state.pending.push_back(CommandKind::ClearToolpath("Face1".into()));
     state.drain_actions();
-    assert!(state.status.contains("Ctrl+Z restores"), "{:?}", state.status);
+    let hint = format!("{} restores", camcraft_ui::shortcut_keys::chord("Z"));
+    assert!(state.status.contains(&hint), "{:?}", state.status);
     assert_eq!(cache(&state, "Face1"), None, "the path is gone");
     assert_eq!(status(&state, "Face1"), OpStatus::Never, "reads never generated");
     assert!(model::find_by_name(&state.world, "Face1").is_some(), "the operation is kept");

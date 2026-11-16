@@ -150,6 +150,15 @@ pub fn render_all(world: &World) -> Vec<(String, String)> {
 /// like everything else here - the sim reads only the document.
 #[must_use]
 pub fn simulate_verdict(world: &World) -> String {
+    let line = sim_line(world);
+    // #1168: a verdict the field engine judged says so, never silently.
+    match crate::stock_sim::carry_engine_note() {
+        Some(note) => format!("{line} ({note})"),
+        None => line,
+    }
+}
+
+fn sim_line(world: &World) -> String {
     match crate::stock_sim::simulate_document(world) {
         Ok(sim) if sim.dev.is_clean() => "SIM: clean - within deviation tolerance".to_string(),
         Ok(sim) => format!(

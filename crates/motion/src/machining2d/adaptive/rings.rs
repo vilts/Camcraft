@@ -12,6 +12,9 @@ use super::GenError;
 use super::front::{densify, dist, len, rotate_to, thin};
 use super::near::SegIndex;
 
+#[path = "simplify.rs"]
+mod simplify;
+
 /// Arc flattening of the rings' fillets (mm): about 2.6 degrees a chord
 /// on a 1 mm fillet.
 pub(super) const ARC_TOL: f64 = 2.5e-4;
@@ -33,8 +36,42 @@ pub(super) const SEG: f64 = 0.2;
 /// The morph's nearest-point grid (mm).
 pub(super) const NEAR_CELL: f64 = 0.5;
 
+/// Outline approximation before the opening (mm, issue #882): the
+/// fillets' own arc tolerance. Nanometre chords otherwise make the
+/// erosion do quadratic work on the planner's repeatedly grown rings.
+pub(super) const SIMPLIFY: f64 = ARC_TOL;
+
+/// Extra erosion (mm): the approximation and round-join flattening,
+/// plus 10 nm for the boolean lattice. This margin is the containment
+/// guarantee: Douglas-Peucker keeps the light outline within `SIMPLIFY`
+/// of the original, so eroding it by `rho + INSET` and dilating by
+/// `rho` cannot cross a wall, island, hole, notch or the seam. It must
+/// stay above `SIMPLIFY + ARC_TOL` (pinned by a test); mutation review
+/// on PR #1376 showed `INSET = 0` leaks or leaves slivers, while the
+/// intersection and fallback alone do not hold containment.
+pub(super) const INSET: f64 = SIMPLIFY + ARC_TOL + 1e-5;
+
+/// Open a lighter outline, eroded `INSET` deeper than it is dilated
+/// back - that margin keeps the opening inside the original region.
+/// The exact intersection with the original region is extra protection
+/// on top (defence in depth), not the guarantee.
 pub(super) fn open(r: &Region, rho: f64) -> Result<Region, GenError> {
-    Ok(r.offset_fine(-rho, ARC_TOL)?.offset_fine(rho, ARC_TOL)?)
+    #[cfg(test)]
+    let inset = OPEN_INSET.with(std::cell::Cell::get);
+    #[cfg(not(test))]
+    let inset = 0.0;
+    let light = simplify::within(r, SIMPLIFY);
+    let source = light.as_ref().unwrap_or(r);
+    let opened = source.offset_fine(-(rho + INSET + inset), ARC_TOL)?.offset_fine(rho, ARC_TOL)?;
+    Ok(opened.intersect(r)?)
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Tests only (issue #982): the opening erodes this much (mm) deeper
+    /// than it dilates back - a sub-micron perturbation of every ring, to
+    /// pin that a plan's verdict does not turn on it.
+    pub(super) static OPEN_INSET: std::cell::Cell<f64> = const { std::cell::Cell::new(0.0) };
 }
 
 pub(super) fn one_loop(r: &Region) -> bool {
@@ -187,18 +224,73 @@ pub(super) fn widest_opening(d: &Region, cap: f64) -> Result<Option<f64>, GenErr
 /// the 5-degree in-cut break law (round 4; 72 sat on it).
 const MIN_CIRCLE: usize = 96;
 
+/// A start this close to the circle (mm) is the circle's own first and
+/// last point (issue #980): far under any machining tolerance, far over
+/// the trigonometry's rounding (ulps of the radius).
+const ON_CIRCLE: f64 = 1e-9;
+
 /// A closed circle about `c` of radius `rr` starting at `start`'s angle,
 /// travelled counter-clockwise for climb (material outside on the right)
-/// and clockwise otherwise.
+/// and clockwise otherwise. It closes exactly: its last point IS its
+/// first - and `start` itself where `start` lies on the circle (the entry
+/// orbit). Issue #980: computed as `a0 + TAU`, the closing point stood an
+/// ulp off the start, and the spiral leaving it read as a proper crossing
+/// of the orbit's first chord (the plan refused, its level given to the
+/// Offset rings).
 pub(super) fn circle(c: Point2, rr: f64, start: Point2, climb: bool, seg: f64) -> Vec<Point2> {
     let a0 = (start.y - c.y).atan2(start.x - c.x);
     let n = ((std::f64::consts::TAU * rr / seg.max(1e-6)).ceil() as usize).clamp(MIN_CIRCLE, 4096);
     let dir = if climb { 1.0 } else { -1.0 };
-    let pts: Vec<Point2> = (0..=n)
+    let mut pts: Vec<Point2> = (0..=n)
         .map(|k| {
             let a = a0 + dir * std::f64::consts::TAU * k as f64 / n as f64;
             Point2::new(c.x + rr * a.cos(), c.y + rr * a.sin())
         })
         .collect();
-    densify(&pts, seg, false)
+    if let Some(f) = pts.first_mut()
+        && ((start.x - c.x).hypot(start.y - c.y) - rr).abs() <= ON_CIRCLE
+    {
+        *f = start;
+    }
+    let mut out = densify(&pts, seg, false);
+    let first = out.first().copied();
+    if let (Some(f), Some(l)) = (first, out.last_mut()) {
+        *l = f;
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::guard::first_crossing;
+    use super::*;
+
+    /// Issue #980: the walk orbits the entry from `start` and leaves the
+    /// orbit where it closed. The orbit's first and last points must be
+    /// `start` itself: an ulp off, the spiral's first chord out of it read
+    /// as a proper crossing of the orbit's first chord (the Z 10 level of
+    /// `Milling-test.step`: seed (0.001968, 0.001968), helix R2).
+    #[test]
+    fn the_orbit_closes_on_its_own_start_and_the_spiral_leaves_it_uncrossed() {
+        let mut crossed = Vec::new();
+        for i in 0..400 {
+            let seed = Point2::new(0.001968 + 0.0137 * i as f64, 0.001968 - 0.0071 * i as f64);
+            let rr = 2.0 - 0.0013 * (i % 7) as f64;
+            let start = Point2::new(seed.x - rr, seed.y);
+            let ring = circle(seed, rr, start, true, 0.625);
+            assert!(ring.first() == Some(&start) && ring.last() == Some(&start), "{i}: the orbit closes on its start");
+            // The walk as the planner builds it: the orbit from the start,
+            // then a revolution leaving the closing point outward.
+            let mut walk = vec![start];
+            walk.extend(ring.iter().skip(1).copied());
+            walk.extend(ring.iter().skip(1).take(20).enumerate().map(|(k, p)| {
+                let f = 1.0 + 0.002 * (k + 1) as f64;
+                Point2::new(seed.x + (p.x - seed.x) * f, seed.y + (p.y - seed.y) * f)
+            }));
+            if let Some(x) = first_crossing(&[walk]) {
+                crossed.push((i, x));
+            }
+        }
+        assert!(crossed.is_empty(), "the spiral out of the orbit read as crossing it: {crossed:?}");
+    }
 }

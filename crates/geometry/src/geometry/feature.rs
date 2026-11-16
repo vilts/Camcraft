@@ -478,8 +478,8 @@ pub fn features_of_facets(facets: &[Triangle]) -> Features {
     for ((a, b), e) in ordered {
         let mut face_ids: Vec<u32> = Vec::new();
         let mut all_planar = true;
-        for slot in 0..e.count.min(3) as usize {
-            let t = e.facets[slot] as usize;
+        for &f in e.facets.iter().take(e.count.min(3) as usize) {
+            let t = f as usize;
             let fi = facet_face[t];
             if !face_ids.contains(&fi) {
                 face_ids.push(fi);
@@ -1202,10 +1202,10 @@ pub fn chains(features: &Features) -> Vec<Chain> {
         .iter()
         .map(|e| {
             let mut fs: Vec<u32> = Vec::new();
-            for slot in 0..(e.n_facets as usize).min(3) {
+            for &f in e.facets.iter().take((e.n_facets as usize).min(3)) {
                 let fi = features
                     .facet_face
-                    .get(e.facets[slot] as usize)
+                    .get(f as usize)
                     .copied()
                     .unwrap_or(u32::MAX);
                 if !fs.contains(&fi) {
@@ -1483,8 +1483,8 @@ fn smooth_band(
     for &(fi, _) in ra.iter().filter(|x| rb.contains(x)) {
         let flank_patch = |e: &TopEdge| -> Option<u32> {
             let mut root: Option<u32> = None;
-            for slot in 0..(e.n_facets as usize).min(3) {
-                let t = e.facets[slot] as usize;
+            for &f in e.facets.iter().take((e.n_facets as usize).min(3)) {
+                let t = f as usize;
                 if features.facet_face.get(t).copied() == Some(fi) {
                     continue; // the shared face's own facet is not a flank
                 }

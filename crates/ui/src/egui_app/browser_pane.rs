@@ -24,30 +24,37 @@ use super::theme::Tokens;
 
 /// The browser pane.
 pub fn browser(ui: &mut Ui, state: &mut State, pal: &Tokens, icons: Option<&IconSet>) {
-    ui.checkbox(&mut state.show_world_axes, "Show world origin axes");
-    let mut show_all_paths = state.show_all_paths;
-    if ui.checkbox(&mut show_all_paths, "Show all toolpaths").changed() {
-        if show_all_paths {
-            state.show_all_toolpaths();
-        } else {
-            state.hide_all_toolpaths();
-        }
-    }
-    // The display mode is view state (a direct field flip, never a command).
-    ui.horizontal(|ui| {
-        ui.label("Solids");
-        ui.radio_value(&mut state.display, DisplayMode::ShadedEdges, "Shaded");
-        ui.radio_value(&mut state.display, DisplayMode::Wireframe, "Wireframe");
-    });
-    // Projection is view state the same way (#434): orthographic keeps
-    // a side view straight - parallel edges, no converging - which is
-    // what CAM eyeballing wants most of the time.
-    ui.horizontal(|ui| {
-        ui.label("Projection");
-        ui.radio_value(&mut state.cam.projection, ProjectionMode::Perspective, "Perspective");
-        ui.radio_value(&mut state.cam.projection, ProjectionMode::Orthographic, "Ortho");
-    });
+    // One compact chrome row: the view
+    // switches behind a door, and the two whole-tree gestures beside
+    // it. The tree starts right under it instead of under five rows
+    // of checkboxes.
+    egui::Frame::NONE
+        .fill(pal.strip_fill())
+        .inner_margin(egui::Margin::symmetric(6, 2))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| {
+                let _ = egui::containers::menu::MenuButton::new("View")
+                    .ui(ui, |ui| view_menu(ui, state));
+                ui.separator();
+                if ui
+                    .button("Expand all")
+                    .on_hover_text("Open the Setup, Models and Tools sections")
+                    .clicked()
+                {
+                    state.browser_expanded = [true; 3];
+                }
+                if ui
+                    .button("Collapse all")
+                    .on_hover_text("Close the Setup, Models and Tools sections")
+                    .clicked()
+                {
+                    state.browser_expanded = [false; 3];
+                }
+            });
+        });
+    ui.add_space(2.0);
     ui.separator();
+    ui.add_space(2.0);
     let (rows, leaves) = browser_rows(state);
     let rect = Rect::from_min_size(
         ui.cursor().min,
@@ -103,11 +110,59 @@ pub(super) fn focus(state: &mut State, name: &str) {
     state.pending.push_back(CommandKind::ActivateSetup(Some(name.to_owned())));
 }
 
+/// The View door's contents: the same switches the inline block used to
+/// show, now one click behind the header.
+fn view_menu(ui: &mut Ui, state: &mut State) {
+    ui.checkbox(&mut state.show_world_axes, "Show world origin axes");
+    // #645: the #727 gizmo names get the switch the review asked for.
+    // Same local-copy law as "Show all toolpaths": the flip goes
+    // through a State method, which takes the user's choice out to
+    // the view file with it.
+    let mut show_names = state.show_gizmo_names;
+    if ui.checkbox(&mut show_names, "Show origin names").changed() {
+        state.set_gizmo_names(show_names);
+    }
+    let mut show_all_paths = state.show_all_paths;
+    if ui.checkbox(&mut show_all_paths, "Show all toolpaths").changed() {
+        if show_all_paths {
+            state.show_all_toolpaths();
+        } else {
+            state.hide_all_toolpaths();
+        }
+    }
+    // #1567: the machine's work envelope. Enabled only with a machine
+    // mounted; the tooltip says why nothing is drawn when its travel
+    // figures are missing. View state, never a command.
+    let mounted = crate::work_envelope::machine_mounted(state);
+    let tip = if mounted {
+        crate::work_envelope::tooltip(state)
+    } else {
+        "Mount a machine on the active setup to show its work envelope.".to_owned()
+    };
+    ui.add_enabled(mounted, egui::Checkbox::new(&mut state.show_work_envelope, "Show work envelope"))
+        .on_hover_text(tip)
+        .on_disabled_hover_text("Mount a machine on the active setup to show its work envelope.");
+    // The display mode is view state (a direct field flip, never a command).
+    ui.horizontal(|ui| {
+        ui.label("Solids");
+        ui.radio_value(&mut state.display, DisplayMode::ShadedEdges, "Shaded");
+        ui.radio_value(&mut state.display, DisplayMode::Wireframe, "Wireframe");
+    });
+    // Projection is view state the same way (#434): orthographic keeps
+    // a side view straight - parallel edges, no converging - which is
+    // what CAM eyeballing wants most of the time.
+    ui.horizontal(|ui| {
+        ui.label("Projection");
+        ui.radio_value(&mut state.cam.projection, ProjectionMode::Perspective, "Perspective");
+        ui.radio_value(&mut state.cam.projection, ProjectionMode::Orthographic, "Ortho");
+    });
+}
+
 fn ctx(name: &str) -> Option<&str> {
     (!name.is_empty()).then_some(name)
 }
 
-fn eye(state: &mut State, leaf: &Leaf) {
+pub(super) fn eye(state: &mut State, leaf: &Leaf) {
     match leaf {
         Leaf::Model(n) => State::toggle_visibility(&mut state.hidden_models, n),
         Leaf::Stock(s) => {
@@ -119,6 +174,7 @@ fn eye(state: &mut State, leaf: &Leaf) {
             State::toggle_visibility(&mut state.hidden_offsets, &name);
         }
         Leaf::Op(n) => State::toggle_visibility(&mut state.hidden_paths, n),
+        Leaf::Setup(n) => state.toggle_setup_display(n),
         _ => {}
     }
 }
@@ -203,3 +259,4 @@ fn drag_ops(ui: &mut Ui, state: &mut State, pal: &Tokens, rect: Rect, leaves: &[
         state.dragging_op = None;
     }
 }
+// force rebuild

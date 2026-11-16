@@ -27,6 +27,7 @@ pub const EPS: f64 = 1e-3;
 
 pub fn pocket(top: f64, bottom: f64) -> OpParams {
     OpParams::Pocket {
+        blend_radius: None,
         stepover: 4.0,
         stock_to_leave: 0.0,
         clearance_z: Height::fixed(40.0),

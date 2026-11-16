@@ -12,6 +12,8 @@ pub mod fixture;
 pub mod fixture_move;
 pub mod fixture_plate;
 pub mod mod_vise;
+// #832: edit and re-fit a placed mod vise pair.
+pub mod mod_vise_edit;
 pub mod import_fixture;
 pub mod import_model;
 // #339 slice 6: a fixture library entry placed into a setup.
@@ -23,6 +25,8 @@ pub mod move_model;
 pub mod operation;
 pub mod post;
 pub mod post_options;
+// #258: the document's program number and comment.
+pub mod program_info;
 // #155: Pause / Home entries of the operation list.
 pub mod program_entry;
 // M13.11: mesh repair (weld + fill holes) as one undo unit over UpdateModel.
@@ -31,14 +35,19 @@ pub mod repair_model;
 pub mod ribbon_pins;
 pub mod select_entity;
 pub mod set_stock;
+pub mod stock_source_only;
 pub mod setup;
 pub mod setup_delete;
 // #196: a setup's picked program offset.
 pub mod setup_align;
+mod align_stock;
 pub mod setup_wcs;
 // #343: a setup's own machine and post.
 pub mod setup_mount;
 pub mod setup_post_options;
+// #821: a setup's stated nose-to-rotary figure (a raised rotary).
+pub mod setup_nose;
+pub mod setup_workholding;
 // #316: a setup placed relative to another (flip / turn presets).
 pub mod setup_relative;
 // #320: a setup's stock source.
@@ -50,6 +59,8 @@ pub mod theme;
 // M13.4 / #877: the viewer's colour-vision remap, the theme's twin.
 pub mod color_vision;
 pub mod set_wcs;
+// #739: the WCS origin on a picked circle's centre.
+pub mod wcs_circle;
 pub mod tool;
 // #368: a tool's modelled body.
 pub mod tool_body;
@@ -60,6 +71,8 @@ pub mod tool_import;
 // #221: a tool's controller number.
 pub mod tool_number;
 pub mod update_model;
+// #547: a sinker electrode generated from a cavity's picked faces.
+pub mod electrode;
 
 use flecs_ecs::prelude::World;
 
@@ -72,6 +85,7 @@ pub use fixture::{
 };
 pub use fixture_plate::{InsertPlate, PlaceOnPlate, PlatePlacement, SetPlate, SetPlateGrid};
 pub use mod_vise::PlaceModVisePair;
+pub use mod_vise_edit::{RefitModVise, SetModJaw};
 pub use import_fixture::ImportFixture;
 pub use import_model::ImportModel;
 pub use insert_fixture::InsertFixture;
@@ -85,26 +99,32 @@ pub use operation::{
 };
 pub use post::SelectPost;
 pub use post_options::SetPostOptions;
+pub use program_info::SetProgramInfo;
 pub use program_entry::{AddProgramEntry, EditProgramEntry};
 pub use repair_model::RepairModel;
 pub use ribbon_pins::SetRibbonPins;
 pub use select_entity::SelectEntity;
 pub use set_stock::SetStock;
+pub use stock_source_only::SetStockSourceOnly;
 pub use setup::{ActivateSetup, CreateSetup, DeleteSetup, SetOperationSetup};
 pub use setup_align::AlignPartToSetup;
 pub use setup_wcs::SetSetupWorkOffset;
 pub use setup_mount::{SetSetupMachine, SetSetupPost};
 pub use setup_post_options::SetSetupPostOptions;
+pub use setup_nose::SetSetupNoseToAxis;
+pub use setup_workholding::SetSetupWorkholdingRpm;
 pub use setup_relative::SetSetupRelative;
 pub use setup_stock::SetSetupStockSource;
 pub use set_units::SetUnits;
 pub use theme::{check_theme, theme_of, theme_set};
 pub use color_vision::{color_vision_of, color_vision_set};
-pub use set_wcs::SetWcsOrigin;
+pub use set_wcs::{BoxPoint, OriginAt, SetWcsOrigin, place_setup_origin};
+pub use wcs_circle::SetWcsAtCircleCentre;
 pub use tool::{AddTool, ChangeTool, DeleteTool, HolderPick};
 pub use tool_body::{LatheBodySpec, SetToolBody, ToolBodySpec};
-pub use tool_cutter::SetToolCutter;
-pub use tool_import::{ImportReport, ImportTools};
+pub use tool_cutter::{ReshapeTool, SetToolCutter};
+pub use tool_import::{ImportMode, ImportReport, ImportTools};
+pub use electrode::ElectrodeFromFaces;
 pub use tool_number::SetToolNumber;
 pub use update_model::UpdateModel;
 
@@ -116,6 +136,10 @@ pub enum CommandError {
     NameConflict(String),
     #[error("invalid parameters: {0}")]
     Invalid(String),
+    /// A precondition the user can fix, said in plain English with what to
+    /// do next (#1105): shown as is, with no "invalid parameters:" prefix.
+    #[error("{0}")]
+    Needs(String),
     #[error(transparent)]
     Import(#[from] crate::geometry::ImportError),
     #[error("'{0}' import is not supported yet; import a STEP, STL, or OBJ file instead")]

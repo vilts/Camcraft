@@ -36,90 +36,56 @@ pub fn current_stamp(
     // bumps produce, working as designed.)
     h.write(b"camcraft-op-stamp-v2");
     let w = |h: &mut std::hash::DefaultHasher, v: f64| h.write(&v.to_bits().to_le_bytes());
-    h.write(tool_name.as_bytes());
-    h.write_u8(0xff);
-    let tool_entity = model::find_by_name(world, tool_name)?;
-    let tool = model::tool_of(world, &tool_entity)?;
-    h.write_u8(match tool.kind {
-        crate::tools::ToolKind::EndMill => 0,
-        crate::tools::ToolKind::BallNose => 1,
-        crate::tools::ToolKind::BullNose => 2,
-        crate::tools::ToolKind::Drill => 3,
-        crate::tools::ToolKind::Tap => 4,
-        crate::tools::ToolKind::Bore => 5,
-        crate::tools::ToolKind::Turning => 6,
-        crate::tools::ToolKind::Groove => 7,
-        crate::tools::ToolKind::Thread => 8,
-        crate::tools::ToolKind::Form => 9,
-        crate::tools::ToolKind::Taper => 10,
-        crate::tools::ToolKind::Probe => 11,
-        crate::tools::ToolKind::Torch => 12,
-    });
-    for v in [
-        tool.diameter,
-        tool.corner_r,
-        // The nose circle rides the digest from its first build
-        // (M5.2 A): it is the envelope ball, so an edit re-marks the
-        // verdict Stale through here, exactly like the diameter does.
-        tool.nose_radius,
-        tool.flute_len,
-        tool.shank_d,
-        tool.shank_len,
-        tool.holder_d,
-        tool.holder_len,
-    ] {
-        w(&mut h, v);
+    // #532: a kind that mounts no library tool (the wire EDM's)
+    // digests what stands in the tool's place - the machine
+    // condition's wire and gap - so an edit of the machine's table
+    // re-marks the operation Stale.
+    match params {
+        OpParams::WireContour(op) => super::wire_op::stamp_condition(world, setup, op, &mut h),
+        _ => super::stamp_tool::write(world, tool_name, params, &mut h)?,
     }
-    // Kind-scoped numbers: a tool digests only what its kind reads. A
-    // tip_angle parked on a ball nose is inert data, and inert data must
-    // never make an operation look stale - the same law the profile and
-    // the cycles draw by. It also keeps every pre-M1.6 stamp value
-    // unchanged: no one-time churn for the milling kinds.
-    // The blade's width rides the digest from its first build
-    // (M5.2 C): the kerf's width IS the tool, so a re-ground blade
-    // is a different cut - marked Stale through here, never through
-    // the params stamp, which never reads it.
-    match tool.kind {
-        crate::tools::ToolKind::Drill => w(&mut h, tool.tip_angle),
-        crate::tools::ToolKind::Tap => w(&mut h, tool.pitch),
-        crate::tools::ToolKind::Groove => w(&mut h, tool.width),
-        // The threading insert digests BOTH its profile numbers
-        // (M5.2 D): the crest width and the flanks' angle are the
-        // wave's footprint - a recut V is a different thread even
-        // when the operation's pitch and depth never moved.
-        crate::tools::ToolKind::Thread => {
-            w(&mut h, tool.width);
-            w(&mut h, tool.tip_angle);
+    // #541: the sinker burn places its tip one spark gap above the floor,
+    // read from the setup machine's condition - a re-stated gap (or a
+    // condition gone) is a different burn, marked Stale through here.
+    // (The electrode itself - kind and face width - is `stamp_tool`'s.)
+    // #544: so is a re-stated orbit list or maximum orbit radius.
+    if let OpParams::SinkerBurn(p) = params {
+        h.write(b"sinker-gap");
+        match super::sinker_op::burn_gap(world, setup, p) {
+            Ok(g) => w(&mut h, g),
+            Err(e) => h.write(e.as_bytes()),
         }
-        // The gauge digests its band width - the kerf's span, the
-        // blade's law - and its crown needs no line here: the arc
-        // radius rides the global nose_radius row above, read at
-        // the gate that makes it mean anything (M5.2 E2).
-        crate::tools::ToolKind::Form => w(&mut h, tool.width),
-        // The chamfer mill digests its cone angle from its first
-        // build (M2.4 B): the congruence door reads it against the
-        // face's angle, so a re-cut cone is a different chamfer even
-        // when width, depth and the wall itself never moved.
-        crate::tools::ToolKind::Taper => w(&mut h, tool.tip_angle),
-        _ => {}
+        // #543: a rough or finish reads its condition's undersize, and a
+        // finish the rough it follows - a re-stated undersize, or a
+        // rough added, removed or re-sized, is a different judgement.
+        if let Some(read) = super::sinker_pass::read_pass(world, op_name, setup, p) {
+            h.write(b"sinker-pass");
+            match read {
+                Ok(r) => {
+                    w(&mut h, r.undersize);
+                    if let Some((name, u)) = r.rough {
+                        h.write(name.as_bytes());
+                        w(&mut h, u);
+                    }
+                }
+                Err(e) => h.write(e.as_bytes()),
+            }
+        }
+        // #546: and the condition's stated wear rate - a re-stated rate
+        // is a different (compensated) burn. Nothing when unstated.
+        if let Some(r) = super::sinker_wear_op::condition_wear(world, setup, p) {
+            h.write(b"sinker-wear");
+            w(&mut h, r);
+        }
     }
-    // A Thread OP times its helix against the TOOL's pitch (M2.4 C, the
-    // tap cycle's reading), whatever kind carries it - so the clause
-    // belongs to the operation, not the tool kind: the turning thread
-    // insert's pitch stays inert there (that ride reads pitch from
-    // params), and no pre-M2.4-C digest changes, because only the new
-    // operation kinds reach past this line.
-    if matches!(params, OpParams::Thread { .. }) {
-        w(&mut h, tool.pitch);
+    // #545: the side burn's gap too, behind its allowance law.
+    if let OpParams::SinkerSideBurn(p) = params {
+        h.write(b"sinker-side-gap");
+        match super::sinker_side_op::side_gap(world, setup, p) {
+            Ok(g) => w(&mut h, g),
+            Err(e) => h.write(e.as_bytes()),
+        }
     }
-    // M11.3: a tool that may not plunge into solid changes the entries;
-    // a byte only then, so no centre-cutting op's digest moves.
-    if !tool.center_cutting {
-        h.write_u8(0xCC);
-    }
-    // #368: a modelled body's envelope - bytes only when there is one,
-    // so no digest without a body moves.
-    crate::tool_body::digest(world, &tool_entity, &mut h);
     params.stamp_with(world, setup, Some(src), &mut h);
     // #326: the setup's part alignment is a moved input for every op of
     // the setup (the parts it machines, verifies against or measures
@@ -206,7 +172,7 @@ pub fn current_stamp(
                 let entity = model::find_by_name(world, &g.entity)?;
                 if !digested.contains(&g.entity.as_str()) {
                     digested.push(g.entity.as_str());
-                    let loc = model::transform_of(world, &entity).unwrap_or_default();
+                    let loc = crate::setup_align::pose_in(world, &entity, setup).unwrap_or_default();
                     for v in [
                         loc.pos.x,
                         loc.pos.y,
@@ -304,12 +270,20 @@ pub fn stale_reason(
         return None;
     }
     let op = model::operation_of(world, entity)?;
-    match model::find_by_name(world, &op.tool) {
-        None => return Some(format!("its tool '{}' no longer exists", op.tool)),
-        Some(t) if !model::is_tool(world, &t) => {
-            return Some(format!("'{}' is no longer a tool", op.tool));
+    // #532: a wire EDM kind names no tool - its condition is the
+    // machine's, and a condition the machine no longer states is why.
+    if let OpParams::WireContour(w) = &op.params {
+        if let Err(why) = super::wire_op::condition_of(world, op.setup.as_deref(), w) {
+            return Some(why);
         }
-        _ => {}
+    } else {
+        match model::find_by_name(world, &op.tool) {
+            None => return Some(format!("its tool '{}' no longer exists", op.tool)),
+            Some(t) if !model::is_tool(world, &t) => {
+                return Some(format!("'{}' is no longer a tool", op.tool));
+            }
+            _ => {}
+        }
     }
     match &op.src {
         SrcRef::Stock => {

@@ -89,15 +89,28 @@ pub(super) struct Layout {
     pub(super) spacing: f64,
 }
 
-/// A polyline walked by arc length.
+/// A polyline walked by arc length (open, or wrapped seamlessly when closed).
 pub(super) struct Chain<'a> {
     pts: &'a [Point2],
     acc: Vec<f64>,
+    closed: bool,
 }
 
 impl<'a> Chain<'a> {
     /// `None` when fewer than two points or a zero-length span.
     pub(super) fn new(pts: &'a [Point2]) -> Option<Self> {
+        Self::build(pts, false)
+    }
+
+    /// A closed loop wrapped continuously across `s = 0` / `s = len`.
+    pub(super) fn new_closed(pts: &'a [Point2]) -> Option<Self> {
+        if pts.len() < 3 || pts.first().zip(pts.last()).is_none_or(|(a, b)| dist(*a, *b) > 1e-6) {
+            return None;
+        }
+        Self::build(pts, true)
+    }
+
+    fn build(pts: &'a [Point2], closed: bool) -> Option<Self> {
         if pts.len() < 2 || pts.iter().any(|p| !(p.x.is_finite() && p.y.is_finite())) {
             return None;
         }
@@ -112,16 +125,17 @@ impl<'a> Chain<'a> {
             s += l;
             acc.push(s);
         }
-        Some(Chain { pts, acc })
+        Some(Chain { pts, acc, closed })
     }
 
     pub(super) fn len(&self) -> f64 {
         self.acc.last().copied().unwrap_or(0.0)
     }
 
-    /// The point at arc length `s` (clamped onto the chain).
+    /// The point at arc length `s` (wrapped when closed, clamped when open).
     pub(super) fn at(&self, s: f64) -> Point2 {
-        let s = s.clamp(0.0, self.len());
+        let len = self.len();
+        let s = if self.closed && len > 0.0 { s.rem_euclid(len) } else { s.clamp(0.0, len) };
         let i = self.acc.partition_point(|&a| a <= s).clamp(1, self.pts.len() - 1);
         let (a, b) = (self.pts[i - 1], self.pts[i]);
         let l = self.acc[i] - self.acc[i - 1];
@@ -250,6 +264,60 @@ pub(super) fn layout(chain: &Chain, b: f64, step: f64, fillet: f64, climb: bool)
         }
     }
     Some(Layout { c0, b, entry: f0.at(0.0, -b), opposite: f0.at(0.0, b), ccw, pieces, loops: n, rho, spacing })
+}
+
+/// Loops along a closed spine (`chain.closed`), stopping cleanly behind
+/// the starting bore circle (`|p - c0| > b + 0.02`) so closure overlaps
+/// without crossing.
+pub(super) fn layout_closed(chain: &Chain, b: f64, step: f64, fillet: f64, climb: bool) -> Option<Layout> {
+    if !(b.is_finite() && b > 0.0 && step.is_finite() && step > 0.0 && fillet.is_finite()) {
+        return None;
+    }
+    let ccw = climb;
+    let end = END_DEG.to_radians();
+    let rho = b / end.cos();
+    let len = chain.len();
+    let span = (len - b - rho - 0.1).max(0.0);
+    let n = if span > 1e-9 { ((span / step).ceil() as usize).max(1) } else { 0 };
+    if n > MAX_LOOPS {
+        return None;
+    }
+    let spacing = if n > 0 { span / n as f64 } else { step };
+    let c0 = chain.at(0.0);
+    let f0 = Frame::new(c0, chain.dir(0.0, spacing), ccw);
+    let mut pieces = Vec::with_capacity(n);
+    for k in 1..=n {
+        let s = k as f64 * spacing;
+        let f = Frame::new(chain.at(s), chain.dir(s, spacing), ccw);
+        let pc = front(&f, rho, b, fillet, ccw);
+        if k > n / 2 && piece_near(&pc, c0, b + 0.02) {
+            break;
+        }
+        pieces.push(pc);
+    }
+    let loops = pieces.len();
+    Some(Layout { c0, b, entry: f0.at(0.0, -b), opposite: f0.at(0.0, b), ccw, pieces, loops, rho, spacing })
+}
+
+fn piece_near(pc: &Piece, c0: Point2, clear: f64) -> bool {
+    if dist(pc.start, c0) <= clear || dist(pc.end(), c0) <= clear {
+        return true;
+    }
+    let mut cur = pc.start;
+    for el in &pc.cut {
+        let El::Arc { center, to, ccw } = *el;
+        let (a0, a1) = ((cur.y - center.y).atan2(cur.x - center.x), (to.y - center.y).atan2(to.x - center.x));
+        let sweep = if ccw { (a1 - a0).rem_euclid(std::f64::consts::TAU) } else { -((a0 - a1).rem_euclid(std::f64::consts::TAU)) };
+        let r = dist(center, to);
+        for t in [0.25, 0.5, 0.75] {
+            let a = a0 + sweep * t;
+            if dist(Point2::new(center.x + r * a.cos(), center.y + r * a.sin()), c0) <= clear {
+                return true;
+            }
+        }
+        cur = to;
+    }
+    false
 }
 
 /// Every loop stays inside the cutter-centre band of the channel (a

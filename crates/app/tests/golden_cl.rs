@@ -2,7 +2,7 @@
 //! testing rule made concrete. Format, naming and the regeneration
 //! workflow: tests/golden/CLAUDE.md.
 //!
-//! Gate map (M4.4): covers app::cl, app::drilling, app::finishing3d, app::geo2d, app::geometry, app::machining2d, app::tools.
+//! Gate map (M4.4): covers cl::cl, motion::drilling, motion::finishing3d, geometry::geo2d, app::geometry, motion::machining2d, tools::tools, motion::wire_edm.
 
 
 mod common;
@@ -84,7 +84,11 @@ fn contour_disc_hole_matches_golden() {
     // A plate with a 128-gon approximation of a round bore: the rim is
     // polygonal only because import tessellates it, so the fitter must
     // replace the chord runs with arc moves - this golden is the v2
-    // format's committed witness.
+    // format's committed witness. The lead is 2 mm (#862): a 3 mm lead
+    // on the R6 bore lies on the r = 3 cutter-centre ring itself, so the
+    // leads cross the ring and the gate refuses the program - a posted
+    // golden must be a program a user can post (`solid_law_goldens`
+    // pins both the pass and the R3 refusal).
     let mut loops = rect(0.0, 0.0, 40.0, 20.0).loops().to_vec();
     loops.push(circle(Point2::new(20.0, 10.0), 6.0, 128));
     let region = Region::new(loops).unwrap();
@@ -100,7 +104,7 @@ fn contour_disc_hole_matches_golden() {
         plunge_feed: 100.0,
         climb: true,
         side: Side::Auto,
-        lead: Lead::Arc { radius: 3.0 },
+        lead: Lead::Arc { radius: 2.0 },
         tolerance: 0.01,
         tab_count: 0,
         tab_width: 0.0,
@@ -120,7 +124,8 @@ fn contour_tangential_lead_matches_golden() {
     // The same plate-and-bore job, tangential entry instead of quarter:
     // this golden is the byte-witness that the half-arc leads post as
     // single S{±1} arc moves with a 2*radius standoff - rerun
-    // WRITE_GOLDEN=1 only together with a deliberate law change.
+    // WRITE_GOLDEN=1 only together with a deliberate law change. 2 mm,
+    // not 3, so the leads stay clear of the ring and the gate (#862).
     let mut loops = rect(0.0, 0.0, 40.0, 20.0).loops().to_vec();
     loops.push(circle(Point2::new(20.0, 10.0), 6.0, 128));
     let region = Region::new(loops).unwrap();
@@ -136,7 +141,7 @@ fn contour_tangential_lead_matches_golden() {
         plunge_feed: 100.0,
         climb: true,
         side: Side::Auto,
-        lead: Lead::Tangential { radius: 3.0 },
+        lead: Lead::Tangential { radius: 2.0 },
         tolerance: 0.01,
         tab_count: 0,
         tab_width: 0.0,
@@ -259,6 +264,7 @@ fn pocket_zigzag_plate_with_island_matches_golden() {
     // 30x30 region with a centered 10x10 island; zigzag rows must stop
     // at the island and step over it between levels.
     let p = PocketParams {
+        blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tool_diameter: 8.0,
         stepover: 3.0,
@@ -325,6 +331,7 @@ fn pocket_zigzag_plate_with_island_blended_matches_golden() {
     // of at most stepover/2); plunges, lifts and pass starts are the
     // sharp golden's to the byte.
     let p = PocketParams {
+        blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tool_diameter: 8.0,
         stepover: 3.0,
@@ -354,6 +361,7 @@ fn pocket_waterline_matches_golden() {
     // ring ordering is a place where a "small" generator change tends to
     // reorder everything.
     let p = PocketParams {
+        blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tool_diameter: 8.0,
         stepover: 3.0,
@@ -469,6 +477,11 @@ fn cycle_tool(kind: ToolKind, diameter: f64, tip_angle: f64, pitch: f64) -> Tool
         tool_material: None,
         flutes: None,
         orientation: None,
+        pitch_min: 0.0,
+        catalog: camcraft_tools::catalog_fields::ToolCatalog::default(),
+        cutting: Vec::new(),
+        outline: Vec::new(),
+        turning: None,
     }
 }
 
@@ -1010,6 +1023,7 @@ fn plasma_plate_with_holes_matches_golden() {
         pierce_height: Some(3.8),
         cut_height: None,
         pierce_delay: Some(0.5),
+        model_excess: 0.0,
     };
     let path = plasma_profile(&loops, &[], &part, &p).unwrap();
     let text = gen_to_cltext(&path);
@@ -1050,4 +1064,201 @@ fn trochoid_slot_small_matches_golden() {
     let t = camcraft_app::machining2d::trochoidal_slot(&[Point2::new(0.0, 0.0), Point2::new(12.0, 0.0)], &p).unwrap();
     assert!(t.has_arcs());
     write_golden("trochoid_slot_small.cl", &gen_to_cltext(&t));
+}
+
+// ---------------------------------------------------------------------------
+// #894 - thread milling. The exact ride - lead arcs, helix, radial passes,
+// levels - for both tool forms, both hands and a boss must not move
+// unnoticed.
+// ---------------------------------------------------------------------------
+
+fn thread_ride(rows: u32, external: bool, hand: camcraft_app::cl::ThreadHand, climb: bool, through: bool) -> camcraft_app::cl::Toolpath {
+    camcraft_app::machining2d::thread_mill(&thread_params(rows, external, hand, climb, through)).expect("a valid thread ride")
+}
+
+fn thread_params(
+    rows: u32,
+    external: bool,
+    hand: camcraft_app::cl::ThreadHand,
+    climb: bool,
+    through: bool,
+) -> camcraft_app::machining2d::ThreadParams {
+    use camcraft_app::machining2d::{ThreadHole, ThreadParams};
+    ThreadParams {
+        holes: vec![
+            ThreadHole { xy: Point2::new(10.0, 10.0), radius: 5.0, top_z: 0.0, floor_z: -8.0, stepped: false, through },
+            ThreadHole { xy: Point2::new(40.0, 10.0), radius: 5.0, top_z: 0.0, floor_z: -8.0, stepped: false, through },
+        ],
+        pitch: 1.5,
+        tool_diameter: 6.0,
+        rows,
+        infeed: 0.45,
+        external,
+        hand,
+        climb,
+        passes: camcraft_app::machining2d::ThreadPasses::default(),
+        clearance_z: 10.0,
+        r_z: None,
+        retract_z: Some(4.0),
+        feed: 300.0,
+        plunge_feed: 100.0,
+    }
+}
+
+#[test]
+fn thread_mill_constant_area_spring_pass_matches_golden() {
+    // #988: right-hand climb in two blind holes with a one-row mill, the
+    // roughing on decreasing passes of constant chip area (first 0.45 mm,
+    // cumulative depth D x sqrt(i/n)), a 0.05 mm finishing pass, one
+    // spring pass on the final radius and a 0.02 mm fit allowance.
+    use camcraft_app::machining2d::{thread_mill, PassSchedule, ThreadPasses};
+    let mut p = thread_params(1, false, camcraft_app::cl::ThreadHand::Right, true, false);
+    p.passes = ThreadPasses { schedule: PassSchedule::ConstantArea, finish: 0.05, spring: 1, allowance: 0.02, ..ThreadPasses::default() };
+    let t = thread_mill(&p).expect("a valid thread ride");
+    assert!(t.is_chained() && t.has_arcs());
+    write_golden("thread_mill_constant_area_spring_pass.cl", &gen_to_cltext(&t));
+}
+
+#[test]
+fn thread_mill_raised_r_plane_matches_golden() {
+    // #1212: the same right-hand climb in two blind holes, the R plane
+    // stated 2 mm over the holes' tops: each rapid stops on it and the
+    // feed down the axis starts there, as on a drill cycle.
+    let mut p = thread_params(1, false, camcraft_app::cl::ThreadHand::Right, true, false);
+    p.r_z = Some(2.0);
+    let t = camcraft_app::machining2d::thread_mill(&p).expect("a valid thread ride");
+    assert!(t.is_chained() && t.has_arcs());
+    write_golden("thread_mill_raised_r_plane.cl", &gen_to_cltext(&t));
+}
+
+#[test]
+fn thread_mill_internal_single_form_matches_golden() {
+    // Right-hand climb in two blind holes with a one-row mill: bottom-up,
+    // counter-clockwise, one turn per thread, two radial passes.
+    let t = thread_ride(1, false, camcraft_app::cl::ThreadHand::Right, true, false);
+    assert!(t.is_chained() && t.has_arcs());
+    write_golden("thread_mill_internal_single_form.cl", &gen_to_cltext(&t));
+}
+
+#[test]
+fn thread_mill_internal_multi_form_left_hand_matches_golden() {
+    // Left-hand conventional through holes with a three-row mill: two
+    // levels of one clockwise revolution each, rising, the tip running one
+    // pitch past the exit.
+    let t = thread_ride(3, false, camcraft_app::cl::ThreadHand::Left, false, true);
+    assert!(t.is_chained() && t.has_arcs());
+    write_golden("thread_mill_internal_multi_form_left_hand.cl", &gen_to_cltext(&t));
+}
+
+#[test]
+fn thread_mill_external_single_form_matches_golden() {
+    // Right-hand climb round two bosses: clockwise, top-down, quarter-arc
+    // leads from one tool radius outside the centre circle.
+    let t = thread_ride(1, true, camcraft_app::cl::ThreadHand::Right, true, false);
+    assert!(t.is_chained() && t.has_arcs());
+    write_golden("thread_mill_external_single_form.cl", &gen_to_cltext(&t));
+}
+
+/// #532: a wire EDM contour - a 40x20 profile with 2 mm corners (3-degree
+/// facets) cut as a die from a start hole at its centre and as a punch
+/// from a threading point outside it, with a SYNTHETIC condition (wire
+/// 0.25 mm, gap 0.04 mm - from no machine's manual): the two wire-centre
+/// paths stand 0.165 mm inside and outside the profile, apart by the
+/// 0.33 mm kerf; every move rides the lower programmed plane and states
+/// no pose and no feed (#290 D2).
+#[test]
+fn wire_contour_die_and_punch_match_golden() {
+    use camcraft_app::wire_edm::{wire_contour, WireParams, WireSide};
+    let (hx, hy, r) = (18.0, 8.0, 2.0);
+    let mut pts = Vec::new();
+    for (cx, cy, a0) in [(hx, hy, 0.0_f64), (-hx, hy, 90.0), (-hx, -hy, 180.0), (hx, -hy, 270.0)] {
+        for s in 0..=30 {
+            let t = (a0 + 3.0 * f64::from(s)).to_radians();
+            pts.push(Point2::new(cx + r * t.cos(), cy + r * t.sin()));
+        }
+    }
+    let profile = Loop::new(pts).unwrap();
+    for (side, start, file) in [
+        (WireSide::Die, Point2::new(0.0, -1.0), "wire_contour_die.cl"),
+        (WireSide::Punch, Point2::new(-30.0, 0.0), "wire_contour_punch.cl"),
+    ] {
+        let p = WireParams {
+            wire_diameter: 0.25,
+            gap: 0.04,
+            condition: "C110".into(),
+            side,
+            start: Some(start),
+            plane_z: 0.0,
+            tabs: None,
+            stock: None,
+            clearance: 1.0,
+        };
+        let path = wire_contour(std::slice::from_ref(&profile), &[], &p).unwrap();
+        assert!(path.is_prismatic() && path.moves.iter().all(|m| m.kind == MoveKind::Feed && m.feed.is_none()));
+        let text = gen_to_cltext(&path);
+        // The in-app writer and the golden writer agree byte for byte,
+        // and the dump reads back as the same moves at its micron scale.
+        assert_eq!(camcraft_app::cl::text::to_text(&path).unwrap(), text);
+        assert_eq!(camcraft_app::cl::text::from_text(&text).unwrap().moves.len(), path.moves.len());
+        write_golden(file, &text);
+    }
+}
+
+/// #1109: an open wire run - a cut-off across a 100 x 50 plate at
+/// x = 60, kerf right of travel, SYNTHETIC condition (wire 0.25 mm, gap
+/// 0.04 mm): the wire stands 0.165 mm right of the line, threaded 1 mm
+/// past the kerf below the plate and run out 1 mm past it above.
+#[test]
+fn wire_open_cutoff_matches_golden() {
+    use camcraft_app::wire_edm::{wire_contour, WireParams, WireSide};
+    let plate = vec![Point2::new(0.0, 0.0), Point2::new(100.0, 0.0), Point2::new(100.0, 50.0), Point2::new(0.0, 50.0)];
+    let p = WireParams {
+        wire_diameter: 0.25,
+        gap: 0.04,
+        condition: "C110".into(),
+        side: WireSide::Right,
+        start: None,
+        plane_z: 0.0,
+        stock: Some(Region::new(vec![Loop::new(plate).unwrap()]).unwrap()),
+        clearance: 1.0,
+        tabs: None,
+    };
+    let line = vec![Point2::new(60.0, 0.0), Point2::new(60.0, 50.0)];
+    let path = wire_contour(&[], &[line], &p).unwrap();
+    assert!(path.is_prismatic() && path.moves.iter().all(|m| m.kind == MoveKind::Feed && m.feed.is_none()));
+    let text = gen_to_cltext(&path);
+    assert_eq!(camcraft_app::cl::text::to_text(&path).unwrap(), text);
+    write_golden("wire_open_cutoff.cl", &text);
+}
+
+#[test]
+fn circular_ring_arcs_matches_golden() {
+    // #1558: the issue's hole - Ø6, a Ø4 cutter, 0.5 stepover, 1 mm
+    // stepdown through 11 mm - with the helix standing down to the ring
+    // ramp: two rings of two half-turn arcs per level, and each ramp
+    // flown as the ring's own helical arcs. Any change to this shape
+    // shows up here as a diff.
+    let c = Point2::new(-35.0, 2.9);
+    let p = camcraft_app::machining2d::CircularParams {
+        links: camcraft_app::links::Links::PLANAR,
+        center: c,
+        radius: 3.0,
+        vault: false,
+        bottom_z: -11.524,
+        top_z: -0.508,
+        tool_diameter: 4.0,
+        stock_to_leave: 0.0,
+        stepover: 0.5,
+        stepdown: 1.0,
+        clearance_z: 5.0,
+        retract_z: None,
+        feed: 500.0,
+        plunge_feed: 250.0,
+        climb: true,
+        entry: camcraft_app::machining3d::Entry3D::Helix,
+        helix_radius: 1.0,
+    };
+    let t = camcraft_app::machining2d::circular(&rect(c.x - 9.0, c.y - 9.0, c.x + 9.0, c.y + 9.0), &p).unwrap();
+    assert!(t.has_arcs());
+    write_golden("circular_ring_arcs.cl", &gen_to_cltext(&t));
 }

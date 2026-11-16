@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo/camcraft-logo.png" alt="CamCraft logotype" width="160"></p>
+
 # CamCraft
 
 A CAM system that turns 3D models into NC programs (G-code) for CNC milling
@@ -30,6 +32,8 @@ text, assets or post processors were used.
 > refusal you think is mistaken - so the next person doesn't find it the
 > hard way.
 
+![CamCraft main window: the model browser on the left, a 3D viewport in the middle showing a block with a round hole on a vise, and the WCS (G54) properties panel on the right.](screenshot.png)
+
 ## What it does
 
 - **Import** STL, OBJ and STEP models; repair meshes (weld vertices, fill
@@ -37,7 +41,8 @@ text, assets or post processors were used.
 - **Set up** stock, work offsets (G54–G59), fixtures and machines (mill,
   5-axis, lathe, mill-turn, and the Tormach 770MX, 770MX (ML), 770M,
   1100M, 1100MX, 1500MX, PCNC 440, PCNC 770 (earlier and Series 3) and
-  PCNC 1100 (Series I, II and 3) mills).
+  PCNC 1100 (Series I, II and 3) mills, and generic grblHAL and TinyG
+  3-axis routers).
 - **2D milling:** face, contour (with G41/G42 compensation), pocket,
   adaptive clearing, slot, trace, engrave, chamfer, circular, bore and
   thread milling.
@@ -54,8 +59,9 @@ text, assets or post processors were used.
   has an area.
 - **Verify and simulate:** a solid-law verifier (gouge, rest, rapid and
   fixture checks), stock simulation with playback, and a deviation view.
-- **Post:** Fanuc, Haas, Mazak, Sinumerik, Heidenhain, Tormach PathPilot
-  and Fanuc Lathe, written as scriptable `.cps` post processors.
+- **Post:** Fanuc, Haas, Mazak, Sinumerik, Heidenhain, Tormach PathPilot,
+  grblHAL, Synthetos TinyG and Fanuc Lathe, written as scriptable `.cps`
+  post processors.
 - **Setup sheets:** the Setups page lists each setup's tools in change
   order with cut and rapid lengths and estimated time, and **Export setup
   sheets…** writes one text page per setup. Posting does not write them.
@@ -150,8 +156,7 @@ cargo test --release -p camcraft-app -p camcraft-motion -- --ignored   # slow ve
 
 Golden toolpath and G-code outputs live under each crate's `tests/golden/`.
 Gates run locally through `cargo xtask gate` (see Contributing). GitHub
-Actions runs only on a pushed release tag; the CI and nightly workflows in
-`.github/workflows/` are manual.
+Actions runs only on a pushed release tag (`release.yml`).
 
 ## Project documents
 
@@ -173,6 +178,12 @@ anything about the machine's motion, **UI / UX bug** for the interface, and
 the general bug and feature templates for the rest. If a path would gouge or
 collide and the app did not warn you, please say so. Those reports matter
 most.
+
+## Community
+
+Questions and discussion: join the CamCraft Discord server at
+<https://discord.gg/bBWjkAgX5>. Bug reports and feature requests still go to
+the GitHub issues, so the work stays tracked.
 
 ## Contributing
 
@@ -210,13 +221,17 @@ version.
 
 ### Issues
 
-Work is the open GitHub issues, picked by priority: `P0` (wrong output,
-gouge, crash, data loss), then `P1` (wrong behaviour a user hits), then `P2`
-(owed polish), oldest first. Each issue carries one `P*` label and one or
+Work is the open GitHub issues, picked by priority, `P1` to `P9`, lowest
+number first and oldest first within a number: `P1` is wrong output, gouge,
+crash or data loss; `P2` a broken main; `P3` wrong behaviour a user hits;
+`P4` work the maintainer asked for; `P5` agent surface and tooling; `P6`
+accepted enhancements; `P7` owed polish; `P8` ideas needing research; `P9`
+someday (AGENTS.md "Priorities" has the table). `P1`-`P3` are defects only.
+Each issue carries one `P*` label and one or
 more `area:*` labels. Issues opened by an agent also carry `source:agent`.
 
 **`P?` means paused.** The maintainer puts `P?` on an issue (in place of
-`P0`/`P1`/`P2`) to hold it: nobody picks it up, claims it or changes its
+`P1`..`P9`) to hold it: nobody picks it up, claims it or changes its
 priority until the maintainer swaps `P?` for a real priority or closes it.
 Comments with relevant facts (a duplicate, a related fix) are still
 welcome.

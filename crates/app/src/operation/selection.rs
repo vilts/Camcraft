@@ -217,7 +217,7 @@ pub(super) fn selection_geometry_in(
         OpParams::Pocket { .. } | OpParams::Adaptive2D { .. } | OpParams::Offset2D { .. }
     );
     // The plasma profile takes open runs as the contour does (#670).
-    let contour = matches!(params, OpParams::Contour { .. } | OpParams::PlasmaProfile(_));
+    let contour = matches!(params, OpParams::Contour { .. } | OpParams::PlasmaProfile(_) | OpParams::WireContour(_));
     let contour_side = match params {
         OpParams::Contour { side, .. } => *side,
         _ => Side::Auto,
@@ -227,6 +227,7 @@ pub(super) fn selection_geometry_in(
     // of `region_for` and the verification project, so preview and path
     // agree) and the stock around it (what a run runs out to, where
     // stock exists).
+    let opframe = OpFrame::new(setup.map(str::to_owned), None);
     let mut material_sil = None;
     let mut envelope = None;
     let mut chain_only = false;
@@ -243,7 +244,7 @@ pub(super) fn selection_geometry_in(
             let sil = silhouette(&material.facets);
             let stock_name = crate::setup::stock_entity_name(world, setup);
             envelope = model::find_by_name(world, &stock_name)
-                .and_then(|e| model::world_facets(world, &e))
+                .and_then(|e| opframe.furniture_facets(world, &e))
                 .and_then(|f| slice::project(&f, FOOTPRINT_SAMPLES).ok())
                 .filter(|r| !r.is_empty())
                 .or_else(|| sil.clone());
@@ -257,7 +258,7 @@ pub(super) fn selection_geometry_in(
     // Per entity first, then across entities (M13.11); the cross walk's
     // refusals - a three-way junction, runs on different planes - are
     // the Prime Directive's kind and come back by name.
-    let (rings, stitched) = stitch_open_runs(world, items, frame)?;
+    let (rings, stitched) = stitch_open_runs(world, setup, items, frame)?;
     let mut stitched_runs = 0usize;
     let mut stitched_rings = 0usize;
     for (label, pts, runs) in rings {
@@ -276,6 +277,8 @@ pub(super) fn selection_geometry_in(
             if stitched_rings == 1 { "" } else { "s" },
         ));
     }
+    // #1735: two open edges of a pocket-family pick are a band's walls.
+    let band = open_band::of_selection(world, setup, items, params, frame, &stitched, &mut loops, notes.as_deref_mut())?;
     for (gi, g) in items.iter().enumerate() {
         let Some(entity) = model::find_by_name(world, &g.entity) else {
             return Err(GenError::Invalid(format!(
@@ -289,7 +292,7 @@ pub(super) fn selection_geometry_in(
                 g.entity
             )));
         };
-        let loc = model::transform_of(world, &entity).unwrap_or_default();
+        let loc = opframe.pose_in_setup(world, &entity).unwrap_or_default();
         let label = format!("{} of '{}'", g.feature, g.entity);
         match g.feature {
             FeatureSel::Vertex(_) => {
@@ -310,6 +313,10 @@ pub(super) fn selection_geometry_in(
                     loc.rot,
                 );
                 if facing && n.z.abs() < FACE_TILT_MAX_DEG.to_radians().cos() {
+                    // #1510: a face level only in a tilted WCS says why.
+                    if let Some(why) = crate::setup_wcs_tilt::setup_problem(world, setup) {
+                        return Err(GenError::Invalid(format!("{label} is not horizontal - a facing pass needs a floor on the machine, and {why}")));
+                    }
                     return Err(GenError::Invalid(format!(
                         "{label} is not horizontal - a facing pass needs a floor; machine its boundary with a 2D Contour instead"
                     )));
@@ -352,10 +359,10 @@ pub(super) fn selection_geometry_in(
                         continue;
                     }
                     if pocket {
-                        return Err(GenError::Invalid(format!(
-                            "{label} is an open run - a {} cannot end mid-edge; select a closed chain - Ctrl+click the remaining edges, or Shift+click to take the whole loop",
-                            params.kind().info().label
-                        )));
+                        if band {
+                            continue;
+                        }
+                        return Err(open_band::mid_edge(&label, params));
                     }
                     if contour {
                         // The run's consumer: a centerline pass along
@@ -507,10 +514,11 @@ pub(super) fn selection_geometry_in(
     }
     if contour && contour_side != Side::Auto && loops.is_empty() && !chains.is_empty() {
         // An explicit Side on a pure open-run selection changes nothing -
-        // the cutter rides the run's own points - so say that plainly
-        // instead of letting the combo imply an effect.
+        // the cutter stays on the run's air side, read from the part
+        // (#1777) - so say that plainly instead of letting the combo
+        // imply an effect.
         if let Some(n) = &mut notes {
-            n.push("Side does not apply to open runs - the cutter rides the run's line".into());
+            n.push("Side does not apply to open runs - the tool stays on the run's air side, read from the part".into());
         }
     }
     Ok((loops, chains, contour_inside))
@@ -547,7 +555,7 @@ pub(super) fn selection_region(
     // around the part, not a refusal).
     let past_edge = matches!(area.containment, Some(Containment::On | Containment::Outside));
     let region = match pocket_ladder(world, setup, items, params)? {
-        Some((part, planes)) if !past_edge => pocket_region_on_part(loops, &part, &planes)?,
+        Some((part, planes)) if !past_edge => pocket_region_on_part(loops, &part, &planes, crate::units::of(world))?,
         _ => Region::new(loops)?,
     };
     // The area controls run after this, at the seam's call sites (the

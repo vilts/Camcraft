@@ -14,7 +14,7 @@
 //! y -30..30), written as an STL by the test so the fixture is the code.
 //!
 //! Gate map (M4.4): covers app::mcp, app::posting, app::posting_sim,
-//! app::stock_sim, app::machining2d.
+//! app::stock_sim, sim::stock_sim, motion::machining2d.
 
 use camcraft_app::mcp::Server;
 

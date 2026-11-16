@@ -37,7 +37,7 @@ use egui_wgpu::wgpu;
 use wgpu::util::DeviceExt;
 
 use camcraft_app::stock_sim::preview::{pack_cut, pack_field, pack_target};
-use camcraft_app::stock_sim::{Preview, PreviewCamera, DEV_TOL};
+use camcraft_app::stock_sim::{Preview, PreviewCamera};
 use camcraft_app::stock_view::{CutLayer, FieldView};
 use camcraft_app::geometry::Point3;
 
@@ -308,7 +308,7 @@ impl StockEye {
         let budget = if gpu.is_some() { GPU_PIXELS } else { CPU_PIXELS };
         let (k, tw, th) = fit(key.view, budget);
         let (buf, source) = match gpu {
-            Some(t) => (t.encode(device, queue, encoder, pcam, tw, th, DEV_TOL)?, Arc::clone(fv)),
+            Some(t) => (t.encode(device, queue, encoder, pcam, tw, th, fv.tol)?, Arc::clone(fv)),
             None => {
                 let Some((pv, src)) = self.cpu_picture(fv, pcam, key, (tw, th))? else { return Ok(None) };
                 let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {

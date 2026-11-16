@@ -91,6 +91,7 @@ pub fn plate(control: bool) -> Toolpath {
         pierce_height: Some(3.8),
         cut_height: None,
         pierce_delay: Some(0.5),
+        model_excess: 0.0,
     };
     plasma_profile(&loops, &[], &part, &p).unwrap()
 }
@@ -109,8 +110,12 @@ pub fn stream_of(t: &Toolpath) -> String {
     cnc::serialize(&post::dump(t, &d))
 }
 
+/// #902: the program's unit is the document's; a run on the inch file
+/// stands for the inch document it posted before #902.
 fn post_clean(mch: &Value, stream: &str) -> String {
-    let out = engine::run(cps(), mch, stream).expect("posts");
+    let inch = mch.pointer("/kinematics/default/units/length").and_then(Value::as_str) == Some("inch");
+    let units = serde_json::json!({ "Units": if inch { "inch" } else { "mm" } });
+    let out = engine::run_with(cps(), mch, stream, &units).expect("posts");
     assert!(out.warnings.is_empty(), "the gate counts warnings: {:?}", out.warnings);
     out.program
 }
@@ -285,6 +290,12 @@ fn a_plasma_document_posts_through_the_app_gate() {
     let src = SrcRef::Entity("plate".into());
     h.execute(&world, CreateOperation::new(&world, "Plasma1", "PT-KERF-150", src, OpParams::PlasmaProfile(op)).expect("op"));
     h.execute(&world, GenerateOperation::new(&world, "Plasma1").expect("generates"));
+    // #1232: the default (Fanuc, a milling post) does not serve the
+    // table - refused by name before a line is written.
+    let file = std::env::temp_dir().join(format!("camcraft_plasma_unserved_{}.nc", std::process::id()));
+    let why = camcraft_app::posting::post_setup(&world, &file).expect_err("a milling post on a plasma table");
+    assert!(why.contains("Plasma1") && why.contains("post Fanuc does not serve") && why.contains("plasma cutting"), "{why}");
+    assert!(!file.exists(), "nothing written");
     // The mount offers the plasma post; the user takes it.
     let (serves, offer) = camcraft_app::posting::post_offer(&world).expect("a mill post on a plasma table is offered the plasma post");
     assert_eq!((serves, &offer), ("mill", &PostRef::Named(PLASMA.into())));

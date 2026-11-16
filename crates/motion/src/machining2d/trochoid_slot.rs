@@ -28,7 +28,8 @@ use crate::quality::{QualitySpec, measure, stock_for};
 use super::face::GenError;
 use super::levels::cut_levels;
 use super::trochoid_air::lifted_cut;
-use super::trochoid_loops::{Chain, El, Layout, MAX_LOOPS, contained, layout};
+use super::trochoid_bore::{bore, start as bore_start};
+use super::trochoid_loops::{Chain, El, Layout, MAX_LOOPS, contained, layout, layout_closed};
 
 /// The forward step is tried at these shares of the user's, longest
 /// first, until the measured engagement holds.
@@ -36,7 +37,7 @@ const LADDER: [f64; 11] = [1.0, 0.85, 0.7, 0.55, 0.45, 0.35, 0.28, 0.22, 0.15, 0
 
 /// A loop band narrower than this share of the tool diameter is no
 /// trochoid (the loops would be a slot with extra steps).
-const MIN_BAND_PER_D: f64 = 0.02;
+pub(super) const MIN_BAND_PER_D: f64 = 0.02;
 
 /// Loops a candidate step is first tried on.
 const TRIAL_LOOPS: usize = 12;
@@ -191,10 +192,41 @@ pub fn trochoidal_slot(chain: &[Point2], p: &TrochoidParams) -> Result<Toolpath,
     plan_trochoidal_slot(chain, p).map(|pl| pl.path)
 }
 
-/// [`trochoidal_slot`] with the planner's numbers.
+/// [`trochoidal_slot`] with the planner's numbers. A loop band wider
+/// than the tool radius opens its bore (#1589): a helix of radius `b`
+/// clears only the ring `b +- r`, so with `b > r` the plain bore leaves
+/// a post of radius `b - r` at the start that no front arc reaches. A
+/// band of at most the tool radius keeps the plain bore it always
+/// posted (its helix already overlaps at the centre).
 pub fn plan_trochoidal_slot(chain: &[Point2], p: &TrochoidParams) -> Result<TrochoidPlan, GenError> {
+    let open = p.band()? > 0.5 * p.tool_diameter;
+    plan_lane(chain, p, open)
+}
+
+/// Planned 2D layout for one lane after holding the engagement limit.
+pub(super) struct LaneLayout {
+    pub(super) lay: Layout,
+    pub(super) step: f64,
+    pub(super) deg: f64,
+    pub(super) b: f64,
+    pub(super) room: f64,
+    pub(super) open: bool,
+    pub(super) entry: Point2,
+    pub(super) tp: TrochoidParams,
+}
+
+/// The planner behind [`plan_trochoidal_slot`]; `open` opens the bore
+/// out to a band wider than the tool (`trochoid_bore`, #1509).
+pub(super) fn plan_lane(chain: &[Point2], p: &TrochoidParams, open: bool) -> Result<TrochoidPlan, GenError> {
+    let planned = plan_lane_layout(chain, p, open, false)?;
+    finish(&planned.lay, p, planned.step, planned.deg, planned.b, planned.room, open)
+}
+
+/// Plan one open or closed trochoidal lane without yet repeating across levels.
+pub(super) fn plan_lane_layout(chain: &[Point2], p: &TrochoidParams, open: bool, closed: bool) -> Result<LaneLayout, GenError> {
     p.validate()?;
-    let Some(ch) = Chain::new(chain) else {
+    let ch = if closed { Chain::new_closed(chain) } else { Chain::new(chain) };
+    let Some(ch) = ch else {
         return Err(GenError::Invalid("trochoidal slot: the centre line needs two distinct, finite points".into()));
     };
     let b = p.band()?;
@@ -212,24 +244,21 @@ pub fn plan_trochoidal_slot(chain: &[Point2], p: &TrochoidParams) -> Result<Troc
     };
     // One level at Z 0 under a 1 mm block of the channel, measured.
     let level = |lay: &Layout| -> Result<Toolpath, GenError> {
-        let mut bld = PathBuilder::new(Point3::new(lay.entry.x, lay.entry.y, 1.0));
-        emit_level(&mut bld, lay, p, 0.0, 1.0, false)?;
+        let s = bore_start(lay, p, open);
+        let mut bld = PathBuilder::new(Point3::new(s.x, s.y, 1.0));
+        emit_level(&mut bld, lay, p, 0.0, 1.0, false, open)?;
         Ok(bld.finish())
     };
     let mut best: Option<(f64, Point3, f64)> = None;
-    // The longest step that needed more loops than the cap (every
-    // shorter rung needs more still).
     let mut capped: Option<f64> = None;
     for f in LADDER {
         let step = p.step * f;
-        let Some(lay) = layout(&ch, b, step, p.smoothing, p.climb) else {
+        let lay_opt = if closed { layout_closed(&ch, b, step, p.smoothing, p.climb) } else { layout(&ch, b, step, p.smoothing, p.climb) };
+        let Some(lay) = lay_opt else {
             capped = capped.or(Some(step));
             continue;
         };
         contained(&ch, &lay, room)?;
-        // The first loops first (the steady state comes within a few
-        // loops; a failing step need not be walked to the end), then
-        // the whole level.
         let head = Layout { pieces: lay.pieces.iter().take(TRIAL_LOOPS).cloned().collect(), ..lay.clone() };
         let full = lay.pieces.len() > TRIAL_LOOPS;
         let mut q = gauge(&level(&head)?)?;
@@ -245,7 +274,6 @@ pub fn plan_trochoidal_slot(chain: &[Point2], p: &TrochoidParams) -> Result<Troc
         if q.max_deg > p.max_engagement {
             continue;
         }
-        // The lifted returns land on air, read inside the disc.
         let trial = match trial {
             Some(t) => t,
             None => level(&lay)?,
@@ -258,7 +286,8 @@ pub fn plan_trochoidal_slot(chain: &[Point2], p: &TrochoidParams) -> Result<Troc
                 at.x, at.y
             )));
         }
-        return finish(&lay, p, step, q.max_deg, b, room);
+        let entry = bore_start(&lay, p, open);
+        return Ok(LaneLayout { lay, step, deg: q.max_deg, b, room, open, entry, tp: *p });
     }
     let cap = |s: f64| {
         format!(
@@ -286,21 +315,23 @@ pub fn plan_trochoidal_slot(chain: &[Point2], p: &TrochoidParams) -> Result<Troc
 
 /// The kept plan over every level, said in the notes and held to the
 /// verifier's crossing law.
-fn finish(lay: &Layout, p: &TrochoidParams, step: f64, deg: f64, b: f64, room: f64) -> Result<TrochoidPlan, GenError> {
+fn finish(lay: &Layout, p: &TrochoidParams, step: f64, deg: f64, b: f64, room: f64, open: bool) -> Result<TrochoidPlan, GenError> {
     let zs = cut_levels(p.top_z, p.bottom_z, p.stepdown)?;
+    let entry = bore_start(lay, p, open);
     let hop = p.retract_z.unwrap_or(p.clearance_z);
     let mut bld = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
-    bld.push(MoveKind::Rapid, Point3::new(lay.entry.x, lay.entry.y, p.clearance_z), None);
+    bld.push(MoveKind::Rapid, Point3::new(entry.x, entry.y, p.clearance_z), None);
     let mut above = p.top_z;
     for (i, &z) in zs.iter().enumerate() {
         if i > 0 {
             let at = bld.at();
             bld.push(MoveKind::Rapid, Point3::new(at.x, at.y, hop), None);
-            bld.push(MoveKind::Rapid, Point3::new(lay.entry.x, lay.entry.y, hop), None);
+            bld.push(MoveKind::Rapid, Point3::new(entry.x, entry.y, hop), None);
         }
         let from = (above + crate::approach::DEFAULT_PLUNGE_HEIGHT).min(hop).max(above);
-        bld.push(MoveKind::Rapid, Point3::new(lay.entry.x, lay.entry.y, from), None);
-        emit_level(&mut bld, lay, p, z, from, true)?;
+        bld.push(MoveKind::Rapid, Point3::new(entry.x, entry.y, from), None);
+        // #871: a part-way refusal hands back the levels so far.
+        emit_level(&mut bld, lay, p, z, from, true, open).map_err(|e| e.with_ghost_moves(bld.moves()))?;
         above = z;
     }
     let at = bld.at();
@@ -330,44 +361,19 @@ fn finish(lay: &Layout, p: &TrochoidParams, step: f64, deg: f64, b: f64, room: f
         return Err(GenError::Invalid(format!(
             "trochoidal slot: the loops would cross themselves (moves {i} and {j}, near ({:.3}, {:.3}))",
             at.x, at.y
-        )));
+        ))
+        .with_ghost(&path));
     }
     Ok(TrochoidPlan { path, step, loop_radius: lay.rho, loops: lay.loops, max_engagement: deg })
 }
 
-/// One level at `z`: the helix bore from `from`, the floor circle, then
-/// each loop's wall lead and cut, the returns between them. `levels`
-/// says whether a retract return may hop (the planner's single level
-/// lifts in place instead, which reads the same stock).
-fn emit_level(
-    b: &mut PathBuilder,
-    lay: &Layout,
-    p: &TrochoidParams,
-    z: f64,
-    from: f64,
-    levels: bool,
-) -> Result<(), GenError> {
+/// One level at `z`: the bore from `from` (`trochoid_bore`), then each
+/// loop's wall lead and cut, the returns between them. `levels` says
+/// whether a retract return may hop (the planner's single level lifts
+/// in place instead, which reads the same stock).
+pub(super) fn emit_level(b: &mut PathBuilder, lay: &Layout, p: &TrochoidParams, z: f64, from: f64, levels: bool, open: bool) -> Result<(), GenError> {
     let p3 = |q: Point2, zz: f64| Point3::new(lattice(q.x), lattice(q.y), lattice(zz));
-    let ccw = lay.ccw;
-    // Past the turn cap the bore is refused by name, never cut as one
-    // turn standing in for the many the drop needs (#774).
-    let Some(turns) = crate::links::helix_turns(from - z, lay.b, 0.0) else {
-        return Err(GenError::Invalid(format!(
-            "trochoidal slot: the bore helix would need more than {} turns to descend {:.3} mm on a {:.3} mm helix radius (half the loop band) - use a smaller stepdown or a wider loop band",
-            crate::links::MAX_HELIX_TURNS,
-            from - z,
-            lay.b
-        )));
-    };
-    let turns = turns.ceil().max(1.0);
-    let halves = (2.0 * turns) as usize;
-    for k in 1..=halves {
-        let zz = from - (from - z) * k as f64 / halves as f64;
-        let to = if k % 2 == 1 { lay.opposite } else { lay.entry };
-        b.push_arc(MoveKind::Feed, p3(to, zz), Some(p.plunge_feed), lay.c0, ccw);
-    }
-    b.push_arc(MoveKind::Feed, p3(lay.opposite, z), Some(p.feed), lay.c0, ccw);
-    b.push_arc(MoveKind::Feed, p3(lay.entry, z), Some(p.feed), lay.c0, ccw);
+    bore(b, lay, p, z, from, open)?;
     let n = lay.pieces.len();
     for (i, pc) in lay.pieces.iter().enumerate() {
         b.push(MoveKind::Feed, p3(pc.start, z), Some(p.feed));

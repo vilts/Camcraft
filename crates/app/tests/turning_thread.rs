@@ -17,7 +17,8 @@
 //! Gate map (M4.4): covers camcraft_app::operation (the threading arm
 //! of generate, the wave verdict wiring, the stamp's kind-scoped
 //! width+tip digest), camcraft_app::commands (Create/
-//! GenerateOperation, ChangeTool, EditOperationParams undo).
+//! GenerateOperation, ChangeTool, EditOperationParams undo),
+//! camcraft_app::path_sig (the lattice-form signature, #1351).
 //! Lane shape (M4.4): all tests here run in seconds.
 
 mod common;
@@ -169,6 +170,7 @@ fn thread_params() -> OpParams {
         infeed: 0.4,
         feed: 120.0,
         plunge_feed: 40.0,
+        infeed_plan: Default::default(),
         hand: camcraft_app::cl::ThreadHand::Right,
     }
 }
@@ -404,6 +406,7 @@ fn an_upward_window_refuses_at_the_create_door() {
         infeed: 0.4,
         feed: 120.0,
         plunge_feed: 40.0,
+        infeed_plan: Default::default(),
         hand: camcraft_app::cl::ThreadHand::Right,
     };
     let Err(err) =
@@ -413,4 +416,34 @@ fn an_upward_window_refuses_at_the_create_door() {
     };
     let msg = err.to_string();
     assert!(msg.contains("must cut downward"), "{msg}");
+}
+
+#[test]
+fn a_chain_of_threading_ops_stays_ok_through_save_and_load() {
+    // #1351: TH1's rest digest reads TH0's path signature. The file
+    // stores moves on the 1 um lattice (TH0 generates y =
+    // 6.050000000000001, the file holds 6.05), so the signature must
+    // be the stored form's - else the reopened chain reads TH1 Stale.
+    let (world, mut history) = thread_world();
+    create(&world, &mut history, "TH0", "TD-1732-60", thread_params());
+    create(&world, &mut history, "TH1", "TD-1732-60", thread_params());
+    assert_eq!(status(&world, "TH0"), OpStatus::Ok);
+    assert_eq!(status(&world, "TH1"), OpStatus::Ok);
+    let file = std::env::temp_dir().join(format!("cc-1351-chain-{}.json", std::process::id()));
+    camcraft_app::project::save(&world, &file).expect("saved");
+    let other = new_world();
+    let loaded = camcraft_app::project::load(&other, &file);
+    let _ = std::fs::remove_file(&file);
+    loaded.expect("loaded");
+    for n in ["TH0", "TH1"] {
+        assert_eq!(status(&other, n), OpStatus::Ok, "{n} after load");
+        let (a, b) = (cache(&world, n).expect("generated"), cache(&other, n).expect("loaded"));
+        assert_eq!(a.path_sig(), b.path_sig(), "{n}: the stored form signs as the generated one");
+    }
+    // The snap hides nothing a file could tell apart: a micron moves it.
+    let mut moved = cache(&world, "TH0").expect("generated").path;
+    let first = moved.moves.first_mut().expect("a move");
+    first.to.y += 1e-3;
+    let moved = camcraft_app::schema::Toolpath::new(moved, Vec::new());
+    assert_ne!(moved.path_sig(), cache(&world, "TH0").expect("generated").path_sig(), "a micron moves the sign");
 }

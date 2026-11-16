@@ -149,7 +149,11 @@ where
         let Some(op) = model::operation_of(world, &e) else {
             continue; // is_operation said yes; a lost component skips, never panics
         };
-        if !keep(&op) {
+        // A wire cut (#1110) mounts no library tool - its wire is the
+        // machine's EDM condition, and a wire EDM has no tool table - so
+        // it adds no row (never one for the empty tool name). Keyed on
+        // the kind alone: a milling op whose tool is gone keeps its row.
+        if !keep(&op) || !op.params.kind().info().mounts_tool() {
             continue;
         }
         let idx = match out.iter().position(|r| r.tool == op.tool) {

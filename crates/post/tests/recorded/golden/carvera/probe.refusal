@@ -1,0 +1,19 @@
+; carvera.cps refused probe: 18 warning(s), the program is never released
+warning: probing: operation "Probe1": this post script does not define onProbeGuard - it cannot write a protected (stop-on-contact) positioning move, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeResult - it cannot set a work offset or stop on a probing result, so the probe operation is refused

@@ -1,5 +1,5 @@
 {
-  "version": 58,
+  "version": 59,
   "machine": {
     "path": "built-in: Tormach 770MX + microARC 4",
     "machine": {
@@ -50,7 +50,8 @@
             0.0
           ],
           "turns_part": true,
-          "nose_to_axis": 269.23999999999995
+          "nose_to_axis": 269.23999999999995,
+          "axis_to_table": 80.01
         }
       ],
       "max_tool_length": null,

@@ -76,6 +76,7 @@ fn run(part: Vec<Triangle>, bar: Option<(f64, f64)>, tool: &str, params: OpParam
     }
     let lathe = Machine { model: "TestBench lathe".into(), kind: Some("lathe".into()), spindle_min: Some(25.0), spindle_max: Some(12000.0), ..Default::default() };
     history.execute(&world, LoadMachine::new(&world, "lathe.mch".into(), Some(lathe)).expect("lathe"));
+    history.execute(&world, camcraft_app::commands::SelectPost::new(&world, camcraft_app::schema::PostRef::Named("Fanuc Lathe".into())).expect("lathe post"));
     let t = catalog().into_iter().find(|(n, _)| *n == tool).map(|(_, t)| t).expect("catalog");
     history.execute(&world, AddTool::new(&world, tool, t).expect("tool"));
     history.execute(&world, ImportModel::from_mesh("bar", Mesh::from_facets(part)));

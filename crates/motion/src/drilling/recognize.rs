@@ -67,13 +67,13 @@ const MIN_FIT_VIDS: usize = 6;
 /// transverse center, the radius, the span along the axis, and
 /// whether the low end is open (a through).
 #[derive(Clone, Copy)]
-struct Found {
-    cu: f64,
-    cv: f64,
-    rad: f64,
-    smin: f64,
-    smax: f64,
-    through: bool,
+pub(super) struct Found {
+    pub(super) cu: f64,
+    pub(super) cv: f64,
+    pub(super) rad: f64,
+    pub(super) smin: f64,
+    pub(super) smax: f64,
+    pub(super) through: bool,
 }
 
 /// Find the drilled holes in a triangle mesh: closed, round, vertical
@@ -128,7 +128,7 @@ fn analyze(tris: &[Triangle]) -> (Vec<Hole>, Vec<CrossHole>) {
 
     let mut found: [Vec<Found>; 3] = [Vec::new(), Vec::new(), Vec::new()];
     for (ci, &(along, u, v)) in AXES.iter().enumerate() {
-        found[ci] = analyze_axis(tris, along, u, v, mins[along]);
+        found[ci] = analyze_axis(tris, along, u, v, mins[along], false);
     }
 
     // Z readings: the original Hole path - snap, fold steps, sort.
@@ -189,12 +189,16 @@ fn set(p: &mut Point3, i: usize, val: f64) {
 /// One candidate axis's readings: weld its wall facets (finite,
 /// normal not a cap of this axis) into components across shared
 /// edges the angle test forgives, and classify each component.
-fn analyze_axis(
+///
+/// `convex` reads the other side of the same walls (#985): the
+/// components whose facets face AWAY from their axis - raised bosses.
+pub(super) fn analyze_axis(
     tris: &[Triangle],
     along: usize,
     u: usize,
     v: usize,
     mesh_min: f64,
+    convex: bool,
 ) -> Vec<Found> {
     // Vertex table on exact bits: `world_facets` transforms shared
     // vertices identically, so seams match exactly. But the union-
@@ -264,7 +268,7 @@ fn analyze_axis(
 
     let mut out = Vec::new();
     for fis in by_root.values() {
-        if let Some(f) = classify(fis, &facets, &verts, tris, along, u, v, mesh_min) {
+        if let Some(f) = classify(fis, &facets, &verts, tris, along, u, v, mesh_min, convex) {
             out.push(f);
         }
     }
@@ -291,6 +295,7 @@ fn classify(
     u: usize,
     v: usize,
     mesh_min: f64,
+    convex: bool,
 ) -> Option<Found> {
     let mut vids: Vec<usize> = Vec::new();
     let mut cens: Vec<(Point3, Point3)> = Vec::new();
@@ -355,7 +360,9 @@ fn classify(
             away += 1;
         }
     }
-    if toward <= away {
+    // A boss pass (#985) keeps exactly the walls this vote drops.
+    let (ours, theirs) = if convex { (away, toward) } else { (toward, away) };
+    if ours <= theirs {
         return None;
     }
     // Through, by the axis' own physics:

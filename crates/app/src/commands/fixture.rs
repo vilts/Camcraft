@@ -226,6 +226,9 @@ pub struct DeleteFixture {
     /// #819: a deleted plate's riders leave it (they stay where they
     /// stand), so a later plate given the same name never carries them.
     riders: crate::plate::mount::Unmounts,
+    /// #1094: a raw-stock-only mark naming this model goes with it (the
+    /// print check in `stock_source` is the law; this is tidiness).
+    marks: super::stock_source_only::MarkDrops,
 }
 
 impl DeleteFixture {
@@ -239,6 +242,7 @@ impl DeleteFixture {
             location: model::transform_of(world, &entity).unwrap_or_default(),
             facets: model::facets_of(world, &entity).unwrap_or_default(),
             riders: crate::plate::mount::Unmounts::of(world, name),
+            marks: super::stock_source_only::MarkDrops::of(world, name),
         })
     }
 }
@@ -249,6 +253,7 @@ impl Command for DeleteFixture {
             model::remove(world, &e);
         }
         self.riders.write(world, true);
+        self.marks.write(world, true);
     }
 
     fn invert(&self, world: &World) {
@@ -260,6 +265,7 @@ impl Command for DeleteFixture {
         model::set_transform(world, &entity, self.location);
         model::set_facets(world, &entity, self.facets.clone());
         entity.entity_view(world).set(self.def.clone());
+        self.marks.write(world, false);
     }
 }
 
@@ -272,6 +278,8 @@ impl Command for DeleteFixture {
 pub struct AddFixtureModel {
     name: String,
     facets: std::sync::Arc<[Triangle]>,
+    /// #864: the chord error of a mesh imported coarser than promised.
+    coarse_mm: Option<f64>,
 }
 
 impl AddFixtureModel {
@@ -293,10 +301,11 @@ impl AddFixtureModel {
         if model::find_by_name(world, name).is_some() {
             return Err(CommandError::NameConflict(name.to_string()));
         }
-        let mesh = crate::geometry::import::load_model(path)?;
+        let graded = crate::geometry::import::load_model_graded(path)?;
         Ok(AddFixtureModel {
             name: name.to_string(),
-            facets: mesh.facets,
+            facets: graded.mesh.facets,
+            coarse_mm: graded.coarse_mm,
         })
     }
 }
@@ -314,6 +323,7 @@ impl Command for AddFixtureModel {
         let entity = model::spawn(world, &self.name);
         model::set_facets(world, &entity, self.facets.clone());
         model::set_rev(world, &entity, 1);
+        crate::model_fidelity::set(world, &entity, self.coarse_mm);
         entity.entity_view(world).set(FixtureDef::default());
     }
 

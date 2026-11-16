@@ -1,4 +1,6 @@
-//! Document units: the one mm/inch choice a document displays in.
+//! Document units: the one mm/inch choice a document displays in, and
+//! (#902) the unit every program posts in - one setting, never a second
+//! derivation from the machine file, a post option or a setup.
 //!
 //! Provenance: the international inch (exactly 25.4 mm) and the
 //! internal-metric / display-at-the-edge pattern of CAD/CAM systems and

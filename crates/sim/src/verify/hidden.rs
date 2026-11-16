@@ -1,4 +1,4 @@
-//! Uncut stock under overhangs (M13.7 B): the solid-law backstop of the reach laws (c), (c3) and rapid law (d) - stock a plane section cannot show because part material hangs over it, read from the model's down-facing shadow (the projection identity of a closed solid's boundary, `slice::shadow_above`) on our own conservative rest model; no vendor source.
+//! Uncut stock under overhangs (M13.7 B): the solid-law backstop of the reach laws (c), (c3, over its swept cells since #1316) and rapid law (d) - stock a plane section cannot show because part material hangs over it, read from the model's down-facing shadow (the projection identity of a closed solid's boundary, `slice::shadow_above`) on our own conservative rest model; no vendor source.
 //!
 //! The plane-section laws ask "is the part's section at height h over
 //! this column, or was the column never cut down to h?" - and they only
@@ -27,6 +27,14 @@
 //! A hidden sliver thinner than the sampling can be missed; a slice that
 //! fails convicts (fail closed). It only ever ADDS convictions: every
 //! caller asks it only where its plane-section law found nothing.
+//!
+//! One plane per ask is sound only for a caller that stands at one
+//! height. The law is not monotone in `h` (the shadow shrinks as the
+//! plane rises, the section comes and goes: a cavity over a floor is
+//! hidden at its own planes and part material below them), so the swept
+//! backstop ([`Rest::hidden_in_cover`], #1316) also reads every column
+//! it asks over the whole range of heights the band's bottom takes
+//! there, exactly in Z ([`super::hidden_span`]).
 
 use super::laws::dist2_seg;
 use super::rest::Rest;
@@ -44,10 +52,22 @@ const MAX_SAMPLES: usize = 50_000;
 /// Ring sample count per radius in a band annulus.
 const RING: usize = 24;
 
+/// Most lattice columns one swept ask reads; past it the pitch widens.
+const MAX_LATTICE: usize = 20_000;
+
+/// The ranges of heights a swept footprint's bottom takes over a point
+/// (`turn_hidden`'s `Ask::heights`): asks `hit(lo, hi)` once per closed
+/// range and returns at the first `true`; no range, no cover.
+pub(super) type Heights<'a> = dyn Fn(Point2, &mut dyn FnMut(f64, f64) -> bool) -> bool + 'a;
+
 /// One plane's hidden stock: the region and its inside boundary samples.
 pub(super) struct Hidden {
     region: Region,
     bounds: Option<(Point2, Point2)>,
+    /// The box of everything part material hangs over above the plane,
+    /// inside the stock footprint. The shadow only shrinks as the plane
+    /// rises, so it holds the hidden stock of every higher plane too.
+    over: Option<(Point2, Point2)>,
     samples: Vec<Point2>,
 }
 
@@ -93,7 +113,7 @@ fn inside_samples(region: &Region) -> Vec<Point2> {
     out
 }
 
-impl Rest<'_, '_> {
+impl<'a> Rest<'_, 'a> {
     /// The hidden stock at plane `h` (cached by its bits): the shadow of
     /// what hangs over `h`, inside the stock footprint, less the section
     /// at `h`. `None` is a slice or clip that failed.
@@ -105,15 +125,17 @@ impl Rest<'_, '_> {
         let cx = self.cx();
         let fresh = cx.model.and_then(|f| {
             let hang = crate::geometry::slice::shadow_above(f, h).ok()?;
-            let region = if hang.is_empty() {
-                hang
+            let (region, over) = if hang.is_empty() {
+                (hang, None)
             } else {
                 let foot = cx.stock.unwrap_or(cx.region);
                 let sec = self.islands_at(f, h)?;
-                hang.intersect(foot).ok()?.difference(&sec).ok()?
+                let shade = hang.intersect(foot).ok()?;
+                let over = shade.bounds();
+                (shade.difference(&sec).ok()?, over)
             };
             let samples = inside_samples(&region);
-            Some(Rc::new(Hidden { bounds: region.bounds(), region, samples }))
+            Some(Rc::new(Hidden { bounds: region.bounds(), over, region, samples }))
         });
         self.hidden_cache.borrow_mut().entry(key).or_insert_with(|| fresh.clone());
         fresh
@@ -203,6 +225,69 @@ impl Rest<'_, '_> {
             .any(|q| self.uncut(&hid, q, h, upto))
     }
 
+    /// Law (c3) backstop (#1316): uncut hidden stock under a swept
+    /// footprint inside the box [lo, hi], against the cuts of the moves
+    /// before `upto`. `heights` is the footprint's exact membership AND
+    /// the heights its bottom takes there (the swept cells' own test,
+    /// the flutes' kerf excluded where the tip stands); `h` is the
+    /// lowest of them all. Two readings, either convicts:
+    ///
+    /// - the plane `h`, as a region: its boundary samples in the box and
+    ///   `probes` (points of the footprint itself, built on demand) -
+    ///   the samples catch hidden stock that clips the footprint, the
+    ///   probes stock that swallows it;
+    /// - every column asked, over the whole of its ranges
+    ///   ([`super::hidden_span`], exact in Z): the hidden law is not
+    ///   monotone in the plane, so stock hidden only ABOVE `h` (a cavity
+    ///   over a floor that `h` stands in) is in no reading of `h`. The
+    ///   columns are the probes, the plane's samples and a lattice of
+    ///   pitch [`STEP`] over the box, clipped to where part material
+    ///   hangs over anything from `h` up - so hidden stock [`STEP`]·√2
+    ///   across or wider is met at whatever height the band passes it,
+    ///   however thin in Z.
+    ///
+    /// A slice or a vertical that cannot be read convicts (fail closed).
+    pub(super) fn hidden_in_cover(
+        &self,
+        (lo, hi): (Point2, Point2),
+        h: f64,
+        probes: &dyn Fn() -> Vec<Point2>,
+        heights: &Heights<'_>,
+        upto: usize,
+        columns: &super::hidden_span::Columns<'a>,
+    ) -> bool {
+        if !(lo.x.is_finite() && lo.y.is_finite() && hi.x.is_finite() && hi.y.is_finite()) {
+            return false; // the NonFinite law names it
+        }
+        let cx = self.cx();
+        if cx.model.is_none() || !h.is_finite() || h >= cx.stock_top_z {
+            return false; // nothing hidden at `h` or anywhere above it
+        }
+        let Some(hid) = self.hidden_at(h) else {
+            return true;
+        };
+        let near = |b: Option<(Point2, Point2)>| {
+            b.filter(|(b0, b1)| b0.x <= hi.x && b1.x >= lo.x && b0.y <= hi.y && b1.y >= lo.y)
+        };
+        // Nothing hangs over the box from `h` up: nothing hidden in it.
+        let Some((o0, o1)) = near(hid.over) else {
+            return false;
+        };
+        let in_box = |q: &Point2| q.x >= lo.x && q.x <= hi.x && q.y >= lo.y && q.y <= hi.y;
+        let covers = |q: &Point2| heights(*q, &mut |_, _| true);
+        let asked: Vec<Point2> = probes().into_iter().chain(hid.samples.iter().copied().filter(in_box)).collect();
+        if near(hid.bounds).is_some() && asked.iter().filter(|q| covers(q)).any(|q| self.uncut(&hid, *q, h, upto)) {
+            return true;
+        }
+        let (c0, c1) = (Point2::new(lo.x.max(o0.x), lo.y.max(o0.y)), Point2::new(hi.x.min(o1.x), hi.y.min(o1.y)));
+        let shaded = |q: &Point2| q.x >= c0.x && q.x <= c1.x && q.y >= c0.y && q.y <= c1.y;
+        asked.into_iter().filter(shaded).chain(lattice(c0, c1)).any(|q| match self.hidden_column(columns, q, upto) {
+            Ok(None) => false,
+            Ok(Some(col)) => heights(q, &mut |a, b| col.hidden_in(a, b)),
+            Err(()) => covers(&q),
+        })
+    }
+
     /// Law (d) backstop: uncut hidden stock inside the tool disc of
     /// half-width `w` swept from `a` to `b` at height `h`, against the
     /// cuts of the moves before `upto`.
@@ -232,4 +317,20 @@ impl Rest<'_, '_> {
             .chain(hid.samples.iter().copied().filter(|q| dist2_seg(*q, a, b) <= w2))
             .any(|q| self.uncut(&hid, q, h, upto))
     }
+}
+
+/// A lattice over the box [lo, hi]: pitch [`STEP`], widened so the box
+/// holds at most [`MAX_LATTICE`] points; both ends of each axis are on
+/// it, so a box thinner than the pitch is still read.
+fn lattice(lo: Point2, hi: Point2) -> impl Iterator<Item = Point2> {
+    let (w, d) = ((hi.x - lo.x).max(0.0), (hi.y - lo.y).max(0.0));
+    let fits = |step: f64| ((w / step).ceil() + 1.0) * ((d / step).ceil() + 1.0) <= MAX_LATTICE as f64;
+    let mut step = STEP;
+    while step.is_finite() && !fits(step) {
+        step *= 1.5;
+    }
+    let count = |len: f64| if step.is_finite() { ((len / step).ceil() as usize).min(MAX_LATTICE) } else { 0 };
+    let (nx, ny) = (count(w), count(d));
+    let at = |a: f64, len: f64, k: usize, n: usize| if n == 0 { a } else { a + len * k as f64 / n as f64 };
+    (0..=ny).flat_map(move |j| (0..=nx).map(move |i| Point2::new(at(lo.x, w, i, nx), at(lo.y, d, j, ny))))
 }

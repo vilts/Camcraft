@@ -107,9 +107,9 @@ fn top_face(state: &State) -> GeoSel {
     GeoSel { entity: "part".into(), feature: FeatureSel::Face(face.id) }
 }
 
-const PLAIN: Mods = Mods { ctrl: false, shift: false, alt: false };
-const CTRL: Mods = Mods { ctrl: true, shift: false, alt: false };
-const SHIFT: Mods = Mods { ctrl: false, shift: true, alt: false };
+const PLAIN: Mods = Mods { command: false, shift: false, alt: false };
+const CMD: Mods = Mods { command: true, shift: false, alt: false };
+const SHIFT: Mods = Mods { command: false, shift: true, alt: false };
 
 fn live_area(state: &State) -> AreaControls {
     let e = model::find_by_name(&state.world, "Face1").expect("op");
@@ -165,7 +165,7 @@ fn a_plain_click_takes_one_edge_shift_closes_the_loop_ctrl_opens_it() {
     let e = east(&state);
     queue_boundary_pick(&mut state, e.clone(), PLAIN);
     assert_eq!(picks(&state), vec![e.clone()]);
-    queue_boundary_pick(&mut state, n.clone(), CTRL);
+    queue_boundary_pick(&mut state, n.clone(), CMD);
     assert_eq!(picks(&state), vec![e.clone(), n.clone()]);
     assert!(matches!(boundary_draft::shape_of(&state, &picks(&state)), PickShape::Open { picks: 2, .. }));
     // Shift closes it around the top face's loop.
@@ -173,7 +173,7 @@ fn a_plain_click_takes_one_edge_shift_closes_the_loop_ctrl_opens_it() {
     assert_eq!(picks(&state).len(), 4);
     assert!(boundary_draft::shape_of(&state, &picks(&state)).is_closed());
     // Ctrl on a picked edge takes it out: the loop is open again.
-    queue_boundary_pick(&mut state, e.clone(), CTRL);
+    queue_boundary_pick(&mut state, e.clone(), CMD);
     assert_eq!(picks(&state).len(), 3);
     assert!(!picks(&state).contains(&e));
     assert!(matches!(boundary_draft::shape_of(&state, &picks(&state)), PickShape::Open { picks: 3, .. }));
@@ -190,7 +190,7 @@ fn ctrl_on_an_edge_of_a_picked_face_breaks_its_loop_open() {
     assert_eq!((es[0].role, es[0].summary.as_str()), (Role::Exclude, "1 face loop, closed"));
     assert!(es[0].issue.is_none());
     let g = north(&state);
-    queue_boundary_pick(&mut state, g, CTRL);
+    queue_boundary_pick(&mut state, g, CMD);
     let es = boundary_draft::entries(&state);
     assert_eq!(es[0].summary, "3 edges, open chain", "the face became its three other sides");
     assert!(es[0].issue.is_some());

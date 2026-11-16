@@ -18,6 +18,9 @@
 //!   over-report.
 //! - **No body, no change.** The plain holder cylinder's stack is not
 //!   carried at all, so a tool with no body reads bit-identically.
+//! - **#852: a drawn neck rides the same way** ([`NeckBands`]): the
+//!   shank bands a necked tool's drawn cutter states, never wider than
+//!   the stated shank; no neck carries nothing.
 
 use camcraft_tools::holder_profile::{HolderBand, HolderStack, MAX_BANDS};
 
@@ -49,7 +52,9 @@ impl BodyBands {
     /// holder's.
     #[must_use]
     pub fn of(g: &ToolGeom, stack: &HolderStack) -> Option<Self> {
-        if *stack == HolderStack::cylinder(g) || stack.bands.len() > BODY_BANDS_CAP {
+        // A neck (#852) rides apart (`NeckBands`): only the holder counts.
+        let cyl = HolderStack::cylinder(g);
+        if (stack.bands == cyl.bands && stack.top == cyl.top) || stack.bands.len() > BODY_BANDS_CAP {
             return None;
         }
         let fl = g.flute_len;
@@ -98,5 +103,50 @@ impl BodyBands {
     #[must_use]
     pub fn bands(&self) -> &[HolderBand] {
         &self.b[..self.n]
+    }
+}
+
+/// A necked tool's shank bands (#852), carried with the cutter the way
+/// [`BodyBands`] carries the holder - fixed capacity, so the cutter stays
+/// `Copy`. Only ever a neck that fits its tool and narrows somewhere
+/// (`HolderStack::shank_bands`): otherwise `None`, the stated shank
+/// cylinder, bit-identical to a tool with no drawn cutter.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NeckBands {
+    n: usize,
+    b: [HolderBand; MAX_BANDS],
+}
+
+impl NeckBands {
+    /// The neck `stack` carries for the shank of `g`, or `None` when the
+    /// laws read the stated shank cylinder there.
+    #[must_use]
+    pub fn of(g: &ToolGeom, stack: &HolderStack) -> Option<Self> {
+        if stack.neck.is_empty() {
+            return None;
+        }
+        let bands = stack.shank_bands(g);
+        if bands.len() > MAX_BANDS || bands == HolderStack::cylinder(g).shank_bands(g) {
+            return None;
+        }
+        let mut out = Self { n: 0, b: [HolderBand { above: 0.0, len: 0.0, r: 0.0 }; MAX_BANDS] };
+        for (slot, band) in out.b.iter_mut().zip(&bands) {
+            *slot = *band;
+        }
+        out.n = bands.len();
+        Some(out)
+    }
+
+    /// The bands, bottom-up.
+    #[must_use]
+    pub fn bands(&self) -> &[HolderBand] {
+        &self.b[..self.n]
+    }
+
+    /// Does this neck still fit the shank of `g` exactly as carried?
+    #[must_use]
+    pub fn fits(&self, g: &ToolGeom) -> bool {
+        let stack = HolderStack { neck: self.bands().to_vec(), ..HolderStack::cylinder(g) };
+        stack.shank_bands(g) == self.bands()
     }
 }

@@ -376,10 +376,14 @@ impl PathBuilder {
         };
         self.open(kind);
         let from = self.at;
+        // #1555: an end off the lattice (a lead's start) must still read
+        // as the end - a Z extremum AT it would split a sub-micron sliver.
+        let at_lattice = |q: Point3| Point3::new(lattice(q.x), lattice(q.y), lattice(q.z));
+        let (from_l, to_l) = (at_lattice(from), at_lattice(to));
         for f in z_extrema(&arc, from, to) {
             if let Some(p) = arc.point_at(from, to, f) {
-                let p = Point3::new(lattice(p.x), lattice(p.y), lattice(p.z));
-                if p != self.at && p != to {
+                let p = at_lattice(p);
+                if p != self.at && p != to && p != from_l && p != to_l {
                     self.moves.push(
                         Move::new(kind, self.at, p, feed)
                             .with_arc_in(center, ccw, plane)

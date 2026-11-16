@@ -26,6 +26,7 @@ use camcraft_app::operation::{
 
 use crate::boundary_draft::{self, Entry, EntryRef, Role};
 use crate::boundary_summary;
+use crate::shortcut_keys::command_key;
 use crate::state::{BoundaryPick, GeoPick, State};
 
 use super::colorvision::{ink, palette_of, text_inks};
@@ -35,12 +36,19 @@ use super::layout::{auto_value, consequence, group, group_open, hint, prop_row, 
 /// One line each: what the roles do and how to pick (the user's "very
 /// unclear how the open boundary selection works") - the hover of the
 /// Boundaries group's rows.
-pub const HINTS: [&str; 4] = [
-    "Include adds the area a closed boundary encloses; Exclude keeps the whole tool out of it.",
-    "Open: an open edge chain runs on straight to the stock and splits it - side A holds more of the selection's area, side B is the rest; arrows in the viewport point into the side machined.",
-    "Picking: click an edge to take that one edge, Ctrl-click to add or remove one (removing breaks a picked loop open), Shift-click to close the edges around their face loop, Alt for a single mesh segment; a face adds its loop.",
-    "The filled area in the viewport is what the operation will machine after Apply.",
-];
+/// The picking line names the platform command key (Cmd on macOS), the
+/// one the pick reads (`mods.command`, #1238).
+pub fn hints() -> [String; 4] {
+    [
+        "Include adds the area a closed boundary encloses; Exclude keeps the whole tool out of it.".to_owned(),
+        "Open: an open edge chain runs on straight to the stock and splits it - side A holds more of the selection's area, side B is the rest; arrows in the viewport point into the side machined.".to_owned(),
+        format!(
+            "Picking: click an edge to take that one edge, {}-click to add or remove one (removing breaks a picked loop open), Shift-click to close the edges around their face loop, Alt for a single mesh segment; a face adds its loop.",
+            command_key()
+        ),
+        "The filled area in the viewport is what the operation will machine after Apply.".to_owned(),
+    ]
+}
 
 const CONTAINMENT_HINT: &str = "Inside: the tool's edge touches the boundary from inside (its centre a tool radius in). On: the tool centre rides the boundary. Outside: the tool's edge touches it from outside (its centre a tool radius out). As the kind cuts: the kind's own law.";
 const OFFSET_HINT: &str = "+ grows the area outward, - shrinks it inward, before the tool containment applies.";
@@ -117,7 +125,7 @@ fn body(ui: &mut Ui, state: &mut State, u: camcraft_app::units::Unit) {
         let entries = boundary_draft::entries(state);
         if entries.is_empty() {
             ui.label("None - the selection bounds the area.");
-            hint(ui, HINTS[0]);
+            hint(ui, &hints()[0]);
         }
         for (n, e) in entries.iter().enumerate() {
             entry_row(ui, state, n, e, &mut acts);
@@ -126,7 +134,7 @@ fn body(ui: &mut Ui, state: &mut State, u: camcraft_app::units::Unit) {
         collecting_line(ui, state, &mut acts);
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("(i) roles, picking and the fill").small().weak())
-                .on_hover_text(HINTS.join("\n\n"));
+                .on_hover_text(hints().join("\n\n"));
         });
     });
     if ui.small_button("Reset boundary").on_hover_text("every Boundary setting back to the kind's own law (Apply commits it)").clicked() {
@@ -221,7 +229,7 @@ fn entry_row(ui: &mut Ui, state: &State, n: usize, e: &Entry, acts: &mut Vec<Act
         if !e.picks.is_empty() {
             let target = boundary_draft::target_of(e.at);
             let on = state.boundary_pick == Some(target);
-            if ui.selectable_label(on, "Pick").on_hover_text("route viewport clicks into this boundary").clicked() {
+            if super::pick_button::pick_button(ui, on, "Pick").on_hover_text("route viewport clicks into this boundary").clicked() {
                 acts.push(Act::Pick(if on { None } else { Some(target) }));
             }
         }

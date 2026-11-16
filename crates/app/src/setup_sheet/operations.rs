@@ -66,7 +66,7 @@ pub(super) fn render_operations(world: &World, target: Option<&String>, out: &mu
             "  {count:>2}  {:<12} {:<10} {:<14} {:<12} {:>8} {:>8} {:>8} {:>8}\n",
             model::operation_label(world, &name, &entity),
             op.params.kind(),
-            op.tool,
+            tool_cell(&op.params, &op.tool),
             src,
             cells[0],
             cells[1],
@@ -77,6 +77,7 @@ pub(super) fn render_operations(world: &World, target: Option<&String>, out: &mu
             out.push_str(&n);
             out.push('\n');
         }
+        render_wire(world, op.setup.as_deref(), &op.params, out);
         render_cycles(world, op.setup.as_deref(), &op.src, &op.tool, &op.params, out);
     }
     if count == 0 {
@@ -139,6 +140,39 @@ fn render_cycles(
     }
 }
 
+/// The TOOL cell (#1110): the library tool's name, or for a kind that
+/// mounts none (the wire family) the EDM condition it cuts with.
+fn tool_cell(params: &OpParams, tool: &str) -> String {
+    if params.kind().info().mounts_tool() {
+        return tool.to_owned();
+    }
+    match params {
+        OpParams::WireContour(w) => format!("cond {}", w.condition),
+        _ => "(no tool)".to_owned(),
+    }
+}
+
+/// The line under a wire cut's row (#1110): the condition, wire
+/// diameter and spark gap its setup's machine states for it - read
+/// through the same door generation reads (`wire_op::condition_of`), so
+/// the sheet never states a number the cut was not made with. A
+/// condition the machine no longer states is said by name. Silent for
+/// every kind that mounts a library tool.
+fn render_wire(world: &World, op_setup: Option<&str>, params: &OpParams, out: &mut String) {
+    let OpParams::WireContour(w) = params else {
+        return;
+    };
+    match operation::wire_op::condition_of(world, op_setup, w) {
+        Ok(c) => out.push_str(&format!(
+            "      CONDITION {}  WIRE D {}  GAP {}\n",
+            c.id,
+            mm(c.wire_diameter),
+            mm(c.gap)
+        )),
+        Err(why) => out.push_str(&format!("      ! wire condition: {why}\n")),
+    }
+}
+
 // ------------------------------------------------------------------- helpers
 
 /// The operation's geometry source, labeled.
@@ -170,6 +204,7 @@ fn kind_label(k: CycleKind) -> String {
         CycleKind::FloatingTap => "tap (floating holder)",
         CycleKind::Bore => "bore",
         CycleKind::BackBore => "back-bore",
+        CycleKind::Ream => "ream",
     };
     s.to_string()
 }
@@ -184,5 +219,6 @@ fn choice_label(c: CycleChoice) -> &'static str {
         CycleChoice::FloatingTap => "Tap (floating holder)",
         CycleChoice::Bore => "Bore",
         CycleChoice::BackBore => "BackBore",
+        CycleChoice::Ream => "Ream",
     }
 }

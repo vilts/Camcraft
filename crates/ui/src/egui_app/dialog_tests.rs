@@ -26,6 +26,7 @@ use crate::state::{CommandKind, State, UiTarget};
 
 fn pocket(entry: Entry3D) -> OpParams {
     OpParams::Pocket {
+        blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
         stepover: 1.0,

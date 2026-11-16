@@ -24,11 +24,14 @@
 //! a rapid that does is a [`Warning::RapidInStock`] - the part is stock
 //! too, and steel at rapid feed is a crash.
 
+use super::hole_wall::HoleAxis;
 use super::midpose;
-use super::probe::{Cutter, Frame};
+use super::probe::{Atom, Cutter, Frame, Prof};
 use super::solid_index::SolidIndex;
+use super::thread_bore::ThreadBore;
 use super::types::Warning;
-use crate::cl::{MoveKind, Toolpath, is_vertical, normalize_axis};
+use super::upright::is_upright;
+use crate::cl::{MoveKind, Toolpath, normalize_axis};
 use crate::geometry::{Point3, Triangle};
 
 /// How the solid law samples and what it excuses.
@@ -42,8 +45,11 @@ pub struct SolidLaw {
     pub allow: f64,
     /// The containment kinds (drill, bore, thread mill): their regions
     /// carry exact rims for the mesh's tessellated hole walls, so a
-    /// facet entered only by its chord's dip between two vertices that
-    /// stand outside the tool is the rim, not a gouge.
+    /// facet of a ROUND wall about one of the holes the caller names
+    /// ([`solid_hits_walled`]), entered only between vertices that stand
+    /// outside the tool and by no more than its own sagitta about that
+    /// hole's axis, is the rim, not a gouge ([`super::hole_wall`],
+    /// #1205). With no holes named nothing is excused.
     pub hole_walls: bool,
 }
 
@@ -81,6 +87,61 @@ fn pieces(m: &crate::cl::Move, step: f64) -> Vec<(Point3, Point3, f64)> {
 /// mesh or tool that cannot be read honestly fails closed: a Gouge at
 /// the first cutting move, never a pass.
 pub fn solid_hits(path: &Toolpath, facets: &[Triangle], cutter: &Cutter, law: &SolidLaw) -> Vec<Warning> {
+    solid_hits_walled(path, facets, cutter, law, &[])
+}
+
+/// [`solid_hits`] for a containment kind: `walls` are the holes it
+/// declares (in the path's frame), whose round walls' tessellation
+/// [`SolidLaw::hole_walls`] excuses. A hole axis that does not run along
+/// a move's tool axis excuses nothing on that move.
+pub fn solid_hits_walled(path: &Toolpath, facets: &[Triangle], cutter: &Cutter, law: &SolidLaw, walls: &[HoleAxis]) -> Vec<Warning> {
+    solid_hits_threaded(path, facets, cutter, law, walls, &[])
+}
+
+/// [`solid_hits_walled`] for a thread mill: `bores` are the holes it
+/// threads, whose minor walls the helix cuts into by design
+/// ([`super::thread_bore`], #1071).
+pub fn solid_hits_threaded(
+    path: &Toolpath,
+    facets: &[Triangle],
+    cutter: &Cutter,
+    law: &SolidLaw,
+    walls: &[HoleAxis],
+    bores: &[ThreadBore],
+) -> Vec<Warning> {
+    judged(path, facets, cutter, law, walls, bores, false)
+}
+
+/// The stack's half of the solid law, for a kind whose cutting edge
+/// answers to a law of its own (#1595's mark, which may lower the part
+/// under the edge): a cutting move whose shank or holder enters the
+/// solid is a [`Warning::ShankHit`] on the part whatever its edge does,
+/// and a rapid that enters it with any of the assembly a
+/// [`Warning::RapidInStock`]. The edge of a cutting move is not judged
+/// here. One pose more is excused, and only that pose: on a straight
+/// retract UP the tool's own axis from where a cutting move left it, the
+/// edge where it already stands - the kerf that move made, which the
+/// mesh does not show and the caller's law judged on that move. The
+/// lift itself is judged ([`rise`]): the shank and holder over all
+/// of it, and the column the edge rises through above its own top, so a
+/// part overhang the retract carries the assembly into is a
+/// `RapidInStock` on the lift. Fails closed as [`solid_hits`] does.
+pub fn stack_hits(path: &Toolpath, facets: &[Triangle], cutter: &Cutter, law: &SolidLaw) -> Vec<Warning> {
+    judged(path, facets, cutter, law, &[], &[], true)
+}
+
+/// The one walk both readings share; `stack_only` leaves a cutting
+/// move's edge to its caller's own law.
+fn judged(
+    path: &Toolpath,
+    facets: &[Triangle],
+    cutter: &Cutter,
+    law: &SolidLaw,
+    walls: &[HoleAxis],
+    bores: &[ThreadBore],
+    stack_only: bool,
+) -> Vec<Warning> {
+    let walls = if law.hole_walls { walls } else { &[] };
     let first_cut = path.moves.iter().position(|m| m.kind != MoveKind::Rapid);
     if facets.is_empty() {
         return Vec::new();
@@ -107,37 +168,71 @@ pub fn solid_hits(path: &Toolpath, facets: &[Triangle], cutter: &Cutter, law: &S
         if !(m.from.is_finite() && m.to.is_finite()) {
             continue; // the NonFinite law owns it
         }
-        let axis = m.axis.and_then(normalize_axis).filter(|a| !is_vertical(a));
+        let axis = m.axis.and_then(normalize_axis).filter(|a| !is_upright(a));
         let mid = poses
             .get(i)
             .and_then(|&(f, t)| midpose::change(f, t))
             .map(|(a, b)| midpose::intervals(m, a, b, reach, ARC_SAG))
             .unwrap_or_default();
         let grow_mid = if m.arc.is_some() { ARC_SAG } else { 0.0 };
-        let mut hits = |set: &[super::probe::Atom]| {
+        let mut hits = |set: &[Atom]| {
             !set.is_empty()
                 && (pieces(m, law.step).into_iter().any(|(a, b, grow)| {
                     let fr = Frame::new(a, axis);
-                    index.hits(&fr, fr.local(b), set, allow, grow, law.hole_walls)
+                    index.hits(&fr, fr.local(b), set, allow, grow, &axes_in(&fr, walls), bores)
                 }) || mid.iter().any(|iv| {
                     // The interval's tip travel swept exactly under the
                     // pose held at its midpoint: the pose's own turn
                     // within the interval is the stated sampling limit
                     // (STEP of far-end travel), the same as the fixture
                     // laws' posed sweep.
-                    let fr = Frame::new(iv.p0, normalize_axis(iv.am).filter(|a| !is_vertical(a)));
-                    index.hits(&fr, fr.local(iv.p1), set, allow, grow_mid, law.hole_walls)
+                    let fr = Frame::new(iv.p0, normalize_axis(iv.am).filter(|a| !is_upright(a)));
+                    index.hits(&fr, fr.local(iv.p1), set, allow, grow_mid, &axes_in(&fr, walls), bores)
                 }))
         };
         if m.kind == MoveKind::Rapid {
+            let lifts = stack_only && axis.is_none() && m.arc.is_none() && m.from.x == m.to.x && m.from.y == m.to.y && m.to.z >= m.from.z;
+            let from_cut = i.checked_sub(1).and_then(|j| path.moves.get(j)).is_some_and(|c| c.kind != MoveKind::Rapid && c.to == m.from);
+            if lifts && from_cut {
+                // Out of the kerf that cut made: the edge's start pose is
+                // the caller's; everything the lift enters is ours.
+                let (fr, column) = (Frame::new(m.from, None), rise(&edge, m.to.z - m.from.z));
+                if hits(&body) || (!column.is_empty() && index.hits(&fr, [0.0; 3], &column, allow, 0.0, &[], &[])) {
+                    out.push(Warning::RapidInStock { at: i });
+                }
+                continue;
+            }
             if hits(&atoms) {
                 out.push(Warning::RapidInStock { at: i });
             }
-        } else if hits(&edge) {
+        } else if !stack_only && hits(&edge) {
             out.push(Warning::Gouge { at: i });
         } else if hits(&body) {
             out.push(Warning::ShankHit { at: i, part: true });
         }
     }
     out
+}
+
+/// What a cutting edge enters, beyond the pose it starts in, on a
+/// straight lift of `h` up its own axis: the column from its top to
+/// where that top ends, at its largest radius, as an atom to be judged
+/// standing still at the start. Exact for the edge's profile, which
+/// never narrows upward ([`super::probe`]'s atoms): every point under
+/// the top stays inside where the edge stood. Nothing for no edge or no
+/// rise; an unreadable rise is read as the tallest column the index
+/// takes, never as none.
+fn rise(edge: &[Atom], h: f64) -> Vec<Atom> {
+    let top = edge.iter().map(|a| a.z1).fold(0.0, f64::max);
+    let r = edge.iter().map(Atom::rho_max).fold(0.0, f64::max);
+    let h = if h.is_finite() { h } else { f64::MAX };
+    if edge.is_empty() || !(h > 0.0 && r > 0.0) {
+        return Vec::new();
+    }
+    vec![Atom { z0: top, z1: top + h, prof: Prof::Flat(r) }]
+}
+
+/// The holes' axes in `fr`'s XY: those running along its tool axis.
+fn axes_in(fr: &Frame, walls: &[HoleAxis]) -> Vec<[f64; 2]> {
+    walls.iter().filter_map(|w| fr.axis_xy(w.at, w.dir)).collect()
 }

@@ -70,7 +70,8 @@ pub fn fitting_tools(world: &World, info: &KindInfo) -> Vec<String> {
 /// setup's list belongs to its family. `None` when one does.
 #[must_use]
 pub fn create_refusal(world: &World, info: &KindInfo) -> Option<String> {
-    if library(world).iter().any(|(_, k)| info.accepts(*k)) {
+    // #532: a kind that mounts no library tool needs none to exist.
+    if !info.mounts_tool() || library(world).iter().any(|(_, k)| info.accepts(*k)) {
         return None;
     }
     let hint = catalog_suggestion(&crate::tools::catalog(), info.tool_kinds)
@@ -195,6 +196,12 @@ pub fn tool_problem(world: &World, op_name: &str, op: &Operation) -> Option<Stri
         kinds_phrase(info.tool_kinds)
     );
     let tool = &op.tool;
+    // #532: a wire EDM kind names no tool - and must not.
+    if !info.mounts_tool() {
+        return (!tool.is_empty()).then(|| {
+            format!("{op_name} names tool '{tool}'; a {} operation mounts none - the wire is the machine's EDM condition", info.label)
+        });
+    }
     let Some(entity) = model::find_by_name(world, tool) else {
         return Some(format!("{op_name}'s tool '{tool}' is gone; {wants}"));
     };
@@ -214,4 +221,41 @@ pub fn tool_problem_of(world: &World, entity: &Entity) -> Option<String> {
     let op = model::operation_of(world, entity)?;
     let name = model::name_of(world, entity).unwrap_or_default();
     tool_problem(world, &name, &op)
+}
+
+/// A generation's tool: the tool, its body's envelope, its lathe body,
+/// its drawn neck (#852; empty = none).
+pub(super) type JobTool = (
+    Tool,
+    Option<camcraft_tools::holder_profile::HolderProfile>,
+    Option<std::sync::Arc<camcraft_tools::lathe_holder::LatheClearance>>,
+    Vec<camcraft_tools::holder_profile::HolderBand>,
+);
+
+/// The library tool a generation cuts with, as `collect_job` reads it:
+/// the tool, its modelled body's envelope (#368), its lathe body's
+/// clearance (#369) and its drawn neck (#852) - or the refusal by name.
+/// Kinds that mount no library tool (#532) never come here.
+pub(super) fn job_tool(world: &World, op: &Operation) -> Result<JobTool, crate::machining2d::GenError> {
+    use crate::machining2d::GenError;
+    let Some(tool_entity) = model::find_by_name(world, &op.tool) else {
+        return Err(GenError::Invalid(format!("no tool named '{}'", op.tool)));
+    };
+    let Some(tool) = model::tool_of(world, &tool_entity) else {
+        return Err(GenError::Invalid(format!("'{}' is not a tool", op.tool)));
+    };
+    let neck = crate::tool_cutter::neck_of(world, &tool_entity, &tool);
+    let (tool, body) = crate::tool_body::judged(world, &tool_entity, tool)
+        .map_err(|e| GenError::Invalid(format!("tool '{}': {e}", op.tool)))?;
+    // #369: a lathe body is judged only by the turning family's
+    // revolved-stock law; on any other op no law could read it, so the
+    // op is refused by name rather than cut with it unjudged.
+    let lathe_body = crate::tool_body_lathe::clearance_of(world, &tool_entity);
+    if lathe_body.is_some() && op.params.kind().info().family() != super::Family::Turn {
+        return Err(GenError::Invalid(format!(
+            "tool '{}' carries a lathe-frame body, which only a turning operation judges - clear it or place a spindle body for this op",
+            op.tool
+        )));
+    }
+    Ok((tool, body, lathe_body, neck))
 }

@@ -2,8 +2,8 @@
 //! round bore entered on circular ramps, and the project wire's new
 //! `"arc"` entry word round-tripping with no format bump.
 //!
-//! Gate map (M11.1): covers app::machining2d (contour arc arm),
-//! app::project (EntryDto::Arc), app::cl.
+//! Gate map (M11.1): covers motion::machining2d (contour arc arm),
+//! app::project (EntryDto::Arc), cl::cl.
 
 mod common;
 

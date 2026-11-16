@@ -55,14 +55,20 @@ pub(super) fn body_section(ui: &mut Ui, state: &mut State, exists: bool, u: Unit
     ui.label(match (&landed, has_draft) {
         (Some(src), _) if *src == draft_src => format!("body: {src}"),
         (_, true) => format!("draft: {draft_src} (not applied)"),
+        _ if state.tool_body_ui.lathe.is_some() => "none - the holder is not judged".to_owned(),
         _ => "none - the holder cylinder is judged".to_owned(),
     });
+    // #361: a boring bar chooses its frame; a lathe steel's is the
+    // turning tool frame.
+    super::tool_body_lathe_page::frame_row(ui, state);
     let (import, clear) = ui
         .horizontal(|ui| {
-            let import = ui
-                .button("Import body…")
-                .on_hover_text("read a STEP, STL or OBJ holder/assembly; place it, then Apply body")
-                .clicked();
+            let import = crate::browser_files::button(
+                ui,
+                state.in_browser(crate::browser_files::NEEDS_PICKER),
+                "Import body…",
+                "read a STEP, STL or OBJ holder/assembly; place it, then Apply body",
+            );
             let clear = ui
                 .add_enabled(landed.is_some() || has_draft, egui::Button::new("Clear body"))
                 .on_hover_text("remove the body - the holder cylinder is judged again (undoable)")
@@ -79,6 +85,11 @@ pub(super) fn body_section(ui: &mut Ui, state: &mut State, exists: bool, u: Unit
     if state.tool_body_ui.facets.is_empty() {
         return;
     }
+    if state.tool_body_ui.lathe.is_some() {
+        super::tool_body_lathe_page::section(ui, state, u);
+        super::tool_body_assembly_page::section(ui, state);
+        return;
+    }
     let old_axis = state.tool_body_ui.axis;
     let old_offset = state.tool_body_ui.offset;
     field(ui, "Tool axis (model direction, tip to spindle)");
@@ -93,15 +104,13 @@ pub(super) fn body_section(ui: &mut Ui, state: &mut State, exists: bool, u: Unit
     }
     let pick = state.tool_body_ui.pick;
     ui.horizontal(|ui| {
-        if ui
-            .selectable_label(pick == BodyPickMode::Tip, "Pick tip")
+        if super::pick_button::pick_button(ui, pick == BodyPickMode::Tip, "Pick tip")
             .on_hover_text("click the body in the preview: the nearest corner becomes the tool tip")
             .clicked()
         {
             state.tool_body_ui.pick = if pick == BodyPickMode::Tip { BodyPickMode::Off } else { BodyPickMode::Tip };
         }
-        if ui
-            .selectable_label(pick == BodyPickMode::Axis, "Pick axis")
+        if super::pick_button::pick_button(ui, pick == BodyPickMode::Axis, "Pick axis")
             .on_hover_text("click a face that looks toward the spindle: its normal becomes the tool axis")
             .clicked()
         {
@@ -129,6 +138,7 @@ pub(super) fn body_section(ui: &mut Ui, state: &mut State, exists: bool, u: Unit
     if ui.button("Apply body").on_hover_text("attach the body with this placement (one undo step)").clicked() {
         state.queue_apply_tool_body();
     }
+    super::tool_body_assembly_page::section(ui, state);
 }
 
 fn axis_combo(ui: &mut Ui, axis: &mut [f64; 3]) {
@@ -217,7 +227,7 @@ impl View {
     }
 }
 
-fn preview_3d(ui: &mut Ui, state: &mut State) {
+pub(super) fn preview_3d(ui: &mut Ui, state: &mut State) {
     let (resp, painter) = ui.allocate_painter(SIDE, Sense::click_and_drag());
     let rect = resp.rect;
     painter.rect_filled(rect, 4.0, Color32::from_rgb(24, 26, 31));
@@ -249,9 +259,12 @@ fn preview_3d(ui: &mut Ui, state: &mut State) {
         mesh.add_triangle(base, base + 1, base + 2);
     }
     painter.add(Shape::mesh(mesh));
-    // The placement over it: the axis from the tip up, the tip, and the
-    // model origin.
-    if let Some(a) = norm(d.axis) {
+    // The placement over it: the axis from the tip up (a lathe draft:
+    // the tip with its radial and spindle directions), the tip, and
+    // the model origin.
+    if d.lathe.is_some() {
+        super::tool_body_lathe_page::overlay(&painter, d, &|q| view.screen(q), view.reach);
+    } else if let Some(a) = norm(d.axis) {
         let tip = [-d.offset * a[0], -d.offset * a[1], -d.offset * a[2]];
         let top = [0, 1, 2].map(|i| tip[i] + a[i] * view.reach * 2.0);
         painter.line_segment([view.screen(tip), view.screen(top)], Stroke::new(1.5, Color32::from_rgb(90, 200, 230)));
@@ -263,7 +276,7 @@ fn preview_3d(ui: &mut Ui, state: &mut State) {
         painter.text(
             rect.min + Vec2::new(6.0, 6.0),
             egui::Align2::LEFT_TOP,
-            if mode == BodyPickMode::Tip { "click the tip" } else { "click a spindle-facing face" },
+            super::tool_body_lathe_page::pick_hint(mode),
             egui::FontId::proportional(10.0),
             Color32::from_rgb(240, 200, 120),
         );

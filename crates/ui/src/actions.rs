@@ -11,44 +11,11 @@
 //! these. Enabling/disabling stays with the surface (it knows what the
 //! user can act on), but the effect lives here exactly once.
 
-use camcraft_app::machine::Kind as MachineKind;
 use camcraft_app::operation::SrcRef;
 
 use crate::operations::quick_params;
 use crate::state::{CommandKind, State, UiTarget};
 use crate::viewport::ProjectionMode;
-
-/// The ribbon's machine modes (the ribbon law): the workspace kind,
-/// the Title-case caption it wears on the bar, and the built-in
-/// library machine switching to it mounts. The names must exist in
-/// `camcraft_app::posting::MACHINES` - the switch is a
-/// `LoadBuiltinMachine`, never a bare field poke, so a mode change
-/// rides undo exactly like the Setup pane's picker does. A mill's
-/// reference is the plain VMC (the library's entry 0); the Tilt-head
-/// 5-axis stays picker-only, because a mode says what the document
-/// machines, not which five axes it owns.
-pub(crate) const MACHINE_MODES: [(MachineKind, &str, &str); 3] = [
-    (MachineKind::Mill, "Milling", "VMC 3-axis"),
-    (MachineKind::Lathe, "Turning", "Lathe"),
-    (MachineKind::MillTurn, "Mill-turning", "Mill-turn"),
-];
-
-/// Switch the document's workspace kind by mounting that kind's
-/// reference machine. Picking the mode already running mounts nothing
-/// - the row says "(current)" and this guard is the same law's second
-///   half, so no surface can push a no-change command (`LoadMachine`
-///   would refuse it at the front door anyway).
-pub(crate) fn set_machine_mode(state: &mut State, kind: MachineKind) {
-    if camcraft_app::machine::kind_of(&state.world) == kind {
-        return;
-    }
-    if let Some((_, caption, name)) = MACHINE_MODES.iter().find(|(k, _, _)| *k == kind) {
-        state.pending.push_back(CommandKind::LoadBuiltinMachine(
-            (*name).to_owned(),
-        ));
-        state.status = format!("machine mode: {caption}");
-    }
-}
 
 /// File menu: ask for a mesh to import (the dialog itself runs in
 /// `State::run`, never mid-frame).
@@ -148,6 +115,9 @@ pub(crate) fn toggle_deviate(state: &mut State) {
             if let Some(vote) = machine_vote(&state.world) {
                 state.status += &vote;
             }
+            if let Some(note) = camcraft_app::stock_sim::carry_engine_note() {
+                state.status += &format!(" - {note}"); // #1168: never silent
+            }
             state.program_sim = Some(sim);
             state.doc_version += 1; // the sheet is a new GPU part
         }
@@ -222,14 +192,16 @@ fn follow_playhead(state: &mut State, judged: bool) -> Result<(), String> {
     let sc = crate::egui_app::shell::cached_script(state);
     let t = state.sim.as_ref().map_or(0.0, |s| s.t);
     let play = state.field_play.as_ref().ok_or("playback was not built")?;
-    let k = match progress(&sc, t) {
-        None => 0,
+    // The move under the playhead shows cut as far as the tool is
+    // drawn on it (#1516), not only once it completes.
+    let (k, f) = match progress(&sc, t) {
+        None => (0, 0.0),
         Some(p) => play
             .index()
-            .index_at(&p)
+            .position_at(&p, sc.travelled(t))
             .ok_or_else(|| format!("{} is on the timeline but not in the posting plan", p.op))?,
     };
-    play.request(k);
+    play.request_at(k, f);
     if let Some(frame) = play.take() {
         state.field_view = Some(Ok(frame?.view));
     }
@@ -391,7 +363,11 @@ pub(crate) fn add_operation(state: &mut State, kind: usize) {
         .get(kind)
         .map(|k| camcraft_app::operation::tool_gate::fitting_tools(&state.world, k))
         .unwrap_or_default();
-    let Some(tool) = fitting.last().cloned().or_else(|| state.tool_names().pop()) else {
+    // #532: a kind that mounts no library tool (the wire EDM's) is
+    // created naming none - its door then asks for what it does need.
+    let toolless = camcraft_app::operation::KindInfo::ALL.get(kind).is_some_and(|k| !k.mounts_tool());
+    let picked = if toolless { Some(String::new()) } else { fitting.last().cloned().or_else(|| state.tool_names().pop()) };
+    let Some(tool) = picked else {
         state.status = String::from("cannot add an operation: no tool in the document");
         return;
     };
@@ -407,11 +383,21 @@ pub(crate) fn add_operation(state: &mut State, kind: usize) {
         n += 1;
     };
     let mut params = quick_params(kind);
+    // #535: a quick-add wire contour takes the machine's first stated
+    // condition (the door refuses an op naming none); with none stated
+    // the door's refusal names the table to fill.
+    if let camcraft_app::operation::OpParams::WireContour(w) = &mut params
+        && let Some(first) = camcraft_app::operation::wire_op::conditions_of(&state.world, None).into_iter().next()
+    {
+        w.condition = first;
+    }
     // M11.3: the seed helix radius follows the op's tool (0.4 x radius).
     if let Some(t) = camcraft_app::model::find_by_name(&state.world, &tool)
         .and_then(|e| camcraft_app::model::tool_of(&state.world, &e))
     {
         camcraft_app::operation::seed_helix_for_tool(&mut params, t.diameter);
+        // #890: and its feed, from the tool's row for the document material.
+        camcraft_app::cutting_rows::seed_feed_for_tool(&state.world, &mut params, &t);
     }
     state.pending.push_back(CommandKind::CreateOperation {
         name: name.clone(),

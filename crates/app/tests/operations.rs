@@ -3,7 +3,7 @@
 //! at command construction (validate early), and staleness is derived,
 //! never stored.
 //!
-//! Gate map (M4.4): covers app::cl, app::commands, app::drilling, app::finishing3d, app::geo2d, app::geometry, app::machining2d, app::model, app::operation, app::schema, app::stock, app::tools, app::verify, app::world.
+//! Gate map (M4.4): covers cl::cl, app::commands, motion::drilling, motion::finishing3d, geometry::geo2d, app::geometry, motion::machining2d, motion::machining3d, motion::multiaxis, motion::plunge_law, app::model, app::operation, app::schema, geometry::geometry::stock, tools::tools, sim::verify, app::world (the motion generators these tests drive end to end, #1068).
 //!
 //! Lane shape (M13.8): the debug ladder runs every test here in seconds.
 //! The six slow generate-and-verify laws (swarf, the swarf ladder,
@@ -108,6 +108,8 @@ fn slot_params() -> OpParams {
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
         tilt: None,
+        extend_start: 0.0,
+        extend_end: 0.0,
     }
 }
 
@@ -1399,8 +1401,12 @@ fn threaded_batch_matches_the_serial_loop_bit_for_bit() {
         let world = new_world();
         let mut history = History::default();
         // Box stock: what every Entity-source op reads at collect
-        // time as the swarf column around the smaller model.
-        box_stock(&world, &mut history, 60.0, 60.0, 20.0);
+        // time as the swarf column around the smaller model. It stands
+        // to the cube's top, Z 5 (#96, #1924): the pocket starts at 5,
+        // and the old 20 mm block left uncut stock from Z 5 to 20, where
+        // the ball's Ø8 shank (15 mm above the tip) would sit at Bottom
+        // Z 0 - #1844's reach law rightly refuses that.
+        box_stock(&world, &mut history, 60.0, 60.0, 5.0);
         add_tool(&world, &mut history, "EM-0400-2FL");
         add_tool(&world, &mut history, "BN-0600");
         history.execute(
@@ -1980,6 +1986,7 @@ fn pocket_refuses_an_open_run() {
         tool: "EM-0600-4FL".into(),
         src: sel("part", open),
         params: OpParams::Pocket {
+            blend_radius: None,
             links: camcraft_app::links::Links::PLANAR,
             tilt: None,
             stepover: 3.0,
@@ -2170,7 +2177,7 @@ fn open_run_of(world: &World, name: &str) -> u64 {
 }
 
 #[test]
-fn an_open_run_contours_on_its_centerline() {
+fn an_open_run_contours_on_its_air_side() {
     let (world, mut history) = box_part_world();
     let run = open_run_of(&world, "part");
     history.execute(
@@ -2189,8 +2196,8 @@ fn an_open_run_contours_on_its_centerline() {
         GenerateOperation::new(&world, "Edge1").expect("generate"),
     );
 
-    // Preview: the run bounds no area, so no region outline - the
-    // centerline stands in for it, and it is exactly what the path rides.
+    // Preview: the run bounds no area, so no region outline - the picked
+    // run stands in for it; the path rides beside it (#1777).
     let op = model::operation_of(&world, &model::find_by_name(&world, "Edge1").expect("op"))
         .expect("op");
     assert!(
@@ -2213,8 +2220,21 @@ fn an_open_run_contours_on_its_centerline() {
         .find(|c| c.id == run)
         .expect("chain");
     let pts = feature::chain_points(&f, &c);
+    assert_eq!(pts.len(), 2, "a box rim edge is one straight segment");
+    // #1777: the tool stands one radius (3 mm) off the edge on its air
+    // side - outside the 10 x 10 box - never on the edge itself.
+    let (a, b) = (pts[0], pts[1]);
+    let l = (b[0] - a[0]).hypot(b[1] - a[1]);
+    let n = (-(b[1] - a[1]) / l, (b[0] - a[0]) / l);
+    let outside = |x: f64, y: f64| !(-1e-9..=10.0 + 1e-9).contains(&x) || !(-1e-9..=10.0 + 1e-9).contains(&y);
+    let off = |e: [f64; 3]| {
+        let (p, q) = ((e[0] + 3.0 * n.0, e[1] + 3.0 * n.1), (e[0] - 3.0 * n.0, e[1] - 3.0 * n.1));
+        if outside(p.0, p.1) { p } else { q }
+    };
+    let ends = [off(a), off(b)];
+    let near = |x: f64, y: f64, e: (f64, f64)| (x - e.0).hypot(y - e.1) < 1e-6;
     // contour_params: 5.0 -> 0.0 at 2.5 - three levels, one plunge each,
-    // Lead::None so the plunge lands exactly on the stored start vertex.
+    // Lead::None so the plunge lands exactly on the offset start.
     let levels = [5.0, 2.5, 0.0];
     let plunges: Vec<_> = path
         .moves
@@ -2222,12 +2242,10 @@ fn an_open_run_contours_on_its_centerline() {
         .filter(|m| m.kind == MoveKind::Plunge)
         .collect();
     assert_eq!(plunges.len(), levels.len());
+    let start = plunges[0].to;
+    let first = ends.iter().position(|e| near(start.x, start.y, *e)).expect("the plunge enters at an offset end of the run");
     for (lvl, m) in plunges.iter().enumerate() {
-        assert_eq!(
-            (m.to.x, m.to.y),
-            (pts[0][0], pts[0][1]),
-            "plunge {lvl} enters at the run start, not short of it"
-        );
+        assert!(near(m.to.x, m.to.y, ends[first]), "plunge {lvl} enters at the same offset end: {:?}", m.to);
         assert_eq!(m.to.z, levels[lvl]);
     }
     for (lvl, &z) in levels.iter().enumerate() {
@@ -2236,18 +2254,20 @@ fn an_open_run_contours_on_its_centerline() {
             .iter()
             .filter(|m| m.kind == MoveKind::Feed && m.to.z == z)
             .collect();
-        assert_eq!(
-            feeds.len(),
-            pts.len() - 1,
-            "one feed per segment, level {lvl}"
+        assert_eq!(feeds.len(), 1, "one feed along the straight offset, level {lvl}");
+        let last = feeds[0];
+        assert!(
+            near(last.to.x, last.to.y, ends[1 - first]),
+            "the ride stops at the run's other offset end, never beyond: {:?}",
+            last.to
         );
-        let last = feeds.last().expect("a level feeds somewhere");
-        assert_eq!(
-            (last.to.x, last.to.y),
-            (pts[pts.len() - 1][0], pts[pts.len() - 1][1]),
-            "the run stops at its end, never beyond"
-        );
+        assert!(outside(last.to.x, last.to.y), "the tool centre stays off the part");
     }
+    assert!(
+        path.notes.iter().any(|s| s.contains("air side")),
+        "the path says how it read the run: {:?}",
+        path.notes
+    );
 }
 
 // ============ M1.5.1 step 4: picked runs stitch into rings ============
@@ -2633,17 +2653,21 @@ fn a_mixed_pick_list_cuts_boundary_then_run_and_says_what_overlap_means() {
         6,
         "three levels of boundary, three of run"
     );
-    // The run's edge lies on the face's own wall, so a full-width cutter
-    // centered there half-cuts air and half-cuts the finished boundary -
-    // the verifier sees exactly that and says so, instead of pretending
-    // the pick list was coherent. (Pick the run WITHOUT the face, or use
-    // a chamfer tool, for a clean edge-of-part pass.)
+    // The run's edge lies on the face's own wall. Before #1777 the cutter
+    // rode the edge on its centre and half-cut the finished boundary; now
+    // it stands one radius off the edge on its air side, so the run
+    // repeats the wall's pass and cuts nothing it must keep.
     assert!(
-        out.warnings
+        !out.warnings
             .iter()
             .any(|w| matches!(w, Warning::Gouge { .. })),
-        "a centerline inside a picked wall is flagged, never silent: {:?}",
+        "a run on a picked wall rides beside the wall, never into it: {:?}",
         out.warnings
+    );
+    assert!(
+        out.path.notes.iter().any(|s| s.contains("air side")),
+        "the run says how it was cut: {:?}",
+        out.path.notes
     );
 }
 
@@ -4025,6 +4049,7 @@ fn finish_params(top_z: f64, bottom_z: f64, tolerance: f64) -> OpParams {
         entry_ramp: false,
         steep_stepover: None,
         pencil_reference: None,
+        fill_openings: None,
     }
 }
 
@@ -6333,13 +6358,18 @@ fn multiaxis_rough_pocket_twin() -> OpParams {
 /// first (or read Stale against its sibling's path). This law is about
 /// the stock, not a sequence: each kind must see the whole stock.
 fn ladder_job(tag: &str, stamped: bool) -> (World, History, camcraft_app::cl::Toolpath) {
+    ladder_job_on(tag, stamped, 40.0)
+}
+
+/// [`ladder_job`] on a square stock `side` mm across (#1774).
+fn ladder_job_on(tag: &str, stamped: bool, side: f64) -> (World, History, camcraft_app::cl::Toolpath) {
     let world = new_world();
     let mut history = History::default();
     let cmd = SetStock::new(
         &world,
         StockShape::Box {
-            dx: 40.0,
-            dy: 40.0,
+            dx: side,
+            dy: side,
             dz: 20.0,
         },
         Location {
@@ -6375,6 +6405,22 @@ fn ladder_job(tag: &str, stamped: bool) -> (World, History, camcraft_app::cl::To
     );
     let path = cache(&world, tag).expect("cached ladder").path;
     (world, history, path)
+}
+
+/// #1774: a stock reaching 15 mm past the slab is cleared by both kinds
+/// out to its outline - Multi-Axis Rough reads the 3D Pocket's footprint,
+/// so the far stock grows both ladders alike.
+#[test]
+fn multiaxis_rough_clears_the_far_stock_the_pocket_clears() {
+    let (_pw, _ph, near) = ladder_job_on("P3N", false, 40.0);
+    let (_fw, _fh, plain) = ladder_job_on("P3F", false, 70.0);
+    let (_rw, _rh, rough) = ladder_job_on("MARF", true, 70.0);
+    assert!(plain.moves.len() > near.moves.len(), "the far stock adds cuts: {} vs {}", plain.moves.len(), near.moves.len());
+    assert_eq!(plain.moves.len(), rough.moves.len(), "one ladder, two readings, on the far stock too");
+    let reach = |t: &camcraft_app::cl::Toolpath| {
+        t.moves.iter().filter(|m| m.kind == MoveKind::Feed).map(|m| m.to.x.abs().max(m.to.y.abs())).fold(0.0, f64::max)
+    };
+    assert!(reach(&rough) > 31.0, "Multi-Axis Rough reaches the far stock: {}", reach(&rough));
 }
 
 #[test]
@@ -6594,6 +6640,11 @@ fn stub_tool() -> Tool {
         tool_material: None,
         flutes: None,
         orientation: None,
+        pitch_min: 0.0,
+        catalog: camcraft_tools::catalog_fields::ToolCatalog::default(),
+        cutting: Vec::new(),
+        outline: Vec::new(),
+        turning: None,
     }
 }
 
@@ -6821,9 +6872,13 @@ fn multiaxis_rough_refuses_a_slot_the_cone_cannot_clear() {
     };
     let (world, _history) = job(true);
     let cmd = GenerateOperation::new(&world, "SLOT");
-    let CommandError::Machining(msg) = cmd
-        .err()
-        .expect("a 10-wide shank must refuse a 9-wide slot")
+    let err = cmd.err().expect("a 10-wide shank must refuse a 9-wide slot");
+    // #1015: the shank refusal hands back the plan before its move as a
+    // ghost, so it arrives as `MachiningGhost`, which reads as `Machining`.
+    assert!(err.ghost().is_some(), "the shank refusal carries its ghost");
+    let (CommandError::Machining(msg)
+    | CommandError::MachiningAt { msg, .. }
+    | CommandError::MachiningGhost { msg, .. }) = err
     else {
         panic!("expected a machining refusal");
     };
@@ -7647,4 +7702,109 @@ fn deburr_brick() -> camcraft_app::geometry::Mesh {
         Point3::new(-20.0, -10.0, 0.0),
         Point3::new(20.0, 10.0, 10.0),
     )
+}
+
+/// #1196: the land model end to end - a 12 mm blind pocket in a plate,
+/// finished with a 6 mm ball. Off, the raster dives to the pocket
+/// floor (the model is the finished surface). With `fill_openings` at
+/// 14 mm the pocket is lidded at its rim on the drive surface only:
+/// the path never descends into it, the op still verifies clean
+/// against the REAL model (status Ok), and the path says what stands
+/// as land.
+/// #1196's fixture: a 24 mm plate (top z 10) with a 12 mm blind
+/// pocket (floor z 5) in its middle, a 6 mm ball, on box stock.
+fn land_pocket_world() -> (World, History) {
+    let world = new_world();
+    let mut history = History::default();
+    box_stock(&world, &mut history, 60.0, 60.0, 25.0);
+    add_tool(&world, &mut history, "BN-0600");
+    let quad = |p: [Point3; 4]| vec![Triangle::new(p[0], p[1], p[2]), Triangle::new(p[0], p[2], p[3])];
+    let (t, f) = (10.0, 5.0);
+    let pt = Point3::new;
+    let mut facets = Vec::new();
+    facets.extend(quad([pt(-12.0, -12.0, t), pt(12.0, -12.0, t), pt(12.0, -6.0, t), pt(-12.0, -6.0, t)]));
+    facets.extend(quad([pt(-12.0, 6.0, t), pt(12.0, 6.0, t), pt(12.0, 12.0, t), pt(-12.0, 12.0, t)]));
+    facets.extend(quad([pt(-12.0, -6.0, t), pt(-6.0, -6.0, t), pt(-6.0, 6.0, t), pt(-12.0, 6.0, t)]));
+    facets.extend(quad([pt(6.0, -6.0, t), pt(12.0, -6.0, t), pt(12.0, 6.0, t), pt(6.0, 6.0, t)]));
+    facets.extend(quad([pt(6.0, -6.0, f), pt(-6.0, -6.0, f), pt(-6.0, -6.0, t), pt(6.0, -6.0, t)]));
+    facets.extend(quad([pt(6.0, 6.0, f), pt(6.0, -6.0, f), pt(6.0, -6.0, t), pt(6.0, 6.0, t)]));
+    facets.extend(quad([pt(-6.0, 6.0, f), pt(6.0, 6.0, f), pt(6.0, 6.0, t), pt(-6.0, 6.0, t)]));
+    facets.extend(quad([pt(-6.0, -6.0, f), pt(-6.0, 6.0, f), pt(-6.0, 6.0, t), pt(-6.0, -6.0, t)]));
+    facets.extend(quad([pt(-6.0, -6.0, f), pt(6.0, -6.0, f), pt(6.0, 6.0, f), pt(-6.0, 6.0, f)]));
+    facets.extend(quad([pt(-12.0, -12.0, 0.0), pt(12.0, -12.0, 0.0), pt(12.0, -12.0, t), pt(-12.0, -12.0, t)]));
+    facets.extend(quad([pt(12.0, -12.0, 0.0), pt(12.0, 12.0, 0.0), pt(12.0, 12.0, t), pt(12.0, -12.0, t)]));
+    facets.extend(quad([pt(12.0, 12.0, 0.0), pt(-12.0, 12.0, 0.0), pt(-12.0, 12.0, t), pt(12.0, 12.0, t)]));
+    facets.extend(quad([pt(-12.0, 12.0, 0.0), pt(-12.0, -12.0, 0.0), pt(-12.0, -12.0, t), pt(-12.0, 12.0, t)]));
+    history.execute(&world, ImportModel::from_mesh("pocket", Mesh::from_facets(facets)));
+    (world, history)
+}
+
+/// The fixture's 3D finish ask: Parallel, the stated land width.
+fn land_ask(fill: Option<f64>) -> OpParams {
+    let mut a = finish_params(10.0, 0.0, 0.1);
+    let OpParams::Finish3D { pattern, fill_openings, .. } = &mut a else {
+        panic!("finish3d params expected");
+    };
+    *pattern = camcraft_app::finishing3d::FinishPattern::Parallel;
+    *fill_openings = fill;
+    a
+}
+
+#[test]
+fn finish3d_fill_openings_lands_over_a_pocket_and_verifies_on_the_model() {
+    let (world, mut history) = land_pocket_world();
+    let t = 10.0;
+    let ask = land_ask;
+    let inside_low = |name: &str| {
+        cache(&world, name).expect("cached").path.moves.iter().any(|m| {
+            matches!(m.kind, camcraft_app::cl::MoveKind::Feed)
+                && m.to.x.abs() < 3.0
+                && m.to.y.abs() < 3.0
+                && m.to.z < t - 0.5
+        })
+    };
+    for (name, fill) in [("LOFF", None), ("LON", Some(14.0))] {
+        history.execute(
+            &world,
+            CreateOperation::new(&world, name, "BN-0600", SrcRef::Entity("pocket".into()), ask(fill)).expect("create"),
+        );
+        history.execute(&world, GenerateOperation::new(&world, name).expect("generate"));
+        assert_eq!(status(&world, name), OpStatus::Ok, "{name} must cut and verify clean on the real model");
+    }
+    assert!(inside_low("LOFF"), "off: the finish rides the pocket floor");
+    assert!(!inside_low("LON"), "on: the finish never descends into the lidded pocket");
+    let notes = cache(&world, "LON").expect("cached").path.notes;
+    assert!(notes.iter().any(|n| n.starts_with("land: 1 closed opening")), "{notes:?}");
+    // A nonsense width never reaches the generator: refused at the door.
+    assert!(CreateOperation::new(&world, "LBAD", "BN-0600", SrcRef::Entity("pocket".into()), ask(Some(-1.0))).is_err());
+}
+
+/// #1196 review: Pencil and Corner walk crease loci off the mesh's
+/// shared-edge index, which the lids never join - with the fill on
+/// they would still clean inside a lidded opening while the land note
+/// claimed it was flown over. The pair is refused by name instead, as
+/// Geodesic is, and cuts nothing.
+#[test]
+fn finish3d_fill_openings_refuses_pencil_and_corner_by_name() {
+    let (world, mut history) = land_pocket_world();
+    use camcraft_app::finishing3d::FinishPattern;
+    for (name, pat, word) in [("LPEN", FinishPattern::Pencil, "Pencil"), ("LCOR", FinishPattern::Corner, "Corner")] {
+        let mut a = land_ask(Some(14.0));
+        let OpParams::Finish3D { pattern, .. } = &mut a else {
+            panic!("finish3d params expected");
+        };
+        *pattern = pat;
+        history.execute(
+            &world,
+            CreateOperation::new(&world, name, "BN-0600", SrcRef::Entity("pocket".into()), a).expect("create"),
+        );
+        let CommandError::Machining(msg) = GenerateOperation::new(&world, name)
+            .err()
+            .expect("a crease pattern with fill must be refused")
+        else {
+            panic!("expected a machining refusal");
+        };
+        assert!(msg.contains(word) && msg.contains("cannot fill them") && msg.contains("Fill openings"), "{msg}");
+        assert_eq!(status(&world, name), OpStatus::Never, "a refusal cuts nothing");
+    }
 }

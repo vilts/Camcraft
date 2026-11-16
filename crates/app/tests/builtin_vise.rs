@@ -10,7 +10,7 @@
 //!
 //! Gate map (M4.4): covers app::vise, app::commands::builtin_vise,
 //! app::commands::insert_fixture, app::project (fixture vise key),
-//! app::fixture, app::posting.
+//! app::fixture, sim::fixture, app::posting.
 
 use std::collections::HashMap;
 use std::io::Write;

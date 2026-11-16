@@ -30,10 +30,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde_json::Value;
 
 use super::{EntityKind, ProjectError, ProjectFile, corrupt};
-use crate::schema::WCS_SLOTS;
+use crate::schema::LEGACY_WCS_NAMES;
 
 fn word(slot: usize) -> String {
-    WCS_SLOTS.get(slot).map_or_else(|| format!("work offset #{slot}"), |w| (*w).to_owned())
+    LEGACY_WCS_NAMES.get(slot).map_or_else(|| format!("work offset #{slot}"), |w| (*w).to_owned())
 }
 
 /// Every `work_offset` slot a parameter JSON's heights name, in file
@@ -85,7 +85,7 @@ pub(super) fn settle(file: &mut ProjectFile, from: u32) -> Result<(), ProjectErr
             }
             continue;
         }
-        if let Some(bad) = heights.iter().find(|i| **i >= WCS_SLOTS.len()) {
+        if let Some(bad) = heights.iter().find(|i| **i >= LEGACY_WCS_NAMES.len()) {
             return Err(corrupt(format!(
                 "operation '{}' measures a height from work offset #{bad} - the slots are G54 \
                  to G59",
@@ -115,7 +115,7 @@ fn lift(file: &mut ProjectFile, ops: &[OpSlots]) -> Result<(), ProjectError> {
         }
         let pick = match dto.setup.as_ref().and_then(|s| s.work_offset.as_deref()) {
             None => None,
-            Some(w) => Some(WCS_SLOTS.iter().position(|s| *s == w).ok_or_else(|| {
+            Some(w) => Some(LEGACY_WCS_NAMES.iter().position(|s| *s == w).ok_or_else(|| {
                 corrupt(format!("setup '{}' picks unknown work offset {w:?}", dto.name))
             })?),
         };
@@ -169,7 +169,7 @@ fn lift(file: &mut ProjectFile, ops: &[OpSlots]) -> Result<(), ProjectError> {
     }
     for (idx, slot) in lifts {
         if let Some(s) = file.entities.get_mut(idx).and_then(|e| e.setup.as_mut()) {
-            s.work_offset = WCS_SLOTS.get(slot).map(|w| (*w).to_owned());
+            s.work_offset = LEGACY_WCS_NAMES.get(slot).map(|w| (*w).to_owned());
         }
     }
     Ok(())

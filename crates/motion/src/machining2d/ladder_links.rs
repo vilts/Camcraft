@@ -181,6 +181,17 @@ pub(super) fn pass_link(b: &mut PathBuilder, lv: &LevelWalk, m: &Motion, cert: O
         st.level.extend(push(b, &d, &l, z, plane, m));
         return;
     }
+    // #1665: a pass that starts where the last one ended (the bore's ring
+    // after its radial sweep) is entered by a plunge back down the column
+    // the tool just cut. Where the user asked for a ramp or helix entry,
+    // that plunge is named, never silent.
+    if m.entry != Entry3D::Plunge && at.x == e.x && at.y == e.y {
+        b.note_once(&format!(
+            "entry: the pass at ({:.3}, {:.3}) starts where the last pass ended - the pass link lifts and \
+             plunges back down the column just cut, at the plunge feed",
+            e.x, e.y
+        ));
+    }
     b.push(MoveKind::Rapid, Point3::new(e.x, e.y, plane), None);
     feed_down(b, e, z, mat_top, m, m.plunge_feed);
 }

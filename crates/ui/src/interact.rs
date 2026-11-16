@@ -24,7 +24,6 @@ use camcraft_app::geometry::feature;
 use camcraft_app::geometry::{Aabb, Point3, transform_point};
 use camcraft_app::geo2d::Region;
 use camcraft_app::operation::{FeatureSel, GeoSel, Height};
-use camcraft_app::schema::WCS_SLOTS;
 use camcraft_app::units;
 use camcraft_app::{model, operation, pick};
 use winit::keyboard::ModifiersState;
@@ -34,18 +33,29 @@ use crate::egui_app::ground_ink::{Overlay, light_ground, overlay};
 
 /// Keyboard modifiers as the pick law reads them - the winit state or the
 /// egui `Modifiers`, converted at the shell's edge so the law itself names
-/// no windowing library. Ctrl/Shift add to a feature pick, Alt in Edge
-/// mode takes the one segment under the cursor.
+/// no windowing library. `command` is the platform command modifier
+/// (Cmd on macOS, Ctrl elsewhere - the key the shortcuts use, #1238): it
+/// adds to a feature pick or toggles one in Edge mode. Shift adds (and
+/// closes a loop in Edge mode); Alt in Edge mode takes the one segment
+/// under the cursor. Control on macOS is the secondary click, so it is not
+/// the add key there.
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Mods {
-    pub ctrl: bool,
+    pub command: bool,
     pub shift: bool,
     pub alt: bool,
 }
 
 impl From<ModifiersState> for Mods {
     fn from(m: ModifiersState) -> Self {
-        Mods { ctrl: m.control_key(), shift: m.shift_key(), alt: m.alt_key() }
+        let command = if cfg!(target_os = "macos") { m.super_key() } else { m.control_key() };
+        Mods { command, shift: m.shift_key(), alt: m.alt_key() }
+    }
+}
+
+impl From<egui::Modifiers> for Mods {
+    fn from(m: egui::Modifiers) -> Self {
+        Mods { command: m.command, shift: m.shift, alt: m.alt }
     }
 }
 
@@ -81,30 +91,58 @@ pub(crate) fn ray_at(state: &State, p: [f32; 2]) -> Option<([f64; 3], [f64; 3])>
     state.cam.ray_through(ndc, f64::from(w / h))
 }
 
+/// #1514: is the open operation's selection locked? Picking is a mode: a
+/// viewport click edits an operation's geometry only while its Geometry
+/// tab shows (`op_tab == 0`) or a pick row is armed (a boundary entry; the
+/// setup-page drafts - locate, points, plane, axis, WCS - are their own
+/// modes and are never locked). On any other tab the click does nothing:
+/// the picked geometry stays and the dialog says "Picking off". Ephemeral
+/// view state derived each time from the tab and the drafts; never a
+/// command (selection changes stay undoable commands).
+pub fn op_pick_locked(state: &State) -> bool {
+    !state.op_ui.name.is_empty()
+        && state.op_tab != 0
+        && state.boundary_pick.is_none()
+        && state.locate_pick.is_none()
+        && state.points_pick.is_none()
+        && !state.wcs_ui.pick_circle
+        && !crate::wcs_pick::collecting(state)
+        && !crate::plane_pick::collecting(state)
+        && !crate::axis_pick::collecting(state)
+}
+
 /// A click inside the viewport, routed by the pick mode: models,
 /// feature faces, or edge chains.
 pub(crate) fn pick_at(state: &mut State, p: [f32; 2], mods: Mods) {
-    // Anchor picking wins over entity picking: in pick mode a click ON a
-    // marker places the origin there (same command the pane grid
-    // queues); a click beside one still picks normally, so the viewport
-    // never stops behaving like the viewport.
-    if state.wcs_ui.pick_anchor
-        && let Some((k, pos)) = anchor_hit(state, p, 12.0)
-    {
-        state.wcs_ui.anchor_xy = k;
-        state.pending.push_back(CommandKind::SetWcs {
-            pos,
-            roll_deg: state.wcs_ui.roll_deg,
-            pitch_deg: state.wcs_ui.pitch_deg,
-            yaw_deg: state.wcs_ui.yaw_deg,
-        });
+    // The WCS page's picks win over entity picking while armed: anchor
+    // markers (a click beside one still picks normally) and the #739
+    // circle-centre edge pick.
+    if crate::wcs_circle_pick::take_click(state, p) {
         return;
     }
-    match state.geo_pick {
-        GeoPick::Model => pick_model(state, p),
-        // #692: every feature click resolves through the one pick rule.
-        GeoPick::Face | GeoPick::Edge | GeoPick::Vertex => crate::feature_click::click(state, p, mods),
+    // #1514: off the Geometry tab the click is swallowed whole - no
+    // geometry change, and no model select that would swap the dialog.
+    if op_pick_locked(state) {
+        state.status = String::from("picking is off - open the Geometry tab to change the selection");
+        return;
     }
+    // #692: every feature click resolves through the one pick rule.
+    if feature_routed(state) {
+        crate::feature_click::click(state, p, mods);
+    } else {
+        pick_model(state, p);
+    }
+}
+
+/// Does a viewport click (and the hover) go through the feature pick
+/// rule rather than the whole-model pick? In a Face, Edge or Vertex mode,
+/// and (#1562) while the Setups page's WCS role draft collects: that row
+/// keeps the toolbar's mode on purpose (it takes faces, edges and points
+/// alike), so in the default Model mode its clicks must still reach
+/// `feature_click`, or the draft never receives a pick. Disarmed or
+/// paused, the mode's own click behaviour is back.
+pub(crate) fn feature_routed(state: &State) -> bool {
+    state.geo_pick != GeoPick::Model || crate::wcs_pick::collecting(state)
 }
 
 /// Raycast at a logical-px point inside the viewport; queues Select
@@ -150,14 +188,14 @@ fn pick_model(state: &mut State, p: [f32; 2]) {
 /// write, never a command until Apply.
 pub fn queue_boundary_pick(state: &mut State, pick: GeoSel, mods: Mods) {
     let Some(target) = state.boundary_pick else {
-        queue_feature_pick(state, pick, mods.ctrl || mods.shift);
+        queue_feature_pick(state, pick, mods.command || mods.shift);
         return;
     };
     if state.op_ui.name.is_empty() {
         state.status = String::from("open an operation first - geometry picks fill the open one");
         return;
     }
-    let m = crate::boundary_draft::PickMods { toggle: mods.ctrl, close: mods.shift && !mods.ctrl };
+    let m = crate::boundary_draft::PickMods { toggle: mods.command, close: mods.shift && !mods.command };
     crate::boundary_draft::take_pick(state, target, pick, m);
 }
 
@@ -173,15 +211,19 @@ pub fn queue_boundary_pick(state: &mut State, pick: GeoSel, mods: Mods) {
 /// keeping (the app keeps `left_press` OUTSIDE State, across frames).
 pub(crate) fn update_hover(state: &mut State, p: [f32; 2], held: bool) {
     state.hover_mesh = None; // re-earned below by a mesh hit, or gone
-    let idle_over_viewport =
-        state.drag.is_none() && !held && state.viewport_hot && inside_viewport(state, p);
+    // #1514: a locked selection takes no clicks, so nothing lights as pickable.
+    let idle_over_viewport = state.drag.is_none()
+        && !held
+        && state.viewport_hot
+        && inside_viewport(state, p)
+        && !op_pick_locked(state);
     if !idle_over_viewport {
         state.hover = None;
         return;
     }
     // #692: a feature mode hovers exactly what its click would take - the
     // one pick rule, the armed tool's kinds.
-    if state.geo_pick != GeoPick::Model {
+    if feature_routed(state) || state.wcs_ui.pick_circle {
         crate::feature_click::hover(state, p);
         return;
     }
@@ -263,7 +305,8 @@ pub(crate) fn anchor_reference(state: &State) -> Option<(Aabb, &'static str)> {
     let active = camcraft_app::setup::active(&state.world);
     let stock = || model::stock_world_aabb_for(&state.world, active.as_deref()).map(|b| (b, "stock box"));
     let solid = || {
-        camcraft_app::setup_align::solid_aabb_in(&state.world, active.as_deref()).map(|b| (b, "model bounds"))
+        // #1538: the parts only - a vise's corner is never G54's.
+        camcraft_app::stock_fit::part_bounds(&state.world, active.as_deref()).map(|b| (b, "model bounds"))
     };
     if state.wcs_ui.anchor_source == 1 {
         solid().or_else(stock)
@@ -341,6 +384,11 @@ pub(crate) struct Gizmo {
     pub rot: [f64; 4],
     /// Triad axes sit on X/Y/Z at this exact position with no rotation.
     pub world_axes: bool,
+    /// #727: whose origin this is - the work offset's entity name as the
+    /// Setup pane shows it (`G54`, `Setup2/WCS`), or `World` for the
+    /// dimmed neutral axes. Drawn beside the origin so whose-zero is
+    /// whose reads at a glance, with no hover.
+    pub name: String,
 }
 
 /// The axis inks on a light viewport (#698): the dark set washes out on
@@ -368,6 +416,17 @@ const AXES: [([f32; 3], [f64; 3]); 3] = [
 /// How much the neutral world axes are dimmed against a work offset's
 /// triad (#195: was 0.55 for the lines - too dark to read).
 const WORLD_DIM: f32 = 0.8;
+
+/// #727: the name the dimmed world axes carry, and the gray they wear it
+/// in - neutral, because no axis color belongs to the world as a whole.
+const WORLD_LABEL: &str = "World";
+const WORLD_GRAY: f32 = 0.75;
+
+/// #727: how far a gizmo's name sits below its projected origin, in uv
+/// (same currency as `axis_note::NOTE_DROP_UV`) - enough to clear the
+/// axis lines that meet at the origin, close enough to read as the
+/// origin's own tag.
+const NAME_DROP_UV: f32 = 0.02;
 
 /// Screen-space stroke widths of a gizmo axis, px (#195): the coloured
 /// line over a dark outline that keeps it readable on any ground.
@@ -403,7 +462,7 @@ fn gizmo_len(state: &State) -> f64 {
 pub(crate) fn gizmos(state: &State) -> Vec<Gizmo> {
     let mut out: Vec<Gizmo> = Vec::new();
     for (name, entity) in model::named_entities(&state.world) {
-        if state.hidden_offsets.contains(&name) || !model::is_wcs(&state.world, &entity) {
+        if state.hidden_offsets.contains(&name) || state.wcs_hidden_by_setup(&name) || !model::is_wcs(&state.world, &entity) {
             continue;
         }
         let Some(stored) = model::transform_of(&state.world, &entity) else {
@@ -421,6 +480,7 @@ pub(crate) fn gizmos(state: &State) -> Vec<Gizmo> {
             pos: [loc.pos.x, loc.pos.y, loc.pos.z],
             rot: loc.rot,
             world_axes: false,
+            name: name.clone(),
         });
     }
     let claims_origin = out.iter().any(|g| {
@@ -437,6 +497,7 @@ pub(crate) fn gizmos(state: &State) -> Vec<Gizmo> {
             pos: [0.0, 0.0, 0.0],
             rot: [0.0, 0.0, 0.0, 1.0],
             world_axes: true,
+            name: WORLD_LABEL.to_string(),
         });
     }
     out
@@ -445,7 +506,7 @@ pub(crate) fn gizmos(state: &State) -> Vec<Gizmo> {
 // ------------------------------------------------- screen-space layers
 
 /// Screen-space segments of the FEATURE under the cursor - in the viewport,
-/// or on a Geometry-list row (`state.geo_hover`) - as viewport-uv
+/// (the Geometry-list row hover is [`row_hover_segments`]) - as viewport-uv
 /// pairs (0..1 within the image, like `overlay_labels` - each shell maps
 /// them through the image rect and draws with its own draw list). A
 /// draw-list producer on purpose: hovering must never rebuild the 3D
@@ -457,19 +518,28 @@ pub(crate) fn gizmos(state: &State) -> Vec<Gizmo> {
 /// nothing - a highlight must never promise a pick the click cannot make.
 pub(crate) fn hover_features(state: &State, aspect: f64) -> Vec<([f32; 2], [f32; 2])> {
     let mut out = Vec::new();
-    let mut viewport: Option<(String, FeatureSel)> = None;
     if let Some(hit) = &state.hover
         && let Some(sel) = hit.feature
     {
         feature_segments(state, &hit.entity, sel, aspect, &mut out);
-        viewport = Some((hit.entity.clone(), sel));
     }
-    // The Geometry list's row hover lights the same feature the same way:
-    // the list answering "which one is that?" without a click. Viewport
-    // hover keeps precedence, and one feature never draws twice.
-    if let Some(g) = &state.geo_hover
-        && !viewport.as_ref().is_some_and(|(e, f)| *e == g.entity && *f == g.feature)
-    {
+    out
+}
+
+/// Stroke width of the Geometry-list row hover (#1507), over a
+/// [`ROW_HOVER_HALO_PX`] dark halo: strong enough to read on the shaded and
+/// the wireframe model in both themes, and apart from the 1 px viewport hover.
+pub(crate) const ROW_HOVER_PX: f32 = 3.5;
+/// The dark halo under the row hover stroke.
+pub(crate) const ROW_HOVER_HALO_PX: f32 = 7.0;
+
+/// Screen-space segments of the feature a Geometry-list row (or its remove
+/// button) is hovered over (`state.geo_hover_drawn`, #1507), drawn strongly by the
+/// shell. Same resolution rules as [`hover_features`]: stale, hidden and
+/// gone draw nothing.
+pub(crate) fn row_hover_segments(state: &State, aspect: f64) -> Vec<([f32; 2], [f32; 2])> {
+    let mut out = Vec::new();
+    if let Some(g) = &state.geo_hover_drawn {
         feature_segments(state, &g.entity, g.feature, aspect, &mut out);
     }
     out
@@ -571,9 +641,11 @@ fn push_poly(
 }
 
 /// Screen-space labels for the gizmos just drawn (feedback 7): each axis
-/// tip gets its letter, projected through the same camera math. Entries are
-/// (uv within the viewport image, linear rgb, text); tips behind the camera
-/// or at degenerate `w` are skipped.
+/// tip gets its letter, projected through the same camera math. #727:
+/// each gizmo also wears its name just under its origin - the work
+/// offset's entity name, or `World` for the dimmed neutral axes. Entries
+/// are (uv within the viewport image, linear rgb, text); tips behind the
+/// camera or at degenerate `w` are skipped.
 pub(crate) fn overlay_labels(state: &State, aspect: f64) -> Vec<([f32; 2], [f32; 3], String)> {
     let len = gizmo_len(state);
     let mvp = state.cam.mvp(aspect);
@@ -611,10 +683,7 @@ pub(crate) fn overlay_labels(state: &State, aspect: f64) -> Vec<([f32; 2], [f32;
                     let source = match p.src.reference {
                         camcraft_app::operation::HeightReference::WorkOffset => format!(
                             "WCS {}",
-                            WCS_SLOTS
-                                .get(camcraft_app::setup::wcs_slot(&state.world, shown_setup(state).as_deref()))
-                                .copied()
-                                .unwrap_or("G54")
+                            camcraft_app::setup::wcs_name(&state.world, shown_setup(state).as_deref())
                         ),
                         r => r.to_string(),
                     };
@@ -637,6 +706,24 @@ pub(crate) fn overlay_labels(state: &State, aspect: f64) -> Vec<([f32; 2], [f32;
     let mut notes = crate::axis_note::triad_notes(state);
     for gizmo in gizmos(state) {
         let base = Point3::new(gizmo.pos[0], gizmo.pos[1], gizmo.pos[2]);
+        // #727: the gizmo's own name, at its origin - whose zero this is,
+        // readable without a hover. Emitted before the letters so each
+        // name leads its gizmo's labels. The theme's Z-axis blue for
+        // offsets (via `axes()`, so it lifts for the light ground like
+        // the triad does); neutral gray dimmed like the world axes it
+        // stands for.
+        // #645: names only while the user's "Show origin names" is on -
+        // the letters below never depend on it, and no line does.
+        if state.show_gizmo_names
+            && let Some(uv) = project_uv(&mvp, gizmo.pos)
+        {
+            let c = if gizmo.world_axes {
+                [WORLD_GRAY * WORLD_DIM; 3]
+            } else {
+                axes()[2].0
+            };
+            out.push(([uv[0], uv[1] + NAME_DROP_UV], c, gizmo.name.clone()));
+        }
         for (axis, (rgb, dir)) in axes().iter().enumerate() {
             let p = transform_point(
                 Point3::new(
@@ -709,6 +796,10 @@ const GRID_MAJOR: [f32; 3] = [0.23, 0.25, 0.29];
 /// screen; the outermost rings fade into the ground (issue: an empty
 /// viewport read as a void).
 const GRID_HALF_STEPS: i64 = 24;
+/// Beyond this (mm) the grid is not drawn: far past any machine table, and
+/// where `step * GRID_HALF_STEPS` can overflow to infinity and stretch the
+/// line-index range to the whole of i64.
+const GRID_MAX_COORD: f64 = 1.0e9;
 /// Every fifth line is a major one (0.5, 1, 5, 10, 50 ... on a 1-2-5 step).
 const GRID_MAJOR_EVERY: i64 = 5;
 
@@ -727,6 +818,17 @@ pub(crate) fn ground_grid_lines(state: &State) -> Vec<[f32; 6]> {
     }
     let step = nice_step(state.cam.dist / 10.0);
     let (cx, cy) = (state.cam.target[0], state.cam.target[1]);
+    // A non-finite or absurdly far target (or a non-finite step) would
+    // turn the index range below into billions of lines; the grid is
+    // furniture, so it simply stays out of that frame (Prime Directive:
+    // no hang).
+    if !(cx.is_finite() && cy.is_finite() && step.is_finite())
+        || cx.abs() > GRID_MAX_COORD
+        || cy.abs() > GRID_MAX_COORD
+        || step > GRID_MAX_COORD
+    {
+        return Vec::new();
+    }
     let reach = step * GRID_HALF_STEPS as f64;
     let (k0x, k1x) = (
         ((cx - reach) / step).floor() as i64,
@@ -842,6 +944,7 @@ pub(crate) fn collect_overlay(state: &State) -> Vec<[f32; 6]> {
     out.extend(toolpath_lines(state));
     out.extend(region_lines(state));
     out.extend(height_plane_lines(state));
+    out.extend(crate::work_envelope::envelope_lines(state));
     out.extend(selection_feature_lines(state));
     capped(out)
 }
@@ -899,7 +1002,7 @@ pub fn toolpath_lines(state: &State) -> Vec<[f32; 6]> {
     for (name, entity) in camcraft_app::setup::operation_order(&state.world) {
         // Browser-eye hidden: the cache still exists and still posts, it
         // just does not draw (display state, never a geometry change).
-        if state.hidden_paths.contains(&name) {
+        if state.hidden_paths.contains(&name) || state.op_hidden_by_setup(&name) {
             continue;
         }
         let Some(cache) = model::toolpath_of(&state.world, &entity) else {
@@ -1268,7 +1371,12 @@ pub(crate) fn height_planes(state: &State) -> Vec<HeightPlane> {
         // The probe travels at its clearance plane only (#108), and
         // so does the torch between contours (#670).
         | operation::OpParams::Probe { .. }
-        | operation::OpParams::PlasmaProfile(_) => None,
+        | operation::OpParams::PlasmaProfile(_)
+        // The wire never lifts out of the work (#532): no hop plane.
+        | operation::OpParams::WireContour(_) => None,
+        // The electrode retracts to its approach plane only (#541).
+        | operation::OpParams::SinkerBurn(_)
+        | operation::OpParams::SinkerSideBurn(_) => None,
     };
     if let Some(hop) = hop
         && let (Some(r), Some(c)) = (hop.z_in(world, setup, src), draft.clearance().z_in(world, setup, src))
@@ -1397,6 +1505,16 @@ pub(crate) fn height_planes(state: &State) -> Vec<HeightPlane> {
         // The plate the torch cuts through: its top (the cut plane) and
         // bottom (#670).
         | operation::OpParams::PlasmaProfile(operation::PlasmaOp { top_z, bottom_z, .. })
+        // The workpiece the wire cuts through: its two programmed
+        // planes (#532).
+        | operation::OpParams::WireContour(operation::WireContourOp { top_z, bottom_z, .. })
+        // The work top and the cavity floor datum the burn stops at (#541).
+        | operation::OpParams::SinkerBurn(operation::SinkerBurnOp { top_z, floor_z: bottom_z, .. })
+        // #545: the side burn's own plunge.
+        | operation::OpParams::SinkerSideBurn(operation::SinkerSideBurnOp {
+            burn: operation::SinkerBurnOp { top_z, floor_z: bottom_z, .. },
+            ..
+        })
         | operation::OpParams::Deburr { top_z, bottom_z, .. } => {
             if let Some(z) = top_z.z_in(world, setup, src) {
                 out.push(HeightPlane {

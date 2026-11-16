@@ -116,7 +116,14 @@ pub(super) fn engagement_group(ui: &mut Ui, a: &mut Approach) {
     if g.toggled {
         a.max_engagement = if on { 0.5 } else { 0.0 };
     }
+    // #1512: said whether the group is open or not - this limit slows the
+    // way in, it never moves a pass.
+    hint(ui, ENGAGEMENT_SCOPE);
 }
+
+/// What the entry Engagement limit does and does not change (#1512).
+pub(super) const ENGAGEMENT_SCOPE: &str =
+    "entry feeds only: the path keeps its shape - the side load of the passes is Stepover or Optimal load on Passes";
 
 fn lead_idx(l: Option<Lead>) -> usize {
     match l {

@@ -95,6 +95,7 @@ fn check(path: &Toolpath, region: &Region, model: Option<&[Triangle]>, mode: Mod
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(path, &cx)
 }
@@ -157,6 +158,7 @@ fn top(ms: &[Move]) -> f64 {
 
 fn pp(entry: Entry3D, links: Links) -> PocketParams {
     PocketParams {
+        blend_radius: None,
         tool_diameter: 6.0,
         stepover: 3.0,
         stock_to_leave: 0.0,
@@ -293,13 +295,14 @@ fn bore_params(links: Links) -> BoreParams {
     BoreParams {
         holes: vec![BoreHole {
             xy: Point2::new(0.0, 0.0),
-            radius: 10.0,
+            radius: 8.0,
             top_z: 0.0,
             floor_z: -6.0,
             through: false,
             stepped: false,
         }],
         tool_diameter: 6.0,
+        corner_radius: 0.0,
         stock_to_leave: 0.0,
         stepdown: 2.0,
         through_allowance: 0.5,
@@ -428,9 +431,13 @@ fn contour_ring_to_ring_keep_down_is_proved_or_named() {
         Loop::new(disk(40.0, 8.0).loops()[0].points().to_vec()).unwrap(),
     ])
     .unwrap();
+    // Conventional (counter-clockwise round each boss): the next ring's
+    // leads stand clear of the straight link, so it stays down.
     for (pass, max) in [(Link::KeepDown, 0.0), (Link::KeepDown, 1.0), (Link::Clearance, 0.0)] {
         let links = Links { pass, max_stay_down: max, ..Links::PLANAR };
-        let t = contour(&r, &wall(Entry3D::Plunge, links)).expect("contour");
+        let mut conv = wall(Entry3D::Plunge, links);
+        conv.climb = false;
+        let t = contour(&r, &conv).expect("contour");
         assert_eq!(check(&t, &r, None, Mode::Boundary, 3.0), Vec::new(), "{pass:?}: {:?}", t.notes);
         let gaps = pass_gaps(&t);
         // A long planar feed at depth is the kept-down link itself.
@@ -454,6 +461,14 @@ fn contour_ring_to_ring_keep_down_is_proved_or_named() {
             }
         }
     }
+    // Climb (clockwise, #1555): the straight link would cross the next
+    // boss's lead-out arc - a cut path of the same plane - so it is not
+    // proved: every level lifts, named, and the path verifies clean.
+    let links = Links { pass: Link::KeepDown, ..Links::PLANAR };
+    let t = contour(&r, &wall(Entry3D::Plunge, links)).expect("contour");
+    assert_eq!(check(&t, &r, None, Mode::Boundary, 3.0), Vec::new(), "climb: {:?}", t.notes);
+    assert_eq!(pass_gaps(&t).len(), 4, "every level's link lifts");
+    assert!(t.notes.iter().any(|n| n.contains("staying down would have crossed passes")), "{:?}", t.notes);
 }
 
 fn box_facets(min: [f64; 3], max: [f64; 3]) -> Vec<Triangle> {
@@ -588,3 +603,4 @@ fn the_helix_entry_is_one_continuous_descent() {
         }
     }
 }
+

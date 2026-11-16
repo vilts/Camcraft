@@ -136,6 +136,7 @@ fn verify_against(facets: &[Triangle], region: &Region, path: &Toolpath) -> Vec<
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(path, &cx)
 }
@@ -732,13 +733,13 @@ fn adaptive_refuses_what_the_law_refuses() {
     // Finiteness is strategy-blind, as it has always been.
     assert!(at(PocketStrategy::Zigzag, f64::NAN, 3.0).is_err());
     assert!(at(PocketStrategy::Adaptive, f64::NAN, 3.0).is_err());
-    // The stepover gate is strategy-blind too: under Adaptive the number
-    // never spaces a ring (tiling_step answers for it), but a non-positive
-    // or over-wide stepover is still a nonsense parameter, refused by the
-    // same gate every other pocket meets. The v1 stance - keep the gate
-    // shared, document the inertness, do not fork legality per strategy.
+    // A non-positive stepover is nonsense under every strategy. The
+    // diameter bound is the reach law of the strategies the stepover
+    // spaces; under Adaptive the number never spaces a ring (the page
+    // hides it, #1512), so a stale wide value must not refuse the job.
     assert!(at(PocketStrategy::Adaptive, 45.0, 0.0).is_err());
-    assert!(at(PocketStrategy::Adaptive, 45.0, 9.0).is_err(), "over the D");
+    assert!(at(PocketStrategy::Adaptive, 45.0, 9.0).is_ok(), "stepover unread under Adaptive");
+    assert!(at(PocketStrategy::Zigzag, 45.0, 9.0).is_err(), "over the D under Zigzag");
 }
 
 #[test]

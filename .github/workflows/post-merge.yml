@@ -1,0 +1,137 @@
+# Post-merge gate (#1451): the batch tier of the gate, run on the self-hosted
+# Linux runner after every push to main, instead of a gate-runner agent in the
+# maintainer's checkout (AGENTS.md "Fixes are tested in the background").
+# Triggers: push to main, and workflow_dispatch (input ref). Never
+# pull_request, pull_request_target or schedule (maintainer, 2026-11-13: "Can
+# we setup a build test post merge using local gh runner?"; a push to main
+# only carries merged, reviewed code, so no fork can run code on the runner).
+# Sharing the one runner with the cut: this workflow yields. A burst of merges
+# tests only the newest head (cancel-in-progress), and a run skips itself
+# (green, with a notice) while a cut.yml run is queued or running or a
+# release/vX.Y.Z PR from this repo is open (.github/scripts/post-merge-skip.sh).
+# The release gate of the cut covers main's state then. A cut therefore never
+# queues behind more than the one post-merge run that was already going.
+# Reporting: one rolling issue "main is red (post-merge gate)", opened or
+# commented on when red, closed when green (.github/scripts/post-merge-report.sh).
+# Only the report job holds issues: write; the gate job's token is read-only
+# and is never left on disk while the tests run (persist-credentials: false).
+# Provenance: our own AGENTS.md; GitHub's public Actions documentation.
+name: Post-merge gate
+run-name: post-merge gate ${{ inputs.ref || github.sha }}
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag or sha to gate (default: main). A non-main ref reports nothing to the rolling issue'
+        required: false
+        type: string
+        default: ''
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+# A dispatch of a non-main ref gets its own group, so it never cancels (or is
+# cancelled by) the gate of main.
+concurrency:
+  group: post-merge-${{ github.event_name == 'push' && 'main' || inputs.ref || 'main' }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    runs-on: [self-hosted, camcraft-post-merge]
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      skipped: ${{ steps.yield.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Yield to a cut
+        id: yield
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          if reason=$(bash .github/scripts/post-merge-skip.sh); then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=post-merge gate skipped::$reason; the cut's release gate covers main"
+            echo "Skipped: $reason." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Batch gate tier
+        if: ${{ steps.yield.outputs.skip != 'true' }}
+        shell: bash
+        # The UI suites open windows: inside xvfb-run when no display is set
+        # (AGENTS.md "The cut runner"). sccache comes from the runner's
+        # environment. No token is in this step's environment.
+        run: |
+          set -o pipefail
+          wrap=()
+          if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ] && command -v xvfb-run >/dev/null; then
+            wrap=(xvfb-run -a)
+          fi
+          echo "${wrap[*]} cargo xtask gate batch"
+          "${wrap[@]}" cargo xtask gate batch 2>&1 | tee gate-output.txt
+      - name: Gate summary
+        if: ${{ always() && steps.yield.outputs.skip != 'true' }}
+        shell: bash
+        run: |
+          {
+            echo "### Post-merge batch gate at $(git rev-parse HEAD)"
+            echo '```'
+            sed -n '/^== gate summary/,$p' gate-output.txt 2>/dev/null || echo "no gate output"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Gate logs
+        if: ${{ always() && steps.yield.outputs.skip != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-logs-post-merge-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            gate-logs/
+            gate-output.txt
+          if-no-files-found: warn
+
+  report:
+    # Red or green only: a cancelled run (a newer merge) or a skipped one says nothing.
+    needs: gate
+    if: ${{ (needs.gate.result == 'success' || needs.gate.result == 'failure') && needs.gate.outputs.skipped != 'true' && (github.event_name == 'push' || inputs.ref == '' || inputs.ref == 'main') }}
+    runs-on: [self-hosted, camcraft-post-merge]
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: gate-logs-post-merge-${{ github.run_id }}-${{ github.run_attempt }}
+          path: gate-report
+      - name: Rolling main-is-red issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          STATUS: ${{ needs.gate.result }}
+          SHA: ${{ inputs.ref && inputs.ref != 'main' && inputs.ref || github.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          OUTPUT: gate-report/gate-output.txt
+        run: bash .github/scripts/post-merge-report.sh

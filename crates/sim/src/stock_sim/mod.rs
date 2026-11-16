@@ -61,14 +61,24 @@
 mod backend;
 mod backend_build;
 mod backend_edit;
+mod carried;
+mod carried_read;
 mod carry;
+// #874: the side-on quarter turns.
+mod carry_side;
 mod columns;
 mod cut;
 mod dexel;
 mod dexel_arc;
+// #541: the sinker electrode's box atom.
+mod dexel_box;
 mod dexel_bull;
+// #1152: the sinker body electrode's outline atom.
+mod dexel_outline;
 mod deviate;
 mod edge_break;
+// #1595: the mark an Engrave or Trace declared.
+mod mark;
 mod display;
 mod dual;
 mod field;
@@ -96,6 +106,7 @@ mod kernel;
 mod march;
 mod march_up;
 mod march_verdicts;
+mod partial;
 mod qef;
 pub mod iso;
 pub mod preview;
@@ -105,17 +116,26 @@ mod scan;
 mod scan_arc;
 mod scan_hidden;
 mod scan_near;
+mod scan_turned;
 mod tiles;
 mod wall_slack;
 
 pub use backend::{Backend, Stock, FIELD_BAND, FIELD_VERDICT_EPS, LATHE_COLUMN_REFUSAL};
 pub use backend_edit::SET_TOPS_FIELD_REFUSAL;
+pub use carried::{clip_columns_under, lattice_of_grid, CarriedStock, FieldBody};
 pub use carry::{Body, LatticeTurn, CARRY_TURN_REFUSAL};
+pub use carry_side::{CarryTurn, SideTurn, FIELD_SIDE_CARRY_REFUSAL};
 pub use columns::Columns;
+pub use partial::{clamp_frac, partial_move, PartialCut};
 pub use cut::{auto_cell, first_posed, simulate, SimOp, POSED_REFUSAL};
 pub use deviate::{color_classes, deviate, Deviation, DEV_TOL, ProgramSim, SimSurface};
 pub use dexel::{reach, Dexel};
+pub use dexel_box::{simulate_box, BOX_ARC_REFUSAL};
+pub use dexel_outline::{simulate_outline, OUTLINE_ARC_REFUSAL};
 pub use edge_break::credit_breaks;
+pub use mark::{credit_marks, Mark};
+// The floor a mark must leave on the part's underside (#1595).
+pub use crate::verify::MARK_FLOOR;
 pub use field::SdfField;
 pub use field_body::Lattice;
 pub use field_carry::{box_signed, CarriedField, Clip, ClipRefusal};
@@ -128,5 +148,5 @@ pub use field_rotary::{rotary_chords, rotary_chords_law, ChordLaw, RotaryChordSt
 pub use gouge::dist_seg_tri;
 pub use kernel::{measure, part_surface, StockError, StockReport};
 pub use preview::{preview, Preview, PreviewCamera};
-pub use scan::{envelope_scan, envelope_scan_centers, envelope_scan_within, EnvelopeReport};
+pub use scan::{envelope_scan, envelope_scan_centers, envelope_scan_turned, envelope_scan_within, EnvelopeReport};
 pub use scan_hidden::{HiddenRest, ScanBudget};

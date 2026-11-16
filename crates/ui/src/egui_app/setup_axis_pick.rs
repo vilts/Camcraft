@@ -1,14 +1,17 @@
-//! The Setups page's "Axes in the plane" rows (#557): set the part's +Y
-//! and/or +X in the work plane from a straight edge or two points picked
-//! in the viewport, flip either, choose which one wins when both are
-//! picked, and Apply. The pick draft is view state (`crate::axis_pick`);
-//! Apply queues `CommandKind::TurnPartInPlane`, the undoable
-//! `AlignPartToSetup`. The app says whether the picks make a turn and,
-//! if not, why - shown on the disabled Apply. The work offset is not
-//! touched.
+//! The Setups page's part-axes rows (#557, full 3D since #769): set the
+//! part's +Y and +X from a straight edge or two points picked in the
+//! viewport, flip either, choose which one wins when both are picked,
+//! and Apply. With both picked the two directions define the frame
+//! outright - the primary kept exactly, the other made square to it,
+//! +Z where the right-hand rule puts it; with one picked, the work
+//! plane carries the turn (#557). The pick draft is view state
+//! (`crate::axis_pick`); Apply queues `CommandKind::AlignPartFromAxes`,
+//! the undoable `AlignPartToSetup`. The app says whether the picks
+//! make an alignment and, if not, why - shown on the disabled Apply.
+//! The work offset is not touched.
 //!
-//! Provenance: our own UI over plain fixture practice (indicate an edge
-//! along the table's travel); no vendor material consulted.
+//! Provenance: our own UI over plain fixture practice (indicate two
+//! square edges); no vendor material consulted.
 
 use egui::{RichText, Ui};
 
@@ -24,7 +27,7 @@ pub(super) fn rows(ui: &mut Ui, state: &mut State, setup: &str) {
     if !state.setup_pick_rows.iter().any(|s| s == setup) {
         state.setup_pick_rows.push(setup.to_owned()); // #664
     }
-    ui.label("    Axes in the plane - pick an edge or two points for +Y and/or +X");
+    ui.label("    Part axes - pick an edge or two points for +Y and +X; +Z follows by the right-hand rule");
     for axis in [InPlaneAxis::Y, InPlaneAxis::X] {
         axis_row(ui, state, setup, axis);
     }
@@ -35,15 +38,13 @@ pub(super) fn rows(ui: &mut Ui, state: &mut State, setup: &str) {
     }
     // The command's own check: a refused pick, or one that gives the
     // alignment the setup already holds, greys Apply out with the why.
-    // Just applied, the same picks are a zero turn: say Flip re-applies
+    // Just applied, the same picks are no change: say Flip re-applies
     // rather than "already holds" (#557 hand check).
-    let turn = pick::in_plane_turn_deg(&state.world, setup, &axes).ok();
-    let held = d.applied && turn.is_some_and(|deg| deg.abs() < 1e-9);
-    let check = AlignPartToSetup::check_turn(&state.world, setup, &axes).map_err(|e| {
-        if held {
-            "applied - tick Flip +Y / Flip +X and Apply again to turn the part the other way".to_owned()
+    let check = AlignPartToSetup::check_align(&state.world, setup, &axes).map_err(|e| {
+        if d.applied && e.to_string().contains("already holds") {
+            "applied - tick Flip +Y / Flip +X and Apply again to align the part the other way".to_owned()
         } else {
-            e.to_string()
+            crate::pick_words::plain(&e.to_string())
         }
     });
     ui.horizontal(|ui| {
@@ -61,7 +62,8 @@ pub(super) fn rows(ui: &mut Ui, state: &mut State, setup: &str) {
     ui.horizontal(|ui| {
         ui.label("     ");
         let tip = match &check {
-            Ok(()) => "Turn the part about Z so the picks run along their axes.".to_owned(),
+            Ok(()) => "Align the part from where it sits now so the picks run along their axes (+Z by the right-hand rule; one undo step)."
+                .to_owned(),
             Err(why) => why.clone(),
         };
         if ui
@@ -70,16 +72,20 @@ pub(super) fn rows(ui: &mut Ui, state: &mut State, setup: &str) {
             .on_disabled_hover_text(&tip)
             .clicked()
         {
-            state.pending.push_back(CommandKind::TurnPartInPlane { setup: setup.to_owned(), axes: axes.clone() });
+            state.pending.push_back(CommandKind::AlignPartFromAxes { setup: setup.to_owned(), axes: axes.clone() });
         }
         if ui.button("Clear axes").on_hover_text("Drop the axis picks.").clicked() {
             state.axis_pick = None;
         }
     });
-    let words = match (turn, &check) {
-        (_, Err(why)) => why.clone(),
-        (Some(deg), Ok(())) => format!("turns the part {} about Z", deg_words(deg)),
-        (None, Ok(())) => String::new(),
+    let words = match &check {
+        Err(why) => why.clone(),
+        Ok(()) => match pick::in_plane_turn_deg(&state.world, setup, &axes) {
+            // An in-plane pair is a plain turn about Z (#557); anything
+            // else is the full 3D alignment (#769).
+            Ok(deg) => format!("turns the part {} about Z", deg_words(deg)),
+            Err(_) => "aligns the part: +Y and +X along their picks, +Z from the right-hand rule".to_owned(),
+        },
     };
     if !words.is_empty() {
         ui.label(RichText::new(format!("      {words}")).weak());
@@ -123,8 +129,7 @@ fn axis_row(ui: &mut Ui, state: &mut State, setup: &str, axis: InPlaneAxis) {
             AxisBy::Points => "points",
         };
         let text = if armed { format!("Stop picking {name}") } else { format!("Pick {name} {what}") };
-        if ui
-            .selectable_label(armed, text)
+        if super::pick_button::pick_button(ui, armed, text)
             .on_hover_text(format!("Click {} in the viewport; it runs along {name}.", by.noun()))
             .clicked()
         {

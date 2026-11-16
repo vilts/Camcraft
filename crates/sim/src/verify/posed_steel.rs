@@ -25,11 +25,23 @@
 //! the capsules ENCLOSE the swept volume continuously: an over-report
 //! of a graze, never a hidden crash between two samples. On an arc the
 //! tip's travel also takes the chord's bulge ([`super::arc_bulge`]):
-//! the true tip stands off its chord by up to the sagitta (#491). A capsule
-//! encloses its cylinder (its caps reach one radius past each end),
-//! the same err-toward-HIT direction. The segment-box distance is
-//! exact: the distance to a convex box along a segment is convex in
-//! the segment parameter, minimized by ternary search.
+//! the true tip stands off its chord by up to the sagitta (#491). The
+//! segment-box distance is exact: the distance to a convex box along a
+//! segment is convex in the segment parameter, minimized by ternary
+//! search.
+//!
+//! A capsule's caps reach one whole radius past each end of its band,
+//! so a capsule alone convicted a holder standing just over a clamp at
+//! any lean at all (#1305). A box the capsule reaches is therefore read
+//! a second time against the band as the flat-ended cylinder it is
+//! ([`flat_band_clear`]): the interval's tip chord, swept exactly, plus
+//! the cylinder about the midpoint pose, plus a ball for the swing and
+//! the bulge - the fixture mesh law's own enclosure
+//! ([`super::mesh_posed`], whose header carries the proof). Leaning by
+//! θ, the band's rim then reaches R sin θ past its end plane, not R,
+//! and the verdict changes continuously with the lean. Both enclosures
+//! hold the swept volume, so a box is struck only when BOTH reach it -
+//! and cleared only on the GJK proof of a separating plane.
 //!
 //! Upright moves (held and stated pose both upright, or unstated) are
 //! not this law's: the prismatic laws keep them byte-identical. A
@@ -38,11 +50,15 @@
 //!
 //! Provenance: swept-volume enclosure by bounded sampling and
 //! capsule/AABB distance are textbook computational geometry (Ericson,
-//! "Real-Time Collision Detection", public material); the modal pose
-//! law is RS-274's. Our own design; no vendor source consulted.
+//! "Real-Time Collision Detection", public material); the cylinder-box
+//! separation is [`crate::fixture_mesh`]'s GJK (Gilbert-Johnson-Keerthi
+//! 1988; van den Bergen 1999); the modal pose law is RS-274's. Our own
+//! design; no vendor source consulted.
 
-use crate::cl::{is_vertical, MoveKind, Toolpath};
+use super::upright::is_upright;
+use crate::cl::{MoveKind, Toolpath};
 use crate::fixture::{FixtureBox, FIXTURE_HIT_TOL};
+use crate::fixture_mesh::band_clear_of_box;
 use crate::geometry::Point3;
 use crate::tools::ToolGeom;
 use camcraft_tools::holder_profile::HolderStack;
@@ -118,8 +134,10 @@ pub(super) fn sweep(
     if fixtures.is_empty() {
         return out;
     }
-    let (fl, sl) = (tool.flute_len, tool.shank_len);
-    let mut stack: Vec<(FixturePart, f64, f64, f64)> = vec![(FixturePart::Shank, fl, fl + sl, tool.shank_radius)];
+    let fl = tool.flute_len;
+    // #852: the shank as swept - a drawn neck's bands, or the cylinder.
+    let mut stack: Vec<(FixturePart, f64, f64, f64)> =
+        holder.shank_bands(tool).iter().map(|b| (FixturePart::Shank, b.above, b.above + b.len, b.r)).collect();
     // What stands above the shank (#368): the holder cylinder - the
     // same sums as ever - or a modelled body's bands.
     stack.extend(holder.bands.iter().map(|b| (FixturePart::Holder, b.above, b.above + b.len, b.r)));
@@ -132,7 +150,7 @@ pub(super) fn sweep(
     stack.retain(|&(_, lo, hi, r)| hi - lo > 0.0 || !(lo.is_finite() && hi.is_finite() && r.is_finite()));
     let reach = stack.iter().map(|e| e.2).fold(0.0f64, |a, b| if b.is_finite() { a.max(b) } else { a });
     let tol = if chord_tol.is_finite() && chord_tol > 0.0 { chord_tol } else { 0.01 };
-    let upright = |a: Option<[f64; 3]>| a.is_none_or(|a| is_vertical(&a));
+    let upright = |a: Option<[f64; 3]>| a.is_none_or(|a| is_upright(&a));
     let mut held: Option<[f64; 3]> = path.moves.first().and_then(|m| m.axis);
     for (i, m) in path.moves.iter().enumerate() {
         let from_pose = held;
@@ -188,7 +206,7 @@ pub(super) fn sweep(
                     c0 = turn_about(ax, c0, th);
                     c1 = turn_about(ax, c1, th);
                 }
-                if fixtures.iter().any(|b| capsule_hits(c0, c1, rad, b)) {
+                if fixtures.iter().any(|b| capsule_hits(c0, c1, rad, b) && !flat_band_clear(&iv, bulge, (lo, hi, r), turn, b)) {
                     struck = hit(part);
                     break 'walk;
                 }
@@ -237,6 +255,42 @@ fn capsule_hits(c0: Point3, c1: Point3, r: f64, b: &FixtureBox) -> bool {
     }
     let best = d2(0.0).min(d2(1.0)).min(d2(0.5 * (a + z)));
     best <= lim * lim
+}
+
+/// Is the box PROVEN clear of the band `lo..hi` of radius `r` over the
+/// interval, the band read as the flat-ended cylinder it is (#1305)?
+/// Every band point is `tip + Q y`: the tip within `bulge` of the chord
+/// `p0..p1`, `y` in the cylinder about the midpoint pose, `Q` the least
+/// turn onto a pose within `swing` of it - which moves `y` at most
+/// `swing * |y|`, `|y| <= hypot(max(|lo|, |hi|), r)` (arc >= chord). So
+/// the swept band lies in chord + cylinder + ball(pad); under a rotary
+/// `turn` (angle `th`, the true turn within `dth` of it) that set is
+/// carried rigidly and grown by `dth` times its farthest reach from the
+/// axis line (convex along the chord and the band's axis: a corner's,
+/// plus the disc and the ball). `false` unless proven - a non-finite
+/// number anywhere, a search that ran out: the capsule's hit stands.
+fn flat_band_clear(
+    iv: &midpose::Interval,
+    bulge: f64,
+    (lo, hi, r): (f64, f64, f64),
+    turn: Option<(&RotaryAxis, f64, f64)>,
+    b: &FixtureBox,
+) -> bool {
+    let pad = bulge + iv.swing * lo.abs().max(hi.abs()).hypot(r);
+    let Some((ax, th, dth)) = turn else {
+        return band_clear_of_box(iv.p0, iv.p1, iv.am, lo, hi, r, b, FIXTURE_HIT_TOL + pad);
+    };
+    let corners = [add(iv.p0, iv.am, lo), add(iv.p0, iv.am, hi), add(iv.p1, iv.am, lo), add(iv.p1, iv.am, hi)];
+    let rhos = corners.map(|c| off_axis(ax, c));
+    if !rhos.iter().all(|d| d.is_finite()) {
+        return false;
+    }
+    let rho = rhos.into_iter().fold(0.0f64, f64::max);
+    let grow = dth.abs() * (rho + r.max(0.0) + pad);
+    let (p0, p1) = (turn_about(ax, iv.p0, th), turn_about(ax, iv.p1, th));
+    let tip = turn_about(ax, add(iv.p0, iv.am, 1.0), th);
+    let axis = [tip.x - p0.x, tip.y - p0.y, tip.z - p0.z];
+    band_clear_of_box(p0, p1, axis, lo, hi, r, b, FIXTURE_HIT_TOL + pad + grow)
 }
 
 /// Pose and rotary within this of the rotary's plane / of horizontal:
@@ -309,3 +363,7 @@ fn add(p: Point3, a: [f64; 3], s: f64) -> Point3 {
 fn dist(a: Point3, b: Point3) -> f64 {
     ((b.x - a.x).powi(2) + (b.y - a.y).powi(2) + (b.z - a.z).powi(2)).sqrt()
 }
+
+#[cfg(test)]
+#[path = "posed_steel_tests.rs"]
+mod tests;

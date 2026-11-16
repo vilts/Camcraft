@@ -27,9 +27,22 @@ pub use lathe::{LathePlan, LATHE_HELIX_REFUSAL, LATHE_THREAD_REFUSAL, LATHE_VERD
 // next setup's frame through the transform between the two.
 #[path = "stock_sim_carry.rs"]
 pub mod carry;
+// The stock as the walk holds it, and the engine that carries it (#637).
+#[path = "stock_sim_held.rs"]
+pub mod held;
 #[path = "stock_sim_breaks.rs"]
 pub mod breaks;
-pub use carry::{CARRY_MACHINE_CHANGE_REFUSAL, CARRY_MACHINE_REFUSAL, incoming_body};
+// #1595: the marks an Engrave or Trace on the part declares.
+#[path = "stock_sim_marks.rs"]
+mod marks;
+// The wire clause (#1110): a wire cut stays out of the plan, by name.
+#[path = "stock_sim_wire.rs"]
+pub mod wire;
+pub use carry::{
+    CARRY_MACHINE_CHANGE_REFUSAL, CARRY_MACHINE_REFUSAL, carry_machine_refusal, incoming_body, machine_kind_name,
+};
+pub use held::{CARRY_ENGINE_ENV, CARRY_ENGINE_SWITCH_HONOURED, FIELD_CARRY_SHAPE_REFUSAL, engine as carry_engine};
+pub use held::{engine_from_switch as carry_engine_from_switch, engine_note as carry_engine_note, with_engine as with_carry_engine};
 
 use crate::geometry::Triangle;
 
@@ -134,7 +147,12 @@ pub fn simulate_document(
     world: &flecs_ecs::prelude::World,
 ) -> Result<ProgramSim, String> {
     let planned = plan_program(world)?;
+    wire::refuse_wire_cuts(world)?;
     refuse_unjudged(&planned)?;
+    // #864: a part imported coarser than promised tightens the verdict by
+    // its excess; one too coarse for that is refused by name, not judged -
+    // and so is a program with an op the gate refuses for it (#1056).
+    let tol = crate::model_fidelity::program_tol(world)?;
 
     // Setup changes (#317): a setup that holds the part differently, or
     // is placed relative to the one before it, starts from the body the
@@ -147,13 +165,13 @@ pub fn simulate_document(
     } else {
         part_facets(world)?
     };
-    let (mut dev, display) = match walked.held {
-        carry::Held::Plain(dex) => (deviate(&dex, &model_facets, DEV_TOL).map_err(|e| e.to_string())?, dex),
-        carry::Held::Carried(body) => (body.deviate(&model_facets, DEV_TOL).map_err(|e| e.to_string())?, body.display()),
-    };
+    let (mut dev, display) = walked.held.verdict(&model_facets, tol)?;
     // #303: the op owns its break - a chamfer's or deburr's declared
     // bevel is part of the finished part, judged by its own depth.
     credit_breaks(&mut dev, &display, &model_facets, &program_breaks(world, &planned, walked.spanned, &walked.frame));
+    // #1595: and its mark - an Engrave's or Trace's own sweep, within
+    // the budget the operation's own law holds it to.
+    credit_marks(&mut dev, &display, &model_facets, &marks::program_marks(world, &planned, walked.spanned, &walked.frame));
     // #320: a gouge on a block a later setup set aside for a new one.
     if let Some(left) = &walked.left {
         carry::fold_left(&mut dev, left);
@@ -234,7 +252,17 @@ pub(crate) struct Planned {
     /// The edge breaks the op was asked to cut (#303); empty for every
     /// kind but the chamfer and the deburr.
     pub breaks: Vec<crate::cl::EdgeBreak>,
+    /// The mark budget and target part(s) the op declares (#1595, #1627,
+    /// `operation::mark_law`): `Some` only for an Engrave or Trace.
+    pub mark: Option<crate::operation::mark_law::SimMark>,
+    /// A sinker electrode's atom (#541, #1152). The column verdict cuts
+    /// it; the field eye has no electrode atom and refuses the program
+    /// by name. `None` for every other tool.
+    pub electrode: Option<held::ElectrodeAtom>,
 }
+
+/// The field eye's refusal of a sinker electrode (#541), said once.
+pub const ELECTRODE_FIELD_REFUSAL: &str = "the stock view has no sinker electrode atom yet - the program verdict (the column engine's box atom) judges the burn";
 
 /// The corner radius a tool's atom carries (M13.1): Some only for a
 /// bull nose with a real corner, clamped to the tool radius (the
@@ -273,6 +301,9 @@ pub(crate) fn plan_program(world: &flecs_ecs::prelude::World) -> Result<Vec<Plan
     for (name, e) in &ops {
         let op = model::operation_of(world, e)
             .ok_or_else(|| format!("{name}: lost its operation"))?;
+        if wire::skips(&op) {
+            continue;
+        }
         // The rotary clause (M13.1): between two stations a rotary
         // move turns the WORK, so the tool sweeps an annular sector
         // about the fitted axis - a torus-family solid no stock engine
@@ -328,16 +359,39 @@ pub(crate) fn plan_program(world: &flecs_ecs::prelude::World) -> Result<Vec<Plan
         // A turning insert's cutting feature is its nose (a blade's,
         // half its band - `LathePlan::feature`): the display cell law
         // (`auto_cell`) reads it, not the IC. Every other tool sweeps
-        // its cutting radius - a tap its thread's core (#266).
-        let radius = match lathe {
-            Some(plan) => plan.feature(),
-            None => crate::operation::tool_law::cutting_radius(&tool).map_err(|e| format!("{name}: {e}"))?,
+        // its cutting radius - a tap its thread's core (#266, #985).
+        // A sinker electrode (#541) sweeps its rectangular face - or its
+        // outline (#1152) - grown by the condition's spark gap; its
+        // radius is the least half extent, which only the cell law reads.
+        let electrode = match &op.params {
+            crate::operation::OpParams::SinkerBurn(sb) if tool.kind == crate::tools::ToolKind::Electrode => {
+                let gap = crate::operation::sinker_op::condition_gap(world, op.setup.as_deref(), sb)
+                    .map_err(|e| format!("{name}: {e}"))?;
+                Some(held::ElectrodeAtom::of(&tool, gap))
+            }
+            // #545: the side burn sweeps the same box atom along its
+            // lateral move.
+            crate::operation::OpParams::SinkerSideBurn(sb) if tool.kind == crate::tools::ToolKind::Electrode => {
+                let gap = crate::operation::sinker_side_op::side_gap(world, op.setup.as_deref(), sb)
+                    .map_err(|e| format!("{name}: {e}"))?;
+                Some(held::ElectrodeAtom::of(&tool, gap))
+            }
+            _ => None,
         };
+        let radius = match (lathe, &electrode) {
+            (Some(plan), _) => plan.feature(),
+            (None, Some(e)) => e.half[0].min(e.half[1]),
+            (None, None) => crate::operation::thread_op::sim_radius(&tool, &op.params).map_err(|e| format!("{name}: {e}"))?,
+        };
+        // #546: a wear-compensated burn is judged as the worn electrode burns it.
+        let moves = crate::operation::sinker_wear_op::judged(world, &op, electrode.as_ref().map(|e| e.gap), cache.path.moves)
+            .map_err(|e| format!("{name}: {e}"))?;
         planned.push(Planned {
             name: name.clone(),
-            moves: cache.path.moves,
+            moves,
             // #529: only what the op itself declared, never wider.
             breaks: breaks::bounded(name, &op.params, cache.path.breaks),
+            mark: crate::operation::mark_law::sim_mark_of(world, &op, tool.diameter * 0.5),
             radius,
             ball: tool.kind == crate::tools::ToolKind::BallNose,
             cone,
@@ -345,6 +399,7 @@ pub(crate) fn plan_program(world: &flecs_ecs::prelude::World) -> Result<Vec<Plan
             setup: op.setup,
             rotary,
             lathe,
+            electrode,
         });
     }
     Ok(planned)
@@ -396,8 +451,9 @@ fn part_facets_as_modelled(world: &flecs_ecs::prelude::World) -> Vec<Triangle> {
     use crate::model;
 
     let mut model_facets: Vec<Triangle> = Vec::new();
+    let skip = crate::stock_source::stock_only_model(world); // #1094
     for (_, e) in model::model_entities(world) {
-        if model::is_fixture(world, &e) {
+        if !crate::stock_source::judged(world, &e, skip) {
             continue;
         }
         let tris = model::facets_of(world, &e).unwrap_or_default();

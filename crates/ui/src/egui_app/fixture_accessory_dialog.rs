@@ -12,7 +12,7 @@ use camcraft_app::units::Unit;
 
 use crate::state::{AccessoryDraft, CommandKind};
 
-use super::fields::{num, num_plain};
+use super::fields::{num_by, num_plain_by};
 
 /// What the body's buttons asked for.
 pub(crate) enum AccessoryAct {
@@ -44,17 +44,17 @@ pub(crate) const FIT_SINKS_HINT: &str = "The fit keeps the stock where it is and
 pub(crate) fn dims_grid(ui: &mut Ui, u: Unit, id: &str, a: &mut Accessory, fitting: bool) {
     egui::Grid::new(id).num_columns(2).show(ui, |ui| {
         if let Some(steps) = a.steps_mut() {
-            ui.label("Steps");
-            ui.add(egui::DragValue::new(steps).range(1..=accessory::MAX_STEPS));
+            let l = ui.label("Steps");
+            ui.add(egui::DragValue::new(steps).range(1..=accessory::MAX_STEPS)).labelled_by(l.id);
             ui.end_row();
         }
         for d in a.dims_mut() {
             if fitting && d.key == "height" {
-                ui.add_enabled(false, egui::Label::new(FIT_HEIGHT_LABEL));
-                ui.add_enabled_ui(false, |ui| num(ui, u, d.value));
+                let l = ui.add_enabled(false, egui::Label::new(FIT_HEIGHT_LABEL));
+                ui.add_enabled_ui(false, |ui| num_by(ui, u, d.value, l.id));
             } else {
-                ui.label(d.label);
-                num(ui, u, d.value);
+                let l = ui.label(d.label);
+                num_by(ui, u, d.value, l.id);
             }
             ui.end_row();
         }
@@ -93,8 +93,8 @@ pub(crate) fn body(ui: &mut Ui, u: Unit, d: &mut AccessoryDraft) -> Option<Acces
                 }
             });
             egui::Grid::new("accessory-fit").num_columns(2).show(ui, |ui| {
-                ui.label("Stock top over the jaws");
-                num(ui, u, &mut d.above);
+                let l = ui.label("Stock top over the jaws");
+                num_by(ui, u, &mut d.above, l.id);
                 ui.end_row();
             });
         }
@@ -105,17 +105,17 @@ pub(crate) fn body(ui: &mut Ui, u: Unit, d: &mut AccessoryDraft) -> Option<Acces
     } else {
         egui::Grid::new("accessory-place").num_columns(2).show(ui, |ui| {
             for (k, axis) in ["Origin X", "Origin Y", "Origin Z"].iter().enumerate() {
-                ui.label(*axis);
-                num(ui, u, &mut d.pos[k]);
+                let l = ui.label(*axis);
+                num_by(ui, u, &mut d.pos[k], l.id);
                 ui.end_row();
             }
-            ui.label("Turn about Z (yaw)");
-            num_plain(ui, &mut d.yaw_deg);
+            let l = ui.label("Turn about Z (yaw)");
+            num_plain_by(ui, &mut d.yaw_deg, l.id);
             ui.end_row();
         });
     }
     if let Some(err) = &d.error {
-        ui.colored_label(ui.visuals().error_fg_color, err);
+        super::error_text::error_text(ui, ui.visuals().error_fg_color, err);
     }
     ui.add_space(8.0);
     ui.horizontal(|ui| {

@@ -4,8 +4,9 @@
 //! fixture findings read back as data - every step undoable, every bad
 //! input a tool error.
 //!
-//! Gate map (M4.4): covers app::mcp::setup_tools, app::mcp::fixture_tools,
-//! app::mcp::align_tools (#557, #555),
+//! Gate map (M4.4): covers app::mcp::setup_tools (set_program, #258), app::mcp::fixture_tools,
+//! app::mcp::align_tools (#557, #555), app::commands::stock_source_only
+//! (#1094),
 //! app::posting (fixture_findings).
 
 use camcraft_app::mcp::Server;
@@ -96,7 +97,7 @@ fn g54_off_the_stock_corner_a_machine_and_fixture_findings_as_data() {
         .as_array()
         .map(|t| t.iter().filter_map(|t| t["name"].as_str().map(str::to_owned)).collect())
         .unwrap_or_default();
-    for want in ["add_setup", "activate_setup", "set_wcs", "set_work_offset", "load_machine", "add_fixture", "remove_fixture", "move_fixture", "get_fixture_findings"] {
+    for want in ["add_setup", "activate_setup", "set_wcs", "set_work_offset", "set_program", "set_setup_post", "load_machine", "add_fixture", "remove_fixture", "move_fixture", "get_fixture_findings"] {
         assert!(names.iter().any(|n| n == want), "missing tool {want}: {names:?}");
     }
 
@@ -271,6 +272,26 @@ fn bad_setup_input_is_a_tool_error() {
     assert!(e.contains("unknown argument"), "{e}");
 }
 
+/// #258: the program number and comment, one undo step; an omitted key
+/// keeps its value, null clears it, a bad value is the command's refusal.
+#[test]
+fn set_program_states_undoes_and_refuses_by_name() {
+    let mut c = Client::new();
+    let p = c.ok("set_program", json!({ "number": 1234, "comment": "Bracket A" }));
+    assert_eq!(p, json!({ "number": 1234, "comment": "Bracket A" }));
+    let p = c.ok("set_program", json!({ "number": null }));
+    assert_eq!(p, json!({ "number": null, "comment": "Bracket A" }), "the comment is kept");
+    c.ok("undo", json!({}));
+    let e = c.refused("set_program", json!({ "number": 0 }));
+    assert!(e.contains("outside 1 to 9999"), "{e}");
+    let e = c.refused("set_program", json!({ "comment": "A (B)" }));
+    assert!(e.contains("'('"), "{e}");
+    let e = c.refused("set_program", json!({ "number": "12" }));
+    assert!(e.contains("whole number"), "{e}");
+    let e = c.refused("set_program", json!({ "number": 1234 }));
+    assert!(e.contains("already set"), "undo restored 1234: {e}");
+}
+
 /// #561: `locate_part` mates a part face onto a fixture face by
 /// `list_features` ids (a fixture's features list too), one undo step;
 /// an edge is refused by name.
@@ -286,7 +307,7 @@ fn locate_part_seats_the_part_on_the_fixture_by_feature_ids() {
     c.ok("import_model", json!({ "path": vise.display().to_string() }));
     c.ok("add_fixture", json!({ "model": "vise" }));
     c.ok("move_fixture", json!({ "name": "vise", "position": [100.0, 0.0, -20.0] }));
-    // The flat face lying at world Z `z` ("facing" is winding-free).
+    // The flat face lying at world Z `z`.
     let face = |c: &mut Client, model: &str, z: f64| -> String {
         let f = c.ok("list_features", json!({ "model": model, "kinds": ["faces"] }));
         f["faces"]
@@ -422,4 +443,69 @@ fn lay_part_on_points_lays_the_plane_through_three_vertices() {
     assert!(msg.contains("pick three points - 1 picked"), "{msg}");
     let msg = c.refused("lay_part_on_points", json!({ "points": wall, "plane": "g20" }));
     assert!(msg.contains("\"plane\""), "{msg}");
+}
+
+/// #1094: the stock page's "raw stock only" checkbox over MCP - the same
+/// command, one undo step, refused on a stock not made from a model.
+#[test]
+fn set_raw_stock_only_marks_the_stock_source_through_the_command() {
+    let dir = tmp_dir("raw");
+    let casting = dir.join("casting.stl");
+    write_box_stl(&casting, (30.0, 30.0, 20.0));
+    let mut c = Client::new();
+    c.ok("set_stock", json!({ "box": { "dx": 10.0, "dy": 10.0, "dz": 10.0 } }));
+    let e = c.refused("set_raw_stock_only", json!({ "on": true }));
+    assert!(e.contains("not made from a model"), "{e}");
+    c.ok("import_model", json!({ "path": casting.display().to_string() }));
+    c.ok("set_stock", json!({ "from_model": "casting" }));
+    let e = c.refused("set_raw_stock_only", json!({}));
+    assert!(e.contains("\"on\""), "{e}");
+    let on = c.ok("set_raw_stock_only", json!({ "on": true }));
+    assert_eq!(on["raw_stock_only"], json!(true), "{on}");
+    // No operation and no other model: the mark holds; nothing else to judge.
+    assert_eq!(on["judged_out"], json!("casting"), "{on}");
+    c.ok("undo", json!({}));
+    let off = c.ok("set_raw_stock_only", json!({ "on": false }));
+    assert_eq!(off["judged_out"], Value::Null, "undo walked the mark back: {off}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #1233: a setup's own post through the undoable command: set, read
+/// back in get_job, undo/redo, clear, and the refusals by name.
+#[test]
+fn set_setup_post_sets_clears_undoes_and_refuses() {
+    let mut c = Client::new();
+    c.ok("set_stock", json!({ "box": { "dx": 50.0, "dy": 40.0, "dz": 10.0 } }));
+    let e = c.refused("set_setup_post", json!({ "post": "Haas" }));
+    assert!(e.contains("add_setup"), "{e}");
+    c.ok("add_setup", json!({}));
+    c.ok("add_setup", json!({}));
+    let own = |c: &mut Client, i: usize| c.ok("get_job", json!({}))["setups"][i]["post"].clone();
+    assert_eq!(own(&mut c, 0), Value::Null);
+
+    let r = c.ok("set_setup_post", json!({ "setup": "Setup1", "post": "Haas" }));
+    assert_eq!(r["own_post"], json!(true), "{r}");
+    assert!(r["post"].as_str().unwrap_or_default().contains("Haas"), "{r}");
+    assert!(own(&mut c, 0).as_str().unwrap_or_default().contains("Haas"));
+    assert_eq!(own(&mut c, 1), Value::Null, "the other setup is untouched");
+
+    c.ok("undo", json!({}));
+    assert_eq!(own(&mut c, 0), Value::Null);
+    c.ok("redo", json!({}));
+    assert!(own(&mut c, 0).as_str().unwrap_or_default().contains("Haas"));
+
+    let cleared = c.ok("set_setup_post", json!({ "setup": "Setup1", "post": null }));
+    assert_eq!(cleared["own_post"], json!(false), "{cleared}");
+    assert_eq!(own(&mut c, 0), Value::Null);
+    c.ok("undo", json!({}));
+    assert!(own(&mut c, 0).as_str().unwrap_or_default().contains("Haas"), "undo restores the cleared post");
+
+    let e = c.refused("set_setup_post", json!({ "setup": "Setup1", "post": "No Such Post" }));
+    assert!(e.contains("No Such Post"), "{e}");
+    let e = c.refused("set_setup_post", json!({ "setup": "Nope", "post": "Haas" }));
+    assert!(e.contains("Nope"), "{e}");
+    let e = c.refused("set_setup_post", json!({ "setup": "Setup1" }));
+    assert!(e.contains("post"), "{e}");
+    let e = c.refused("set_setup_post", json!({ "setup": "Setup1", "post": 3 }));
+    assert!(e.contains("string or null"), "{e}");
 }

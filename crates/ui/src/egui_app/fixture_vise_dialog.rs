@@ -6,22 +6,30 @@
 //! `InsertVise` through the command queue. The 5-axis self-centering
 //! sizes (#787) are a second row of the picker: centred on the stock,
 //! with a clamping range and an optional dovetail lip instead of a
-//! screw housing.
+//! screw housing - or, instead of the lip, a grip step (#1274): a ledge
+//! cut into each jaw's inside top edge that the stock sits on.
 //! Provenance: our own layout over our own vise commands.
 
 use egui::{RichText, Ui};
 
-use camcraft_app::units::Unit;
+use camcraft_app::units::{Unit, len};
 use camcraft_app::vise::{self, ViseStyle};
+use camcraft_app::vise_fit::VisePreview;
 
 use crate::state::{CommandKind, ViseDraft};
 
-use super::fields::{num, num_plain};
+use super::fields::{num_by, num_plain_by};
+
+const LIP_TIP: &str = "A dovetail jaw: a lip standing above the jaw top at each clamping face. 0 for none. A jaw is a dovetail or a grip jaw, not both.";
+const GRIP_DEPTH_TIP: &str = "A grip jaw: how far below the jaw top the step's ledge sits - the stock rests on the ledge and is gripped over this depth only (typically 3 mm). 0 for no step; set the dovetail lip to 0 to use it.";
+const GRIP_WIDTH_TIP: &str = "A grip jaw: how far the ledge reaches in from each clamping face, under the stock's edge (typically 1.5 mm). Less than the jaw thickness; 0 for no step.";
 
 /// What the body's buttons asked for.
 pub(crate) enum ViseAct {
     Close,
     Place(Box<CommandKind>),
+    /// Close the dialog and open the Stock page.
+    OpenStock,
 }
 
 /// The Place button's command for this draft.
@@ -30,10 +38,62 @@ pub(crate) fn place_command(d: &ViseDraft) -> CommandKind {
     CommandKind::InsertBuiltinVise {
         setup: (!d.setup.is_empty()).then(|| d.setup.clone()),
         params: d.params.clone(),
-        fit_stock: d.fit_stock,
+        fit_stock: fitting(d),
         pos: d.pos,
         yaw_deg: d.yaw_deg,
     }
+}
+
+/// Is Fit in force: ticked, and the setup has a stock body to fit to.
+fn fitting(d: &ViseDraft) -> bool {
+    d.fit_stock && !matches!(d.fit, Some(VisePreview::NoStock))
+}
+
+/// The plain lines under the Fit checkbox: what the vise grips, and where
+/// it lands with a stock (all from `vise_fit::preview`, the command's own
+/// derivation).
+fn fit_lines(ui: &mut Ui, u: Unit, d: &ViseDraft) -> Option<ViseAct> {
+    let mut act = None;
+    match &d.fit {
+        Some(VisePreview::NoStock) => {
+            ui.label(
+                "This setup has no stock yet. A vise grips the stock - the block the part is cut from -                  not the imported model. Set the stock on the Stock page to fit the vise to it,                  or place the vise by position below.",
+            );
+            if ui.button("Open the Stock page").clicked() {
+                act = Some(ViseAct::OpenStock);
+            }
+        }
+        Some(VisePreview::Fits { opening, at, centred }) if d.fit_stock => {
+            ui.label(RichText::new("The vise grips the stock (set on the Stock page), not the imported model.").small());
+            let l = |v: f64| format!("{} {}", len(v, u, 3), u.suffix());
+            let (x, y, z) = (l(at.x), l(at.y), l(at.z));
+            let seat = d.params.seat_height();
+            if *centred && seat > 0.0 {
+                ui.label(format!(
+                    "Centred on the stock at X {x}, Y {y}; the jaws close on its {} Y width; the stock sits on the grip steps (Z {z}), {} above the vise floor.",
+                    l(*opening),
+                    l(seat)
+                ));
+            } else if *centred {
+                ui.label(format!(
+                    "Centred on the stock at X {x}, Y {y}; the jaws close on its {} Y width; the stock sits on the jaw floor (Z {z}).",
+                    l(*opening)
+                ));
+            } else {
+                ui.label(format!(
+                    "Opens to {} on the stock's Y width; the fixed jaw sits against the stock's +Y side (Y {y}), centred in X ({x}); the stock sits on the jaw floor (Z {z}).",
+                    l(*opening)
+                ));
+            }
+        }
+        Some(VisePreview::Refused(why)) if d.fit_stock => {
+            ui.colored_label(ui.visuals().error_fg_color, format!("This vise cannot be fitted to the stock: {why}"));
+        }
+        _ => {
+            ui.label(RichText::new("The vise grips the stock (set on the Stock page), not the imported model.").small());
+        }
+    }
+    act
 }
 
 pub(crate) fn body(ui: &mut Ui, u: Unit, d: &mut ViseDraft) -> Option<ViseAct> {
@@ -59,54 +119,69 @@ pub(crate) fn body(ui: &mut Ui, u: Unit, d: &mut ViseDraft) -> Option<ViseAct> {
     }
     let p = &mut d.params;
     egui::Grid::new("builtin-vise-dims").num_columns(2).show(ui, |ui| {
-        let mut rows: Vec<(&str, &mut f64)> = vec![
-            ("Jaw width", &mut p.jaw_width),
-            ("Jaw height", &mut p.jaw_height),
-            ("Jaw thickness", &mut p.jaw_thickness),
-            ("Jaw body depth", &mut p.jaw_body_depth),
-            ("Max opening", &mut p.max_opening),
-            ("Overall length", &mut p.length),
-            ("Overall width", &mut p.width),
-            ("Base height", &mut p.base_height),
+        let mut rows: Vec<(&str, Option<&str>, &mut f64)> = vec![
+            ("Jaw width", None, &mut p.jaw_width),
+            ("Jaw height", None, &mut p.jaw_height),
+            ("Jaw thickness", None, &mut p.jaw_thickness),
+            ("Jaw body depth", None, &mut p.jaw_body_depth),
+            ("Max opening", None, &mut p.max_opening),
+            ("Overall length", None, &mut p.length),
+            ("Overall width", None, &mut p.width),
+            ("Base height", None, &mut p.base_height),
         ];
         match &mut p.style {
             ViseStyle::Standard => {
-                rows.push(("Housing length", &mut p.housing_length));
-                rows.push(("Housing height", &mut p.housing_height));
+                rows.push(("Housing length", None, &mut p.housing_length));
+                rows.push(("Housing height", None, &mut p.housing_height));
             }
             ViseStyle::SelfCentering(sc) => {
-                rows.push(("Min opening", &mut sc.min_opening));
-                rows.push(("Dovetail lip height", &mut sc.lip_height));
-                rows.push(("Dovetail lip depth", &mut sc.lip_depth));
+                rows.push(("Min opening", None, &mut sc.min_opening));
+                rows.push(("Dovetail lip height", Some(LIP_TIP), &mut sc.lip_height));
+                rows.push(("Dovetail lip depth", Some(LIP_TIP), &mut sc.lip_depth));
+                rows.push(("Grip step depth", Some(GRIP_DEPTH_TIP), &mut sc.grip_depth));
+                rows.push(("Grip step width", Some(GRIP_WIDTH_TIP), &mut sc.grip_width));
             }
         }
-        for (label, v) in rows {
-            ui.label(label);
-            num(ui, u, v);
+        for (label, tip, v) in rows {
+            let l = ui.label(label);
+            let id = l.id;
+            if let Some(tip) = tip {
+                l.on_hover_text(tip);
+            }
+            num_by(ui, u, v, id);
             ui.end_row();
         }
     });
     let centred = matches!(d.params.style, ViseStyle::SelfCentering(_));
     let fit = if centred { "Fit to the stock (centred, jaws closed on it)" } else { "Fit to the stock (jaws open to it)" };
-    ui.checkbox(&mut d.fit_stock, fit);
-    if !d.fit_stock {
+    if matches!(d.fit, Some(VisePreview::NoStock)) {
+        let mut off = false;
+        ui.add_enabled(false, egui::Checkbox::new(&mut off, fit))
+            .on_disabled_hover_text("Fit to the stock needs a stock: this setup has none yet.");
+    } else {
+        ui.checkbox(&mut d.fit_stock, fit);
+    }
+    if let Some(a) = fit_lines(ui, u, d) {
+        act = Some(a);
+    }
+    if !fitting(d) {
         egui::Grid::new("builtin-vise-place").num_columns(2).show(ui, |ui| {
-            ui.label("Jaw opening");
-            num(ui, u, &mut d.params.opening);
+            let l = ui.label("Jaw opening");
+            num_by(ui, u, &mut d.params.opening, l.id);
             ui.end_row();
             let axes = if centred { ["Centre X", "Centre Y", "Floor Z"] } else { ["Fixed jaw X", "Fixed jaw Y", "Floor Z"] };
             for (k, axis) in axes.iter().enumerate() {
-                ui.label(*axis);
-                num(ui, u, &mut d.pos[k]);
+                let l = ui.label(*axis);
+                num_by(ui, u, &mut d.pos[k], l.id);
                 ui.end_row();
             }
-            ui.label("Turn about Z (yaw)");
-            num_plain(ui, &mut d.yaw_deg);
+            let l = ui.label("Turn about Z (yaw)");
+            num_plain_by(ui, &mut d.yaw_deg, l.id);
             ui.end_row();
         });
     }
     if let Some(err) = &d.error {
-        ui.colored_label(ui.visuals().error_fg_color, err);
+        super::error_text::error_text(ui, ui.visuals().error_fg_color, err);
     }
     ui.add_space(8.0);
     ui.horizontal(|ui| {

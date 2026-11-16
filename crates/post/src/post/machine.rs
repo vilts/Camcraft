@@ -182,6 +182,28 @@ pub fn mirror(m: &crate::machine::Machine) -> Value {
     {
         o.insert("kind".to_owned(), json!("plasma"));
     }
+    // #533: a wire or sinker EDM says its kind and its `edm` words (the
+    // control's codes, D5, and whether it threads by itself) for the
+    // EDM posts' machine check; every other mirror is unchanged. #542:
+    // a sinker's `edm` also carries what the sinker post reads - its
+    // orbit words, pickup and condition table (lengths already mm) - so
+    // a wire mirror keeps exactly main's two keys.
+    let k = crate::machine::kind(Some(m));
+    if matches!(k, crate::machine::Kind::WireEdm | crate::machine::Kind::SinkerEdm)
+        && let Some(o) = out.as_object_mut()
+    {
+        o.insert("kind".to_owned(), json!(k.word()));
+        let awt = m.edm.as_ref().and_then(|e| e.awt);
+        let mut edm = json!({ "codes": m.edm_codes, "awt": awt });
+        if k == crate::machine::Kind::SinkerEdm
+            && let (Some(e), Some(eo)) = (m.edm.as_ref(), edm.as_object_mut())
+        {
+            eo.insert("orbits".to_owned(), json!(e.orbits));
+            eo.insert("pickup".to_owned(), json!(e.pickup));
+            eo.insert("conditions".to_owned(), serde_json::to_value(&e.conditions).unwrap_or_else(|_| json!([])));
+        }
+        o.insert("edm".to_owned(), edm);
+    }
     let inverted = m.inverted_axes();
     if !inverted.is_empty()
         && let Some(o) = out.as_object_mut()
@@ -356,6 +378,12 @@ pub fn script_props(m: &Value) -> Value {
         // #375: the inverted linear axes, for the header comment a post
         // that translates them writes ([] for every standard machine). A
         // statement the reader refuses was refused before the script ran.
+        // #533: the EDM section's codes and AWT flag through either
+        // door (the mirror's or a raw file's `edm`), null when unstated.
+        // #542: a sinker's orbits, pickup and conditions ride the same
+        // object; the sinker post reads only their words and ids (no
+        // length), so the raw door needs no unit scaling here.
+        "edm": get(m, &["edm"]).filter(|e| e.is_object()).cloned().unwrap_or(Value::Null),
         "invertedAxes": super::invert::stated(m).map(|(_, l)| l).unwrap_or_default(),
     })
 }

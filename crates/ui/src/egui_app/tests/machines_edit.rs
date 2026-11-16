@@ -318,3 +318,43 @@ fn the_kind_dropdown_filters_the_list_and_gates_new_blank() {
     assert!(new_blank_disabled(&h));
     assert_no_commands(&h);
 }
+
+/// Issue #869: a blank mill's seeded Flood is removed, an Air M7 added
+/// with its code, and the saved file reads back with Air M7 alone - the
+/// added coolant is never dropped. A coolant added without its code is
+/// refused by name and adds nothing.
+#[test]
+fn a_blank_mill_swaps_its_flood_for_air_m7_and_keeps_it_through_save_and_reload() {
+    let dir = user_dir("air");
+    let mut h = harness_with_user_dir(Some(dir.clone()));
+    h.run();
+    open_machines(&mut h);
+    pick_kind(&mut h, "All", "mill");
+    press(&mut h, "New blank");
+    let list = "/kinematics/default/parts/0/parts/3/tool_station/coolants";
+    assert_eq!(draft_at(&h, &format!("{list}/0/name")).and_then(|v| v.as_str().map(str::to_owned)).as_deref(), Some("Flood"));
+    // A name alone is refused by name.
+    type_into(&mut h, "New coolant", "Air");
+    press(&mut h, "Add coolant");
+    h.get_by_label("coolant Air: enter its M code (M7 air or mist, M8 flood) before adding it");
+    assert_eq!(draft_at(&h, list).and_then(|v| v.as_array().map(Vec::len)), Some(1), "nothing added");
+    type_into(&mut h, "New coolant code", "M7");
+    press(&mut h, "Add coolant");
+    press(&mut h, "Remove Coolant Flood");
+    h.get_by_label("Validation: passes");
+    press(&mut h, "Save machine");
+    assert_eq!(prompt(&h), Some(Prompt::SaveAs));
+    press(&mut h, "Write file");
+    let path = dir.join("new-mill.mch");
+    let text = std::fs::read_to_string(&path).expect("the machine was written");
+    let m = camcraft_app::machine::parse_mch(&text).expect("the saved machine reads back");
+    let coolants: Vec<(String, String)> = m.coolants.iter().map(|c| (c.name.clone(), c.m_code.clone())).collect();
+    assert_eq!(coolants, [("Air".to_owned(), "M7".to_owned())], "{text}");
+    assert_eq!(
+        camcraft_app::operation::CoolantMode::machine_default(&m.coolants),
+        camcraft_app::operation::CoolantMode::Air,
+        "an Air-only machine starts its ops on Air"
+    );
+    assert_no_commands(&h);
+    let _ = std::fs::remove_dir_all(&dir);
+}

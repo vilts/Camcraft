@@ -11,10 +11,14 @@
 //! suite `fanuc_post.rs` already locks); the four stage-B dialects get
 //! one subdirectory each.
 //!
-//! Gate map (M4.4): covers app::cl, app::post, app::posting.
+//! Gate map (M4.4): covers cl::cl, post::post, app::posting.
+
+mod common;
 
 use camcraft_app::cl::{CycleKind, MoveKind};
-use camcraft_app::post::{cnc, engine};
+use camcraft_app::machine::parse_mch;
+use common::legacy_program::as_program;
+use camcraft_app::post::{cnc, engine, machine};
 use serde_json::json;
 use std::path::{Path, PathBuf};
 
@@ -54,17 +58,51 @@ const POSTS: &[(&str, &str, &str)] = &[
     ("Heidenhain", "heidenhain", "heidenhain"),
     ("Mazak", "mazak", "mazak"),
     ("Tormach PathPilot", "tormach", "tormach"),
+    ("grblHAL", "grblhal", "grblhal"),
+    ("TinyG", "tinyg", "tinyg"),
     ("Doosan DNM", "doosan-dnm", "doosan-dnm"),
     ("Makera Carvera", "carvera", "carvera"),
 ];
 
+/// #1357: the Tormach goldens are runnable programs - posted for a real
+/// Tormach (the 770MX, an inch machine) from the golden dressed with the
+/// setup, operation and tool records, tool change and spindle speed a
+/// real operation's stream carries. PathPilot ran the bare stream with
+/// T0, the spindle stopped and a G73 with no F (a "zero feed rate"
+/// alarm); the post now refuses that stream by name.
+const TORMACH_MCH: &str = "assets/machines/tormach-770mx.mch";
+
+/// What each dialect's golden is posted from: its machine and its
+/// stream. Every dialect's cycles state their own chain's feed (a canned
+/// cycle with no feed is refused by name, #1357); the Tormach goldens are
+/// whole programs on the 770MX (above).
+fn golden_input(cps_stem: &str, g: &str) -> (serde_json::Value, String) {
+    let stream = read(&format!("crates/app/tests/golden/{g}.cl"));
+    if cps_stem == "tormach" {
+        let m = parse_mch(&read(TORMACH_MCH)).unwrap_or_else(|e| panic!("{TORMACH_MCH}: {e}"));
+        return (machine::mirror(&m), as_program(g, &stream));
+    }
+    // #1359: every spindle mill dialect refuses a cut with the spindle
+    // stopped, so each posts the golden as the program a real operation
+    // streams (tool change, spindle speed, cycle feeds) - on the generic
+    // VMC, its own goldens' machine.
+    let mch = serde_json::from_str(&read("assets/machines/3axis-vmc.mch")).expect("machine json");
+    (mch, as_program(g, &stream))
+}
+
 /// (post stem, golden, named reason): a golden a dialect must REFUSE
-/// rather than post, so it has no `.nc` there. Heidenhain (#51) supports
-/// tapping, but this legacy golden lacks spindle speed. Carvera (#707)
-/// cannot tap (no canned cycles or spindle reverse).
+/// rather than post, so it has no `.nc` there. Carvera (#707) cannot
+/// tap (no canned cycles or spindle reverse). Heidenhain (#51) taps once
+/// the stream states a spindle speed - since #1359 every dialect posts
+/// the golden as a program that does (500 rpm for the M10x1.5 tap), so
+/// it has a tap_plate golden now.
+/// #710: grblHAL's core G-code list has no G84 either; TinyG has no
+/// canned cycles at all and posts drilling as plain moves, but a tap
+/// cannot be plain moves.
 const REFUSED: &[(&str, &str, &str)] = &[
-    ("heidenhain", "tap_plate", "tapping needs a positive integral spindle speed"),
     ("carvera", "tap_plate", "tapping"),
+    ("grblhal", "tap_plate", "tapping"),
+    ("tinyg", "tap_plate", "tapping"),
 ];
 
 /// The TURNING dialects (M13.5): their goldens are the lathe
@@ -76,6 +114,35 @@ const LATHE_POSTS: &[(&str, &str)] = &[("Fanuc Lathe", "fanuc-lathe"), ("Tormach
 /// own (`plasma_post.rs`, `nc/tormach-plasma/`); on a mill golden they
 /// refuse by name (`plasma_post_refusals.rs`).
 const PLASMA_POSTS: &[(&str, &str)] = &[("Tormach PathPilot Plasma", "tormach-plasma")];
+
+/// The WIRE EDM dialects (#533): their golden is the wire stream's own
+/// (`wire_post.rs`, `nc/wire-iso/`); a mill golden they refuse by name.
+const WIRE_POSTS: &[(&str, &str)] = &[("Generic ISO Wire EDM", "wire-iso"), ("Sodick Wire EDM (Mark 21)", "sodick-wire")];
+
+/// The SINKER EDM dialects (#542): their golden is the sinker burn's
+/// own (`crates/post/tests/script_sinker_iso.rs`, `nc/sinker-iso/`); a
+/// mill golden over a mill machine they refuse by name (the script's
+/// own machine check - the app's serves door, #1232, refuses first).
+const SINKER_POSTS: &[(&str, &str)] = &[("Sinker EDM (ISO)", "sinker-iso")];
+
+#[test]
+fn every_sinker_post_refuses_every_mill_golden_by_name() {
+    let mch: serde_json::Value =
+        serde_json::from_str(&read("assets/machines/3axis-vmc.mch")).expect("machine json");
+    for (name, cps_stem) in SINKER_POSTS {
+        let cps = read(&format!("assets/posts/{cps_stem}.cps"));
+        for g in GOLDENS {
+            let stream = read(&format!("crates/app/tests/golden/{g}.cl"));
+            let out = engine::run(&cps, &mch, &stream)
+                .unwrap_or_else(|e| panic!("{name} on {g}: the engine runs, the script refuses: {e}"));
+            assert!(
+                out.warnings.iter().any(|w| w.contains("is not declared a sinker EDM")),
+                "{name} on {g}: a mill machine must be refused by name, got {:?}",
+                out.warnings
+            );
+        }
+    }
+}
 
 #[test]
 fn every_lathe_post_refuses_every_mill_golden_by_name() {
@@ -104,15 +171,17 @@ fn every_lathe_post_refuses_every_mill_golden_by_name() {
 
 #[test]
 fn every_builtin_posts_every_golden_byte_exact() {
-    let mch: serde_json::Value =
-        serde_json::from_str(&read("assets/machines/3axis-vmc.mch")).expect("machine json");
     let write = std::env::var_os("WRITE_GOLDEN").is_some();
     let mut written = 0usize;
     for (name, cps_stem, sub) in POSTS {
         let cps = read(&format!("assets/posts/{cps_stem}.cps"));
         for g in GOLDENS {
-            let stream = read(&format!("crates/app/tests/golden/{g}.cl"));
-            let out = engine::run(&cps, &mch, &stream)
+            let (mch, stream) = golden_input(cps_stem, g);
+            // #902: the program's unit is the document's. The Tormach
+            // goldens stand for an inch document on the 770MX (what they
+            // were run as in PathPilot); the rest for an mm one.
+            let units = if *cps_stem == "tormach" { json!({ "Units": "inch" }) } else { serde_json::Value::Null };
+            let out = engine::run_with(&cps, &mch, &stream, &units)
                 .unwrap_or_else(|e| panic!("{name} on {g}: must post: {e}"));
             if let Some((_, _, why)) = REFUSED.iter().find(|(s, gg, _)| s == cps_stem && gg == g) {
                 assert!(
@@ -156,7 +225,7 @@ fn every_builtin_posts_every_golden_byte_exact() {
 /// offset, slot origin), a tool block, a contour (rapid, feed, arc) and
 /// a five-hole drilling group - dwelled drill, a two-hole peck run
 /// (the modal-continuation branch), a deep hole, a tap. Every
-/// dialect-specific word - `S.. M3`, `MOTON`, `T2 M6`, `G43 H2`, `D2`,
+/// dialect-specific word - `S.. M3`, `T2 M6`, `G43 H2`, `D2`,
 /// `G98`/its absence, `P..` - appears here, so the goldens that lock
 /// them exist for all five scripts.
 ///
@@ -195,6 +264,12 @@ fn synth_stream_with(wcs: &str, tap: bool) -> String {
         R::Param { name: "OriginX".into(), value: json!(10.0) },
         R::Param { name: "OriginY".into(), value: json!(20.0) },
         R::Param { name: "OriginZ".into(), value: json!(5.0) },
+        // #1028: the planes a generator states for every section (as in
+        // the recorded drill_retract stream): the clearance, and the hop
+        // the holes traverse at - above their R plane 2. The holes below
+        // carry no leaving rapids, so each cycle is seated at this hop.
+        R::Param { name: "ClearancePlane".into(), value: json!(10.0) },
+        R::Param { name: "RetractPlane".into(), value: json!(5.0) },
         R::Tool { number: 2, name: "10MM END MILL".into() },
         R::Section { begin: true },
         // The contour: moves 0..2, no cycle anchored at or below 2
@@ -282,8 +357,11 @@ fn the_synthesized_stream_locks_the_tool_and_spindle_words() {
         // #51: Heidenhain supports the full G55 + tap stream.
         // #707: the Carvera refuses the tap the same way (no canned
         // cycles, no spindle reverse); its G55 stands.
+        // #710: grblHAL has no G84, so its golden drops only the tap;
+        // TinyG the same (its drill chains post as plain moves).
         let stream = match *cps_stem {
             "carvera" => synth_stream_with("G55", false),
+            "grblhal" | "tinyg" => synth_stream_with("G55", false),
             _ => synth_stream(),
         };
         let cps = read(&format!("assets/posts/{cps_stem}.cps"));
@@ -316,7 +394,7 @@ fn the_dialects_actually_differ() {
     // cycles, tool change, spindle, the lot).
     let mch: serde_json::Value =
         serde_json::from_str(&read("assets/machines/3axis-vmc.mch")).expect("machine json");
-    let stream = read("crates/app/tests/golden/drill_peck.cl");
+    let stream = as_program("drill_peck", &read("crates/app/tests/golden/drill_peck.cl"));
     let texts: Vec<(&str, String)> = POSTS
         .iter()
         .map(|(name, stem, _)| {
@@ -346,9 +424,17 @@ fn every_builtin_registry_entry_compiles() {
     let mut want: Vec<&str> = POSTS.iter().map(|(n, _, _)| *n).collect();
     want.extend(LATHE_POSTS.iter().map(|(n, _)| *n));
     want.extend(PLASMA_POSTS.iter().map(|(n, _)| *n));
+    want.extend(WIRE_POSTS.iter().map(|(n, _)| *n));
+    want.extend(SINKER_POSTS.iter().map(|(n, _)| *n));
     assert_eq!(names, want, "the picker lists what the registry ships");
+    for (n, _) in SINKER_POSTS {
+        assert!(camcraft_app::posting::SINKER_POSTS.contains(n), "{n} is a sinker dialect in the registry's own table");
+    }
     for (n, _) in PLASMA_POSTS {
         assert!(camcraft_app::posting::PLASMA_POSTS.contains(n), "{n} is a plasma dialect in the registry's own table");
+    }
+    for (n, _) in WIRE_POSTS {
+        assert!(camcraft_app::posting::WIRE_POSTS.contains(n), "{n} is a wire EDM dialect in the registry's own table");
     }
     for (n, _) in LATHE_POSTS {
         assert!(
@@ -369,11 +455,16 @@ const EXTENSIONS: &[(&str, &str)] = &[
     ("heidenhain", "I"),
     ("mazak", "nc"),
     ("tormach", "nc"),
+    ("grblhal", "nc"),
+    ("tinyg", "gcode"),
     ("doosan-dnm", "nc"),
     ("carvera", "nc"),
     ("fanuc-lathe", "nc"),
     ("tormach-lathe", "nc"),
     ("tormach-plasma", "nc"),
+    ("wire-iso", "nc"),
+    ("sodick-wire", "nc"),
+    ("sinker-iso", "nc"),
 ];
 
 /// The top-level `extension = "..."` manifest line's value.
@@ -388,6 +479,8 @@ fn every_builtin_declares_its_controls_file_extension() {
     let mut stems: Vec<&str> = POSTS.iter().map(|(_, s, _)| *s).collect();
     stems.extend(LATHE_POSTS.iter().map(|(_, s)| *s));
     stems.extend(PLASMA_POSTS.iter().map(|(_, s)| *s));
+    stems.extend(WIRE_POSTS.iter().map(|(_, s)| *s));
+    stems.extend(SINKER_POSTS.iter().map(|(_, s)| *s));
     let pinned: Vec<&str> = EXTENSIONS.iter().map(|(s, _)| *s).collect();
     assert_eq!(pinned, stems, "every shipped post has its extension pinned");
     for (stem, want) in EXTENSIONS {

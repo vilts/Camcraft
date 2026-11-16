@@ -79,6 +79,7 @@ fn rough_in(diameter: f64, bar_top: f64) -> (World, Vec<Warning>, Vec<camcraft_a
     let cmd = SetStock::new(&world, StockShape::Cylinder { diameter, height: bar_top + 16.0 }, at);
     history.execute(&world, cmd.expect("bar stock"));
     history.execute(&world, LoadMachine::new(&world, "lathe.mch".into(), Some(lathe())).expect("lathe"));
+    history.execute(&world, camcraft_app::commands::SelectPost::new(&world, camcraft_app::schema::PostRef::Named("Fanuc Lathe".into())).expect("lathe post"));
     let name = "TN-1600-0R8";
     let tool = catalog().into_iter().find(|(n, _)| *n == name).map(|(_, t)| t).expect("catalog");
     history.execute(&world, AddTool::new(&world, name, tool).expect("tool"));

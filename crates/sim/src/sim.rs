@@ -363,7 +363,7 @@ impl Script {
 /// family nothing moves in, every family before stage G) arrives at
 /// the start and holds; a zero-length move (`secs == 0`) is at its
 /// end by definition.
-fn leg_frac(leg: f64, f: f64, secs: f64) -> f64 {
+pub(crate) fn leg_frac(leg: f64, f: f64, secs: f64) -> f64 {
     if secs <= 0.0 {
         return 1.0;
     }
@@ -403,27 +403,35 @@ fn seg_axis(s: &Seg, g: f64) -> [f64; 3] {
 /// law is `arc_chords`' exact survivor - measured off `from`, so no
 /// rounding accumulates).
 fn at_seg(s: &Seg, f: f64) -> Point3 {
+    point_along(s.from, s.to, s.arc, f)
+}
+
+/// The point at fraction `f` along the move `from..to` (straight, or
+/// the arc `arc`): the tool's drawn position, shared by the timeline
+/// and the playback's partial cut (#1516), so the material removed
+/// mid-move ends exactly where the tool is drawn.
+pub(crate) fn point_along(from: Point3, to: Point3, arc: Option<ArcMove>, f: f64) -> Point3 {
     let straight = |f: f64| {
         Point3::new(
-            s.from.x + (s.to.x - s.from.x) * f,
-            s.from.y + (s.to.y - s.from.y) * f,
-            s.from.z + (s.to.z - s.from.z) * f,
+            from.x + (to.x - from.x) * f,
+            from.y + (to.y - from.y) * f,
+            from.z + (to.z - from.z) * f,
         )
     };
-    let Some(arc) = s.arc else {
+    let Some(arc) = arc else {
         return straight(f);
     };
     if !arc.plane.is_xy() {
         // XZ / YZ (M11.2 A): the same angle law in the arc's own
         // plane (`cl::plane`), the normal coordinate lerping.
-        return arc.point_at(s.from, s.to, f).unwrap_or_else(|| straight(f));
+        return arc.point_at(from, to, f).unwrap_or_else(|| straight(f));
     }
     let o = arc.center;
-    let ra = ((s.from.x - o.x).powi(2) + (s.from.y - o.y).powi(2)).sqrt();
-    let rb = ((s.to.x - o.x).powi(2) + (s.to.y - o.y).powi(2)).sqrt();
+    let ra = ((from.x - o.x).powi(2) + (from.y - o.y).powi(2)).sqrt();
+    let rb = ((to.x - o.x).powi(2) + (to.y - o.y).powi(2)).sqrt();
     let r = ra.max(rb);
-    let a0 = (s.from.y - o.y).atan2(s.from.x - o.x);
-    let a1 = (s.to.y - o.y).atan2(s.to.x - o.x);
+    let a0 = (from.y - o.y).atan2(from.x - o.x);
+    let a1 = (to.y - o.y).atan2(to.x - o.x);
     let mut d = if arc.ccw { a1 - a0 } else { a0 - a1 };
     d = d.rem_euclid(2.0 * PI);
     if !r.is_finite() || !d.is_finite() || r <= f64::EPSILON || d <= 0.0 {
@@ -436,7 +444,7 @@ fn at_seg(s: &Seg, f: f64) -> Point3 {
     Point3::new(
         o.x + r * th.cos(),
         o.y + r * th.sin(),
-        s.from.z + (s.to.z - s.from.z) * f,
+        from.z + (to.z - from.z) * f,
     )
 }
 

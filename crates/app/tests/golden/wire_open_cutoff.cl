@@ -1,0 +1,5 @@
+; HSMW-CL v1 scale=0.001mm moves=3
+START 60165 -1165 0
+Feed 60165 0 0
+Feed 60165 50000 0
+Feed 60165 51165 0

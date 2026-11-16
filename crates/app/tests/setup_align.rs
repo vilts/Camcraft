@@ -9,7 +9,7 @@
 //!
 //! Gate map (#326): covers app::setup_align, app::commands
 //! (AlignPartToSetup, MoveModel, CreateSetup), app::operation (job,
-//! material, heights, stamp), app::stock_sim (part_facets),
+//! material, heights, stamp), app::stock_sim, sim::stock_sim (part_facets),
 //! app::project (save, load, open), app::posting.
 //! Lane shape (M4.4): all tests here run in seconds.
 
@@ -17,8 +17,9 @@ use flecs_ecs::prelude::World;
 
 use camcraft_app::commands::{
     AddTool, AlignPartToSetup, CreateOperation, CreateSetup, GenerateOperation, History, ImportModel,
-    SetStock,
+    LoadMachine, SetStock,
 };
+use camcraft_app::machine::parse_mch;
 use camcraft_app::geometry::{Mesh, Point3, Triangle, cube};
 use camcraft_app::machining2d::{Lead, Side};
 use camcraft_app::machining3d::Entry3D;
@@ -239,23 +240,22 @@ fn two_setups_hold_the_part_differently_without_touching_each_other() {
 }
 
 #[test]
-fn unverified_kinds_and_picks_are_refused_by_name_in_an_aligned_setup() {
+fn unverified_kinds_are_refused_while_verified_picks_generate_aligned() {
     let (world, mut h) = document(60.0);
-    let seed = (KindInfo::ALL[OpType::Pocket3D.ordinal()].seed)(&Carried::of(&contour_params()));
-    let op = CreateOperation::new(&world, "Rough3D", TOOL, SrcRef::Entity("part".into()), seed);
-    h.execute(&world, op.expect("create 3D pocket"));
+    let seed = (KindInfo::ALL[OpType::Offset2D.ordinal()].seed)(&Carried::of(&contour_params()));
+    let op = CreateOperation::new(&world, "Offset2D", TOOL, SrcRef::Entity("part".into()), seed);
+    h.execute(&world, op.expect("create offset pocket"));
     let face = model::find_by_name(&world, "part")
         .and_then(|e| model::features_of(&world, &e))
-        .and_then(|f| f.faces.first().map(|fa| fa.id))
-        .expect("a face");
+        .and_then(|f| f.faces.iter().find(|fa| fa.normal[2].abs() > 0.9).map(|fa| fa.id))
+        .expect("a horizontal face");
     let pick = SrcRef::Selection(vec![GeoSel { entity: "part".into(), feature: FeatureSel::Face(face) }]);
     let picked = CreateOperation::new(&world, "Picked", TOOL, pick, contour_params());
     h.execute(&world, picked.expect("create a face-picked contour"));
     align(&world, &mut h, AlignPreset::FlipY);
-    let err = generate(&world, &mut h, "Rough3D").expect_err("3D pocket is not verified aligned");
+    let err = generate(&world, &mut h, "Offset2D").expect_err("offset pocket is not verified aligned");
     assert!(err.contains("part alignment") && err.contains("not supported yet"), "{err}");
-    let err = generate(&world, &mut h, "Picked").expect_err("picks are not verified aligned");
-    assert!(err.contains("picked faces"), "{err}");
+    generate(&world, &mut h, "Picked").expect("verified-kind picks generate aligned");
     generate(&world, &mut h, "Contour1").expect("the verified kind generates");
 }
 
@@ -348,4 +348,22 @@ fn the_setup_sheet_names_the_part_alignment() {
     align(&world, &mut h, AlignPreset::TurnZ90);
     let sheet = camcraft_app::setup_sheet::render(&world, Some("Setup1")).expect("sheet");
     assert!(sheet.contains("  Turn 90° about Z - clamp"), "{sheet}");
+}
+
+/// #1230: an aligned setup on a machine that is not a mill is refused
+/// with that machine's kind named (the same refusal as before, only the
+/// words changed); a lathe or mill-turn keeps its own wording in the
+/// carry tests.
+#[test]
+fn an_aligned_setup_on_an_edm_names_the_edm_kind_it_is_refused_on() {
+    let machines = [("sinker EDM", include_str!("edm/sinker-edm.mch")), ("wire EDM", include_str!("edm/wire-edm.mch"))];
+    for (name, text) in machines {
+        let (world, mut h) = document(60.0);
+        let m = parse_mch(text).expect("the EDM machine parses");
+        h.execute(&world, LoadMachine::new(&world, "edm.mch".into(), Some(m)).expect("mount"));
+        align(&world, &mut h, AlignPreset::FlipY);
+        let err = generate(&world, &mut h, "Contour1").expect_err("an aligned EDM setup is refused");
+        assert!(err.contains(&format!("an aligned part is not supported yet on a {name} machine")), "{name}: {err}");
+        assert!(!err.contains("lathe") && !err.contains("mill-turn"), "{name}: {err}");
+    }
 }

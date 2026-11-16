@@ -7,7 +7,7 @@
 //! Provenance: our own tests over our own refusal model; no vendor
 //! material consulted.
 //!
-//! Gate map (M4.4): covers app::commands, app::operation, app::machining2d.
+//! Gate map (M4.4): covers app::commands, app::operation, motion::machining2d.
 
 use flecs_ecs::prelude::World;
 

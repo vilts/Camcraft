@@ -54,7 +54,7 @@ Icon=camcraft
 Terminal=false
 Categories=Graphics;Engineering;
 EOF
-convert assets/ui/cube.png -resize 256x256 \
+install -m 644 assets/logo/icons/camcraft-256.png \
     "$appdir/usr/share/icons/hicolor/256x256/apps/camcraft.png"
 ln -s usr/share/applications/camcraft.desktop "$appdir/camcraft.desktop"
 ln -s usr/share/icons/hicolor/256x256/apps/camcraft.png "$appdir/camcraft.png"

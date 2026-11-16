@@ -7,7 +7,10 @@
 //! (fail-safe stale gates must not fire on an unchanged project) and the
 //! serde_json `float_roundtrip` feature; no vendor material.
 //!
-//! Gate map (#169): covers camcraft_app::project (save, load),
+//! Also the arc's plane key in the project file (M11.2 A): it stayed in
+//! app when the rest of `arc_planes` moved to crates/post/tests (#926).
+//!
+//! Gate map (#169): covers camcraft_app::project (save, load, ArcDto),
 //! camcraft_app::operation (stamp).
 //! Lane shape: all tests here run in seconds.
 
@@ -110,4 +113,22 @@ fn imported_mesh_vertices_are_bit_identical_after_save_and_load() {
             );
         }
     }
+}
+
+/// M11.2 A: an XY arc writes what it always wrote; a vertical plane is
+/// stated, and an absent key reads as XY.
+#[test]
+fn the_project_file_states_only_a_vertical_plane() {
+    let xy = project::ArcDto { center: [1.0, 2.0], ccw: true, plane: project::ArcPlaneDto::Xy };
+    let xz = project::ArcDto { center: [1.0, 2.0], ccw: false, plane: project::ArcPlaneDto::Xz };
+    let sxy = serde_json::to_string(&xy).unwrap_or_default();
+    let sxz = serde_json::to_string(&xz).unwrap_or_default();
+    assert_eq!(sxy, r#"{"center":[1.0,2.0],"ccw":true}"#, "XY writes what it always wrote");
+    assert_eq!(sxz, r#"{"center":[1.0,2.0],"ccw":false,"plane":"xz"}"#);
+    let old: project::ArcDto = serde_json::from_str(r#"{"center":[1.0,2.0],"ccw":true}"#).expect("pre-M11.2 arc");
+    assert_eq!(old, xy, "absent is XY");
+    let back: project::ArcDto = serde_json::from_str(&sxz).expect("xz");
+    assert_eq!(back, xz);
+    let yz: project::ArcDto = serde_json::from_str(r#"{"center":[0.0,0.0],"ccw":true,"plane":"yz"}"#).expect("yz");
+    assert_eq!(yz.plane, project::ArcPlaneDto::Yz);
 }

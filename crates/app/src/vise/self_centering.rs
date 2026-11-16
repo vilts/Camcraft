@@ -11,12 +11,22 @@
 //! `-base_height`. An optional dovetail lip is a step `lip_depth` deep at
 //! each clamping face, `lip_height` above the jaw top, drawn solid: the
 //! dovetail's undercut is filled, so the laws see at least the real steel.
+//! An optional grip jaw (#1274) is instead a step cut into each jaw's
+//! inside top edge, `grip_depth` down from the jaw top and `grip_width`
+//! in from the clamping face: the stock sits on that ledge, not on the
+//! floor, and is gripped over the step's depth only. The frame's z = 0
+//! stays where the part sits - the ledge - so the floor and body drop
+//! by `jaw_height - grip_depth`, and a fit or an edit keeps the stock
+//! seated. Dovetail and grip jaw are one choice or the other, never both
+//! on one vise.
 //!
 //! Provenance: our own geometry and parameters; the size table's figures
 //! are typical values from public catalog spec sheets (cited in
 //! `docs/decisions/787-self-centering-vises.md`), no vendor model copied.
 //! The prism and its ear-clipped cap are the textbook method `vise::mesh`
-//! uses (Meisters, "Polygons have ears", 1975).
+//! uses (Meisters, "Polygons have ears", 1975). The grip step is the
+//! stepped (ledge) jaw of general workholding practice; its figures are
+//! user parameters, no vendor drawing consulted.
 
 use crate::geometry::{Aabb, IDENTITY_Q, Point3, Triangle, quat_conjugate, quat_rotate_point};
 use crate::schema::Location;
@@ -24,13 +34,33 @@ use crate::schema::Location;
 use super::{ViseParams, ViseSize, ViseStyle, mesh::triangulate};
 
 /// What a self-centering vise has that a standard one does not: the low
-/// end of its clamping range and the optional dovetail lip (millimetres;
-/// a lip of zero height and depth is no lip).
+/// end of its clamping range, the optional dovetail lip and the optional
+/// grip step (millimetres; a lip of zero height and depth is no lip, a
+/// step of zero depth and width no step).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct SelfCentering {
     pub min_opening: f64,
     pub lip_height: f64,
     pub lip_depth: f64,
+    /// How far the grip step's ledge sits below the jaw top (#1274).
+    pub grip_depth: f64,
+    /// How far the ledge reaches in from the clamping face (#1274).
+    pub grip_width: f64,
+}
+
+impl SelfCentering {
+    /// Is the grip step on?
+    #[must_use]
+    pub fn has_grip(&self) -> bool {
+        self.grip_depth > 0.0
+    }
+
+    /// How far above the vise floor the stock's bottom sits: on the grip
+    /// step's ledge, or 0 (on the floor) when there is no step.
+    #[must_use]
+    pub fn seat(&self, jaw_height: f64) -> f64 {
+        if self.has_grip() { jaw_height - self.grip_depth } else { 0.0 }
+    }
 }
 
 /// How far a stock box's centre may sit off the vise's centre along the
@@ -67,7 +97,13 @@ const fn sc(
         base_height,
         housing_length: 0.0,
         housing_height: 0.0,
-        style: ViseStyle::SelfCentering(SelfCentering { min_opening, lip_height: 0.0, lip_depth: 0.0 }),
+        style: ViseStyle::SelfCentering(SelfCentering {
+            min_opening,
+            lip_height: 0.0,
+            lip_depth: 0.0,
+            grip_depth: 0.0,
+            grip_width: 0.0,
+        }),
     }
 }
 
@@ -106,6 +142,8 @@ pub fn check(p: &ViseParams, sc: &SelfCentering) -> Result<(), String> {
         ("min opening", sc.min_opening),
         ("lip height", sc.lip_height),
         ("lip depth", sc.lip_depth),
+        ("grip step depth", sc.grip_depth),
+        ("grip step width", sc.grip_width),
     ] {
         if !v.is_finite() {
             return Err(format!("vise {what} must be a finite length (got {v})"));
@@ -156,11 +194,54 @@ pub fn check(p: &ViseParams, sc: &SelfCentering) -> Result<(), String> {
             sc.lip_depth, p.jaw_body_depth
         ));
     }
+    check_grip(p, sc)?;
     let carry = p.max_opening + 2.0 * p.jaw_body_depth;
     if p.length < carry {
         return Err(format!(
             "vise overall length {:.3} mm must be at least the max opening and two jaw bodies ({carry:.3} mm) - the jaws ride on the body",
             p.length
+        ));
+    }
+    Ok(())
+}
+
+/// The grip step's own law (#1274), refusals by name: both figures or
+/// neither, not beside a dovetail lip, the ledge inside the jaw, and the
+/// two ledges apart at the opening (else the jaws' feet would meet under
+/// the stock - no vise closes that far).
+fn check_grip(p: &ViseParams, sc: &SelfCentering) -> Result<(), String> {
+    if (sc.grip_depth > 0.0) != (sc.grip_width > 0.0) {
+        return Err(format!(
+            "vise grip step needs both a depth and a width, or neither (got grip step depth {} and grip step width {} mm)",
+            sc.grip_depth, sc.grip_width
+        ));
+    }
+    if !sc.has_grip() {
+        return Ok(());
+    }
+    if sc.lip_height > 0.0 {
+        return Err(format!(
+            "a self-centering jaw is a dovetail or a grip jaw, not both: set the dovetail lip or the grip step to 0 (got lip height {} and grip step depth {} mm)",
+            sc.lip_height, sc.grip_depth
+        ));
+    }
+    if sc.grip_depth >= p.jaw_height {
+        return Err(format!(
+            "vise grip step depth {:.3} mm must be less than its jaw height {:.3} mm",
+            sc.grip_depth, p.jaw_height
+        ));
+    }
+    if sc.grip_width >= p.jaw_thickness {
+        return Err(format!(
+            "vise grip step width {:.3} mm must be less than its jaw thickness {:.3} mm",
+            sc.grip_width, p.jaw_thickness
+        ));
+    }
+    if p.opening <= 2.0 * sc.grip_width {
+        return Err(format!(
+            "vise jaw opening {:.3} mm is not more than its two grip step widths ({:.3} mm): the ledges would meet under the stock",
+            p.opening,
+            2.0 * sc.grip_width
         ));
     }
     Ok(())
@@ -178,19 +259,34 @@ pub fn profile(p: &ViseParams, sc: &SelfCentering) -> Vec<(f64, f64)> {
     let jh = p.jaw_height;
     // The +y jaw, walked from its back foot up, over and down its face.
     let mut jaw = vec![(back, 0.0), (back, jh)];
-    if sc.lip_height > 0.0 {
+    let foot = if sc.has_grip() {
+        // Down the face to the ledge, in along it, down to the floor.
+        let ledge = jh - sc.grip_depth;
+        let foot = (face - sc.grip_width).max(0.0);
+        jaw.extend([(face, jh), (face, ledge), (foot, ledge)]);
+        foot
+    } else if sc.lip_height > 0.0 {
         let lip = (face + sc.lip_depth).min(back);
         let top = jh + sc.lip_height;
         jaw.extend([(lip, jh), (lip, top), (face, top)]);
+        face
     } else {
         jaw.push((face, jh));
-    }
-    jaw.push((face, 0.0));
+        face
+    };
+    jaw.push((foot, 0.0));
     let mut poly = vec![(half_len, -p.base_height), (half_len, 0.0)];
     poly.extend(jaw.iter().copied());
     // The -y jaw: the mirror, walked the other way.
     poly.extend(jaw.iter().rev().map(|&(y, z)| (-y, z)));
     poly.extend([(-half_len, 0.0), (-half_len, -p.base_height)]);
+    // Drawn from the floor up; the frame's z = 0 is the seat (#1274).
+    let seat = sc.seat(jh);
+    if seat > 0.0 {
+        for c in &mut poly {
+            c.1 -= seat;
+        }
+    }
     simplify(poly)
 }
 
@@ -261,7 +357,8 @@ fn in_range(p: &ViseParams, sc: &SelfCentering, across: f64) -> Result<(), Strin
 }
 
 /// Fit at identity rotation to stock box `stock`: the vise centred on the
-/// stock in x and y, the floor under it, the jaws closed to its y extent.
+/// stock in x and y, the seat under it (the floor, or a grip step's
+/// ledge with the floor that much lower), the jaws closed to its y extent.
 pub fn fit_to_stock(p: &ViseParams, sc: &SelfCentering, stock: &Aabb) -> Result<(ViseParams, Location), String> {
     let across = stock.max.y - stock.min.y;
     in_range(p, sc, across)?;

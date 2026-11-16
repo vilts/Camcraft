@@ -1,0 +1,2 @@
+; tormach.cps refused rotary: 1 warning(s), the program is never released
+warning: simultaneous 4-axis motion in operation Index (A changes inside the operation) - not confirmed on PathPilot; this post indexes A between operations only

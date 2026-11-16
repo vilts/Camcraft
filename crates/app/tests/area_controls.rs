@@ -8,7 +8,7 @@
 //! boundary, the legality, the command and the file.)
 //!
 //! Gate map (M11.5): covers app::operation (area, boundary, boundary_ctx,
-//! job, generate), geo2d (offset_sharp), app::verify.
+//! job, generate), geo2d (offset_sharp), sim::verify.
 
 mod area_support;
 mod common;
@@ -188,6 +188,11 @@ fn tilt_pocket(tilt: Option<Tilt>, top: f64) -> OpParams {
 }
 
 fn tilt_world() -> World {
+    tilt_world_with(true)
+}
+
+/// [`tilt_world`], the tower left out when `tower` is false.
+fn tilt_world_with(tower: bool) -> World {
     let world = new_world();
     let mut h = History::default();
     let tool = catalog().into_iter().find(|(n, _)| *n == TOOL).map(|(_, t)| t).expect("catalog");
@@ -195,18 +200,28 @@ fn tilt_world() -> World {
     h.execute(&world, ImportModel::from_mesh("part", tilt_block()));
     h.execute(&world, ImportModel::from_mesh("twin", rotated_by_90(tilt_block())));
     // The tilt suite's tower: tall enough that a b = 35 frame sections it.
-    h.execute(&world, ImportModel::from_mesh("tower", cube(Point3::new(0.0, 0.0, -10.0), Point3::new(40.0, 30.0, 25.0))));
+    if tower {
+        h.execute(&world, ImportModel::from_mesh("tower", cube(Point3::new(0.0, 0.0, -10.0), Point3::new(40.0, 30.0, 25.0))));
+    }
     world
 }
 
 #[test]
 fn a_boundary_offset_on_a_tilted_pocket_is_the_flat_offset_pocket_rotated() {
+    // The two pockets compared without the tower: standing on the
+    // block's top, it is a neighbouring part the tilted pocket's +3
+    // offset really enters (#1621: judged on the op, 15 gouges), while
+    // the flat twin has no part beside it - the comparison is of the
+    // frame door, not of the scene.
+    let bare = tilt_world_with(false);
     let world = tilt_world();
     let area = AreaControls { offset: 3.0, ..Default::default() };
     let tilt = Tilt { a_deg: 0.0, b_deg: 90.0, origin: [0.0; 3] };
-    let (flat, wf) = run(&world, &op(SrcRef::Entity("twin".into()), tilt_pocket(None, 40.0), area.clone())).expect("flat");
-    let (tilted, wt) = run(&world, &op(SrcRef::Entity("part".into()), tilt_pocket(Some(tilt), 40.0), area)).expect("tilted");
+    let (flat, wf) = run(&bare, &op(SrcRef::Entity("twin".into()), tilt_pocket(None, 40.0), area.clone())).expect("flat");
+    let (tilted, wt) = run(&bare, &op(SrcRef::Entity("part".into()), tilt_pocket(Some(tilt), 40.0), area.clone())).expect("tilted");
     assert_eq!(wf, wt);
+    let (_, w_tower) = run(&world, &op(SrcRef::Entity("part".into()), tilt_pocket(Some(tilt), 40.0), area)).expect("tilted by the tower");
+    assert!(w_tower > 0, "the tower beside the tilted pocket is kept on the op (#1621)");
     // The offset did something: the flat pocket reaches 3 further than the block's 30.
     assert!((max_by(&feeds(&flat), |p| p.x) - (30.0 + 3.0 - R)).abs() < EPS);
     assert_eq!(flat.moves.len(), tilted.moves.len(), "the door adds and drops no move");
@@ -293,6 +308,7 @@ fn finish_parallel() -> OpParams {
         entry_ramp: false,
         steep_stepover: None,
         pencil_reference: None,
+        fill_openings: None,
     }
 }
 

@@ -17,7 +17,7 @@ use camcraft_app::fixture_library::DatumChoice;
 
 use crate::state::{CommandKind, FixtureLibDialog, InsertFixtureDraft, State};
 
-use super::fields::{num, num_plain};
+use super::fields::{num_by, num_plain_by};
 use super::fixture_accessory_dialog::AccessoryAct;
 use super::fixture_vise_dialog::ViseAct;
 
@@ -27,6 +27,8 @@ enum Act {
     Save { replace: bool },
     Insert(Box<CommandKind>),
     Delete(String),
+    /// Close the dialog and open the Stock page of this setup.
+    OpenStock(String),
 }
 
 /// The Insert button's command for this draft (`None`: nothing picked).
@@ -51,6 +53,10 @@ pub(crate) fn window(ctx: &egui::Context, state: &mut State) {
     let Some(dialog) = state.fixture_lib.as_mut() else {
         return;
     };
+    if let FixtureLibDialog::Vise(d) = dialog {
+        let setup = (!d.setup.is_empty()).then_some(d.setup.as_str());
+        d.fit = Some(camcraft_app::vise_fit::preview(&state.world, &d.params, setup));
+    }
     let mut act: Option<Act> = None;
     let response = Modal::new(Id::new("fixture-library")).show(ctx, |ui| {
         ui.set_max_width(420.0);
@@ -68,10 +74,10 @@ pub(crate) fn window(ctx: &egui::Context, state: &mut State) {
                 ui.label("Placed by");
                 ui.radio_value(&mut d.datum, DatumChoice::ModelOrigin, "Model origin");
                 ui.radio_value(&mut d.datum, DatumChoice::BottomCentre, "Bottom centre");
-                ui.label("Note");
-                ui.add(TextEdit::singleline(&mut d.note).desired_width(320.0));
+                let l = ui.label("Note");
+                ui.add(TextEdit::singleline(&mut d.note).desired_width(320.0)).labelled_by(l.id);
                 if let Some(err) = &d.error {
-                    ui.colored_label(ui.visuals().error_fg_color, err);
+                    super::error_text::error_text(ui, ui.visuals().error_fg_color, err);
                 }
                 ui.add_space(8.0);
                 if let Some(taken) = &d.confirm_replace {
@@ -99,12 +105,14 @@ pub(crate) fn window(ctx: &egui::Context, state: &mut State) {
                 act = super::fixture_plate_dialog::body(ui, u, d).map(|a| match a {
                     ViseAct::Close => Act::Close,
                     ViseAct::Place(cmd) => Act::Insert(cmd),
+                    ViseAct::OpenStock => Act::Close,
                 });
             }
             FixtureLibDialog::Vise(d) => {
                 act = super::fixture_vise_dialog::body(ui, u, d).map(|a| match a {
                     ViseAct::Close => Act::Close,
                     ViseAct::Place(cmd) => Act::Insert(cmd),
+                    ViseAct::OpenStock => Act::OpenStock(d.setup.clone()),
                 });
             }
             FixtureLibDialog::Accessory(d) => {
@@ -135,18 +143,18 @@ pub(crate) fn window(ctx: &egui::Context, state: &mut State) {
                 ui.label(format!("Datum at (into {})", setup_label(&d.setup)));
                 egui::Grid::new("fixture-lib-datum").num_columns(2).show(ui, |ui| {
                     for (k, axis) in ["X", "Y", "Z"].iter().enumerate() {
-                        ui.label(*axis);
-                        num(ui, u, &mut d.pos[k]);
+                        let l = ui.label(*axis);
+                        num_by(ui, u, &mut d.pos[k], l.id);
                         ui.end_row();
                     }
                     for (k, axis) in ["Tilt about X (roll)", "Tilt about Y (pitch)", "Turn about Z (yaw)"].iter().enumerate() {
-                        ui.label(*axis);
-                        num_plain(ui, &mut d.rpy_deg[k]);
+                        let l = ui.label(*axis);
+                        num_plain_by(ui, &mut d.rpy_deg[k], l.id);
                         ui.end_row();
                     }
                 });
                 if let Some(err) = &d.error {
-                    ui.colored_label(ui.visuals().error_fg_color, err);
+                    super::error_text::error_text(ui, ui.visuals().error_fg_color, err);
                 }
                 ui.add_space(8.0);
                 if let Some(name) = d.confirm_delete.clone() {
@@ -186,6 +194,11 @@ pub(crate) fn window(ctx: &egui::Context, state: &mut State) {
         Some(Act::Save { replace }) => state.save_fixtures_to_library(replace),
         Some(Act::Insert(cmd)) => state.pending.push_back(*cmd),
         Some(Act::Delete(name)) => state.delete_library_entry(&name),
+        Some(Act::OpenStock(setup)) => {
+            // The same path as the browser's Stock row.
+            state.fixture_lib = None;
+            super::browser_pane::click(state, super::browser_tree::Leaf::Stock(setup));
+        }
         None => {}
     }
 }

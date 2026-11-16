@@ -1,3 +1,514 @@
+# CamCraft 0.21.0 (clean-room implementation)
+
+Released 2026-11-15.
+
+## Breaking
+None. No pull request in this release is marked breaking, and the project file
+format stays at version 61, so 0.20.0 opens files that 0.21.0 saves. Some posts
+and some toolpaths change for existing projects, though: read "Changes to posted
+programs" below before you post an old project again.
+
+A minor release headlined by **more wire and sinker EDM** (an outline
+electrode, Side Burn wear compensation, angle-word taper, 4-axis fan spans and
+sync picks, the Sodick ALC400G machine), **a 2D Adaptive Trochoidal method that
+clears wide and island regions**, **3D operations in part-aligned setups**,
+**stock carried into a setup turned side-on**, and **safer entries and setup
+changes in the posts**. 106 pull requests merged since 0.20.0 (19 features, 65
+fixes, 22 tests, docs and process).
+
+## Changes to posted programs
+These change the G-code that an existing project posts.
+- **Fanuc-family posts write a decimal point on whole-number values** (#1836,
+  PR #1866). Fanuc, Haas, Mazak, Doosan DNM and Fanuc lathe write `Z14.`, not
+  `Z14`, for each length, angle and feed-per-revolution word. A control with
+  parameter 3401#0 DPI=0 then no longer reads the word in least increments.
+- **G76 threading states the passes that were verified** (#417, PR #517). With
+  the G76 cycle option, the finish allowance R is posted: the default Fanuc lathe
+  thread now posts `R0.4` instead of `R0`. G32 passes stay the default output.
+- **Threading can repeat each roughing depth** (#418, PR #518). Off by default;
+  the G76 cycles refuse it by name.
+- **Seven mill posts retract Z and name the next setup before a setup-change
+  stop** (#1647, PR #1859). Heidenhain refuses a setup change without a safe work
+  clearance.
+- **The Tormach lathe approaches one axis at a time after G30** and leaves the
+  stock before each G30 (#1604, PR #1667).
+- **The Tormach mill skips a repeated G30/M6** when two sections in a row use the
+  same tool (#1626, PR #1741).
+- **grblHAL and TinyG** state indexed work offsets G54-G59 (#1385, PR #1824).
+  grblHAL, Carvera and TinyG write no motion after a refused first traverse
+  (#1682, PR #1707).
+- **Sodick wire posts** refuse an angle-word move and a control-side offset
+  request by name instead of posting them wrong (#1496, #1498).
+- Toolpath changes that show in the posted program:
+  - A Contour on an open edge of a part cuts with the tool on the air side, one
+    radius off the edge, not on the edge (#1777, PR #1781).
+  - Default Ramp entries of Inside Contour, Circular and Bore use 3 degrees, not
+    the link ramp angle (#1674). An inside Contour and a Bore with Ramp entry
+    descend at the ramp angle, not straight down at the cutting feed (#1664,
+    #1665).
+  - A whole-model 3D Pocket and Multi-Axis Rough clear out to the stock outline
+    and past an open-sided notch (#1774, #1749).
+  - Bore clears a wide hole with concentric rings (#1566).
+
+## Highlights
+### Posts and G-code
+- Optional plain-English Explain comments on the Tormach mill and the
+  Fanuc-family posts; the executable words do not change (#1387, #1388).
+- MCP lists the Tormach PathPilot Plasma post with its Plasma Profile workflow
+  (#1871).
+
+### Wire and sinker EDM
+- A sinker electrode can be a body with an outline, made from the cavity faces
+  (#1152). Rough and finish burns count the orbit radius (#1355). A Side Burn
+  takes a measured electrode wear and is compensated in Z (#1340). The Machine
+  window edits each condition's wear rate and notes (#1381).
+- Wire EDM: a machine can state an angle-word taper dialect (#1164); explicit
+  4-axis fan spans (#1172); pick the 4-axis sync points in the viewport (#1171);
+  skim order, holding tabs and captured-piece controls on the Passes tab
+  (#1148).
+- A wire taper that the machine cannot post is refused when you set it (#1800).
+  A user post script's Wire EDM manifest is honoured (#1335).
+- New built-in machine: Sodick ALC400G wire EDM, travels and taper from Sodick's
+  published specifications (#1501).
+
+### Operations
+- 2D Adaptive (Trochoidal) clears wide, branching, island and closed-ring areas
+  with parallel lanes and clean-up peels (#1587). Its engagement, return, return
+  feed and loop width are parameters (#1588).
+- 2D Pocket, 2D Adaptive and 2D Offset take a corner arc radius (#1733), cut the
+  band between two opposite open edges out to the stock (#1735), and accept a
+  U-shaped blind slot (#1762).
+- Slot: "Extend past A" and "Extend past B" (#1731).
+- Face, Contour, Pocket and 2D Adaptive take picked faces and edges in aligned
+  setups (#763). 3D Pocket, 3D Adaptive and 3D Finish work in part-aligned setups
+  (#1743).
+- The Boundary group takes edge picks in any pick mode; two edges bound the area
+  between them (#1727).
+- Tools can be assembled from modular multi-piece bodies from vendor STEP, STL
+  or OBJ models (#361).
+- Cross drill works on reduced-fidelity models with clearances widened by the
+  model's excess (#1053).
+
+### Gouge, collision and simulation
+- A setup turned side-on can take the machined stock of the setup before it; a
+  gouge cut before the turn stays in the verdict (#874).
+- An earlier setup's chamfers, deburrs and marks are credited before gouges are
+  kept (#1806). Engrave and Trace marks are credited only on the marked parts
+  (#1627).
+- 3D Pocket refuses a depth that the shank or holder cannot reach, and names
+  tool clearance when the open area is too narrow (#1844, #1709).
+- A stock band narrower than the tool is named (#1655). A stock-source 2D Chamfer
+  that breaks into a part names the cause and the workaround (#1637).
+- Ring ramps keep their planned chords (#1612). Rim crossings need a distance
+  band, so near-trace wall wobble stays under check (#1669).
+
+### Importers
+- A STEP closed shell that meshes open imports as an incomplete model with its
+  hole named; operations on it are refused at the post (#1610).
+- Runaway STEP edge and swept-curve subdivisions are refused by name (#1545).
+- Closed inward STL and OBJ bodies are turned outward at import (#1672).
+
+### UI
+- The workbench rework: denser built-in themes (PR #1639).
+- The Browser View shows the machine's work envelope (#1567).
+- The WCS marker pick anchors on part corners and circle or slot centres (#1502).
+- Hovering a picked feature marks its row in the Geometry tab (#1519). Pick
+  buttons share one style with a clear armed state (#1728). The first Ctrl+click
+  on a second edge adds it (#1726).
+- Machine page inputs carry accessibility labels (#1119). The CamCraft icon shows
+  in the Windows taskbar (#1754).
+
+### MCP
+- New tools: `get_post_options` and `set_post_options` (#1534), cylinder
+  alignment and setup origin placement (#1586).
+
+### Packaging and docs
+- The Linux RPM builds again (#1719).
+- Each of the 44 operation reference sections has a toolpath picture (#1250).
+  The user guide is grouped by job stage (#1903).
+
+## Not exercised on a real control
+No real control ran the output of these post changes. The test goldens are
+regression records. Check the first program on the machine before cutting.
+- The decimal point on Fanuc-family words (#1836): no control ran with DPI=0 or
+  DPI=1. The behaviour comes from the published parameter documentation.
+- G76 with the finish allowance R (#417): no Fanuc control run. That run is
+  tracked in #1842. The threading repeat pass (#418): no controller run.
+- Setup-change retract and stop on the seven mill posts (#1647).
+- The Tormach lathe G30 approach (#1604): no PathPilot lathe run. The Tormach
+  mill repeated-tool skip (#1626): no PathPilot or physical control run.
+- grblHAL and TinyG work offsets (#1385).
+- Wire and sinker EDM: the angle-word taper (#1164) and the Side Burn wear
+  compensation (#1340) use synthetic fixtures. The Sodick ALC400G output (#1501)
+  was not run on a Sodick control.
+
+## Process changes
+Contributor and agent process only; no effect on the program. PROCESS_VERSION
+went from 65 to 76:
+- **66** (PR #1693, PR #1704): the MCP skill documents `fit_stock`; the batch
+  gate runs the kernel suites; `gate --only` and `gate --failed`.
+- **67** (PR #1757): the post-merge gate has its own runner label.
+- **68** (PR #1718): the MCP skill documents `detect_holes` skipped holes and the
+  Bore refusal.
+- **69** (PR #1722, PR #1695): the MCP skill lists the post-options, cylinder
+  alignment and setup origin tools.
+- **70** (PR #1737): the release gate builds once and runs one heavy step for
+  each test binary.
+- **71** (PR #1744): the MCP skill covers modular multi-piece tool bodies.
+- **72** (PR #1790): the release gate runs independent lanes up to four at a time.
+- **73** (PR #1830): AGENTS.md is shorter and in ASD-STE100; procedures moved to
+  the `gate`, `runners`, `release-cut`, `fork-sync` and `issue-claims` skills.
+- **74** (PR #1823, PR #1835, PR #1878): committed review artifacts are removed
+  and refused; the release plan has kernel heavy steps.
+- **75** (PR #1899, PR #1900): `merge-ready` needs evidence of an independent
+  review; the MCP skill documents the plasma workflow.
+- **76** (PR #1919): the MCP skill states the bounded Bore ring rule of
+  `detect_holes`.
+
+A fork syncs the process files at the start of its next session (`fork-sync`
+skill).
+
+## Known issues
+- No P1 or P2 issue was open at the start of the cut (2026-11-15T16:09Z), and
+  none was filed after it.
+- The pixel-snapshot lanes were skipped at this cut.
+
+---
+
+# CamCraft 0.20.0 (clean-room implementation)
+
+Released 2026-11-14.
+
+## Breaking
+- **Climb milling now runs climb on 2D Contour and 2D Chamfer** (#1555, PR #1577).
+  With the M3 spindle, an outside profile runs clockwise and an inside profile
+  runs counter-clockwise. Under control or wear compensation, climb posts G41
+  and conventional posts G42. The posted direction of every existing 2D Contour
+  and 2D Chamfer reverses, and G41 and G42 swap. A project that set climb off
+  to get climb milling now posts conventional. Check the first program you post
+  from an old project.
+- **Work offsets above G59 are saved by number** (#931, PR #1113). A setup can
+  use the offsets that its own post supports (Tormach: 7 to 9, G59.1 to G59.3).
+  Older builds cannot open a project that saves such an offset. A post that
+  cannot write an offset refuses it by setup name. It no longer posts G54.
+- **Programs stop between setups by default** (#1532, PR #1650). A program that
+  runs from one setup into the next now writes M0 with a comment that names the
+  next setup. "Between setups" in the post options chooses an optional stop,
+  running straight on, or one file per setup.
+- **Tormach mill programs end and lift differently** (#1594, #1596, PR #1600,
+  PR #1606). A program ends with `G53 G0 Z0` then `M30`, with no trailing G30.
+  Each tool change is followed by a `G53 G0 Z<safe>` lift before the first X/Y
+  move.
+
+A minor release headlined by **a Z clearance law for the posts**, **wire and
+sinker EDM in the UI**, **stricter gouge judgement of 2D operations against the
+parts in the stock**, **a hardened STEP importer**, and **a browser build that
+opens, saves and posts**. 120 pull requests merged since 0.19.0. Three fixes came in during the cut: #1692 (issue 1691), #1698 (issue 1697, the STEP bench meters truck's faces) and #1712 (issue 1706, test only: the heavy test of `shared_face_bodies` asked for a 3D Pocket that the product correctly refuses; the test now pins the refusal and generates the 3D Finish).
+
+## Highlights
+### Posts and G-code
+- Fanuc, Haas, Mazak, Doosan DNM, Sinumerik 840D and Heidenhain posts state the
+  section's clearance Z before the first X/Y traverse after each tool change.
+  grblHAL, TinyG, Carvera and Tormach do the same. A stream that states no
+  clearance or retract plane is refused by name (#1633, #1616, #1632).
+- The Carvera post lifts to the clearance height after M6, before the X/Y
+  traverse (#1616).
+- Work offsets are an index; each post writes its own word. The Setups page lists
+  the offsets of the setup's post, and MCP `set_work_offset` takes a 1-based
+  `index` (#931).
+- The Mazak post writes `S.. M3` or `M4`, and `M5`, not MOTON and MOTOFF (#1411).
+- The fanuc-lathe C-axis feed is floored, never rounded, over its cap (#1392).
+- Explain G-code reads a lathe post's own words: G98, G99, T0101 and G50 S
+  (#1399).
+- The whole-program post refuses by name when setups differ in End units (#1540).
+- New Sodick wire EDM post for 2-axis contours; taper and 4-axis are refused by
+  name (#617).
+- Drilling has a Ream cycle (G85 or an explicit feed-out chain) (#1445).
+- Circular posts rings as arcs, not 512 chords. A 6 mm hole drops from 74,131
+  moves to 417 (#1558).
+- New built-in machine Makera Z1 (#868). The Doosan DNM 5700 is a 3-axis machine
+  with full-stroke travel, and a separate rotary-table variant (#1433, #1410).
+
+### Gouge and collision checks
+- 2D Engrave, Trace, Slot, Trochoidal slot, Circular, Contour, Face, Chamfer,
+  Drill, Bore and Thread are judged against the parts in the stock, also when
+  the stock is their source. A cut into a part blocks the post (#1543, #1550,
+  #1593, #1607, #1631, #1635, #1641).
+- The post judges the parts beside each operation's source again at post time
+  (#1628). A legal stock-source Drill, Bore, Thread or cross drill in the
+  part's own modelled hole is no longer refused there (#1691).
+- A Slot or a Trochoidal slot that leaves its picks is refused by name (#1503,
+  #1504).
+- A Bore wider than three tool diameters is refused by name (#1556).
+- A milling setup whose WCS Z is tilted off the machine Z is refused (#1510).
+- Fixtures are judged against the carried stock's real shape in a flipped setup
+  (#1530). Model heights and Fit to Models measure parts, never fixtures
+  (#1529, #1538).
+- Lathe Facing on a grooved bar is no longer refused wrongly (#1408). Lathe chuck
+  collision solids never drop steel (#1470).
+- A 2D clearing no longer cuts across a part between two pieces of its area
+  (#1620). A Face with a last row on a rim vertex gets no false Gouge (#1659).
+
+### Operations
+- 2D Adaptive has a Trochoidal method (#1509). 2D Pocket can enter by plunge
+  down proved pre-drilled holes (#1449).
+- Contour has a user-set start point and exit point on closed contours (#1448,
+  #1473).
+- Wire EDM: skim passes with a condition per pass (#538), and 4-axis ruled
+  surfaces between an upper and a lower profile (#537).
+- Circular ramp entry rides the ring at the ramp angle (#1609).
+- Fixtures can generate 3-jaw, 4-jaw and collet lathe chucks (#1442).
+
+### Importers
+- STEP import refuses a closed shell that meshes open, a face whose tessellation
+  never converges, and any face the kernel cannot mesh, by name (#1573, #1536).
+- Three-fillet corner blends import closed (#1548). Rational B-spline thread
+  faces mesh in seconds at full fidelity (#1602).
+- A closed STEP solid wound inward is turned outward, and the import says so
+  (#1617). The per-face evaluation cap has measured headroom (#1568).
+- Solidcraft `.sc` bodies are read, and far-off coordinates are refused (#1456,
+  #1467).
+
+### UI
+- Setup, Stock, Tool list, Fixtures and Machine pages share one layout (#1440).
+- Setup alignment composes on the current pose (#738). Two orientation dropdowns
+  replace the old section (#771). Circle and arc centres can be picked as points
+  (#692).
+- Operation picking is a mode; other tabs lock the selection (#1514). Edge picks
+  are one edge per click (#1505).
+- Sinker EDM machine setup in the Machine window (#548).
+- Drop a STEP, STL or OBJ file on the window to import it (#1450). A failed
+  project open keeps the current document (#1613).
+- The browser build opens files with a picker, saves, and posts as downloads
+  (#31, #1431). The logotype is the window icon and the package icon (#1459,
+  #1461).
+
+### MCP
+- `set_work_offset` takes a 1-based `index` and replies with `index` and `name`.
+- New tool `fit_stock`. Chuck fixtures, pick points and the contour start and
+  exit points are available through MCP.
+
+### Tooling
+- The cut runs on a self-hosted Linux runner, and a post-merge gate runs on
+  main (#1413, #1451). PR builds run on `camcraft-pr-test` runners (#1420).
+- `cargo xtask` selects and runs directory test suites (#927).
+
+## Not exercised on a real control
+No real control ran the output of these post changes. The test goldens are
+regression records. Check the first program on the machine before cutting.
+- The clearance Z law on the Fanuc family, Haas, Mazak, Doosan DNM, Sinumerik
+  840D and Heidenhain (#1636, #1633). A G43.4 stream with an unknown rotary pose
+  was not run.
+- The clearance Z law on grblHAL and TinyG (#1632).
+- The Carvera post (#1632, #1661): after `M6` it writes `G0 Z` to the clearance
+  height before the first X/Y traverse. This follows a reading of the public
+  firmware source. No real Carvera ran it.
+- Setup stops and "Between setups" (#1650); the Fanuc and PathPilot programs are
+  checked by text only.
+- The Tormach clearance state, partly (#1618): the refusal path was not run on a
+  control.
+- The Sodick wire EDM post (#617). Its program header says it is not verified.
+- The Ream cycle (#1445) and the fanuc-lathe C-axis feed cap (#1392).
+
+## Process changes
+Contributor and agent process only; no effect on the program. PROCESS_VERSION
+went from 62 to 65:
+- **63** (#1488): the merging session is the one writer of `PROCESS_VERSION`;
+  process PRs no longer edit it.
+- **64** (#1581): the PR test job runs on any `camcraft-pr-test` runner, Linux or
+  macOS. A fork pulls the process files.
+- **65** (#1645): issues and comments are written in ASD-STE100 Simplified
+  Technical English. A fork pulls the process files and reads AGENTS.md again.
+
+## Known issues
+- No P1 or P2 issue was open at the start of the cut, and none was filed after it.
+- No installer is built on the cut machine; the zip is the release, and the
+  published artifact is built by the release workflow from the tag.
+
+---
+
+# CamCraft 0.19.0 (clean-room implementation)
+
+Released 2026-11-13.
+
+## Breaking
+- **The document's unit is the unit every post writes** (#902, PR #981).
+  Posted programs are in the document's mm or inch (G21/G20, Siemens 840D
+  G710/G700), never the machine file's unit. The grblHAL and TinyG posts follow
+  it; the Carvera, Heidenhain and Fanuc Lathe posts refuse an inch document by
+  name. Older projects open on the unit they posted in. MCP gains `set_units`.
+  Check the first program you post on each machine.
+- **Thread milling is reworked** (#894, PR #1005). Thread mills are tool kinds
+  (multi-form and single-form), and the Thread operation cuts internal threads
+  by helical interpolation (radial passes, climb or conventional, right or left
+  hand) and posts G2/G3 with Z. A Thread operation no longer accepts a Tap-kind
+  tool, so projects that used one need a thread mill.
+- **Air coolant and machine default coolant** (#869, PR #961). An operation can
+  ask for Air (M7 air blast), resolved from the machine's coolant list or
+  refused by name. A new operation starts on its machine's default coolant (Air
+  on the Carvera), and the Carvera post posts the operation's own coolant
+  instead of the first Flood entry. The machine editor adds coolants with their
+  codes and no longer saves a coolant without one.
+- **Project file format is v59** (#1056, PR #1341). Projects saved before mesh
+  fidelity was recorded (v58 or older) open with every model marked "fidelity
+  unknown", and their operations are refused by name until the model is
+  re-imported. Files saved by 0.19.0 do not open in 0.18.0.
+
+A minor release headlined by **wire EDM and sinker EDM**, **more turning**
+(threading infeed, workholding rpm limits, lathe holder bodies), **new posts**
+(grblHAL, TinyG, generic ISO wire and sinker EDM), **a much larger MCP surface**
+and **stricter verification** of imported STEP models. 237 pull requests merged
+since 0.18.0.
+
+## Highlights
+### Wire EDM
+- Machine files can declare `wire_edm` and `sinker_edm` machines with an `edm`
+  section and an EDM condition table; a program whose operation its setup's
+  machine cannot run is refused at post (#530, #560).
+- 2-axis Wire Contour: kerf offset to a stated punch or die side, start hole,
+  corner refusal, open runs cut in from the stock's edge, tabs with a tab
+  cut-off (an unheld slug is refused), no-core burnout by offset rings, and
+  constant taper with posed moves and max-angle and U/V refusals.
+- Wire verification: kerf, threading and slug laws block the post.
+- A tool-less Wire Contour page and machine section in the UI.
+
+### Sinker EDM
+- Sinker burn to depth with one electrode, rough and finish with undersize from
+  their conditions, orbit patterns (circular, vector, planetary), side burn,
+  electrode wear compensation in Z, and an electrode generated from a cavity's
+  picked faces (`electrode_from_faces`).
+
+### Turning
+- Threading infeed method with a decreasing-depth pass schedule (#516).
+- A setup's workholding max rpm caps G96 and refuses G97 above it.
+- The index swing of any work-turning rotary is judged about a level line, and
+  a rotary subplate raises the A centerline.
+- Lathe holder bodies can be placed from the tool editor and over MCP, are read
+  on their own side of the axis, and are judged against chuck jaws and standing
+  steel. The simulation draws the turning tool's lathe body.
+
+### Milling, threads and finishing
+- External threads on a boss at the operation level, and thread-milling pass
+  control (decreasing passes, finish and spring passes, depth allowance).
+- Finish 3D gains a land model that fills closed openings on the drive surface.
+- Part alignment from two perpendicular edge picks (full 3D frame), the WCS from
+  any set of feature picks, and the WCS anchored on a picked circle's centre.
+- Tools carry part number, vendor, coating, helix angle, notes and cutting data
+  per work material; the setup sheet tool list prints them. Tool library import
+  has add, update and replace modes, and `.camtools` carries the tool body.
+- A self-centering grip vise jaw, and editing and re-fitting a placed mod vise
+  pair.
+
+### Posts
+- New posts: grblHAL (3-axis mill), Synthetos TinyG (3-axis mill), generic ISO
+  wire EDM and generic ISO sinker EDM (every EDM code is machine data). Sienci
+  AltMill machines run on the grblHAL post.
+- Fanuc Lathe writes inch programs; the document's program number and comment
+  are written per dialect. A user's post script states the machine kinds it
+  serves. Rigid tapping is refused by name at the program gate when the machine
+  does not state it.
+- An opt-in **Explain G-code** option writes plain-English comments on blocks
+  for posts that declare a comment form; other posts are refused by name.
+
+### MCP tools
+`set_tool_holder`, `list_holder_library`, `rename_operation`,
+`reorder_operation`, `set_operation_coolant`, `set_setup_post`, `edit_machine`,
+`edit_tool`, `set_wcs_from_features`, `set_wcs_circle_centre`, `lay_part_on_face`,
+`set_tool_number`, `set_work_material`, `apply_cutting_data`, `delete_tool`,
+`set_operation_setup`, `delete_setup`, `electrode_from_faces`, `set_units`, and
+`add_operation` for the Wire Contour with no tool. `pick_in_box` takes a
+`through` argument. The skill documents every registered tool.
+
+### Verification and collision
+- A STEP model imported coarser than 0.005 mm is flagged as reduced fidelity:
+  gouge checks are tightened by the excess and its operations are refused at the
+  post once it is too coarse. The facet budget is a setting carried with the
+  import. A STEP import can go through solidcore behind a seam, and a machining
+  mesh with a measured deviation is available from it.
+- A from-model stock's source is judged unless marked raw stock only. The rapid
+  law reads the stock under the rapid, and the mid-turn sweeps read the whole
+  turn rather than five poses.
+- Refusal ghosts show where a part-way refusal stopped.
+
+### UI
+- The Setups page lists setups only; alignment, work offset, workholding and
+  tools live on the setup. A viewport bottom control bar holds the view buttons,
+  and a "Pick through" toggle lets picks reach the far side.
+- The G-code window has syntax colour, selectable text, a highlighted trace line
+  and click-to-trace. Error text is selectable and copyable everywhere.
+- Original SVG operation icons, tool kind glyphs and status badges, with an
+  SVG-to-PNG icon pipeline. The tool editor edits each milling tool kind by its
+  parameters. Viewport origin gizmos wear their names.
+- The browser (wasm32) build is published under `/app/` on the project site.
+
+## Fixes
+91 fixes landed; the ones most likely to matter when posting:
+- Posts: canned-cycle posts traverse between holes at the stream's hop and seat
+  an off-seat cycle by the same law; Sinumerik writes work offsets 5 and 6 as
+  G505 and G506; an absent rotary takes no angle word; lathe posts state G97
+  before a section that is not constant surface speed; a milling operation is
+  never posted on a lathe's work spindle; a cut with the spindle stopped, or a
+  canned cycle with no feed, is refused in every spindle mill dialect; a touch
+  probe section starts no coolant; a post that does not serve its setup's machine
+  kind is refused by name; the sinker ISO post writes the document's unit.
+- Rotary and A-axis: posts cap the feed of a block that turns a rotary at the
+  machine's stated rotary rate and linear feed (Fanuc, Doosan DNM, Fanuc Lathe;
+  #885), and the Doosan DNM post writes the first A word of every operation, so
+  an A0 operation after a tilted one no longer cuts at the old angle (#950).
+- Swarf: the mid-turn sweep no longer refuses a blade-lying link that turns B
+  through vertical (#1404).
+- Verification: a tool cutting into a flat is a gouge; a necked tool is judged at
+  its drawn neck; non-finite or zero tool axes are refused; crossing checks read
+  a shared vertex a rounding apart as a touch; the hole-wall excuse and tilted
+  band laws were corrected.
+- Import and project: a STEP record nested past 64 parentheses is refused by name
+  instead of overflowing the stack; STEP parse errors name the entity and line;
+  opening a project over MCP replaces the document.
+- Adaptive roughing no longer drops a level to Offset rings because the entry
+  orbit's closing point sat a rounding error off its start (#980).
+- UI: no console window on a Windows double-click, native dialogs are owned by
+  the shell window, and the plasma refusal reads plainly.
+
+## Not exercised on a real control
+These were checked by simulation, recorded streams and tests only, not on a
+machine or a vendor control:
+- The generic ISO wire EDM post and the generic ISO sinker EDM post are
+  synthetic: their codes are machine data, not taken from a real control.
+- Wire taper, tabs, no-core burnout and 4-axis wire as merged, and the sinker
+  orbit, side burn and wear compensation moves.
+- The turning thread infeed plan (#516).
+- The rotary feed cap (#885) and the Doosan DNM A-state change (#950) merged
+  without a PathPilot Hub run or a real Doosan control.
+- The grblHAL and TinyG posts, and the Sienci AltMill machine files.
+- Thread milling by helical interpolation was verified in simulation only.
+
+## Process changes
+Contributor and agent process only; no effect on the program. PROCESS_VERSION
+went from 16 to 54 (numbers 23 and 27 were not announced):
+- **17** (#1117): the `gh-issues` skill is in the repo.
+- **18, 20, 22, 25, 28, 34, 35, 40, 41, 43-53**: camcraft-mcp skill rows for new
+  MCP tools and arguments.
+- **19, 21, 33, 37, 38, 42**: xtask gate maps and the quick gate follow moved
+  modules, changed post scripts and machine files, `#[path]` files, and the
+  motion generator; probe and arc post suites and twelve other test files moved
+  into the crates that own them.
+- **24, 26** (#1116, #1179): `cargo xtask icons` rasterises the SVG masters.
+- **29** (#1193): the priority scale is `P1`..`P9`.
+- **30** (#1214): the gate reports VOID when the checkout moves during a run.
+- **31, 32** (#1227, #1321): refresh only at merge time; any collaborator's
+  review counts and both may merge.
+- **36, 39** (#991, #1225): code placement rules (`app` holds the document, new
+  crate dependencies need a decision) and `crates/ui/AGENTS.md`.
+- **54** (#1391): the cut ends once the Pages job is green and the site shows the
+  new version.
+
+## Known issues
+- The browser build is a first rung; the file picker is still owed.
+- No installer is built on the cut machine; the zip is the release and the
+  published artifact is built by the release workflow from the tag.
+
+---
+
 # CamCraft 0.18.0 (clean-room implementation)
 
 Released 2026-11-12.

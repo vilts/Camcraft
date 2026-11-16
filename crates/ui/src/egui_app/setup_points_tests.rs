@@ -172,3 +172,28 @@ fn coincident_points_grey_apply_out_and_one_draft_collects_at_a_time() {
     crate::axis_pick::arm(h.state_mut(), "Setup1", camcraft_app::pick::InPlaneAxis::Y);
     assert!(h.state().points_pick.is_none());
 }
+
+/// #738: the row counts its points - "1 point selected", "2 points
+/// selected" - and each point line says where it is; no label of the row
+/// and no refusal carries a feature's internal id.
+#[test]
+fn the_pick_status_counts_the_points_and_never_shows_an_id() {
+    let mut h = harness();
+    h.get_by_label("Pick three points").click();
+    h.run();
+    let a = corner(h.state(), [0.0, 0.0, 10.0]);
+    crate::points_pick::take(h.state_mut(), a);
+    h.run();
+    assert!(h.query_by_label_contains("1 point selected").is_some(), "one point, singular");
+    let b = corner(h.state(), [20.0, 0.0, 10.0]);
+    crate::points_pick::take(h.state_mut(), b);
+    h.run();
+    assert!(h.query_by_label_contains("2 points selected").is_some(), "two points, plural");
+    assert!(h.query_by_label_contains("Point 2: on 'part' (20.000, 0.000, 10.000) mm").is_some(), "where point 2 is");
+    let face = top_face(h.state());
+    crate::points_pick::take(h.state_mut(), face);
+    h.run();
+    assert!(h.state().status.contains("is a face"), "{}", h.state().status);
+    assert!(!h.state().status.contains("0x"), "no id on the status line: {}", h.state().status);
+    assert!(h.query_all_by_label_contains("0x").next().is_none(), "no id on the row");
+}

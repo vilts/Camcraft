@@ -84,6 +84,8 @@ pub enum Overlay {
     Cut,
     Pick,
     Hover,
+    /// The Geometry-list row hover (#1507): a hot magenta, apart from the violet pick and the yellow viewport hover.
+    RowHover,
 }
 
 /// An overlay ink on a ground: the dark consts as they were, or the
@@ -101,6 +103,8 @@ pub fn overlay_ink(o: Overlay, light: bool) -> [f32; 3] {
         (Overlay::Pick, true) => [0.45, 0.15, 0.62],
         (Overlay::Hover, false) => crate::boundary_viz::HOVER_RGB,
         (Overlay::Hover, true) => [0.70, 0.40, 0.00],
+        (Overlay::RowHover, false) => [1.00, 0.25, 0.75],
+        (Overlay::RowHover, true) => [0.85, 0.00, 0.50],
     }
 }
 
@@ -198,7 +202,15 @@ pub fn dimmed(base: [f32; 3], dim: f32, ground: Color32) -> [f32; 3] {
     if !light_ground(ground) {
         return [base[0] * dim, base[1] * dim, base[2] * dim];
     }
+    faded(base, LIGHT_DIM_KEEP, ground)
+}
+
+/// `base` faded toward `ground`, keeping `keep` of its own colour: the
+/// light ground's half of [`dimmed`], open to a caller that needs its own
+/// share (#871: the refusal ghost keeps more, so it still clears 3:1).
+#[must_use]
+pub fn faded(base: [f32; 3], keep: f32, ground: Color32) -> [f32; 3] {
     let g = [ground.r(), ground.g(), ground.b()].map(|c| f32::from(c) / 255.0);
-    let k = LIGHT_DIM_KEEP;
+    let k = keep.clamp(0.0, 1.0);
     [0, 1, 2].map(|i| base[i] * k + g[i] * (1.0 - k))
 }

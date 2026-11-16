@@ -25,7 +25,7 @@ fn no_tool_routes_to_the_tool_library() {
 }
 
 #[test]
-fn a_kind_the_machine_cannot_run_opens_the_workspace_list() {
+fn a_kind_the_machine_cannot_run_opens_the_machine_page() {
     let mut state = State::new();
     state.pending.push_back(CommandKind::LoadBuiltinMachine("Lathe".into()));
     state.drain_actions();
@@ -37,8 +37,7 @@ fn a_kind_the_machine_cannot_run_opens_the_workspace_list() {
     let pocket = Cmd::Create(kind(camcraft_app::operation::OpType::Pocket));
     assert_eq!(gate_route(pocket, &state), Some(GateRoute::Machine));
     follow_gate(pocket, &mut state);
-    assert!(state.ribbon_mode_open, "the machine door opens on its workspace list");
-    assert!(state.status.ends_with("pick a workspace"), "{}", state.status);
+    assert!(state.status.ends_with("opened the Machine page"), "{}", state.status);
 }
 
 #[test]

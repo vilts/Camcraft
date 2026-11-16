@@ -610,6 +610,74 @@
         "feed": 2500.0,
         "center_cutting": false
       }
+    },
+    {
+      "name": "EDM-E10X6",
+      "definition": {
+        "kind": "electrode",
+        "diameter": 10.0,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 6.0,
+        "flute_len": 30.0,
+        "shank_d": 10.0,
+        "shank_len": 15.0,
+        "holder_d": 0.0,
+        "holder_len": 0.0,
+        "material_group": "graphite",
+        "rpm": 0.0,
+        "feed": 50.0,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "TM-0600-P125",
+      "definition": {
+        "kind": "thread_mill",
+        "diameter": 6.0,
+        "corner_r": 0.0,
+        "tip_angle": 60.0,
+        "pitch": 1.25,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 12.5,
+        "shank_d": 6.0,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 8000.0,
+        "feed": 400.0,
+        "tool_material": "carbide",
+        "flutes": 3,
+        "center_cutting": false
+      }
+    },
+    {
+      "name": "TMS-0600-P050-150",
+      "definition": {
+        "kind": "thread_mill_single",
+        "diameter": 6.0,
+        "corner_r": 0.0,
+        "tip_angle": 60.0,
+        "pitch": 1.5,
+        "pitch_min": 0.5,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 2.0,
+        "shank_d": 4.0,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 8000.0,
+        "feed": 300.0,
+        "tool_material": "carbide",
+        "flutes": 3,
+        "center_cutting": false
+      }
     }
   ]
 }

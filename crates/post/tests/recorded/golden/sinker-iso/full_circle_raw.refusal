@@ -1,0 +1,3 @@
+; sinker-iso.cps refused full_circle_raw: 2 warning(s), the program is never released
+warning: the generic sinker post writes sinker EDM blocks - the machine is not declared a sinker EDM
+warning: operation Ring: states 8000 rpm - an electrode turns no spindle, and this post writes no spindle word

@@ -1,0 +1,30 @@
+(synthetic program, posted for syntax conformance)
+%
+(VMC 3-AXIS)
+G21
+(OPERATION: Ream - G54)
+G17 G90 G54 G40 G49 G80
+(T3 REAMER 8H7 - D8)
+T3 M6
+G43 H3
+S400 M3
+M8
+G0 Z10.
+G0 X10. Y10.
+G0 X10. Y10. Z2.
+G99
+G85 X10. Y10. Z-12. R2. F150
+G80
+G0 X10. Y10. Z10.
+G0 X30. Y10. Z10.
+G0 X30. Y10. Z2.
+G99
+G85 X30. Y10. Z-12. R2. F150
+G80
+G0 X30. Y10. Z10.
+M9
+M5
+G91 G28 Z0
+G28 X0 Y0
+M30
+%

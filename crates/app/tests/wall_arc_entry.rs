@@ -8,9 +8,9 @@
 //! Every path must verify silent - against the part SOLID, which is how
 //! the blind bore's ring below its floor stopped passing (the depth law).
 //!
-//! Gate map (M11.1): covers app::commands, app::machining2d (contour
+//! Gate map (M11.1): covers app::commands, motion::machining2d (contour
 //! wall arc, seam leads, level link, depth ladder), app::operation,
-//! app::verify, app::cl.
+//! sim::verify, cl::cl.
 
 use camcraft_app::cl::{Move, MoveKind, Toolpath};
 use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, ImportModel, SetStock};
@@ -319,6 +319,7 @@ fn verify_wall(t: &Toolpath, region: &Region) -> Vec<camcraft_app::verify::Warni
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(t, &cx)
 }

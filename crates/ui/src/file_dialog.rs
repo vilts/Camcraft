@@ -3,8 +3,9 @@
 //! Native builds forward to rfd's synchronous dialog, unchanged. A
 //! wasm32 build has no synchronous dialog (the browser only offers an
 //! async `<input type=file>`), so there the pickers answer `None` - the
-//! same "cancelled" the user gets from closing the dialog - and log why,
-//! until the browser shell brings an async picker.
+//! same "cancelled" the user gets from closing the dialog - and log why.
+//! Open model and Open project do not come here in a browser: they ask
+//! `crate::file_pick`'s async picker instead (#31).
 //! Provenance: our own seam; rfd's builder API from its public docs.
 
 use std::path::{Path, PathBuf};
@@ -96,6 +97,34 @@ impl FileDialog {
     }
 }
 
+// The shell's window, published once it exists: rfd's dialogs take it as
+// their owner, so a picker opens in front of the app instead of behind it.
+// The window is `!Send`, so this is a thread-local rather than a `OnceLock`
+// - every picker runs on the thread that owns it.
+#[cfg(not(target_arch = "wasm32"))]
+thread_local! {
+    static PARENT: std::cell::RefCell<Option<std::sync::Arc<winit::window::Window>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Publish the window the native dialogs belong to, once it exists. Later
+/// calls are ignored: the shell opens one window.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn set_parent(window: &std::sync::Arc<winit::window::Window>) {
+    PARENT.with(|p| {
+        let mut p = p.borrow_mut();
+        if p.is_none() {
+            *p = Some(window.clone());
+        }
+    });
+}
+
+/// The published window, if the shell has opened one on this thread.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn parent() -> Option<std::sync::Arc<winit::window::Window>> {
+    PARENT.with(|p| p.borrow().clone())
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 mod imp {
     use super::FileDialog;
@@ -114,6 +143,14 @@ mod imp {
         }
         if let Some(name) = d.file_name {
             out = out.set_file_name(name);
+        }
+        // #1067: an unowned dialog can open behind the app window, and an
+        // owned one still follows an owner that is not the foreground window
+        // (a shell launched from a terminal). Raise the owner first, then
+        // hand the dialog to it.
+        if let Some(window) = super::parent() {
+            window.focus_window();
+            out = out.set_parent(&*window);
         }
         out
     }

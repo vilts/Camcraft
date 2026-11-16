@@ -46,9 +46,13 @@ pub struct ChamferParams {
     pub top_z: f64,
     pub feed: f64,
     pub plunge_feed: f64,
-    /// Canonical (material-on-the-left) travel; conventional reverses
-    /// each loop (trace's law, same words).
+    /// Climb milling under M3 (#1555): the material stays on the RIGHT
+    /// of travel - a boss edge rides clockwise, a bore edge
+    /// counter-clockwise; conventional reverses each loop.
     pub climb: bool,
+    /// The picked region is a bore's air (Side Inside), not the part's
+    /// material: which side of each stored loop the material stands on.
+    pub inside: bool,
 }
 
 impl ChamferParams {
@@ -114,11 +118,10 @@ pub fn chamfer(region: &crate::geo2d::Region, p: &ChamferParams) -> Result<Toolp
     }
     let mut passes: Vec<Vec<Point2>> = Vec::with_capacity(loops.len());
     for l in &loops {
-        let mut pass: Vec<Point2> = if p.climb {
-            l.points().to_vec()
-        } else {
-            l.points().iter().rev().copied().collect()
-        };
+        // A stored loop keeps its region on the left: the material for a
+        // boss edge (climb reverses it), the bore's air for an Inside
+        // pick (climb keeps it) - material right of travel either way.
+        let mut pass: Vec<Point2> = super::ring::walked(l.points(), p.climb == p.inside, false);
         if let Some(&start) = pass.first() {
             pass.push(start);
         }

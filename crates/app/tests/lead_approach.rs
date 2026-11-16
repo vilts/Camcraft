@@ -12,7 +12,7 @@
 //!
 //! Gate map (M11.3): covers app::operation (params, stamp, sane, links,
 //! generate), app::project (approach DTO, tool DTO), app::commands,
-//! app::verify, app::posting.
+//! sim::verify, app::posting.
 
 use camcraft_app::cl::{MoveKind, Toolpath};
 use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, ImportModel, SetStock};
@@ -58,6 +58,7 @@ fn contour_op(lead: Lead, links: Links) -> OpParams {
 /// between passes, top = model top.
 fn pocket_op(links: Links) -> OpParams {
     OpParams::Pocket {
+        blend_radius: None,
         stepover: 2.4,
         stock_to_leave: 0.0,
         clearance_z: Height::of(HeightReference::TopOfStock, 20.5),
@@ -97,6 +98,16 @@ fn user_job(tool_name: &str, src_entity: bool, params: OpParams) -> (World, Tool
     let warns = tp.warnings.iter().map(|w| format!("{w:?}")).collect();
     let path = tp.path.clone();
     (world, path, warns)
+}
+
+/// The warnings of the user's stock-source pocket. Since #1554 (PR
+/// #1656) the stock as the source clears the stock around the part and
+/// stays off the user's part, so the keep law (#1603) finds no gouge -
+/// asserted here, and the entry laws this suite reads are judged on the
+/// warnings that remain.
+fn beside_the_cut_part(warns: Vec<String>) -> Vec<String> {
+    assert!(!warns.iter().any(|w| w.starts_with("Gouge")), "the stock-source pocket stays off the user's part: {warns:?}");
+    warns
 }
 
 fn with(a: Approach) -> Links {
@@ -156,6 +167,7 @@ fn every_lead_option_on_the_users_part_verifies_silent() {
 fn the_reported_keep_down_helix_pocket_enters_every_level_once() {
     let links = Links { transition: Some(Entry3D::Helix), helix_pitch: 1.0, level: Link::KeepDown, ..Links::PLANAR };
     let (_w, t, warns) = user_job("EM-0600-4FL", false, pocket_op(links));
+    let warns = beside_the_cut_part(warns);
     assert!(warns.is_empty(), "{warns:?}");
     let helix_ends: Vec<usize> = (1..t.moves.len())
         .filter(|&i| {
@@ -227,6 +239,7 @@ fn the_horizontal_arc_entry_on_the_users_pocket_verifies_silent() {
             *e = entry;
         }
         let (_w, t, warns) = user_job("EM-0600-4FL", false, op);
+        let warns = beside_the_cut_part(warns);
         assert!(warns.is_empty(), "{entry:?}: {warns:?} / {:?}", t.notes);
         assert!(t.is_chained() && t.all_finite());
         let first = t.moves.iter().find(|m| m.kind == MoveKind::Feed && m.from.z == m.to.z).expect("a cut");

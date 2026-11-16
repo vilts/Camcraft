@@ -22,7 +22,7 @@
 
 use super::per_op::{sanitise, write_all};
 use super::{
-    file_stem, join_streams, op_streams, options_value, post_options, script_of, verification_report, viewer_map,
+    file_stem, join_streams, script_of, verification_report, viewer_map,
     wcs_slot, Posted,
 };
 use crate::machine::{check_ops, Machine, MachineCheck};
@@ -83,6 +83,18 @@ fn active(world: &World) -> Mount {
 /// machine alone (a caller handing its own script).
 pub(super) fn single(world: &World, by_post: bool) -> Result<Mount, String> {
     let mounts = program_mounts(world, by_post);
+    // #1532: "One file per setup" asks a file per setup - one file
+    // cannot hold two, so the single-file post refuses and says how.
+    let per_setup = super::setup_change::split(world, mounts.clone());
+    if mounts.len() <= 1 && per_setup.len() > 1 {
+        let names: Vec<String> = per_setup.iter().map(Mount::label).collect();
+        return Err(format!(
+            "Between setups is set to One file per setup, and the program holds {} setups ({}) - \
+             post it as one file per setup, or choose another Between setups",
+            per_setup.len(),
+            names.join("; ")
+        ));
+    }
     if mounts.len() > 1 {
         let names: Vec<String> = mounts.iter().map(Mount::label).collect();
         return Err(format!(
@@ -168,7 +180,8 @@ pub fn post_mounts_script(world: &World, out_path: &Path, cps: &str) -> Result<V
 }
 
 fn post_mounts_with(world: &World, out_path: &Path, cps: Option<&str>) -> Result<Vec<PostedMount>, String> {
-    let mounts = program_mounts(world, cps.is_none());
+    // #1532: "One file per setup" writes each setup as its own mount's file.
+    let mounts = super::setup_change::split(world, program_mounts(world, cps.is_none()));
     if mounts.len() <= 1 {
         let posted = match cps {
             None => super::post_setup(world, out_path)?,
@@ -193,15 +206,36 @@ fn post_mounts_with(world: &World, out_path: &Path, cps: Option<&str>) -> Result
 fn post_each(world: &World, out_path: &Path, cps: Option<&str>, mounts: Vec<Mount>) -> Result<Vec<PostedMount>, String> {
     // Every script first: a post that cannot be read refuses before
     // anything is judged, as the single-file post does.
-    let mut scripts: Vec<String> = Vec::with_capacity(mounts.len());
+    let mut scripts: Vec<(Option<String>, String)> = Vec::with_capacity(mounts.len());
     for m in &mounts {
         scripts.push(match cps {
-            Some(c) => c.to_owned(),
-            None => script_of(&m.post)?.1,
+            Some(c) => (None, c.to_owned()),
+            None => script_of(&m.post).map(|(label, text)| (Some(label), text))?,
         });
     }
-    let streams = op_streams(world)?;
-    let mut report = verification_report(world);
+    let streams = super::op_streams_by(world, cps.is_none())?;
+    // #1190: each mount's own script opens only what a lathe may run;
+    // #1232: and writes only for a machine kind it serves.
+    let mut unserved = Vec::new();
+    for (m, (label, cps)) in mounts.iter().zip(&scripts) {
+        let own: Vec<&str> = streams
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .filter(|name| model::find_by_name(world, name).is_some_and(|e| member(world, &e, &m.setups)))
+            .collect();
+        crate::lathe_voice::at_post(world, own.iter().copied(), cps, label.as_deref())?;
+        unserved.extend(super::serves::refusal(world, &m.setups, &own, &m.machine, cps, label.as_deref())?);
+    }
+    // #1174: an explicit script is the dialect every op posts through;
+    // otherwise each op's own mount's post (the scripts read above).
+    let mut report = match cps {
+        Some(c) => {
+            let voice = crate::post::dialect::work_voice(c).map_err(|e| format!("post engine: {e}"))?;
+            crate::posting::verification_report_by(world, &|_| voice)
+        }
+        None => verification_report(world),
+    };
+    report.problems.splice(0..0, unserved);
     for m in &mounts {
         report.problems.extend(wcs_slot::shared_word_problems_in(world, Some(&m.setups)));
     }
@@ -210,16 +244,19 @@ fn post_each(world: &World, out_path: &Path, cps: Option<&str>, mounts: Vec<Moun
     }
     let dir = out_path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let program = out_path.file_stem().and_then(|s| s.to_str()).unwrap_or("program");
-    let options = options_value(post_options(world));
+    let options = super::program_options(world);
+    // #258: each mount's file is a whole program of its own, numbered as
+    // the single-file post numbers it (the document's number, or O0001).
+    let id = super::document_program_id(world, 1)?;
     let mut files = Vec::with_capacity(mounts.len());
-    for (k, (mount, cps)) in mounts.into_iter().zip(scripts).enumerate() {
+    for (k, (mount, (_, cps))) in mounts.into_iter().zip(scripts).enumerate() {
         let own: Vec<(String, Vec<cnc::Record>)> = streams
             .iter()
             .filter(|(name, _)| model::find_by_name(world, name).is_some_and(|e| member(world, &e, &mount.setups)))
             .cloned()
             .collect();
         let records = join_streams(own);
-        let out = engine::run_with(&cps, &machine_value_for(&mount.machine), &cnc::serialize(&records), &options)
+        let out = engine::run_program_with(&cps, &machine_value_for(&mount.machine), &cnc::serialize(&records), &options, &id)
             .map_err(|e| format!("{}: post engine: {e}", mount.label()))?;
         if !out.warnings.is_empty() {
             return Err(format!(

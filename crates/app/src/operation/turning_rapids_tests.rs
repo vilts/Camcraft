@@ -324,3 +324,53 @@ fn a_radial_exit_inside_a_longer_bar_is_refused_unless_it_is_a_feed() {
     assert_eq!(convicted_in(path(MoveKind::Rapid), 24.0), vec![Warning::RapidInStock { at: 2 }]);
     assert!(convicted_in(path(MoveKind::Feed), 24.0).is_empty());
 }
+#[test]
+fn the_margin_generation_hands_the_law_shrinks_with_a_coarse_models_excess() {
+    // #904: `generate` hands the meridian laws `tightened(GOUGE_TOL,
+    // excess)`. The margin excuses a graze twice over - the nose disc
+    // shrinks by it and so does the bar's skin - so an axial rapid
+    // beside the r 10 bar is convicted from further out on a coarse
+    // model, by twice the excess.
+    use crate::operation::fidelity_law::tightened;
+    use crate::operation::material::GOUGE_TOL;
+    let p = Point3::new;
+    let params = OpParams::ProfileRough {
+        tolerance: 0.05,
+        clearance_z: crate::operation::Height::fixed(25.0),
+        top_z: crate::operation::Height::fixed(16.0),
+        bottom_z: crate::operation::Height::fixed(-16.0),
+        stepdown: 0.8,
+        stock_to_leave: 0.25,
+        feed: 150.0,
+        plunge_feed: 80.0,
+    };
+    let (part, stock) = (cylinder(6.0, -16.0, 16.0), cylinder(10.0, -16.0, 16.0));
+    let hit = |r: f64, excess: f64| {
+        let path = Toolpath { moves: vec![mv(MoveKind::Rapid, p(r, 0.0, 25.0), p(r, 0.0, 5.0))], cycles: Vec::new(), notes: Vec::new(), comps: Vec::new(), threads: Vec::new(), probes: Vec::new(), breaks: Vec::new(), plasma: None };
+        let margin = tightened(GOUGE_TOL, excess);
+        let cx = Meridian { part: &part, stock: Some(&stock), nose: 0.8, margin, z_tol: 1e-6, drills: &[], band: 0.0, body: None, ahead: &[], outward: None };
+        let mut warns = Vec::new();
+        judge_axial_rapids(&params, &path, &cx, &mut PriorCell::new(None), &mut warns);
+        warns == vec![Warning::RapidInStock { at: 0 }]
+    };
+    // The smallest radius the law leaves a rapid alone at.
+    let clear_from = |excess: f64| {
+        let (mut lo, mut hi) = (10.5f64, 11.0f64);
+        assert!(hit(lo, excess) && !hit(hi, excess));
+        for _ in 0..30 {
+            let mid = 0.5 * (lo + hi);
+            if hit(mid, excess) { lo = mid } else { hi = mid }
+        }
+        hi
+    };
+    assert_eq!(tightened(GOUGE_TOL, 0.0), GOUGE_TOL);
+    assert!((tightened(GOUGE_TOL, 0.007) - 0.003).abs() < 1e-12);
+    assert_eq!(tightened(GOUGE_TOL, 0.02), GOUGE_TOL, "past the bound: untightened, the gate refuses");
+    let (full, coarse) = (clear_from(0.0), clear_from(0.007));
+    assert!((coarse - full - 2.0 * 0.007).abs() < 1e-6, "stricter by twice the excess: {full} -> {coarse}");
+    // Between the two: silent today, a rapid in stock on the coarse model.
+    let between = 0.5 * (full + coarse);
+    assert!(!hit(between, 0.0) && hit(between, 0.007));
+    // Past the bound the law reads exactly as at full fidelity.
+    assert!((clear_from(0.02) - full).abs() < 1e-9);
+}

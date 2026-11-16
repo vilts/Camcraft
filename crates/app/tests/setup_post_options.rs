@@ -21,7 +21,7 @@ use camcraft_app::commands::{
 };
 use camcraft_app::operation::{AfterOperation, Height, OpParams, SrcRef};
 use camcraft_app::post::cnc;
-use camcraft_app::schema::{PostOptions, ThreadingOutput};
+use camcraft_app::schema::{BetweenSetups, PostOptions, ThreadingOutput};
 use camcraft_app::stock::StockShape;
 use camcraft_app::tools::catalog;
 use camcraft_app::world::new_world;
@@ -137,16 +137,21 @@ fn a_setups_own_post_options_do_undo_redo() {
 #[test]
 fn a_setup_that_skips_posts_without_its_stops_while_the_other_follows_the_document() {
     let (world, mut h) = doc(2);
+    // #1532: the program runs straight on between the setups, so the
+    // count reads the operations' own stops only (a setup change stops
+    // whatever the skip switch says - `between_setups.rs`).
+    let cont = |o: PostOptions| PostOptions { between_setups: BetweenSetups::Continue, ..o };
+    h.execute(&world, SetPostOptions::new(&world, cont(PostOptions::default())).expect("run straight on"));
     assert_eq!(stops(&world), 2, "both faces stop");
     let both = post(&world, "skip-before").expect("posts");
-    h.execute(&world, SetSetupPostOptions::new(&world, "Setup1", Some(skip())).expect("Setup1 skips"));
+    h.execute(&world, SetSetupPostOptions::new(&world, "Setup1", Some(cont(skip()))).expect("Setup1 skips"));
     assert_eq!(stops(&world), 1, "only Setup2's face keeps its stop");
     let one = post(&world, "skip-one").expect("posts: the skip switch may differ per setup");
     assert_ne!(one, both);
     // The document skipping too reaches Setup2 (which follows it) only.
-    h.execute(&world, SetPostOptions::new(&world, skip()).expect("document skips"));
+    h.execute(&world, SetPostOptions::new(&world, cont(skip())).expect("document skips"));
     assert_eq!(stops(&world), 0);
-    h.execute(&world, SetSetupPostOptions::new(&world, "Setup1", Some(PostOptions::default())).expect("own: keep stops"));
+    h.execute(&world, SetSetupPostOptions::new(&world, "Setup1", Some(cont(PostOptions::default()))).expect("own: keep stops"));
     assert_eq!(stops(&world), 1, "Setup1's own options keep its stop while the document skips");
 }
 
@@ -165,6 +170,39 @@ fn setups_disagreeing_on_the_output_are_refused_by_name() {
     h.execute(&world, SetSetupPostOptions::new(&world, "Setup1", Some(PostOptions::default())).expect("own default"));
     h.execute(&world, SetSetupPostOptions::new(&world, "Setup2", Some(PostOptions::default())).expect("own default"));
     assert_eq!(post(&world, "out-back").expect("posts"), both);
+}
+
+/// #1540: the End units are one word for the whole program. Setups that
+/// differ in them are refused by name, whichever setup is active - never
+/// posted with the active setup's word. Setups that agree post exactly
+/// what the document's own choice posts.
+#[test]
+fn setups_disagreeing_on_the_end_units_are_refused_by_name() {
+    use camcraft_app::schema::EndUnits;
+    let (world, mut h) = doc(2);
+    let inch = PostOptions { end_units: EndUnits::Inch, ..PostOptions::default() };
+    let mm = PostOptions { end_units: EndUnits::Millimeters, ..PostOptions::default() };
+    h.execute(&world, SetSetupPostOptions::new(&world, "Setup1", Some(inch)).expect("Setup1 ends in inch"));
+    h.execute(&world, SetSetupPostOptions::new(&world, "Setup2", Some(mm)).expect("Setup2 ends in mm"));
+    let why = post(&world, "end-diff-2").expect_err("refused with Setup2 active");
+    assert!(why.contains("setup 'Setup1' posts with other post options (end units) than the active setup 'Setup2'"), "{why}");
+    h.execute(&world, ActivateSetup::new(&world, Some("Setup1")).expect("activate"));
+    let why = post(&world, "end-diff-1").expect_err("refused with Setup1 active");
+    assert!(why.contains("setup 'Setup2' posts with other post options (end units) than the active setup 'Setup1'"), "{why}");
+    // A setup that follows the document is judged by the document's word.
+    h.execute(&world, SetSetupPostOptions::new(&world, "Setup2", None).expect("Setup2 follows"));
+    assert!(post(&world, "end-follow").is_err(), "the document leaves the unit modal; Setup1 ends in inch");
+    // Agreement posts the program the document's own choice posts.
+    h.execute(&world, SetSetupPostOptions::new(&world, "Setup1", None).expect("Setup1 follows"));
+    h.execute(&world, SetPostOptions::new(&world, inch).expect("document ends in inch"));
+    let document = post(&world, "end-doc").expect("one word: posts");
+    h.execute(&world, SetSetupPostOptions::new(&world, "Setup2", Some(inch)).expect("Setup2 owns inch"));
+    assert_eq!(post(&world, "end-same").expect("posts"), document);
+    // Two differences are both named.
+    let both = PostOptions { per_op: true, end_units: EndUnits::Millimeters, ..PostOptions::default() };
+    h.execute(&world, SetSetupPostOptions::new(&world, "Setup2", Some(both)).expect("Setup2 differs twice"));
+    let why = post(&world, "end-two").expect_err("refused");
+    assert!(why.contains("(output, end units)"), "{why}");
 }
 
 #[test]
@@ -198,6 +236,8 @@ fn own_post_options_round_trip_and_old_files_follow_the_document() {
         per_op: true,
         end_units: camcraft_app::schema::EndUnits::Inch,
         smoothing: true,
+        explain: false,
+        between_setups: Default::default(),
     };
     h.execute(&world, SetSetupPostOptions::new(&world, "Setup2", Some(own)).expect("own options"));
     let text = saved(&world, "rt");

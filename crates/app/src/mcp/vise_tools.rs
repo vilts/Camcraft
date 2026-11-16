@@ -4,7 +4,8 @@
 //! undoable command the Fixtures page queues (`InsertVise`, `SetVise`),
 //! one History step, so `undo` takes it back. The 5-axis self-centering
 //! vises (#787) are rows of the same size list, centred on the stock, with
-//! their own `min_opening` / `lip_height` / `lip_depth` dimensions.
+//! their own `min_opening` / `lip_height` / `lip_depth` dimensions, and
+//! the grip step's `grip_depth` / `grip_width` (#1274).
 //!
 //! Provenance: our own tool surface over this repo's vise commands.
 
@@ -21,13 +22,13 @@ use crate::vise::{self, ViseParams, ViseStyle};
 use serde_json::{Map, Value, json};
 
 pub(super) const TOOLS: &[Tool] = &[
-    Tool { name: "add_builtin_vise", description: "Place a built-in generic milling vise (size table: 3-8 in, 100-200 mm jaw widths, and the 5-axis self-centering 52/75/80/125 mm rows) as a fixture of a setup - the active one by default. Either fit it to the setup's stock (standard: fixed jaw on the stock's +Y side, centred in X, floor under the stock, jaws opened to the stock's Y width; self-centering: centred on the stock in X and Y, jaws closed to its Y width within the clamping range) or place its frame (standard: origin = the fixed jaw's clamping face, centred, at the floor, jaws open toward -Y; self-centering: origin = the centre between the jaws at the floor) at a position/rotation with an opening. Optional dimension overrides in mm. One undoable step; nonsense dimensions are refused by name.", schema: s_add, run: add_builtin_vise },
+    Tool { name: "add_builtin_vise", description: "Place a built-in generic milling vise (size table: 3-8 in, 100-200 mm jaw widths, and the 5-axis self-centering 52/75/80/125 mm rows) as a fixture of a setup - the active one by default. Either fit it to the setup's stock (standard: fixed jaw on the stock's +Y side, centred in X, floor under the stock, jaws opened to the stock's Y width; self-centering: centred on the stock in X and Y, jaws closed to its Y width within the clamping range; with a grip step - dimensions grip_depth/grip_width, not beside the lip_height/lip_depth dovetail - the stock sits on the step's ledge grip_depth below the jaw top, the frame origin is that ledge and the vise floor sits jaw_height - grip_depth lower) or place its frame (standard: origin = the fixed jaw's clamping face, centred, at the floor, jaws open toward -Y; self-centering: origin = the centre between the jaws at the floor, or at the ledge with a grip step) at a position/rotation with an opening. Optional dimension overrides in mm. One undoable step; nonsense dimensions are refused by name.", schema: s_add, run: add_builtin_vise },
     Tool { name: "set_vise", description: "Change a placed built-in vise: its jaw opening in mm, or from_stock to open the jaws to the setup's stock as the vise stands, and/or dimension overrides in mm. The mesh is regenerated; one undoable step.", schema: s_set, run: set_vise },
 ];
 
-const DIMS: [&str; 13] = [
+const DIMS: [&str; 15] = [
     "jaw_width", "jaw_height", "jaw_thickness", "jaw_body_depth", "max_opening", "length", "width", "base_height", "housing_length",
-    "housing_height", "min_opening", "lip_height", "lip_depth",
+    "housing_height", "min_opening", "lip_height", "lip_depth", "grip_depth", "grip_width",
 ];
 
 /// `p` with every dimension `dims` names replaced.
@@ -37,14 +38,16 @@ fn with_dims(mut p: ViseParams, a: &Map<String, Value>) -> Result<ViseParams, St
     for (k, v) in d {
         let v = v.as_f64().ok_or_else(|| format!("dimension \"{k}\" must be a number of mm"))?;
         let slot = match k.as_str() {
-            "min_opening" | "lip_height" | "lip_depth" => {
+            "min_opening" | "lip_height" | "lip_depth" | "grip_depth" | "grip_width" => {
                 let ViseStyle::SelfCentering(sc) = &mut p.style else {
                     return Err(format!("dimension \"{k}\" is a self-centering vise's; this one is a standard vise"));
                 };
                 match k.as_str() {
                     "min_opening" => &mut sc.min_opening,
                     "lip_height" => &mut sc.lip_height,
-                    _ => &mut sc.lip_depth,
+                    "lip_depth" => &mut sc.lip_depth,
+                    "grip_depth" => &mut sc.grip_depth,
+                    _ => &mut sc.grip_width,
                 }
             }
             "jaw_width" => &mut p.jaw_width,
@@ -84,6 +87,8 @@ fn params_view(p: &ViseParams) -> Value {
         v["min_opening"] = json!(fnum(sc.min_opening));
         v["lip_height"] = json!(fnum(sc.lip_height));
         v["lip_depth"] = json!(fnum(sc.lip_depth));
+        v["grip_depth"] = json!(fnum(sc.grip_depth));
+        v["grip_width"] = json!(fnum(sc.grip_width));
     } else {
         v["style"] = json!("standard");
     }

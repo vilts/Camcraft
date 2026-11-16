@@ -225,3 +225,78 @@ fn the_typed_turn_pivots_on_the_wcs_origin_by_real_clicks_and_undoes() {
     assert!(near(held_at(h.state(), [0.0, 0.0, 4.0]), [0.0, 0.0, 4.0]), "the centre stays put");
     assert_eq!(camcraft_app::setup::work_offset(&h.state().world, "Setup1"), None, "the work offset is untouched");
 }
+
+/// #738: the page is one flow. A preset chosen AFTER a face lay flips the
+/// part from the laid pose (the laid wall ends face down, where the
+/// absolute "Flip over X" from as modelled would leave it facing +Y) -
+/// it never wipes the face pick's move. Ctrl+Z steps back to the lay
+/// exactly; "As modelled" is the one reset, and the header says so.
+#[test]
+fn a_preset_after_a_face_lay_composes_and_as_modelled_is_the_one_reset() {
+    let mut state = with_part();
+    let wall = {
+        let e = camcraft_app::model::find_by_name(&state.world, "part").expect("part");
+        let f = camcraft_app::model::features_of(&state.world, &e).expect("features");
+        f.faces.iter().find(|x| x.normal[1].abs() > 0.99 && (x.normal[1] * -10.0 - x.offset).abs() < 1e-9).map(|x| x.id).expect("the front wall")
+    };
+    let picks = vec![camcraft_app::operation::GeoSel {
+        entity: "part".into(),
+        feature: camcraft_app::operation::FeatureSel::Face(wall),
+    }];
+    let lay = camcraft_app::pick::PlaneLay { plane: camcraft_app::cl::ArcPlane::Xy, flip: false, place: true };
+    run(&mut state, CommandKind::LayPartOnPlane { setup: "Setup1".into(), picks, lay });
+    let laid = setup_align::stored(&state.world, "Setup1").expect("laid");
+    let wall_dir = |a: camcraft_app::schema::Location| {
+        let v = camcraft_app::geometry::quat_rotate_point(a.rot, Point3::new(0.0, -1.0, 0.0));
+        [v.x, v.y, v.z]
+    };
+    assert!(near(wall_dir(laid), [0.0, 0.0, 1.0]), "the wall faces up");
+
+    let mut h = Harness::builder()
+        .with_size(Vec2::new(600.0, 400.0))
+        .build_ui_state(frame, state);
+    h.run();
+    assert!(h.query_by_label_contains("Part alignment").is_some(), "the row keeps its header (the flow is its tooltip)");
+    let now = held(h.state());
+    h.get_by(|n| n.role() == Role::ComboBox && n.value().as_deref() == Some(now.as_str())).click();
+    h.run();
+    h.get_by_label("Flip over X").click();
+    h.run();
+    let flipped = setup_align::stored(&h.state().world, "Setup1").expect("flipped");
+    assert!(near(wall_dir(flipped), [0.0, 0.0, -1.0]), "composed: the laid wall now faces down: {:?}", wall_dir(flipped));
+    key(&mut h, Key::Z);
+    assert_eq!(setup_align::stored(&h.state().world, "Setup1"), Some(laid), "undo: back to the lay, exactly");
+
+    let now = held(h.state());
+    h.get_by(|n| n.role() == Role::ComboBox && n.value().as_deref() == Some(now.as_str())).click();
+    h.run();
+    h.get_by_label("As modelled").click();
+    h.run();
+    assert_eq!(held(h.state()), "As modelled", "the one reset");
+    key(&mut h, Key::Z);
+    assert_eq!(setup_align::stored(&h.state().world, "Setup1"), Some(laid), "undo brings the lay back");
+}
+
+/// #1538: with a 5 in vise closed on the stock, the "model bounds"
+/// anchors are the 50 x 50 x 6 part's corners, not the vise's, and a
+/// G54 set from the SW anchor lands on the part's corner.
+#[test]
+fn model_bounds_anchors_are_the_parts_never_the_vise() {
+    use camcraft_app::commands::{InsertVise, SetStock, VisePlacement};
+    use camcraft_app::schema::Location;
+    use camcraft_app::stock::StockShape;
+    let mut state = State::new();
+    let part = ImportModel::from_mesh("block", cube(Point3::new(2.5, 2.5, 4.0), Point3::new(52.5, 52.5, 10.0)));
+    state.history.execute(&state.world, part);
+    let stock = SetStock::new(&state.world, StockShape::Box { dx: 55.0, dy: 55.0, dz: 11.0 }, Location::default());
+    state.history.execute(&state.world, stock.expect("stock"));
+    let p = camcraft_app::vise::size("5 in").expect("5 in").half_open();
+    let vise = InsertVise::new(&state.world, &p, None, VisePlacement::FitStock).expect("vise");
+    state.history.execute(&state.world, vise);
+    let [sw, ne, c] = model_anchors(&mut state);
+    assert_eq!((sw, ne, c), ([2.5, 2.5, 4.0], [52.5, 52.5, 4.0], [27.5, 27.5, 4.0]), "the part's corners");
+    run(&mut state, CommandKind::SetWcs { pos: sw, roll_deg: 0.0, pitch_deg: 0.0, yaw_deg: 0.0 });
+    let g54 = camcraft_app::model::find_by_name(&state.world, "G54").expect("the WCS");
+    let at = camcraft_app::model::transform_of(&state.world, &g54).expect("placed").pos;
+    assert_eq!([at.x, at.y, at.z], [2.5, 2.5, 4.0], "G54 on the part's SW corner");
+}

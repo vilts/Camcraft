@@ -1,0 +1,3 @@
+; tormach-plasma.cps refused arcs: 2 warning(s), the program is never released
+warning: operation Arcs: states 8000 rpm - a plasma torch turns no spindle (PathPilot plasma takes no S, M3, M4 or M5)
+warning: the Tormach 1300PL plasma post writes torch words (M200, G15, G16, M205) only a plasma table reads - no machine is stated, so none is declared a plasma machine

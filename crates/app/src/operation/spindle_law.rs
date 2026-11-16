@@ -263,11 +263,12 @@ pub(crate) fn post_problem(world: &World, name: &str, e: &Entity) -> Option<Stri
     if !turns(world, setup, &op.params) {
         return None;
     }
-    let (slot, origin) = crate::posting::wcs_context(world, setup);
+    let (_, origin) = crate::posting::wcs_context(world, setup);
+    let slot = crate::setup::wcs_name(world, setup);
     // A material that cannot be read is a source that moved or went:
     // the freshness check right after this names that, as it always has.
     let m = super::material_of(world, setup, &op.src).ok()?;
-    let why = check(&m.facets, origin, slot).err()?;
+    let why = check(&m.facets, origin, &slot).err()?;
     Some(format!("{name}: {why} - fix it and regenerate before posting"))
 }
 

@@ -46,7 +46,8 @@ use super::rest::Rest;
 use super::solid_index::SolidIndex;
 use super::types::VerifyContext;
 
-use crate::cl::{is_vertical, normalize_axis, Move};
+use super::upright::is_upright;
+use crate::cl::{normalize_axis, Move};
 use crate::geo2d::Point2;
 use crate::geometry::Point3;
 
@@ -70,7 +71,7 @@ impl<'a> PartIndex<'a> {
 /// Whether the move's held or stated pose leans off the upright: only
 /// such a rapid earns the second reading.
 pub(super) fn leaning(pose: (Pose, Pose)) -> bool {
-    let lean = |a: Pose| a.and_then(normalize_axis).is_some_and(|a| !is_vertical(&a));
+    let lean = |a: Pose| a.and_then(normalize_axis).is_some_and(|a| !is_upright(&a));
     lean(pose.0) || lean(pose.1)
 }
 
@@ -109,13 +110,14 @@ pub(super) fn in_rest<'a>(
     // The part: the rapid starts where the cut ended, so it is granted
     // the cut's own budget (the finish tolerance where one is judged)
     // on top of the gouge tolerance.
-    let allow = cx.gouge_tol.max(0.0) + cx.finish_tol.unwrap_or(0.0).max(0.0);
+    // #904: less a coarse model's excess, while that is honest.
+    let allow = cx.tightened(cx.gouge_tol.max(0.0) + cx.finish_tol.unwrap_or(0.0).max(0.0));
     let Some(index) = part.index.get_or_insert_with(|| SolidIndex::build(facets)).as_mut() else {
         return true; // unreadable mesh: fail closed
     };
     for &(p0, p1, a) in &pieces {
-        let fr = Frame::new(p0, Some(a).filter(|a| !is_vertical(a)));
-        if index.hits(&fr, fr.local(p1), &atoms, allow, 0.0, false) {
+        let fr = Frame::new(p0, Some(a).filter(|a| !is_upright(a)));
+        if index.hits(&fr, fr.local(p1), &atoms, allow, 0.0, &[], &[]) {
             return true;
         }
     }

@@ -1,0 +1,11 @@
+; wire-iso.cps refused css_then_live: 10 warning(s), the program is never released
+warning: operation Cross mill: is C-axis live-tool work (the spindle turns as C under a radial live tool), but this post script does not declare liveTooling - use a lathe post that voices the C axis
+warning: the generic wire EDM post writes wire words only a wire EDM reads - machine TESTBENCH MILL-TURN LIVE is not declared kind wire_edm
+warning: operation Face CSS: states 1200 rpm - a wire EDM turns no spindle
+warning: operation Face CSS: changes to tool 1 - a wire EDM mounts no tool (the wire is the condition's)
+warning: operation Face CSS: is not wire EDM work (no EDM condition) - the wire post posts Wire Contour operations only
+warning: operation Face CSS: a move outside a wire section - refused
+warning: operation Cross mill: states 3000 rpm - a wire EDM turns no spindle
+warning: operation Cross mill: changes to tool 2 - a wire EDM mounts no tool (the wire is the condition's)
+warning: operation Cross mill: is not wire EDM work (no EDM condition) - the wire post posts Wire Contour operations only
+warning: operation Cross mill: a move outside a wire section - refused

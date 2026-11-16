@@ -1,0 +1,2 @@
+; fanuc-lathe.cps refused full_circle_raw: 1 warning(s), the program is never released
+warning: XY arc that is not a thread half-turn about the spindle axis

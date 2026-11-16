@@ -99,6 +99,7 @@ fn verify_against(facets: &[Triangle], region: &Region, path: &Toolpath) -> Vec<
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(path, &cx)
 }

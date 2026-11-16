@@ -12,7 +12,7 @@
 //!
 //! Gate map (#321): covers app::fixture_carried (carried_fixture_problems,
 //! penetration), app::rest::carried_cache (body, computes, clear),
-//! app::rest::across (carried_body, entered_body), app::stock_sim::carry
+//! app::rest::across (carried_body, entered_body), app::stock_sim, sim::stock_sim::carry
 //! (CARRY_MACHINE_REFUSAL), app::posting (the workholding clause).
 //! Lane shape (M4.4): all tests here run in seconds.
 
@@ -32,7 +32,8 @@ use camcraft_app::posting;
 use camcraft_app::rest::{carried_body_computes, carry_refusal};
 use camcraft_app::schema::Location;
 use camcraft_app::stock::StockShape;
-use camcraft_app::stock_sim::{CARRY_MACHINE_REFUSAL, simulate_document};
+use camcraft_app::machine::{Kind, parse_mch};
+use camcraft_app::stock_sim::{CARRY_MACHINE_REFUSAL, carry_machine_refusal, simulate_document};
 use camcraft_app::tools::catalog;
 use camcraft_app::verify::Warning;
 use camcraft_app::world::new_world;
@@ -186,12 +187,14 @@ fn a_new_document_starts_with_no_carried_body_cached() {
 
 #[test]
 fn a_carry_on_a_lathe_or_mill_turn_is_refused_by_name_on_every_path() {
-    for machine in ["Lathe", "Mill-turn"] {
+    for (machine, name) in [("Lathe", "lathe"), ("Mill-turn", "mill-turn")] {
         let (world, mut h) = program(9.0, 100.0, 10.0);
         h.execute(&world, LoadMachine::builtin(&world, machine).expect("load machine"));
         let generated = GenerateOperation::new(&world, "Contour2").map(|_| ()).expect_err("refused").to_string();
         assert!(
-            generated.contains(CARRY_MACHINE_REFUSAL) && generated.contains("from setup 'Setup1' into setup 'Setup2'"),
+            generated.contains(CARRY_MACHINE_REFUSAL)
+                && generated.contains(&format!("on a {name} machine"))
+                && generated.contains("from setup 'Setup1' into setup 'Setup2'"),
             "{machine}: {generated}"
         );
         // The rest chain names it too (the stamp digests that refusal, so
@@ -204,6 +207,18 @@ fn a_carry_on_a_lathe_or_mill_turn_is_refused_by_name_on_every_path() {
         let gate = posting::verification_report(&world).problems;
         assert!(gate.iter().any(|p| p.contains("Contour2")), "{machine}: the carried program posted: {gate:?}");
     }
+}
+
+#[test]
+fn a_carry_onto_a_sinker_edm_names_the_sinker_edm_and_a_mill_still_carries() {
+    let (world, mut h) = program(9.0, 100.0, 10.0);
+    // The mill carries: nothing is refused on it.
+    assert!(carry_refusal(&world, "Contour2", Some("Setup2")).is_none(), "a mill carries");
+    let m = parse_mch(include_str!("edm/sinker-edm.mch")).expect("parses");
+    h.execute(&world, LoadMachine::new(&world, "sinker.mch".into(), Some(m)).expect("mount"));
+    let rest = carry_refusal(&world, "Contour2", Some("Setup2")).expect("the sinker refuses");
+    assert!(rest.contains(&carry_machine_refusal(Kind::SinkerEdm)) && rest.contains("sinker EDM"), "{rest}");
+    assert!(!rest.contains("lathe"), "{rest}");
 }
 
 #[test]

@@ -7,7 +7,7 @@
 //! Helpers are duplicated from `tests/setups.rs` (cross-test-file imports
 //! are not the idiom here).
 //!
-//! Gate map (M4.4): covers app::commands, app::geometry, app::operation, app::schema, app::setup_sheet, app::stock, app::tools, app::world.
+//! Gate map (M4.4): covers app::commands, app::geometry, app::operation, app::schema, app::setup_sheet, geometry::geometry::stock, tools::tools, app::world.
 
 use flecs_ecs::prelude::World;
 
@@ -387,4 +387,44 @@ fn every_float_uses_the_format_helper() {
         !sheet.contains("NaN") && !sheet.contains("nan") && !sheet.contains("inf"),
         "no Debug floats ever:\n{sheet}"
     );
+}
+
+/// #1063: the tool list prints a tool's stated part number, vendor,
+/// coating and helix on a line of its own, and prints nothing for a tool
+/// that states none of them (no "None", no empty labels).
+#[test]
+fn tool_list_prints_stated_catalog_facts_and_omits_unstated() {
+    use camcraft_app::catalog_fields::ToolCatalog;
+    use camcraft_app::commands::ChangeTool;
+    let (world, mut history) = two_setup_world();
+    let other = catalog()
+        .into_iter()
+        .map(|(n, _)| n)
+        .find(|n| *n != "EM-0400-2FL")
+        .expect("a second catalog tool");
+    add_tool(&world, &mut history, other);
+    let mut t = catalog_tool("EM-0400-2FL");
+    t.catalog = ToolCatalog {
+        part_number: Some("XY-1234".into()),
+        vendor: Some("Acme Tooling".into()),
+        coating: None,
+        helix_deg: Some(35.0),
+        notes: Some("never printed".into()),
+    };
+    run(&world, &mut history, ChangeTool::new(&world, "EM-0400-2FL", t), "state facts");
+    create_face(&world, &mut history, "F1", 19.5);
+    let cmd = CreateOperation::new(&world, "F2", other, SrcRef::Stock, face_params());
+    history.execute(&world, cmd.expect("second face op"));
+    let cmd = GenerateOperation::new(&world, "F2").expect("generate F2");
+    history.execute(&world, cmd);
+    let sheet = setup_sheet::render(&world, Some("Setup2")).expect("sheet");
+    let lines: Vec<&str> = sheet.lines().collect();
+    let catalog_lines: Vec<&&str> = lines.iter().filter(|l| l.contains("PART ")).collect();
+    assert_eq!(catalog_lines.len(), 1, "only the stating tool gets a line:\n{sheet}");
+    let l = catalog_lines[0];
+    assert!(l.contains("PART XY-1234") && l.contains("VENDOR Acme Tooling"), "{l}");
+    assert!(l.contains("HELIX 35"), "{l}");
+    assert!(!l.contains("COATING"), "unstated coating is omitted: {l}");
+    assert!(!sheet.contains("None") && !sheet.contains("never printed"), "{sheet}");
+    assert!(plain_floats_only(&sheet));
 }

@@ -23,6 +23,8 @@ const AREA_EPS: f64 = 1e-6;
 pub(super) fn from_slice(e: SliceError) -> GenError {
     match e {
         SliceError::Geo(g) => GenError::Geo(g),
+        // #1407: a model fault, named as one - never "machining parameters".
+        e @ (SliceError::Open { .. } | SliceError::NonManifold { .. }) => GenError::Model(e.to_string()),
         other => GenError::Invalid(other.to_string()),
     }
 }

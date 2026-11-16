@@ -10,7 +10,7 @@
 //! Provenance: our own design (see `crate::rest`); RS-274 program-order
 //! semantics for what "ahead in the program" means.
 //!
-//! Gate map (M4.4): covers app::cl, app::commands, app::geometry, app::machining2d, app::machining3d, app::model, app::operation, app::schema, app::stock, app::tools, app::world.
+//! Gate map (M4.4): covers cl::cl, app::commands, app::geometry, motion::machining2d, motion::machining3d, app::model, app::operation, app::schema, geometry::geometry::stock, tools::tools, app::world.
 
 use flecs_ecs::prelude::World;
 

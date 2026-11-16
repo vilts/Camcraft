@@ -89,15 +89,23 @@ fn a_self_centering_vise_is_fitted_edited_and_undone_over_mcp() {
     assert_eq!(set["vise"]["opening"], json!(60.0), "{set}");
     let set = c.ok("set_vise", json!({ "name": name, "from_stock": true }));
     assert_eq!(set["vise"]["opening"], json!(50.0), "closed on the stock again: {set}");
+    // #1274: the grip step, not beside the dovetail lip; refused by name.
+    let why = c.refused("set_vise", json!({ "name": name, "dimensions": { "grip_depth": 3.0, "grip_width": 1.5 } }));
+    assert!(why.contains("a dovetail or a grip jaw"), "{why}");
+    let dims = json!({ "lip_height": 0.0, "lip_depth": 0.0, "grip_depth": 3.0, "grip_width": 1.5 });
+    let set = c.ok("set_vise", json!({ "name": name, "dimensions": dims }));
+    assert_eq!([&set["vise"]["grip_depth"], &set["vise"]["grip_width"]], [&json!(3.0), &json!(1.5)], "{set}");
+    let why = c.refused("set_vise", json!({ "name": name, "dimensions": { "grip_depth": 15.0 } }));
+    assert!(why.contains("grip step depth"), "{why}");
 
     // A standard vise has no clamping-range floor or lip.
     c.ok("add_builtin_vise", json!({ "size": "6 in", "position": [0.0, 200.0, 0.0] }));
     let why = c.refused("set_vise", json!({ "name": "Vise 6 in", "dimensions": { "min_opening": 1.0 } }));
     assert!(why.contains("self-centering vise's"), "{why}");
 
-    for _ in 0..5 {
+    for _ in 0..6 {
         c.ok("undo", json!({}));
     }
     let f = c.ok("get_fixture_findings", json!({})).to_string();
-    assert!(!f.contains("Vise 80 mm self-centering"), "five undos take the 6 in, three edits and the vise: {f}");
+    assert!(!f.contains("Vise 80 mm self-centering"), "six undos take the 6 in, four edits and the vise: {f}");
 }

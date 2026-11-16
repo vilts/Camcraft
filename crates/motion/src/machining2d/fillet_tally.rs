@@ -108,6 +108,23 @@ impl FilletTally {
     }
 }
 
+/// The corner-arc radius a pass walk asks of `fillet_corners` (#1733):
+/// the user's `radius` or, with none, the tool radius (every file before
+/// the option). `Err` names the door: the radius must be finite, at
+/// least [`MIN_BLEND_RADIUS`] and at most the tool radius - past it the
+/// arc leaves more corner rest than the passes are spaced to clear.
+pub fn corner_arc_radius(radius: Option<f64>, tool_diameter: f64) -> Result<f64, String> {
+    let tool_r = tool_diameter * 0.5;
+    let Some(rho) = radius else { return Ok(tool_r) };
+    if rho.is_finite() && rho >= MIN_BLEND_RADIUS && rho <= tool_r {
+        Ok(rho)
+    } else {
+        Err(format!(
+            "corner arc radius must be between {MIN_BLEND_RADIUS} mm and the tool radius ({tool_r:.3} mm)"
+        ))
+    }
+}
+
 /// The radius floor a fillet must clear for tolerance `tol`.
 pub fn fillet_floor(tol: f64) -> f64 {
     if tol.is_finite() && tol > MIN_BLEND_RADIUS {

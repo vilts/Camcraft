@@ -25,7 +25,10 @@
 //!   parts about the centre of their bounds, so a flip leaves them on the
 //!   same spot of the table. Typed angles ([`AlignPartToSetup::turn`],
 //!   #606) pivot on the setup's WCS origin by default - the part keeps
-//!   its relation to the origin - or on the centre, by choice. [`AlignPartToSetup::new`]
+//!   its relation to the origin - or on the centre, by choice.
+//! - **Picks and the page's turns compose (#738).** A face, three
+//!   points, the in-plane axes and [`AlignPartToSetup::turn_by`] each move
+//!   the part from the pose the setup holds now. [`AlignPartToSetup::new`]
 //!   takes any rigid transform - the door the face pick (#330) uses,
 //!   through [`AlignPartToSetup::lay_on_plane`], three points (#555),
 //!   through [`AlignPartToSetup::lay_on_points`], and the in-plane axis
@@ -45,11 +48,10 @@ use crate::model;
 use crate::schema::{Location, SetupDef, StockDef};
 use crate::setup_align::{self, AlignPreset};
 use crate::setup_turn::TurnPivot;
-use crate::stock::{self, StockShape};
 
 use flecs_ecs::core::EntityViewGet; // try_get is not re-exported in prelude (0.2.2)
 
-type StockState = (StockShape, Location, std::sync::Arc<[Triangle]>);
+use super::align_stock::{StockState, following_stock};
 
 /// The setup's (held, new) alignment for `alignment`, normalised (the
 /// identity is "as modelled"); refused when nothing would change.
@@ -164,21 +166,21 @@ impl AlignPartToSetup {
         picks: &[crate::operation::GeoSel],
         lay: crate::pick::PlaneLay,
     ) -> Result<(), CommandError> {
-        let at = crate::pick::lay_on_plane(world, picks, lay).map_err(CommandError::Invalid)?;
+        let at = crate::pick::lay_on_plane_in(world, setup, picks, lay).map_err(CommandError::Invalid)?;
         change_of(world, setup, Some(at)).map(|_| ())
     }
 
     /// Lay the part on a G17 / G18 / G19 plane from a pick (#330): one
-    /// flat face, read by [`crate::pick::lay_on_plane`] (an edge is
-    /// refused by name, #554).
-    /// A refused pick is refused here, by name, before anything is written.
+    /// flat face (an edge is refused by name, #554), laid from the pose
+    /// the setup holds NOW (#738, [`crate::pick::lay_on_plane_in`]).
+    /// Refused by name before anything is written.
     pub fn lay_on_plane(
         world: &World,
         setup: &str,
         picks: &[crate::operation::GeoSel],
         lay: crate::pick::PlaneLay,
     ) -> Result<Self, CommandError> {
-        let at = crate::pick::lay_on_plane(world, picks, lay).map_err(CommandError::Invalid)?;
+        let at = crate::pick::lay_on_plane_in(world, setup, picks, lay).map_err(CommandError::Invalid)?;
         Self::new(world, setup, Some(at))
     }
 
@@ -190,22 +192,21 @@ impl AlignPartToSetup {
         picks: &[crate::operation::GeoSel],
         pl: crate::pick::PointsLay,
     ) -> Result<(), CommandError> {
-        let at = crate::pick::lay_on_points(world, picks, pl).map_err(CommandError::Invalid)?;
+        let at = crate::pick::lay_on_points_in(world, setup, picks, pl).map_err(CommandError::Invalid)?;
         change_of(world, setup, Some(at)).map(|_| ())
     }
 
     /// Lay the part on a G17 / G18 / G19 plane through three picked
-    /// points (#555), read by [`crate::pick::lay_on_points`] through the
-    /// face pick's own apply path; with `frame`, point 1 is the origin and
-    /// 1 -> 2 the plane's first axis (3-2-1). Refused by name before any
-    /// write.
+    /// points (#555) from the pose the setup holds NOW (#738,
+    /// [`crate::pick::lay_on_points_in`]); with `frame`, 3-2-1. Refused
+    /// by name before any write.
     pub fn lay_on_points(
         world: &World,
         setup: &str,
         picks: &[crate::operation::GeoSel],
         pl: crate::pick::PointsLay,
     ) -> Result<Self, CommandError> {
-        let at = crate::pick::lay_on_points(world, picks, pl).map_err(CommandError::Invalid)?;
+        let at = crate::pick::lay_on_points_in(world, setup, picks, pl).map_err(CommandError::Invalid)?;
         Self::new(world, setup, Some(at))
     }
 
@@ -225,6 +226,59 @@ impl AlignPartToSetup {
         Self::new(world, setup, Some(at))
     }
 
+    /// Would [`Self::align_from_axes`] be accepted? The same refusals,
+    /// by name, without building the command (the Setups page's Apply).
+    pub fn check_align(world: &World, setup: &str, axes: &crate::pick::InPlaneAxes) -> Result<(), CommandError> {
+        let at = crate::pick::align_from_axes(world, setup, axes).map_err(CommandError::Invalid)?;
+        change_of(world, setup, Some(at)).map(|_| ())
+    }
+
+    /// Align the part from its two picked axes (#769): with both +Y and
+    /// +X picked their directions define the full 3D frame - the
+    /// primary kept exactly, the other made square to it, +Z where the
+    /// right-hand rule puts it - read by
+    /// [`crate::pick::align_from_axes`] through the setup's current
+    /// alignment. One picked axis keeps the in-plane turn (#557).
+    /// Refused by name before any write.
+    pub fn align_from_axes(world: &World, setup: &str, axes: &crate::pick::InPlaneAxes) -> Result<Self, CommandError> {
+        let at = crate::pick::align_from_axes(world, setup, axes).map_err(CommandError::Invalid)?;
+        Self::new(world, setup, Some(at))
+    }
+
+    /// Align the part from a picked cylinder (#771): one curved-wall
+    /// pick names a bore's or cylinder's axis; it lands on `target`,
+    /// turned `angle_deg` about it, read by
+    /// [`crate::pick::align_from_cylinder`] through the setup's
+    /// current alignment. Refused by name before any write.
+    pub fn align_from_cylinder(
+        world: &World,
+        setup: &str,
+        pick: &crate::operation::GeoSel,
+        target: crate::pick::TargetAxis,
+        angle_deg: f64,
+        flip: bool,
+    ) -> Result<Self, CommandError> {
+        let at = crate::pick::align_from_cylinder(world, setup, pick, target, angle_deg, flip)
+            .map_err(CommandError::Invalid)?;
+        Self::new(world, setup, Some(at))
+    }
+
+    /// Would [`Self::align_from_cylinder`] be accepted? The same
+    /// refusals, by name, without building the command (the Setups
+    /// page's Apply).
+    pub fn check_cylinder(
+        world: &World,
+        setup: &str,
+        pick: &crate::operation::GeoSel,
+        target: crate::pick::TargetAxis,
+        angle_deg: f64,
+        flip: bool,
+    ) -> Result<(), CommandError> {
+        let at = crate::pick::align_from_cylinder(world, setup, pick, target, angle_deg, flip)
+            .map_err(CommandError::Invalid)?;
+        change_of(world, setup, Some(at)).map(|_| ())
+    }
+
     /// One of the Setups page's quick choices.
     pub fn preset(world: &World, setup: &str, preset: AlignPreset) -> Result<Self, CommandError> {
         Self::angles(world, setup, preset.angles())
@@ -237,15 +291,25 @@ impl AlignPartToSetup {
     }
 
     /// Turn the parts to X, then Y, then Z (degrees, from as modelled)
-    /// about `pivot` (#606): the WCS origin keeps the part's point on the
-    /// origin there; the part centre keeps the bounds centre put. All zero
-    /// is "as modelled".
+    /// about `pivot` (#606). All zero is "as modelled".
     pub fn turn(world: &World, setup: &str, deg: [f64; 3], pivot: TurnPivot) -> Result<Self, CommandError> {
-        let rot = setup_align::rotation_from_angles(deg)
-            .ok_or_else(|| CommandError::Invalid("the alignment angles must be finite numbers".into()))?;
-        let at = crate::setup_turn::turned(world, setup, rot, pivot).map_err(CommandError::Invalid)?;
+        let at = crate::setup_turn::turned(world, setup, rotation(deg)?, pivot).map_err(CommandError::Invalid)?;
         Self::new(world, setup, at)
     }
+
+    /// Turn the parts BY X, then Y, then Z (degrees) about `pivot` from
+    /// where they sit now (#738, [`crate::setup_turn::turned_by`]): the
+    /// Setups page's preset and "Turn by" rows, composed onto every move
+    /// before them. One undo step.
+    pub fn turn_by(world: &World, setup: &str, deg: [f64; 3], pivot: TurnPivot) -> Result<Self, CommandError> {
+        let at = crate::setup_turn::turned_by(world, setup, rotation(deg)?, pivot).map_err(CommandError::Invalid)?;
+        Self::new(world, setup, at)
+    }
+}
+
+fn rotation(deg: [f64; 3]) -> Result<[f64; 4], CommandError> {
+    setup_align::rotation_from_angles(deg)
+        .ok_or_else(|| CommandError::Invalid("the alignment angles must be finite numbers".into()))
 }
 
 impl Step {
@@ -283,140 +347,4 @@ impl Command for AlignPartToSetup {
             step.write(world, step.prev, step.stock.as_ref().map(|(_, before, _)| before));
         }
     }
-}
-
-/// The setup's stock as it must stand after the alignment changes from
-/// `prev` to `next`, when it follows the part; `None` when it does not
-/// follow (or there is no stock yet).
-fn following_stock(
-    world: &World,
-    setup: &str,
-    prev: Option<Location>,
-    next: Option<Location>,
-    square: bool,
-) -> Result<Option<(String, StockState, StockState)>, CommandError> {
-    let name = crate::setup::stock_entity_name(world, Some(setup));
-    let Some(entity) = model::find_by_name(world, &name) else { return Ok(None) };
-    let Some(shape) = model::stock_def_of(world, &entity) else { return Ok(None) };
-    let parts = model::model_entities(world)
-        .into_iter()
-        .filter(|(_, e)| !model::is_fixture(world, e))
-        .map(|(n, _)| n)
-        .collect::<Vec<_>>();
-    let follows = match &shape {
-        StockShape::FromModel { source } => parts.contains(source),
-        _ => parts.len() == 1,
-    };
-    if !follows {
-        return Ok(None);
-    }
-    if crate::setup::is_furniture_of_other(world, &name, setup) {
-        return Err(CommandError::Invalid(format!(
-            "the stock '{name}' is shared with another setup - turning the part here would move it there too; \
-             give this setup its own stock first"
-        )));
-    }
-    let loc = model::transform_of(world, &entity).unwrap_or_default();
-    let facets = model::facets_of(world, &entity).unwrap_or_default();
-    // The change as one transform: undo the old alignment, apply the new.
-    let undo = prev.map_or_else(Location::default, setup_align::inverse);
-    let delta = setup_align::compose(next.unwrap_or_default(), undo);
-    if square && let Some(after) = square_refit(world, &name, &shape, (loc, &facets), &parts, (prev, next))? {
-        return Ok(Some((name, (shape, loc, facets), after)));
-    }
-    let after = match &shape {
-        StockShape::FromModel { .. } => {
-            let moved = check_location(setup_align::compose(delta, loc), &format!("stock '{name}'"))?;
-            (shape.clone(), moved, facets.clone())
-        }
-        StockShape::Box { dx, dy, dz } => {
-            let corners = [-0.5, 0.5]
-                .into_iter()
-                .flat_map(|x| [-0.5, 0.5].map(|y| (x, y)))
-                .flat_map(|(x, y)| [0.0, 1.0].map(|z| Point3::new(x * dx, y * dy, z * dz)));
-            let moved: Vec<Point3> = corners.map(|p| place(delta, loc, p)).collect();
-            refit_box(&name, &moved)?
-        }
-        StockShape::Cylinder { diameter, height } => {
-            let bottom = place(delta, loc, Point3::ZERO);
-            let top = place(delta, loc, Point3::new(0.0, 0.0, *height));
-            let axis = Point3::new(top.x - bottom.x, top.y - bottom.y, top.z - bottom.z);
-            // Written so a NaN reads as "not upright" and refuses.
-            let upright = axis.z.abs() >= height * (1.0 - 1e-9);
-            if !upright {
-                return Err(CommandError::Invalid(format!(
-                    "the cylinder stock '{name}' would lie on its side - only turns that keep it upright \
-                     can carry it; set the stock again after aligning"
-                )));
-            }
-            let pos = Point3::new(bottom.x, bottom.y, bottom.z.min(top.z));
-            let shape = StockShape::Cylinder { diameter: *diameter, height: *height };
-            let mesh = mesh_of(&shape, &name)?;
-            (shape, check_location(Location { pos, ..Location::default() }, &format!("stock '{name}'"))?, mesh)
-        }
-    };
-    Ok(Some((name, (shape, loc, facets), after)))
-}
-
-/// #561: the square block re-fitted round the one part with its
-/// allowance kept (`None`: not a square parametric block - the turned
-/// block is re-fitted as before).
-fn square_refit(
-    world: &World,
-    name: &str,
-    shape: &StockShape,
-    (loc, facets): (Location, &std::sync::Arc<[Triangle]>),
-    parts: &[String],
-    (prev, next): (Option<Location>, Option<Location>),
-) -> Result<Option<StockState>, CommandError> {
-    let [part] = parts else { return Ok(None) };
-    let Some(pe) = model::find_by_name(world, part) else { return Ok(None) };
-    let Some(tris) = model::facets_of(world, &pe) else { return Ok(None) };
-    let doc = model::transform_of(world, &pe).unwrap_or_default();
-    let seen = |a: Option<Location>| {
-        let at = a.map_or(doc, |a| setup_align::compose(a, doc));
-        tris.iter().flat_map(|t| [t.a, t.b, t.c]).map(|p| transform_point(p, at.pos, at.rot)).collect::<Vec<_>>()
-    };
-    let fit = crate::stock_follow::keep_square(name, shape, loc, &seen(prev), &seen(next)).map_err(CommandError::Invalid)?;
-    let Some((sized, at)) = fit else { return Ok(None) };
-    let at = check_location(at, &format!("stock '{name}'"))?;
-    let mesh = if &sized == shape { facets.clone() } else { mesh_of(&sized, name)? };
-    Ok(Some((sized, at, mesh)))
-}
-
-/// A stock-local point through its placement, then through the change.
-fn place(delta: Location, loc: Location, p: Point3) -> Point3 {
-    let world_p = transform_point(p, loc.pos, loc.rot);
-    transform_point(world_p, delta.pos, delta.rot)
-}
-
-/// The box square to the setup frame that holds the turned block.
-fn refit_box(name: &str, pts: &[Point3]) -> Result<StockState, CommandError> {
-    let (mut lo, mut hi) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
-    for p in pts {
-        for (i, v) in [p.x, p.y, p.z].into_iter().enumerate() {
-            lo[i] = lo[i].min(v);
-            hi[i] = hi[i].max(v);
-        }
-    }
-    // A micron of float noise on a quarter turn is not a new size.
-    let snap = |v: f64| (v * 1e6).round() / 1e6;
-    let shape = StockShape::Box {
-        dx: snap(hi[0] - lo[0]),
-        dy: snap(hi[1] - lo[1]),
-        dz: snap(hi[2] - lo[2]),
-    };
-    let mesh = mesh_of(&shape, name)?;
-    let pos = Point3::new(snap(0.5 * (lo[0] + hi[0])), snap(0.5 * (lo[1] + hi[1])), snap(lo[2]));
-    let at = check_location(Location { pos, ..Location::default() }, &format!("stock '{name}'"))?;
-    Ok((shape, at, mesh))
-}
-
-fn mesh_of(shape: &StockShape, name: &str) -> Result<std::sync::Arc<[Triangle]>, CommandError> {
-    if !shape.is_sane() || !shape.is_bounded() {
-        return Err(CommandError::Invalid(format!("the stock '{name}' cannot be rebuilt in the turned frame")));
-    }
-    stock::stock_mesh(shape)
-        .map(Into::into)
-        .ok_or_else(|| CommandError::Invalid(format!("the stock '{name}' cannot be rebuilt in the turned frame")))
 }

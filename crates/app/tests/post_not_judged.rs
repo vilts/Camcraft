@@ -8,7 +8,7 @@
 //! the tilt suite's parked pocket, the posting suite's contour); the
 //! law is the Prime Directive's "correct, or visibly refused".
 //!
-//! Gate map (M4.4): covers app::posting, app::stock_sim, app::script.
+//! Gate map (M4.4): covers app::posting, app::stock_sim, sim::stock_sim, app::script.
 
 use flecs_ecs::prelude::World;
 
@@ -168,10 +168,15 @@ fn tilted_world() -> World {
     add_tool(&world, &mut history, "EM-0600-4FL");
     history.execute(
         &world,
-        ImportModel::from_mesh("part", cube(Point3::new(0.0, 0.0, -20.0), Point3::new(40.0, 30.0, -10.0))),
+        // #1603: the part is what the pocket leaves - the stock's last
+        // 10 mm along the tool (local Z 25..35), so the cut to local Z 35
+        // stops on it. A part filling the stock would be cut, and a
+        // stock-source pocket now answers for the part it cuts.
+        ImportModel::from_mesh("part", cube(Point3::new(0.0, 0.0, -20.0), Point3::new(10.0, 30.0, -10.0))),
     );
     stock_at(&world, &mut history, StockShape::Box { dx: 40.0, dy: 30.0, dz: 10.0 }, Point3::new(20.0, 15.0, -20.0));
     let params = OpParams::Pocket {
+        blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: Some(Tilt { a_deg: 0.0, b_deg: 90.0, origin: [-25.0, 0.0, -15.0] }),
         stepover: 3.0,
@@ -192,9 +197,8 @@ fn tilted_world() -> World {
     };
     history.execute(
         &world,
-        // The stock is the volume to remove (it coincides with the part
-        // box): a whole-PART source would keep the part and refuse
-        // (issue #12).
+        // The stock is the volume to remove: a whole-PART source would
+        // clear around the part instead (issue #12).
         CreateOperation::new(&world, "P", "EM-0600-4FL", SrcRef::Stock, params).expect("create"),
     );
     history.execute(&world, GenerateOperation::new(&world, "P").expect("generate"));

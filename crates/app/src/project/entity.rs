@@ -211,6 +211,7 @@ pub enum CycleKindDto {
     Bore,
     BackBore,
     FloatingTap,
+    Ream,
 }
 
 impl CycleDto {
@@ -225,6 +226,7 @@ impl CycleDto {
                 CycleKind::FloatingTap => CycleKindDto::FloatingTap,
                 CycleKind::Bore => CycleKindDto::Bore,
                 CycleKind::BackBore => CycleKindDto::BackBore,
+                CycleKind::Ream => CycleKindDto::Ream,
             },
             xy: [lattice(c.xy.x), lattice(c.xy.y)],
             r_z: lattice(c.r_z),
@@ -247,6 +249,7 @@ impl CycleDto {
                 CycleKindDto::FloatingTap => CycleKind::FloatingTap,
                 CycleKindDto::Bore => CycleKind::Bore,
                 CycleKindDto::BackBore => CycleKind::BackBore,
+                CycleKindDto::Ream => CycleKind::Ream,
             },
             xy: Point2::new(self.xy[0], self.xy[1]),
             r_z: self.r_z,
@@ -262,7 +265,7 @@ impl CycleDto {
 /// A setup as files hold it (M3.2 A): the furniture it owns, by name.
 /// `wcs` names the setup's one WCS entity (v54, #342); it may name an
 /// entity the file does not contain - the WCS is simply not placed yet.
-/// Older files held a list indexed by [`WCS_SLOTS`] (see [`WcsDto`]).
+/// Older files held a list indexed by [`LEGACY_WCS_NAMES`] (see [`WcsDto`]).
 /// `datum_from` is
 /// clone provenance for the setup sheet (stage D); every stamp ignores
 /// it, so it defaults and rides along for the reader, not the machinery.
@@ -302,6 +305,14 @@ pub struct SetupDto {
     /// Absent follows the document's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub post_options: Option<SetupPostOptionsDto>,
+    /// #821: the setup's stated nose-to-rotary-centerline figure, mm,
+    /// additive (no version step). Absent states none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nose_to_axis: Option<f64>,
+    /// #1031: the rated maximum rpm of the setup's chuck or collet,
+    /// additive (no version step). Absent - every older file - states none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workholding_max_rpm: Option<f64>,
 }
 
 /// A setup's WCS as files hold it. v54 (#342) writes one entity name
@@ -558,12 +569,49 @@ pub struct EntityDto {
     /// identical to its v19 save.
     #[serde(default, skip_serializing_if = "is_unrevised")]
     pub rev: u64,
+    /// The chord error (mm) of a model imported coarser than the STEP
+    /// importer promises (#864, `schema::ReducedFidelity`), and of a
+    /// stock copied from one (#1056: the copy carries it). Absent on
+    /// every other entity, so a document without such a model - and every
+    /// file from before the key existed - saves byte for byte as it did
+    /// and loads as full fidelity.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coarse_mm: Option<f64>,
+    /// #1056 (v59): this mesh's fidelity is not known - a model or stock
+    /// copy from a file saved before CamCraft recorded it. Its operations
+    /// are refused at the post until the model is re-imported. Absent is
+    /// false; never written beside `coarse_mm`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub fidelity_unknown: bool,
+    /// #1610: the hole of a model imported from a STEP closed shell that
+    /// meshes open (`schema::MeshOpen`), written only on a model beside
+    /// `fidelity_unknown`. An old reader dropping it keeps the mark and
+    /// still refuses every operation on the model; only the words go.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mesh_open: Option<String>,
+    /// The STEP facet budget a model was imported under when it is not the
+    /// default (#1054, `schema::StepBudget`). Absent everywhere else, so a
+    /// file from before the key existed - and every default import - reads
+    /// as `step_budget::DEFAULT` and saves byte for byte as it did. An old
+    /// reader dropping it loses only the record: the facets are stored.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub facet_budget: Option<u64>,
     /// Absent means Model; only non-model entities carry the tag.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<EntityKind>,
     /// Stock parameters; present exactly when `kind == Some(Stock)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stock: Option<StockDto>,
+    /// #1094: a from-model stock's source model is raw stock only, not
+    /// judged as the part. Absent is false - every older file judges it,
+    /// and an older reader that drops the key judges more, never less.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub raw_stock_only: bool,
+    /// #1094: the fingerprint of the source model's geometry the mark was
+    /// set on (`stock_print::to_text`). The mark loads only with it; a
+    /// flag without it (an early file, or by hand) loads unmarked.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub raw_stock_print: Option<String>,
     /// Tool definition; present exactly when `kind == Some(Tool)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<ToolDto>,

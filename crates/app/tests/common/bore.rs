@@ -122,6 +122,7 @@ pub fn bore_world() -> (World, History) {
     );
     let cmd = LoadMachine::new(&world, "lathe.mch".into(), Some(machine("lathe")));
     history.execute(&world, cmd.expect("lathe"));
+    history.execute(&world, camcraft_app::commands::SelectPost::new(&world, camcraft_app::schema::PostRef::Named("Fanuc Lathe".into())).expect("lathe post"));
     add_tool(&world, &mut history, "BR-1000");
     add_tool(&world, &mut history, "TN-1600-0R8");
     add_tool(&world, &mut history, "EM-0400-2FL");

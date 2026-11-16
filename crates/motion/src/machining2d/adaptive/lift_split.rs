@@ -30,7 +30,8 @@ pub(super) struct Piece {
     /// where the walk ends): where a return may climb along.
     pub tail: Vec<Point2>,
     /// The spiral's own chords when `pts` holds coarser ones (`lift`'s
-    /// re-thinning), walked instead where those read worse.
+    /// re-thinning), walked instead where those read worse or leave a
+    /// sliver (`lift_coarse::cut`).
     pub fine: Option<Vec<Point2>>,
 }
 

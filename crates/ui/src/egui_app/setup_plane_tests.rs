@@ -195,3 +195,26 @@ fn face_down_is_the_default_and_off_lays_the_face_up() {
     key(&mut h, Key::Z);
     assert_eq!(setup_align::stored(&h.state().world, "Setup1"), None, "undo restores as modelled");
 }
+
+/// #738: the row's pick status is a count and a kind - "nothing
+/// selected", then "1 face selected" - and neither it, any label of the
+/// row, nor a refusal on the status line carries a feature's internal id
+/// ("face 0xccc7c...").
+#[test]
+fn the_pick_status_counts_the_face_and_never_shows_an_id() {
+    let mut h = Harness::builder().with_size(Vec2::new(1200.0, 300.0)).build_ui_state(frame, with_part());
+    h.run();
+    h.get_by_label("Pick a face").click();
+    h.run();
+    assert!(h.query_by_label_contains("nothing picked yet").is_some(), "an empty draft says so");
+    let wall = front_wall(h.state());
+    crate::plane_pick::take(h.state_mut(), wall);
+    h.run();
+    assert!(h.query_by_label_contains("1 face selected").is_some(), "one face, counted");
+    let edge = top_edge(h.state(), 0.0);
+    crate::plane_pick::take(h.state_mut(), edge);
+    h.run();
+    assert!(h.state().status.contains("is an edge"), "the refusal names the kind: {}", h.state().status);
+    assert!(!h.state().status.contains("0x"), "no id on the status line: {}", h.state().status);
+    assert!(h.query_all_by_label_contains("0x").next().is_none(), "no id on the row");
+}

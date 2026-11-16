@@ -5,7 +5,7 @@
 //! written to the project file only when ON - so every legacy save
 //! stays byte-identical.
 //!
-//! Gate map (M11.1): covers app::commands, app::machining2d, app::operation, app::posting, app::project, app::verify.
+//! Gate map (M11.1): covers app::commands, motion::machining2d, app::operation, app::posting, app::project, sim::verify.
 
 use flecs_ecs::prelude::World;
 
@@ -66,6 +66,7 @@ fn ctx<'a>(region: &'a Region, stock: Option<&'a Region>, tool: &'a ToolGeom, mo
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     }
 }
 
@@ -96,6 +97,7 @@ fn cp(blend: bool) -> ContourParams {
 
 fn pp(strategy: PocketStrategy, blend: bool) -> PocketParams {
     PocketParams {
+        blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tool_diameter: 8.0,
         stepover: 3.0,
@@ -143,6 +145,7 @@ fn blended_pockets_verify_silent() {
 
 fn pocket_op(blend: bool) -> OpParams {
     OpParams::Pocket {
+        blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 3.0,
         stock_to_leave: 0.0,

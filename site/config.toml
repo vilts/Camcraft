@@ -8,8 +8,19 @@ title = "CamCraft"
 description = "CamCraft: an open-source CAM system that turns 3D models into G-code for CNC mills and lathes."
 default_language = "en"
 compile_sass = false
-build_search_index = false
+build_search_index = true
 generate_feeds = false
+
+# Search (#1245): Zola writes search_index.en.js from the pages below; the
+# header box loads it with the vendored elasticlunr (static/vendor/). Only
+# the title, description, path and the start of each body are indexed.
+[search]
+index_format = "elasticlunr_javascript"
+include_title = true
+include_description = true
+include_path = true
+include_content = true
+truncate_content_length = 2000
 
 [markdown]
 smart_punctuation = false

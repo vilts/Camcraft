@@ -44,15 +44,18 @@ fn run(tag: &str, parts: &str, cps: &str, stream: &str) -> (bool, String, Option
     (r.status.success(), String::from_utf8_lossy(&r.stderr).to_string(), written)
 }
 
-const STREAM: &str = "Rapid 10000 5000 2000\nFeed 20000 5000 0 F500000\n";
+// #1359: the fanuc post refuses a cut with the spindle stopped. #1633: the
+// stream states its clearance, as `post::dump` does (a refused first
+// traverse writes no move).
+const STREAM: &str = "PARAM SpindleSpeed 6000\nPARAM ClearancePlane 5\nRapid 10000 5000 2000\nFeed 20000 5000 0 F500000\n";
 
 #[test]
 fn the_cli_posts_an_inverted_x_mirrored() {
     let (ok, err, nc) = run("flipx", r#"{"type": "linear", "name": "X", "direction": -1}"#, &fanuc(), STREAM);
     assert!(ok, "{err}");
     let nc = nc.expect("written");
-    assert!(nc.contains("G00 X-10 Y5 Z2"), "{nc}");
-    assert!(nc.contains("G01 X-20 Y5 Z0 F500"), "{nc}");
+    assert!(nc.contains("G00 X-10. Y5. Z2."), "{nc}");
+    assert!(nc.contains("G01 X-20. Y5. Z0. F500"), "{nc}");
 }
 
 #[test]

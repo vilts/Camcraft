@@ -4,7 +4,8 @@
 //! Provenance: our own tests, specced from the operation lifecycle and
 //! the hand-test report (vertical-wall rim picked for a 2D Pocket).
 //!
-//! Gate map (M4.4): covers app::commands, app::operation, app::model, app::schema.
+//! Gate map (M4.4): covers app::commands, app::operation, app::model, app::schema,
+//! app::setup_wcs_tilt (#1510).
 
 mod common;
 
@@ -13,8 +14,9 @@ use flecs_ecs::prelude::World;
 use camcraft_app::commands::{
     AddTool, ChangeOperationKind, ClearToolpath, CommandError, CreateOperation, DeleteOperation,
     EditOperationLinks, GenerateOperation, History, ImportModel, MoveModel, SetOperationGeometry, SetStock,
+    SetWcsOrigin,
 };
-use camcraft_app::geometry::feature::FaceKind;
+use camcraft_app::geometry::feature::{self, FaceKind};
 use camcraft_app::geometry::{Point3, cube, quat_from_euler};
 use camcraft_app::model;
 use camcraft_app::operation::{self, FeatureSel, GeoSel, Height, OpParams, OpStatus, SrcRef};
@@ -67,6 +69,7 @@ fn pick(id: u64) -> GeoSel {
 
 fn pocket() -> OpParams {
     OpParams::Pocket {
+        blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
         stepover: 3.0,
@@ -215,6 +218,29 @@ fn a_rotated_face_pick_for_facing_is_refused_before_generation() {
     assert!(refusal.is_some_and(|msg| msg.contains("not horizontal")));
 }
 
+/// #1510: a wall the tilted WCS calls level - the reporter's pick - says
+/// the WCS is why, and that the part is turned with its alignment.
+#[test]
+fn a_wall_level_only_in_a_tilted_wcs_names_the_wcs() {
+    let (world, mut history) = world_with_part();
+    history.execute(
+        &world,
+        CreateOperation::new(&world, "F1", TOOL, SrcRef::Stock, facing()).expect("facing op"),
+    );
+    let tilted = Location { rot: quat_from_euler(std::f64::consts::FRAC_PI_2, 0.0, 0.0), ..Location::default() };
+    history.execute(&world, SetWcsOrigin::new(&world, tilted).expect("tilt the WCS"));
+    let err = SetOperationGeometry::new(&world, "F1", vec![pick(face_id(&world, true))])
+        .err()
+        .expect("a machine-vertical face is refused at the pick");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("not horizontal")
+            && msg.contains("the WCS (G54) has its Z axis tilted 90.000 deg off the machine's Z")
+            && msg.contains("Part alignment"),
+        "{msg}"
+    );
+}
+
 #[test]
 fn the_door_is_the_pocket_familys_and_the_horizontal_pick_passes() {
     let (world, _history) = world_with_part();
@@ -255,4 +281,55 @@ fn retyping_onto_a_wall_pick_meets_the_pocket_door() {
         Err(_) => return, // the contour's own doors refuse a wall: nothing to retype
     }
     refusal_names_the_fix(ChangeOperationKind::new(&world, "C1", pocket_ordinal));
+}
+
+/// The edge run of the part whose every point passes `on` (`lo`/`hi` are
+/// the part's bounds): the pick a viewport click on that edge makes.
+fn edge_run(world: &World, on: impl Fn(&[f64; 3], [f64; 3], [f64; 3]) -> bool) -> GeoSel {
+    let e = model::find_by_name(world, "part").expect("part");
+    let f = model::features_of(world, &e).expect("features");
+    let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+    for v in &f.verts {
+        for k in 0..3 {
+            lo[k] = lo[k].min(v[k]);
+            hi[k] = hi[k].max(v[k]);
+        }
+    }
+    let run = feature::edge_runs(&f)
+        .into_iter()
+        .find(|c| feature::chain_points(&f, c).iter().all(|p| on(p, lo, hi)))
+        .expect("an edge run");
+    GeoSel { entity: "part".into(), feature: FeatureSel::Chain(run.id) }
+}
+
+/// #1726: an edge picked one at a time is an open run mid-pick. Two runs
+/// that only coincide seen from above (a top edge and the bottom edge
+/// under it), or one vertical edge, stitch into a "ring" with no area;
+/// the pick door used to refuse that pick, so Ctrl+click added nothing.
+/// The door takes the picks; Generate keeps the refusal.
+#[test]
+fn edge_picks_that_meet_only_from_above_pass_the_pick_door() {
+    let (world, mut history) = world_with_part();
+    generated_pocket(&world, &mut history);
+    let near = |a: f64, b: f64| (a - b).abs() < 1e-9;
+    let top = edge_run(&world, |p, lo, hi| near(p[1], lo[1]) && near(p[2], hi[2]));
+    let under = edge_run(&world, |p, lo, _| near(p[1], lo[1]) && near(p[2], lo[2]));
+    let upright = edge_run(&world, |p, lo, _| near(p[0], lo[0]) && near(p[1], lo[1]));
+    for items in [vec![upright.clone()], vec![top.clone(), upright], vec![top.clone(), under.clone()]] {
+        let n = items.len();
+        let cmd = match SetOperationGeometry::new(&world, "P1", items.clone()) {
+            Ok(cmd) => cmd,
+            Err(err) => panic!("{n} edge pick(s) refused at the pick door: {err}"),
+        };
+        history.execute(&world, cmd);
+        let op = model::operation_of(&world, &model::find_by_name(&world, "P1").expect("P1")).expect("op");
+        assert_eq!(op.src, SrcRef::Selection(items.clone()), "the picks are stored");
+        // The page still says what Generate will say, and Generate refuses.
+        let (_, said) = operation::selection_account(&world, None, &items, &pocket());
+        assert!(said.is_some_and(|m| m.contains("projects to a line from above")));
+        let refused = GenerateOperation::new(&world, "P1").err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(refused.contains("projects to a line from above"), "Generate is the backstop: {refused:?}");
+    }
+    // A wall FACE, and a closed chain, still meet the door (pinned above).
+    refusal_names_the_fix(SetOperationGeometry::new(&world, "P1", vec![pick(face_id(&world, true))]));
 }

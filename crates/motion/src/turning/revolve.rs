@@ -13,7 +13,7 @@
 //! dimensional:
 //!
 //! - the material E(s) is the silhouette's own chord polyline (the
-//!   [`profile::silhouette`] samples at the caller's quarter budget,
+//!   [`super::profile::silhouette`] samples at the caller's quarter budget,
 //!   interpolated on each interval);
 //! - the cut C(s) is the MINIMUM tip over the moves whose open band
 //!   `(start - w/2, end + w/2)` contains s - widened along an axial
@@ -51,11 +51,7 @@
 //! construction is our own, on the same silhouette the kernels ride.
 //! No vendor strategy consulted.
 
-use crate::cl::{MoveKind, Toolpath};
-use crate::geometry::Triangle;
 use crate::verify::Warning;
-
-use super::profile;
 
 type SR = (f64, f64);
 
@@ -263,13 +259,16 @@ pub struct Alert {
 /// unless `crest` says better: a lone crown's band sits INSIDE the
 /// blank it cannot reach past, and clipping that floor to its own
 /// window would hide the rest it stands off the modeled surface.
+/// The gouge clause answers to `gouge_tol`, the rest clause to `tol`:
+/// one number on a model that met its import promise, the smaller
+/// [`gouge_tol_on`] on a coarser one (#904).
 #[allow(clippy::too_many_arguments)] // the scan's whole meridian frame, threaded once
 pub fn scan(
     sg: &Segs,
     moves: &[BandMove],
     window: Option<(f64, f64)>,
     lat: &[f64],
-    tol: f64,
+    (tol, gouge_tol): (f64, f64),
     leave: f64,
     clip_shell: bool,
     crest: Option<f64>,
@@ -298,7 +297,7 @@ pub fn scan(
     let mut ki = 0usize;
     let mut gouge: Option<Alert> = None;
     let mut rest: Option<Alert> = None;
-    let gouge_gate = tol + 1e-9;
+    let gouge_gate = gouge_tol + 1e-9;
     let rest_gate = tol + leave + 1e-9;
     for w in lat.windows(2) {
         let (u, v) = (w[0], w[1]);
@@ -402,120 +401,18 @@ fn nearest(moves: &[BandMove], s: f64) -> usize {
     best.1
 }
 
-/// The full blade judgment over a generated path: the warnings this
-/// path deserves, in the vocabulary the verifier already speaks.
-/// A model this cannot even frame reports as a gouge at the first
-/// cut - a judge that cannot measure never reports silence (the
-/// law (b) precedent the envelope scan keeps too).
-pub fn blade_warnings(
-    facets: &[Triangle],
-    path: &Toolpath,
-    width: f64,
-    tol: f64,
-    leave: f64,
-) -> Vec<Warning> {
-    let first_cut = || Warning::Gouge {
-        at: path
-            .moves
-            .iter()
-            .position(|m| m.kind != MoveKind::Rapid)
-            .unwrap_or(0),
-    };
-    if width <= 0.0 || !width.is_finite() || facets.is_empty() {
-        return vec![first_cut()];
-    }
-    let f = match profile::Frame::about(facets) {
-        Ok(f) => f,
-        Err(_) => return vec![first_cut()],
-    };
-    let pts = match profile::silhouette(facets, &f, tol * 0.25) {
-        Ok(p) => p,
-        Err(_) => return vec![first_cut()],
-    };
-    let moves: Vec<BandMove> = path
-        .moves
-        .iter()
-        .enumerate()
-        .filter(|(_, m)| m.kind == MoveKind::Feed)
-        .map(|(i, m)| {
-            let (sa, ra) = f.sr(m.from);
-            let (sb, rb) = f.sr(m.to);
-            BandMove {
-                a: sa,
-                b: sb,
-                tip: ra.min(rb),
-                at: i,
-                floor: Floor::Flat,
-                half: width * 0.5,
-            }
-        })
-        .collect();
-    judge(&pts, moves, tol, leave, false, None)
-}
-
-/// One leg of a program composed for the final-part scan: the
-/// passes an operation cached, and the width of the blade that
-/// would run them.
-pub struct BladeLeg<'a> {
-    pub path: &'a Toolpath,
-    pub width: f64,
-}
-
-/// The final-part scan (M5.3 D): what an in-process probe touches
-/// is everything the program's blades cut TOGETHER, so a probe
-/// budget is judged on the composed cut, not on any one op. The
-/// legs' moves union into one lattice - the same boxcar-min law as
-/// the single-tool scan, so a finish that comes later in the
-/// program answers for a rough's left floor, and the kerf law
-/// stands unchanged: inside a cutoff, what stands there was meant
-/// to go. `tol` is the strictest authored ask (it chords the
-/// silhouette at its quarter, the scan's own resolution law), and
-/// leave is zero BY CONSTRUCTION - a roughing promise is what the
-/// PROMISE forgives, never the part. `at` indexes the composed
-/// feed order (program order, the caller's op names), which is how
-/// the verdict says who left the steel. A model this cannot frame,
-/// or a blade without a width, reports as a gouge at move 0 - a
-/// judge that cannot measure never reports silence.
-pub fn blade_program_warnings(
-    facets: &[Triangle],
-    legs: &[BladeLeg<'_>],
-    tol: f64,
-) -> Vec<Warning> {
-    if legs.is_empty()
-        || facets.is_empty()
-        || legs.iter().any(|l| l.width <= 0.0 || !l.width.is_finite())
-    {
-        return vec![Warning::Gouge { at: 0 }];
-    }
-    let f = match profile::Frame::about(facets) {
-        Ok(f) => f,
-        Err(_) => return vec![Warning::Gouge { at: 0 }],
-    };
-    let pts = match profile::silhouette(facets, &f, tol * 0.25) {
-        Ok(p) => p,
-        Err(_) => return vec![Warning::Gouge { at: 0 }],
-    };
-    let mut moves: Vec<BandMove> = Vec::new();
-    let mut start = 0usize;
-    for l in legs {
-        for (i, m) in l.path.moves.iter().enumerate() {
-            if m.kind != MoveKind::Feed {
-                continue;
-            }
-            let (sa, ra) = f.sr(m.from);
-            let (sb, rb) = f.sr(m.to);
-            moves.push(BandMove {
-                a: sa,
-                b: sb,
-                tip: ra.min(rb),
-                at: start + i,
-                floor: Floor::Flat,
-                half: l.width * 0.5,
-            });
-        }
-        start += l.path.moves.len();
-    }
-    judge(&pts, moves, tol, 0.0, false, None)
+/// The gouge clause's tolerance on a model imported coarser than
+/// promised (#864, #904): `tol` less the model's `excess` chord error,
+/// while that leaves a positive tolerance. The silhouette E(s) is read
+/// off the facets, and a facet of a convex meridian stands inside the
+/// true surface by up to its chord error - so a floor that far below
+/// the real skin reads as flush. Past the bound the clause reads `tol`
+/// untouched and the program gate refuses the operation by name
+/// ([`crate::verify::excess_floor`] is the one test both sides read).
+/// The rest clause and the silhouette's own chord budget keep `tol`.
+#[must_use]
+pub fn gouge_tol_on(tol: f64, excess: f64) -> f64 {
+    crate::verify::excess_floor(tol, excess).unwrap_or(tol)
 }
 
 /// The shared close: scan what the moves leave and speak it in the
@@ -524,18 +421,19 @@ pub fn blade_program_warnings(
 /// flat floors and passes false. `crest` names the blank level the
 /// clip reads - None takes the window's own span (the thread's
 /// crest), Some the model's tallest claim (a lone crown's steel
-/// cannot reach past the bar, M5.2 E2).
+/// cannot reach past the bar, M5.2 E2). `excess` is the judged
+/// model's chord error past the import promise ([`gouge_tol_on`]).
 pub(crate) fn judge(
     pts: &[SR],
     moves: Vec<BandMove>,
-    tol: f64,
+    (tol, excess): (f64, f64),
     leave: f64,
     clip_shell: bool,
     crest: Option<f64>,
 ) -> Vec<Warning> {
     let sg = segs(pts);
     let (window, lat) = lattice(pts, &moves);
-    let (gouge, rest) = scan(&sg, &moves, window, &lat, tol, leave, clip_shell, crest);
+    let (gouge, rest) = scan(&sg, &moves, window, &lat, (tol, gouge_tol_on(tol, excess)), leave, clip_shell, crest);
     let g = gouge.as_ref().map(|a| a.mm).unwrap_or(0.0);
     let r = rest.as_ref().map(|a| a.mm).unwrap_or(0.0);
     if g <= 0.0 && r <= 0.0 {

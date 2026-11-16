@@ -8,12 +8,23 @@
 //! (`project::tool_to_json` / `tool_from_json`); no vendor library format
 //! (Fusion `.json`, `.hsmlib`) was read or consulted - those stay out of
 //! scope by the owner's clean-room decision on #300.
+//!
+//! #889: a definition may also carry the tool's body (`body`, the very
+//! `ToolBodyDto` a `.camproj` tool stores - a drawn holder profile, a
+//! placed mesh or a lathe holder). The key is additive: a file without
+//! it reads as before, and a build that predates it skips it (the
+//! tool record alone). A body is judged here exactly as the project
+//! loader and `SetToolBody` judge one - re-derived from its outline or
+//! facets and fitted to its tool - so a body the holder laws would
+//! misread refuses the whole file by name.
 
 use flecs_ecs::prelude::World;
 use serde_json::{Value, json};
 
 use crate::model;
-use crate::project;
+use crate::project::{self, ToolBodyDto};
+use crate::schema::ToolBody;
+use crate::tool_body;
 use crate::tools::Tool;
 
 /// The envelope's `format` tag.
@@ -41,19 +52,38 @@ pub fn with_library_extension(path: &std::path::Path) -> std::path::PathBuf {
 pub struct LibraryTool {
     pub name: String,
     pub tool: Tool,
+    /// #889: the body the file carries for this tool (already judged
+    /// against it), `None` for a tool with only its holder cylinder.
+    pub body: Option<ToolBody>,
+}
+
+impl LibraryTool {
+    /// A library tool with no body - what every pre-#889 file holds.
+    #[must_use]
+    pub fn bare(name: impl Into<String>, tool: Tool) -> Self {
+        Self { name: name.into(), tool, body: None }
+    }
 }
 
 /// The document's tools, sorted by name, as library JSON (pretty, so a
 /// person can read and hand-edit it). Lengths are millimetres, as the
 /// document stores them, whatever the display units. Refuses an empty
 /// document: a library with no tools is never what the user meant.
+/// #889: a tool's body rides its definition as `body`.
 pub fn export_tool_library(world: &World) -> Result<String, String> {
-    let tools: Vec<Value> = model::named_entities(world)
-        .iter()
-        .filter_map(|(n, e)| {
-            model::tool_of(world, e).map(|t| json!({ "name": n, "definition": project::tool_to_json(&t) }))
-        })
-        .collect();
+    let mut tools: Vec<Value> = Vec::new();
+    for (n, e) in model::named_entities(world) {
+        let Some(t) = model::tool_of(world, &e) else { continue };
+        let mut def = project::tool_to_json(&t);
+        if let Some(b) = tool_body::body_of(world, &e) {
+            let body = serde_json::to_value(ToolBodyDto::from_body(&b))
+                .map_err(|err| format!("tool '{n}': body not written: {err}"))?;
+            if let Value::Object(o) = &mut def {
+                o.insert("body".into(), body);
+            }
+        }
+        tools.push(json!({ "name": n, "definition": def }));
+    }
     if tools.is_empty() {
         return Err("the document has no tools to export".into());
     }
@@ -115,10 +145,32 @@ pub fn parse_tool_library(text: &str) -> Result<Vec<LibraryTool>, String> {
                 "tool '{name}' is refused: its sizes must be finite and positive, corner radius within the diameter"
             ));
         }
-        out.push(LibraryTool { name: name.to_owned(), tool });
+        let body = read_body(def, &tool, name)?;
+        out.push(LibraryTool { name: name.to_owned(), tool, body });
     }
     if out.is_empty() {
         return Err("the tool library holds no tools".into());
     }
     Ok(out)
+}
+
+/// #889: a definition's `body`, judged as the project loader judges it
+/// (`project::validate`): re-derived by this build's envelope law and
+/// fitted to its tool, or the file refuses naming the tool.
+fn read_body(def: &Value, tool: &Tool, name: &str) -> Result<Option<ToolBody>, String> {
+    let Some(raw) = def.get("body").filter(|v| !v.is_null()) else {
+        return Ok(None);
+    };
+    let dto: ToolBodyDto =
+        serde_json::from_value(raw.clone()).map_err(|e| format!("tool '{name}': body is malformed: {e}"))?;
+    let body = dto.to_body(name).map_err(|e| format!("{e} (body refused)"))?;
+    tool_body::fits(tool, &body).map_err(|e| format!("tool '{name}': body refused: {e}"))?;
+    Ok(Some(body))
+}
+
+/// How many of a library's tools carry a body (#889) - what the import
+/// page and the MCP reply name, so the holders choice is informed.
+#[must_use]
+pub fn bodies_in(library: &[LibraryTool]) -> usize {
+    library.iter().filter(|t| t.body.is_some()).count()
 }

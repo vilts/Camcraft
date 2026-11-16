@@ -38,8 +38,8 @@ impl Height {
 }
 
 /// Resolve one height to a world Z. `Fixed` reads through; the other
-/// sources ask the world for the current geometry (model bounds exclude
-/// stock and WCS by `solid_world_aabb`'s rule; a slot entity that exists
+/// sources ask the world for the current geometry (model bounds are the
+/// parts': no stock, WCS or fixture, #1529; a slot entity that exists
 /// but was never moved reads at the origin, matching `transform_of`'s
 /// own default-everything semantics).
 /// `setup` is the declared setup of the asking operation (`None` = the
@@ -61,11 +61,12 @@ pub fn resolve_height(
         HeightReference::Fixed => return (h.offset.is_finite()).then_some(h.offset),
         HeightReference::TopOfStock => model::stock_world_aabb_for(world, setup)?.max.z,
         HeightReference::BottomOfStock => model::stock_world_aabb_for(world, setup)?.min.z,
-        // #326: the model bounds in the setup's frame - a flipped part's
-        // top is its former bottom (identical to the document bounds
-        // when the setup holds the part as modelled).
-        HeightReference::TopOfModel => crate::setup_align::solid_aabb_in(world, setup)?.max.z,
-        HeightReference::BottomOfModel => crate::setup_align::solid_aabb_in(world, setup)?.min.z,
+        // #326: the parts' bounds in the setup's frame - a flipped
+        // part's top is its former bottom. #1529: the parts only - a
+        // vise, accessory or tagged fixture (of any setup) is never
+        // the model the heights stand on.
+        HeightReference::TopOfModel => crate::setup_align::part_aabb_in(world, setup)?.max.z,
+        HeightReference::BottomOfModel => crate::setup_align::part_aabb_in(world, setup)?.min.z,
         HeightReference::WorkOffset => {
             // #329, #342: the setup's one WCS, never the height's own.
             let entity = crate::setup::wcs_entity(world, setup)?;
@@ -99,7 +100,9 @@ pub fn missing_source(
                 .then_some("no stock yet - set it up in Setup > Stock")
         }
         HeightReference::TopOfModel | HeightReference::BottomOfModel => {
-            model::solid_world_aabb(world).is_none().then_some("no model loaded")
+            crate::setup_align::part_aabb_in(world, setup)
+                .is_none()
+                .then_some("no model loaded")
         }
         HeightReference::WorkOffset => crate::setup::wcs_entity(world, setup)
             .is_none()
@@ -173,6 +176,10 @@ pub fn region_z(
         OpParams::Probe { target, .. } => Some(target[2]),
         // The plasma cut rides the plate's top (#670).
         OpParams::PlasmaProfile(p) => resolve_height(world, setup, src, p.top_z),
+        // The wire's profile is read on the workpiece's top (#532).
+        OpParams::WireContour(p) => resolve_height(world, setup, src, p.top_z),
+        // The electrode enters at the work top (#541).
+        OpParams::SinkerBurn(p) | OpParams::SinkerSideBurn(crate::operation::SinkerSideBurnOp { burn: p, .. }) => resolve_height(world, setup, src, p.top_z),
     }
 }
 
@@ -387,6 +394,22 @@ pub fn resolve_params(
             req("Clearance Z", p.clearance_z)?,
             Some(req("Top of Plate Z", p.top_z)?),
             Some(req("Bottom of Plate Z", p.bottom_z)?),
+            None,
+            None,
+        ),
+        // The wire cut (#532): the workpiece's top and bottom - the two
+        // programmed planes. A wire never lifts out of the work, so no
+        // rapids plane is stated; the slot reads the top.
+        OpParams::WireContour(p) => {
+            let top = req("Top of Workpiece Z", p.top_z)?;
+            (top, Some(top), Some(req("Bottom of Workpiece Z", p.bottom_z)?), None, None)
+        }
+        // The sinker burn (#541): the approach plane, the work top and
+        // the cavity floor datum - no hop plane.
+        OpParams::SinkerBurn(p) | OpParams::SinkerSideBurn(crate::operation::SinkerSideBurnOp { burn: p, .. }) => (
+            req("Clearance Z", p.clearance_z)?,
+            Some(req("Work Top Z", p.top_z)?),
+            Some(req("Cavity Floor Z", p.floor_z)?),
             None,
             None,
         ),

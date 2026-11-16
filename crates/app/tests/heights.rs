@@ -6,7 +6,7 @@
 //! Provenance: HSMWorks expresses heights the same way (From + Offset);
 //! specced from its published user documentation, behavior only.
 //!
-//! Gate map (M4.4): covers app::commands, app::geometry, app::machining2d, app::model, app::operation, app::project, app::schema, app::stock, app::tools, app::world.
+//! Gate map (M4.4): covers app::commands, app::geometry, motion::machining2d, app::model, app::operation, app::project, app::schema, geometry::geometry::stock, tools::tools, app::world.
 
 use flecs_ecs::prelude::World;
 
@@ -68,7 +68,7 @@ fn stock_and_block() -> (World, History) {
 /// nothing else varied - (enum variants take no functional-update syntax,
 /// so the three heights are the only knobs this literal exposes).
 fn pocket(clearance_z: Height, top_z: Height, bottom_z: Height) -> OpParams {
-    OpParams::Pocket { tilt: None,
+    OpParams::Pocket { blend_radius: None, tilt: None,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 3.0,
         stock_to_leave: 0.0,

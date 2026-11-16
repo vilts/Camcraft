@@ -11,11 +11,14 @@
 //!   operation's after-action), so each operation reads its OWN setup's
 //!   choice ([`of`]) - a setup that skips posts without its stops while
 //!   the next one keeps them.
-//! - The Output (one file per operation) and the thread output shape the
-//!   whole program, so the program posts with the ACTIVE setup's options
+//! - The Output (one file per operation), the thread output and the End
+//!   units (the unit word the program ends in, #596) shape the whole
+//!   program, so the program posts with the ACTIVE setup's options
 //!   ([`in_force`]) - the one-mount law of the post itself - and a program
-//!   holding a setup that disagrees on either is refused by name
-//!   ([`program_problems`]), never posted half one way.
+//!   holding a setup that disagrees on any of them is refused by name
+//!   ([`program_problems`]), never posted half one way (#1540). The
+//!   program's own unit is not a post option at all: it is the
+//!   document's one mm / inch setting (#902, `crate::posting_units`).
 //!
 //! Provenance: our own design (the #343 mount law restated for the post
 //! options); no vendor implementation inspected.
@@ -57,8 +60,9 @@ pub fn in_force(world: &World) -> PostOptions {
 }
 
 /// The program-level clause: every unsuppressed operation's setup must
-/// agree with the active setup on the Output and the thread output (the
-/// skip switch is per operation and may differ). Each disagreeing setup
+/// agree with the active setup on the Output, the thread output and the
+/// End units (the skip switch and smoothing are per operation and may
+/// differ). Each disagreeing setup
 /// is named once. Empty whenever no setup owns its options.
 #[must_use]
 pub fn program_problems(world: &World) -> Vec<String> {
@@ -82,12 +86,35 @@ pub fn program_problems(world: &World) -> Vec<String> {
             continue;
         }
         let has = of(world, Some(&here));
-        if has.per_op != want.per_op || has.threading != want.threading {
+        let differ = differing(&has, &want);
+        if !differ.is_empty() {
             out.push(format!(
-                "setup '{here}' posts with other post options (output or threading) than the active setup '{active}' - post the setups one at a time"
+                "setup '{here}' posts with other post options ({}) than the active setup '{active}' - post the setups one at a time",
+                differ.join(", ")
             ));
         }
         seen.push(here);
+    }
+    out
+}
+
+/// The program-wide options on which `has` differs from `want`, by the
+/// names the post-options page shows: the Output, the thread output and
+/// the End units (#1540 - the one End-units word of the program, never
+/// whichever setup happens to be active).
+fn differing(has: &PostOptions, want: &PostOptions) -> Vec<&'static str> {
+    let mut out = Vec::new();
+    if has.per_op != want.per_op {
+        out.push("output");
+    }
+    if has.threading != want.threading {
+        out.push("threading");
+    }
+    if has.end_units != want.end_units {
+        out.push("end units");
+    }
+    if has.between_setups != want.between_setups {
+        out.push("between setups");
     }
     out
 }

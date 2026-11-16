@@ -153,3 +153,64 @@ fn an_imported_fixture_offers_detect_plate_grid() {
     let def = model::find_by_name(&h.state().world, "Block").and_then(|e| fixture::def_of(&h.state().world, &e)).expect("fixture");
     assert!(def.plate.plate.is_none(), "a refused detection changes nothing");
 }
+
+/// #1119: every input in the fixture family carries an accessible name -
+/// the label its row shows (`labelled_by`) or a plain name. Returns the
+/// role and drawn value of each input that has neither, and how many
+/// inputs were looked at.
+pub(super) fn unnamed_inputs<S>(h: &Harness<'static, S>) -> (Vec<String>, usize) {
+    use egui::accesskit::Role;
+    use egui_kittest::kittest::NodeT;
+    let (mut bad, mut seen) = (Vec::new(), 0);
+    for n in h.root().children_recursive() {
+        let node = n.accesskit_node();
+        if !matches!(node.role(), Role::SpinButton | Role::TextInput | Role::MultilineTextInput | Role::ComboBox | Role::Slider) {
+            continue;
+        }
+        seen += 1;
+        let named = node.labelled_by().next().is_some() || node.data().label().is_some_and(|l| !l.is_empty());
+        if !named {
+            bad.push(format!("{:?} = {:?}", node.role(), node.value()));
+        }
+    }
+    (bad, seen)
+}
+
+#[test]
+fn the_fixture_dialogs_name_every_input() {
+    for (what, cmd, at_least) in [
+        ("plate dialog", CommandKind::FixturePlateDialog(String::new()), 6),
+        ("vise dialog", CommandKind::BuiltinViseDialog(String::new()), 8),
+        ("accessory dialog", CommandKind::AccessoryDialog(String::new()), 3),
+        ("library save dialog", CommandKind::FixtureLibrarySaveDialog(String::new()), 0),
+    ] {
+        let mut state = State::new();
+        state.pending.push_back(cmd);
+        let mut h = dialog(state);
+        h.run();
+        h.run();
+        let (bad, seen) = unnamed_inputs(&h);
+        assert!(seen >= at_least, "{what}: only {seen} inputs found");
+        assert!(bad.is_empty(), "{what}: unnamed inputs {bad:?}");
+    }
+}
+
+#[test]
+fn the_fixture_rows_name_every_input() {
+    let mut state = State::new();
+    let p = plate::preset("770MX table 28 x 15 in").map(plate::PlatePreset::params).expect("preset");
+    state.pending.push_back(CommandKind::InsertFixturePlate { setup: None, params: p, on_table: false, pos: [0.0; 3], yaw_deg: 0.0 });
+    let six = camcraft_app::vise::size("6 in").map(camcraft_app::vise::ViseSize::half_open).expect("6 in");
+    state.pending.push_back(CommandKind::InsertBuiltinVise { setup: None, params: six, fit_stock: false, pos: [0.0, 0.0, 300.0], yaw_deg: 0.0 });
+    state.drain_actions();
+    let mut h = page(state);
+    h.run();
+    h.get_by_label("Place on plate…").click();
+    h.run();
+    h.get_by_label("Add mod vise pair…").click();
+    h.run();
+    h.run();
+    let (bad, seen) = unnamed_inputs(&h);
+    assert!(seen >= 4, "only {seen} inputs found");
+    assert!(bad.is_empty(), "unnamed inputs {bad:?}");
+}

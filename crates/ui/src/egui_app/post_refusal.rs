@@ -12,7 +12,7 @@
 
 use std::path::PathBuf;
 
-use egui::{Id, Label, RichText, ScrollArea, Window};
+use egui::{Id, RichText, ScrollArea, Window};
 
 use crate::state::State;
 
@@ -62,7 +62,7 @@ pub(crate) fn window(ctx: &egui::Context, state: &mut State) {
             ScrollArea::vertical()
                 .max_height(REASON_MAX_HEIGHT)
                 .show(ui, |ui| {
-                    ui.add(Label::new(RichText::new(&refusal.reason).color(error_ink)).wrap());
+                    super::error_text::error_text(ui, error_ink, &refusal.reason);
                 });
             ui.label(format!("Nothing was written to {file}; a program already there is unchanged."));
             if changed_since {

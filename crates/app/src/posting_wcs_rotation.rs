@@ -15,7 +15,7 @@
 use flecs_ecs::prelude::World;
 
 use crate::model;
-use crate::schema::{Location, WCS_SLOTS};
+use crate::schema::Location;
 
 use super::wcs_slot::wcs_slot;
 
@@ -108,7 +108,7 @@ pub(super) fn rotated_wcs_problems(world: &World) -> Vec<String> {
             hit.2.push(label);
             continue;
         }
-        let word = WCS_SLOTS.get(slot).copied().unwrap_or("G54");
+        let word = crate::setup::offset_name(world, setup, u32::try_from(slot).map_or(u32::MAX, |s| s.saturating_add(1)));
         let owner = match crate::setup::effective(world, setup) {
             Some(s) => format!("setup {s}: its WCS ({word})"),
             None => format!("the WCS ({word})"),

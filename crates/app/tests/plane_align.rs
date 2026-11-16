@@ -164,7 +164,7 @@ fn the_command_writes_the_setup_alignment_and_undo_restores_it() {
     let held = setup_align::stored(&w, "Setup1").expect("an alignment is held");
     assert!(on_axis(laid_dir(&w, held, [0.0, -1.0, 0.0]), Z));
     assert_eq!(camcraft_app::setup::work_offset(&w, "Setup1"), None, "the work offset is untouched");
-    // Absolute: the same pick in the now-aligned setup is the same turn.
+    // #738: composed on the held pose, the same pick again is a zero step.
     let again = AlignPartToSetup::lay_on_plane(&w, "Setup1", &picks, lay(ArcPlane::Xy, false, true));
     assert!(again.is_err_and(|e| e.to_string().contains("already holds the part that way")));
     assert!(h.undo(&w));

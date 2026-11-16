@@ -36,25 +36,67 @@ fn children(state: &State, setup: &str) -> Vec<String> {
     rows[at + 1..].iter().take_while(|(_, d, _)| *d > depth).filter(|(_, d, _)| *d == depth + 1).map(|(n, _, _)| n.clone()).collect()
 }
 
-const NODES: [&str; 7] = ["WCS", "Stock", "Machine", "Post", "Fixtures", "Tool list", "Operations"];
+const NODES: [&str; 7] = ["WCS", "Stock", "Operations", "Tool list", "Fixtures", "Machine", "Post"];
 
 #[test]
 fn every_setup_owns_its_nodes_in_order() {
     let mut state = State::new();
     // No setups: the implicit setup's nodes stand straight under Setup.
     let rows = tree(&state);
-    let flat: Vec<&str> = rows.iter().filter(|(_, d, _)| *d == 1).map(|(n, _, _)| n.as_str()).collect();
-    assert_eq!(&flat[..9], ["Setups", "WCS", "Stock", "Machine", "Post", "Fixtures", "Tool list", "Operations", "(no models yet)"]);
-    run(&mut state, CommandKind::CreateSetup { name: None, datum_from: None });
-    run(&mut state, CommandKind::CreateSetup { name: None, datum_from: None });
+    let flat: Vec<&str> = rows
+        .iter()
+        .filter(|(_, d, _)| *d == 1)
+        .map(|(n, _, _)| n.as_str())
+        .collect();
+    assert_eq!(
+        &flat[..10],
+        [
+            "Setups",
+            "WCS",
+            "Stock",
+            "Operations",
+            "Tool list",
+            "Fixtures",
+            "Machine",
+            "Post",
+            "(no models yet)",
+            "(no tools yet)",
+        ]
+    );
+    run(
+        &mut state,
+        CommandKind::CreateSetup {
+            name: None,
+            datum_from: None,
+        },
+    );
+    run(
+        &mut state,
+        CommandKind::CreateSetup {
+            name: None,
+            datum_from: None,
+        },
+    );
     for s in ["Setup1", "Setup2"] {
         assert_eq!(children(&state, s), NODES, "{s}'s nodes");
     }
     let (rows, leaves) = panes::browser_rows(&state);
-    let node = |s: &str| leaves.iter().position(|l| *l == Leaf::Setup(s.to_owned())).expect("setup node");
-    assert_eq!(rows[node("Setup2")].kind, painted::Kind::Setup(true), "the last created is active");
+    let node = |s: &str| {
+        leaves
+            .iter()
+            .position(|l| *l == Leaf::Setup(s.to_owned()))
+            .expect("setup node")
+    };
+    assert_eq!(
+        rows[node("Setup2")].kind,
+        painted::Kind::Setup(true),
+        "the last created is active"
+    );
     assert_eq!(rows[node("Setup1")].kind, painted::Kind::Setup(false));
-    assert!(!rows.iter().any(|r| r.label == "Operations" && r.depth == 0), "no document-wide Operations section");
+    assert!(
+        !rows.iter().any(|r| r.label == "Operations" && r.depth == 0),
+        "no document-wide Operations section"
+    );
 }
 
 #[test]

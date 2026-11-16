@@ -134,7 +134,11 @@ pub fn assert_refusals_named(reads: &[LevelRead], skin: f64) {
     }
 }
 
-pub fn read_levels(path: &Toolpath, top: f64, floor: f64) -> Vec<LevelRead> {
+/// Read per developed level of the ladder `top`, `top - step`, ...
+/// (issue #983: only the ladder's own planes - a microlift's lifted run
+/// whose down ramp passes a vertex on its height is no level, and read
+/// as one it looked like a ring-cut level no note named).
+pub fn read_levels(path: &Toolpath, top: f64, floor: f64, step: f64) -> Vec<LevelRead> {
     let mut spec = QualitySpec::new(D);
     spec.cell = D / 60.0;
     spec.break_deg = 5.0;
@@ -164,6 +168,11 @@ pub fn read_levels(path: &Toolpath, top: f64, floor: f64) -> Vec<LevelRead> {
     // and its descent's end differ in the last bit). A microlift's lifted
     // run is planar too, but nothing descends onto its height.
     zs.retain(|&z| path.moves.iter().any(|m| m.kind != MoveKind::Rapid && (m.to.z - z).abs() < 1e-6 && m.from.z > z + 1e-6));
+    let on_ladder = |z: f64| {
+        let k = (top - z) / step;
+        step > 0.0 && (k - k.round()).abs() * step < 1e-5
+    };
+    zs.retain(|&z| on_ladder(z));
     zs.iter()
         .map(|&z| {
             let idx: Vec<usize> =

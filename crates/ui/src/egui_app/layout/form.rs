@@ -55,6 +55,15 @@ fn label_cell(ui: &mut Ui, label: &str) -> Response {
     .inner
 }
 
+/// The id of the label of the property row drawn last this frame, for a
+/// control to be named by it (`Response::labelled_by`, #1119). `None` when
+/// no row was drawn this frame.
+pub fn row_label_id(ui: &Ui) -> Option<Id> {
+    let frame = ui.ctx().cumulative_frame_nr();
+    let last: Option<(u64, Response)> = ui.ctx().data(|d| d.get_temp(last_label_id()));
+    last.and_then(|(f, r)| (f == frame).then_some(r.id))
+}
+
 /// One property row: `label` in the label column, `add`'s controls at
 /// the right, on one line. The label's full text rides its hover (a
 /// truncated label never hides its name).

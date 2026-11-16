@@ -1,0 +1,5 @@
+; tormach-lathe.cps refused arcs: 4 warning(s), the program is never released
+warning: XY arc that is not a thread half-turn about the spindle axis
+warning: arc start off the spindle axis meridian (both X and Y move) - milling work, not turning
+warning: arc end off the spindle axis meridian (both X and Y move) - milling work, not turning
+warning: rapid off the spindle axis meridian (both X and Y move) - milling work, not turning

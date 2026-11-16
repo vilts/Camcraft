@@ -31,7 +31,7 @@ use crate::operation::Family;
 fn cuts_plasma(op: &crate::schema::Operation) -> bool {
     match op.params.kind().info().family() {
         Family::Plasma => true,
-        Family::Mill | Family::Turn => false,
+        Family::Mill | Family::Turn | Family::WireEdm | Family::Sinker => false,
     }
 }
 

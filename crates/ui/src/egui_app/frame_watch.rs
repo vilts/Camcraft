@@ -164,6 +164,22 @@ mod tests {
     }
 
     #[test]
+    fn an_excuse_is_clamped_to_the_time_since_the_last_mark() {
+        // #879: a 5 s dialog excused at +210 ms may only take the 10 ms
+        // since the last mark off the frame. Without the clamp the stamps
+        // jump past `now`, the frame reads as 0 ms and the 200 ms of
+        // commands work is lost.
+        let t0 = Instant::now();
+        let mut w = FrameWatch::new(t0);
+        w.begin(t0);
+        w.mark("commands", t0 + ms(200));
+        w.excuse(ms(5_000), t0 + ms(210));
+        let line = w.end(t0 + ms(210)).expect("200 ms of commands work is slow");
+        assert!(line.contains("slow frame 200 ms"), "{line}");
+        assert!(line.contains("\"commands\" 200 ms"), "{line}");
+    }
+
+    #[test]
     fn reports_are_rate_limited_but_counted() {
         let t0 = Instant::now();
         let mut w = FrameWatch::new(t0);

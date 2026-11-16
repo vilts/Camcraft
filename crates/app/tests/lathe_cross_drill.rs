@@ -75,7 +75,14 @@ fn params(holes: Vec<Hole>, cross: Vec<CrossHole>) -> OpParams {
 /// finished r10 bar on the world origin (G54 unmoved), `raw` as the
 /// setup's stock diameter.
 fn lathe(raw: Option<f64>) -> (World, History) {
-    lathe_at(raw, 0.0)
+    lathe_at(raw, 0.0, "lathe")
+}
+
+/// `lathe` on a mill-turn: what the posting test needs - a 2-axis
+/// lathe has no live tool for a cross hole, so only a mill-turn's
+/// milling post may post it (#1232).
+fn mill_turn(raw: Option<f64>) -> (World, History) {
+    lathe_at(raw, 0.0, "mill-turn")
 }
 
 fn rotaries() -> Vec<AxisLimits> {
@@ -85,7 +92,7 @@ fn rotaries() -> Vec<AxisLimits> {
 
 /// `lathe` with the bar shifted `dx` along world X (G54 left at the
 /// world origin, so the bar no longer turns on the programmed spindle).
-fn lathe_at(raw: Option<f64>, dx: f64) -> (World, History) {
+fn lathe_at(raw: Option<f64>, dx: f64, kind: &str) -> (World, History) {
     let world = new_world();
     let mut history = History::default();
     if let Some(d) = raw {
@@ -93,7 +100,7 @@ fn lathe_at(raw: Option<f64>, dx: f64) -> (World, History) {
         let shape = StockShape::Cylinder { diameter: d, height: 40.0 };
         history.execute(&world, SetStock::new(&world, shape, at).expect("stock"));
     }
-    let m = Machine { model: "TestBench lathe".into(), kind: Some("lathe".into()), axes: rotaries(), ..Default::default() };
+    let m = Machine { model: "TestBench lathe".into(), kind: Some(kind.into()), axes: rotaries(), ..Default::default() };
     history.execute(&world, LoadMachine::new(&world, "bench.mch".into(), Some(m)).expect("machine"));
     let mut tool = catalog().into_iter().find(|(n, _)| *n == "DR-0400").map(|(_, t)| t).expect("catalog entry");
     tool.flute_len = 30.0;
@@ -125,7 +132,7 @@ fn blocking(w: &[Warning]) -> Vec<&Warning> {
 #[test]
 fn a_clear_lathe_cross_drill_generates_with_no_blocking_warning_and_posts() {
     for raw in [None, Some(40.0)] {
-        let (world, mut history) = lathe(raw);
+        let (world, mut history) = mill_turn(raw);
         let (_, warns) = operation::generate(&world, &op(params(vec![], cross(6.0))), "")
             .unwrap_or_else(|e| panic!("raw {raw:?}: the clear lathe cross drill generates: {e}"));
         assert!(blocking(&warns).is_empty(), "raw {raw:?}: a clear cross drill is convicted: {warns:?}");
@@ -151,7 +158,7 @@ fn a_lathe_cross_drill_deeper_than_its_flute_is_still_refused_by_name() {
 
 #[test]
 fn a_lathe_cross_drill_whose_bar_is_off_the_spindle_is_still_refused_by_name() {
-    let (world, _h) = lathe_at(None, 30.0);
+    let (world, _h) = lathe_at(None, 30.0, "lathe");
     let moved: Vec<CrossHole> = cross(6.0)
         .into_iter()
         .map(|h| CrossHole { origin: Point3::new(h.origin.x + 30.0, h.origin.y, h.origin.z), ..h })
@@ -193,7 +200,7 @@ fn a_bar_with_one_modelled_cross_hole_fits_on_the_spindle_and_drills_clean() {
     assert!(r.trusted && r.worst() <= operation::SPINDLE_TOL, "the one-hole bar sits on the spindle: {r:?}");
     let world = new_world();
     let mut history = History::default();
-    let m = Machine { model: "TestBench lathe".into(), kind: Some("lathe".into()), axes: rotaries(), ..Default::default() };
+    let m = Machine { model: "TestBench lathe".into(), kind: Some("mill-turn".into()), axes: rotaries(), ..Default::default() };
     history.execute(&world, LoadMachine::new(&world, "bench.mch".into(), Some(m)).expect("machine"));
     let mut tool = catalog().into_iter().find(|(n, _)| *n == "DR-0400").map(|(_, t)| t).expect("catalog entry");
     tool.flute_len = 30.0;

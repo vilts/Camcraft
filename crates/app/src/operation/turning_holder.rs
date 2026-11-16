@@ -45,6 +45,7 @@ use crate::verify::Warning;
 use super::drill_prior::PriorCell;
 use super::kinds::Section;
 use super::turning_credit::{pilots, Pilot};
+use super::turning_holder_side::sided;
 use super::turning_holder_scene::{material, pilot_removed, standing, Annuli, Kerf, Table, PITCH};
 use super::turning_outline::Revolved;
 use super::turning_rapids::{faced_end, kerf_of, Meridian, SignedMeridian};
@@ -75,6 +76,20 @@ pub(super) fn noted(mut path: Toolpath, params: &OpParams, tool: &Tool, has_body
     path
 }
 
+/// The world directions a lathe body's tool frame stands in on `path`
+/// (#1038): +x the radial on the holder's side of the axis (#1102), +z
+/// the spindle - the very frame [`judge`] reads a body point (x, y, z)
+/// in, fitted from the same part, so the drawn holder is the judged one.
+/// Refuses by name when no spindle fits the part, or the path cannot
+/// tell the holder's side.
+pub(crate) fn body_axes(part: &[crate::geometry::Triangle], path: &Toolpath) -> Result<([f64; 3], [f64; 3]), String> {
+    let frame = Frame::about(part).map_err(|e| format!("no spindle fits the part ({e})"))?;
+    let sm = SignedMeridian::of(&frame, path);
+    let (side, _) = sided_pieces(&sm, path, super::material::Z_TOL)?;
+    let (dir, r) = sm.axes();
+    Ok(([r.x * side, r.y * side, r.z * side], [dir.x, dir.y, dir.z]))
+}
+
 /// The holder law (#369) on `path`, for a tool whose lathe body is
 /// `body`: one [`Warning::HolderHit`] per rubbing move. Nothing for an op
 /// outside the turning section or a tool with no body. Refuses by name
@@ -102,10 +117,7 @@ pub(super) fn judge(
         None => None,
     };
     let sm = SignedMeridian::of(&frame, path);
-    let mut pieces = Vec::with_capacity(path.moves.len());
-    for (i, m) in path.moves.iter().enumerate() {
-        pieces.push(pieces_of(m, &sm, cx.z_tol).ok_or_else(|| unjudged(format!("move {i} leaves the turning plane")))?);
-    }
+    let (side, pieces) = sided_pieces(&sm, path, cx.z_tol).map_err(unjudged)?;
     let margin = if cx.margin.is_finite() { cx.margin.max(0.0) } else { 0.0 };
     let mut kerfs: Vec<Kerf> = Vec::new();
     for (i, _) in path.moves.iter().enumerate().filter(|(_, m)| m.kind != MoveKind::Rapid) {
@@ -129,7 +141,7 @@ pub(super) fn judge(
     vertices.extend(part.knots());
     vertices.extend(stock.iter().flat_map(Revolved::knots));
     let table = Table::new(&part, stock.as_ref(), lo, hi, &vertices).ok_or_else(|| unjudged("the path's stations are not finite".into()))?;
-    let scene = Scene { table, buckets: Buckets::new(&kerfs, lo, hi), kerfs, pilots: pilots(cx.drills, &sm), spans: body.spans(), profile, margin };
+    let scene = Scene { table, buckets: Buckets::new(&kerfs, lo, hi), kerfs, pilots: pilots(cx.drills, &sm), spans: body.spans(), profile, margin, side };
     let mut cap: Option<Option<f64>> = None; // the faced end, read once
     for (i, piece) in pieces.iter().enumerate() {
         let verdict = match scene.judge_move(i, piece, None) {
@@ -148,24 +160,36 @@ pub(super) fn judge(
     Ok(())
 }
 
+/// The holder's side of `path` (#1102) and every move's meridian
+/// pieces, a round arc about the axis set on that side. Refuses by name
+/// when a move leaves the turning plane or the side cannot be told.
+pub(super) fn sided_pieces(sm: &SignedMeridian, path: &Toolpath, tol: f64) -> Result<(f64, Vec<Vec<Seg>>), String> {
+    let mut pieces = Vec::with_capacity(path.moves.len());
+    for (i, m) in path.moves.iter().enumerate() {
+        pieces.push(pieces_of(m, sm, tol).ok_or_else(|| format!("move {i} leaves the turning plane"))?);
+    }
+    sided(pieces)
+}
+
 /// A move's meridian pieces: its chord, a thread's helix read at its
-/// constant radius, or a meridian arc's chords; `None` when it leaves
-/// the turning plane.
-fn pieces_of(m: &Move, sm: &SignedMeridian, tol: f64) -> Option<Vec<Seg>> {
+/// constant radius (flagged `true`: a round arc about the axis, whose
+/// ends stand on both sides and tell no holder side), or a meridian
+/// arc's chords; `None` when it leaves the turning plane.
+pub(super) fn pieces_of(m: &Move, sm: &SignedMeridian, tol: f64) -> Option<(Vec<Seg>, bool)> {
     if !sm.in_plane(m.from, tol) || !sm.in_plane(m.to, tol) {
         return None;
     }
     if m.arc.is_none() {
-        return Some(vec![(sm.sr(m.from), sm.sr(m.to))]);
+        return Some((vec![(sm.sr(m.from), sm.sr(m.to))], false));
     }
     if let Some(pq) = kerf_of(m, sm, tol) {
-        return Some(vec![pq]);
+        return Some((vec![pq], true));
     }
     let chords = m.segments3(ARC_TOL);
     if chords.iter().any(|(p, q)| !sm.in_plane(*p, tol) || !sm.in_plane(*q, tol)) {
         return None;
     }
-    Some(chords.into_iter().map(|(p, q)| (sm.sr(p), sm.sr(q))).collect())
+    Some((chords.into_iter().map(|(p, q)| (sm.sr(p), sm.sr(q))).collect(), false))
 }
 
 /// The tool's footprint swept from `p` to `q` (meridian (s, rho)), its
@@ -230,6 +254,9 @@ struct Scene<'a> {
     spans: Vec<(f64, f64, camcraft_tools::lathe_holder::Reach)>,
     profile: LatheProfile,
     margin: f64,
+    /// The holder's side of the signed radial (#1102), +1 or -1: a tip
+    /// at signed X stands at `side * X` along the holder's own +x.
+    side: f64,
 }
 
 impl Scene<'_> {
@@ -268,7 +295,7 @@ impl Scene<'_> {
         // worst reading is at one of them.
         for &(z0, z1, reach) in &self.spans {
             let (a, b) = (st + z0, st + z1);
-            let radii = reach.radii(x);
+            let radii = reach.radii(if self.side < 0.0 { -x } else { x });
             let inner = (self.table.first_at(a)..self.table.first_at(b)).filter(|&k| self.table.station(k) > a);
             let points = std::iter::once((a, self.table.annuli_at(a)))
                 .chain(inner.map(|k| (self.table.station(k), self.table.annuli(k))))

@@ -123,6 +123,14 @@ fn the_post_refuses_what_a_plasma_table_cannot_say() {
     let vmc: Value = serde_json::from_str(&read("assets/machines/3axis-vmc.mch")).expect("json");
     let w = warnings(script(PLASMA), &vmc, &section("", HEAD, CUT));
     assert!(w.iter().any(|m| m.contains("is not declared a plasma machine")), "{w:?}");
+    // A document with no machine: the sentence must read, not double-negate
+    // ("no machine is not declared ...") - #998.
+    let w = warnings(script(PLASMA), &Value::Null, &section("", HEAD, CUT));
+    assert!(
+        w.iter().any(|m| m.contains("no machine is stated, so none is declared a plasma machine")),
+        "{w:?}"
+    );
+    assert!(!w.iter().any(|m| m.contains("no machine is not declared")), "{w:?}");
     let mut rot = pl1300();
     // (The mirror's door: the parsed 1300PL itself refuses a rotary.)
     rot["kinematics"]["static"] = serde_json::json!({ "rotaries": [{ "letter": "A", "direction": [1, 0, 0] }] });
@@ -179,6 +187,14 @@ fn a_small_hole_factor_out_of_range_names_the_factor_range() {
 fn the_mills_posts_decline_a_plasma_stream_and_the_1300pl() {
     let stream = read("crates/app/tests/golden/plasma_plate_with_holes.cl");
     for (n, cps) in BUILTINS.iter().filter(|(n, _)| *n != PLASMA) {
+        // #542: the sinker post refuses any machine not declared a
+        // sinker by name (the app's serves door, #1232, refuses first).
+        if posting::SINKER_POSTS.contains(n) {
+            let w = warnings(cps, &pl1300(), &stream);
+            assert!(w.iter().any(|m| m.contains("is not declared a sinker EDM")), "{n}: {w:?}");
+            assert!(!posting::post_serves(n, Kind::Plasma), "{n} must not serve a plasma table");
+            continue;
+        }
         let w = warnings(cps, &pl1300(), &stream);
         assert!(w.iter().any(|m| m.contains("does not define onTorchOn / onTorchOff")), "{n}: {w:?}");
         assert!(!posting::post_serves(n, Kind::Plasma), "{n} must not serve a plasma table");

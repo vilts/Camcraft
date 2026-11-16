@@ -73,14 +73,14 @@ fn wear_walks_controls_centre_path_and_programs_it_verbatim() {
     for (w, c) in wear.comps.iter().zip(&control.comps) {
         assert!(w.wear && !c.wear);
         assert_eq!((w.side, w.first, w.last, w.radius), (c.side, c.first, c.last, c.radius));
-        assert_eq!(w.side, CompSide::Right, "climb keeps the centre right of the part");
+        assert_eq!(w.side, CompSide::Left, "climb keeps the centre left of the part (G41, #1555)");
         assert!(w.is_sane(&wear.moves));
         // The programmed text is the centre walk itself.
         assert_eq!(w.programmed.as_slice(), &wear.moves[w.first..=w.last]);
     }
     // Conventional travel engages G41.
     let conv = contour(&square(), &params(lead, false, Compensation::Wear)).unwrap();
-    assert!(!conv.comps.is_empty() && conv.comps.iter().all(|c| c.side == CompSide::Left && c.wear));
+    assert!(!conv.comps.is_empty() && conv.comps.iter().all(|c| c.side == CompSide::Right && c.wear));
 }
 
 #[test]

@@ -19,13 +19,17 @@ extension = "nc";
 setCodePage = "utf-8";
 capabilities = 1;          // reference contract: integer feature mask
 coolantModes = true;       // reads PARAM Coolant - to refuse every ask but Off
+workOffsetIndex = true; // reads PARAM WorkOffset as the 1-based offset number (#931)
+workOffsetMax = 6;      // G54..G59; the plasma manuals read for this post state no more (#931)
+programUnits = "mm inch";  // #902: writes the document's unit (postOptions.Units), G21 / G20
 
 // Determinism law: no timestamps, no randomness - the same stream always
 // posts to the same text (golden files depend on it).
 
 // ---------------------------------------------------------------- state
-var inch = false;          // the machine is programmed in inches (onOpen)
+var inch = false;          // the document's unit is inch (onOpen, #902: postOptions.Units, never the machine file's)
 var wcsWord = "G54";       // from the WorkOffset PARAM
+var wcsIndex = 1;          // the offset number wcsWord writes (#931)
 var orgX = 0, orgY = 0;    // the WCS slot origin (OriginX/Y PARAMs)
 var sectionOpen = false;   // preamble written (a legacy .cl has no SECTION)
 var lit = false;           // the torch is struck (onTorchOn .. onTorchOff)
@@ -37,7 +41,7 @@ var opName = "", opKind = "", setupName = "", setupSaid = "", toolName = "";
 var refused = {};          // one named refusal per key, not one per line
 
 // ------------------------------------------------------------ helpers
-// The stream speaks mm and mm/min. An inch machine gets every length and
+// The stream speaks mm and mm/min. An inch program gets every length and
 // feed divided by 25.4 and written at four decimals; a metric one keeps
 // mm at three.
 function has(v) { return v !== null && v !== undefined && isFinite(v); }
@@ -77,13 +81,19 @@ function note(s) { block(["(" + s + ")"]); }
 // A plasma table cuts flat sheet - a stated rotary has no word here.
 function machineOk() {
   var m = typeof machine !== "undefined" ? machine : null;
-  var nm = (m && (m.name || m.model)) || "no machine";
+  var nm = (m && (m.name || m.model)) || "";
   if (!m || m.kind !== "plasma") {
-    refuse("kind", "the Tormach 1300PL plasma post writes torch words (M200, G15, G16, M205) only a plasma table reads - " + nm + " is not declared a plasma machine");
+    // The engine always publishes a machine object, with an empty name when
+    // the document states none: that fallback made the sentence a double
+    // negative ("no machine is not declared ..."). State it plainly (#998).
+    var why = nm
+      ? nm + " is not declared a plasma machine"
+      : "no machine is stated, so none is declared a plasma machine";
+    refuse("kind", "the Tormach 1300PL plasma post writes torch words (M200, G15, G16, M205) only a plasma table reads - " + why);
     return false;
   }
   if (m.rotaries && m.rotaries.length > 0) {
-    refuse("rotary", nm + " states a rotary axis - a plasma table cuts flat sheet in X and Y, and this post writes no rotary word");
+    refuse("rotary", (nm || "the machine") + " states a rotary axis - a plasma table cuts flat sheet in X and Y, and this post writes no rotary word");
     return false;
   }
   return true;
@@ -98,7 +108,7 @@ function machineOk() {
 // centres (G91.1), feed per minute (G94; G95 is refused on plasma), no
 // cutter compensation (G40), no length offset yet (G49), no cycle (G80).
 function onOpen() {
-  inch = typeof machine !== "undefined" && machine.units === "inch";
+  inch = typeof postOptions !== "undefined" && postOptions.Units === "inch";
   var nm = (typeof machine !== "undefined" && (machine.name || machine.model)) || "CAMCRAFT";
   note(clean(nm));
   block([inch ? "G20" : "G21"]);
@@ -106,8 +116,20 @@ function onOpen() {
   block(["G64", "P0.005", "Q0.005"]);
 }
 
+// #931: PARAM WorkOffset arrives as the 1-based offset number (the engine
+// refuses one above workOffsetMax by setup name); the word is ours to write.
+function workOffsetName(n) {  // offset n -> this control's word; "" when it has none
+  return n >= 1 && n <= 6 && n === Math.floor(n) ? "G" + (53 + n) : "";
+}
+function offsetWord(value) {
+  var n = Number(value), w = workOffsetName(n);
+  if (!w) { msg("work offset " + value + " - this post expresses work offsets 1-" + workOffsetMax + " only"); return wcsWord; }
+  wcsIndex = n;
+  return w;
+}
+
 function onParameter(name, value) {
-  if (name === "WorkOffset" && value) wcsWord = String(value);
+  if (name === "WorkOffset" && value) wcsWord = offsetWord(value);
   else if (name === "OriginX" && has(value)) orgX = Number(value);
   else if (name === "OriginY" && has(value)) orgY = Number(value);
   else if (name === "OperationName") opName = clean(value);

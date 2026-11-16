@@ -293,7 +293,8 @@ pub fn probe_cycle(p: &ProbeParams) -> Result<Toolpath, GenError> {
     let mut path = Toolpath::new(moves);
     path.probes = probes;
     if !path.probes.iter().all(|t| t.is_sane(&path.moves)) {
-        return Err(GenError::Invalid("a probing touch does not run toward its target".into()));
+        // #871: the built cycle rides the refusal (display-only).
+        return Err(GenError::Invalid("a probing touch does not run toward its target".into()).with_ghost(&path));
     }
     if !path.all_finite() || !path.is_chained() {
         return Err(GenError::Invalid("the probing path is not a finite chain".into()));

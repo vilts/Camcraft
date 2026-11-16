@@ -20,6 +20,8 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CAMCRAFT_SOURCE_SHA");
     println!("cargo:rerun-if-env-changed=SOURCE_DATE_EPOCH");
 
+    embed_windows_icon();
+
     // A source archive has no .git directory. Its packager can provide the
     // exact source commit; an ordinary checkout reads its own HEAD.
     let sha = std::env::var("CAMCRAFT_SOURCE_SHA")
@@ -59,3 +61,26 @@ fn main() {
         println!("cargo:rerun-if-changed={path}");
     }
 }
+
+/// Embeds the logotype `.ico` (assets/logo/icons, #1459) as the exe's icon. Provenance: Win32 resource files
+/// (winresource wraps rc.exe / windres). A missing resource compiler warns instead of failing the build.
+#[cfg(windows)]
+fn embed_windows_icon() {
+    let icon = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/logo/icons/camcraft.ico");
+    println!("cargo:rerun-if-changed={}", icon.display());
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+        return;
+    }
+    let Some(icon) = icon.to_str() else {
+        println!("cargo:warning=exe icon not embedded: the icon path is not UTF-8");
+        return;
+    };
+    let mut res = winresource::WindowsResource::new();
+    res.set_icon(icon);
+    if let Err(err) = res.compile() {
+        println!("cargo:warning=exe icon not embedded: {err}");
+    }
+}
+
+#[cfg(not(windows))]
+fn embed_windows_icon() {}

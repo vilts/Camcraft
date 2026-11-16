@@ -32,7 +32,7 @@ fn ring_circle(pts: &[Point3], what: &str) -> Result<(Point2, f64, f64), String>
     let not_round = || format!("the picked {what} is not a circle - a bore or boss centre needs a round wall");
     let ring = Loop::new(pts.iter().map(|p| Point2::new(p.x, p.y)).collect()).map_err(|_| not_round())?;
     let region = Region::new(vec![ring]).map_err(|_| not_round())?;
-    let (c, r) = super::circle_of_region(&region).map_err(|_| not_round())?;
+    let (c, r) = super::circle_of_region(&region, crate::units::Unit::Millimeters).map_err(|_| not_round())?;
     Ok((c, r, hi))
 }
 

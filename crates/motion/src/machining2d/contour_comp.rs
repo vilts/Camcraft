@@ -22,7 +22,7 @@ use crate::geo2d::{Point2, Region};
 use crate::geometry::Point3;
 use crate::links::{Compensation, Link};
 
-use super::arcs::{fit_arcs, Seg};
+use super::arcs::{fit_arcs_sided, Seg};
 use super::contour_comp_room as room;
 use super::contour::{ContourParams, Lead, Side};
 use super::face::GenError;
@@ -269,7 +269,11 @@ pub(super) fn push_span(b: &mut PathBuilder, ctx: &SpanCtx, first: usize, last: 
     if poly.last().is_none_or(|l| dist(*l, s_p) > 1e-9) {
         poly.push(s_p);
     }
-    let walk = fit_arcs(&poly, p.tolerance);
+    // #1579: the control cuts this part contour offset by its register,
+    // so an arc of it that passes a vertex on the part side cuts past the
+    // wall just as the centre walk's would; it walks the centre ring's
+    // way round, so the air is on the same side (`climb`).
+    let walk = fit_arcs_sided(&poly, p.tolerance, Some(p.climb));
     room::arcs(&walk, s_p, p)?;
     let feed = moves.get(first + 1).and_then(|m| m.feed).unwrap_or(p.feed);
     let mut programmed = Vec::with_capacity(walk.len() + 2);
@@ -308,14 +312,14 @@ pub(super) fn push_span(b: &mut PathBuilder, ctx: &SpanCtx, first: usize, last: 
     Ok(())
 }
 
-/// Climb travel keeps the material on the left of the cutter (this
-/// generator's law), so the centre stands right of the part contour -
-/// G42 - in control and in wear alike.
+/// Climb travel keeps the material on the right of the cutter (M3,
+/// #1555), so the centre stands left of the part contour - G41 - in
+/// control and in wear alike; conventional is G42.
 fn side_of(p: &ContourParams) -> CompSide {
     if p.climb {
-        CompSide::Right
-    } else {
         CompSide::Left
+    } else {
+        CompSide::Right
     }
 }
 

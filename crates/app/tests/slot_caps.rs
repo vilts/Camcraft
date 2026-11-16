@@ -11,7 +11,7 @@
 //! elementary polygon/circle geometry; no vendor material.
 //!
 //! Gate map (#510): covers app::operation (material stadium, region_of,
-//! generate), app::verify (section law b), app::posting.
+//! generate), sim::verify (section law b), app::posting.
 
 use camcraft_app::cl::{Move, Toolpath};
 use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, ImportModel, SetStock};
@@ -51,6 +51,8 @@ fn slot(width: f64) -> OpParams {
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
         tilt: None,
+        extend_start: 0.0,
+        extend_end: 0.0,
     }
 }
 
@@ -184,6 +186,7 @@ fn judge(world: &World, path: &Toolpath) -> Vec<Warning> {
             finish_tol: None,
             fixtures: &[],
             spindle: None,
+            ..Default::default()
         },
     )
 }

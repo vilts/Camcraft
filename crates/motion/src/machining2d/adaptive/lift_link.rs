@@ -11,6 +11,7 @@ use crate::geo2d::{Point2, Region};
 use super::front::dist;
 use super::lift::MICROLIFT;
 use super::lift_split::{Piece, seg_dist};
+use super::lift_swept::{EDGE, Swept};
 use super::raster::Raster;
 use super::route::{clearance, route};
 use crate::machining2d::slots::chord_clears;
@@ -64,6 +65,8 @@ pub(super) struct LinkLaw<'a> {
     pub ras: &'a Raster,
     pub center: &'a Region,
     pub links: &'a [Vec<Leg>],
+    /// The stock the pieces cut so far swept, exactly (issue #1169).
+    pub swept: &'a Swept,
     pub r: f64,
     pub rim: f64,
     pub step: f64,
@@ -191,13 +194,17 @@ impl LinkLaw<'_> {
     /// The return over the retract plane onto `p`: down the shortest end
     /// of its lead at least [`RAMP_RUN`] long whose first point's disc
     /// holds no stock (the rapid's column), the descent reading air and
-    /// crossing no earlier return's legs.
+    /// crossing no earlier return's legs. The column is proved twice:
+    /// on the planner's cells and on the swept stock (`lift_swept`,
+    /// issue #1169) - a rapid lands only where the pieces cut so far
+    /// swept the whole footprint, so a wall strip thinner than a cell
+    /// is never rapided onto.
     pub(super) fn high(&self, p: &Piece) -> Option<Return> {
         let n = p.lead.len();
         let mut run = 0.0;
         for k in (0..n.saturating_sub(1)).rev() {
             run += dist(p.lead[k], p.lead[k + 1]);
-            if run < RAMP_RUN || !self.ras.stock_clear(p.lead[k], self.r) {
+            if run < RAMP_RUN || !self.ras.stock_clear(p.lead[k], self.r) || !self.swept.covers(p.lead[k], self.r - EDGE) {
                 continue;
             }
             let ret = Return { lift: LIFTS[0], high: true, up: Vec::new(), via: Vec::new(), down: p.lead[k..].to_vec() };
@@ -278,14 +285,18 @@ pub(super) fn crosses_any(p: &[Leg], links: &[Vec<Leg>]) -> bool {
 
 /// Where a hop lands on `p`: its first point, or - when stock stands
 /// within the rim there (a plunge onto it would bite) - the nearest
-/// point of its lead with the rim clear of stock.
-pub(super) fn landing(ras: &Raster, p: &Piece, rim: f64) -> Point2 {
+/// point of its lead with the rim clear of stock. A point whose whole
+/// footprint the pieces cut so far swept (`lift_swept`, issue #1169) is
+/// taken before one only the planner's cells read clear: the cells miss
+/// a wall strip thinner than one. The hop comes down at plunge feed
+/// from over the stock (`ladder_links::pass_link`), never in rapid, so
+/// where no point is proved the cells' choice stands - a descent the
+/// reader counts, not a rapid into stock.
+pub(super) fn landing(ras: &Raster, swept: &Swept, p: &Piece, (r, rim): (f64, f64)) -> Point2 {
     let rad = rim + ras.h;
     let first = p.pts[0];
-    if ras.stock_clear(first, rad) {
-        return first;
-    }
-    p.lead.iter().rev().copied().find(|&q| ras.stock_clear(q, rad)).unwrap_or(first)
+    let spots = || std::iter::once(first).chain(p.lead.iter().rev().copied()).filter(|&q| ras.stock_clear(q, rad));
+    spots().find(|&q| swept.covers(q, r - EDGE)).or_else(|| spots().next()).unwrap_or(first)
 }
 
 /// Start `p` at `st` (a point of its lead): the lead from there on is

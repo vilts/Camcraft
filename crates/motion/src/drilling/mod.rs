@@ -30,6 +30,8 @@
 //! on-axis drill from the turret answers to.
 
 mod axial;
+// #985: the bosses an external thread is milled on.
+mod boss;
 mod cylinder;
 mod cross;
 mod cycle;
@@ -43,8 +45,11 @@ use {cross::*, cycle::*, hole::*, recognize::*};
 mod tests;
 #[cfg(test)]
 mod tests_cross;
+#[cfg(test)]
+mod tests_ream;
 
 pub use axial::{axial_doors, axial_warnings, AXIAL_TOL};
+pub use boss::recognize_bosses;
 pub use cross::{cross_drill, CrossParams};
 pub use cycle::drill;
 pub use hole::{

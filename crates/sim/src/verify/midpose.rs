@@ -149,7 +149,7 @@ fn walk(m: &Move, a: [f64; 3], b: [f64; 3], reach: f64, chord_tol: f64, by_trave
 
 /// The axis the letters hold `s` of the way from `a` to `b` (each
 /// letter on its own straight line); upright when no vector holds them.
-fn pose(a: [f64; 3], b: [f64; 3], s: f64) -> [f64; 3] {
+pub(super) fn pose(a: [f64; 3], b: [f64; 3], s: f64) -> [f64; 3] {
     let l = [a[0] + (b[0] - a[0]) * s, a[1] + (b[1] - a[1]) * s, a[2] + (b[2] - a[2]) * s];
     angles_to_axis(l).unwrap_or([0.0, 0.0, 1.0])
 }

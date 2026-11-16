@@ -1,7 +1,8 @@
 //! Edge multi-select outside the boundary picker (user hand test
 //! 2026-11-06): Shift+click on one rim edge takes the whole face loop it
 //! lies on - one click closes a pocket rim and the 2D Adaptive
-//! generates; Ctrl+click toggles one edge in and back out.
+//! generates; Cmd/Ctrl (the platform command modifier, #1238) toggles one
+//! edge in and back out.
 //!
 //! Gate map: covers ui::edge_pick, ui::interact, app::operation
 //! (boundary_picks, selection), app::commands.
@@ -37,6 +38,7 @@ fn setup() -> State {
         ImportModel::from_mesh("part", cube(Point3::new(-10.0, -10.0, 0.0), Point3::new(10.0, 10.0, 5.0))),
     );
     let pocket = OpParams::Pocket {
+        blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
         stepover: 1.5,
@@ -108,13 +110,13 @@ fn shift_click_on_one_rim_edge_takes_the_whole_loop_and_the_adaptive_generates()
 }
 
 #[test]
-fn ctrl_click_toggles_one_edge_in_and_out() {
+fn command_click_toggles_one_edge_in_and_out() {
     let mut state = setup();
     let edge = rim_edge(&state);
     queue_edge_pick(&mut state, edge.clone(), Mods::default());
     state.drain_actions();
     assert_eq!(picks(&state), vec![edge.clone()]);
-    // A second rim edge joins under Ctrl...
+    // A second rim edge joins under the command modifier...
     let e = model::find_by_name(&state.world, "part").expect("part");
     let f = model::features_of(&state.world, &e).expect("features");
     let other = feature::chains(&f)
@@ -125,11 +127,49 @@ fn ctrl_click_toggles_one_edge_in_and_out() {
         })
         .map(|c| GeoSel { entity: "part".into(), feature: FeatureSel::Chain(c.id) })
         .expect("a second rim edge");
-    queue_edge_pick(&mut state, other.clone(), Mods { ctrl: true, ..Default::default() });
+    queue_edge_pick(&mut state, other.clone(), Mods { command: true, ..Default::default() });
     state.drain_actions();
     assert_eq!(picks(&state), vec![edge.clone(), other.clone()]);
-    // ...and Ctrl again takes it back out.
-    queue_edge_pick(&mut state, other, Mods { ctrl: true, ..Default::default() });
+    // ...and the command modifier again takes it back out.
+    queue_edge_pick(&mut state, other, Mods { command: true, ..Default::default() });
     state.drain_actions();
     assert_eq!(picks(&state), vec![edge]);
+}
+
+/// #1238: the add key is the platform command modifier, read from egui's
+/// `Modifiers`. On macOS Control is the secondary click, so a Control press
+/// (`ctrl` without `command`) must not toggle; Shift keeps its own meaning.
+#[test]
+fn the_command_modifier_from_egui_toggles_and_control_alone_does_not() {
+    let cmd = Mods::from(egui::Modifiers::COMMAND);
+    assert!(cmd.command && !cmd.shift && !cmd.alt, "{cmd:?}");
+    let shift = Mods::from(egui::Modifiers { shift: true, ..Default::default() });
+    assert!(shift.shift && !shift.command, "{shift:?}");
+    let ctrl_only = Mods::from(egui::Modifiers { ctrl: true, ..Default::default() });
+    assert!(!ctrl_only.command, "Control alone is not the add key: {ctrl_only:?}");
+
+    let mut state = setup();
+    let edge = rim_edge(&state);
+    queue_edge_pick(&mut state, edge.clone(), Mods::default());
+    state.drain_actions();
+    let other = {
+        let e = model::find_by_name(&state.world, "part").expect("part");
+        let f = model::features_of(&state.world, &e).expect("features");
+        feature::chains(&f)
+            .into_iter()
+            .find(|c| {
+                let p = feature::chain_points(&f, c);
+                !c.closed && p.len() >= 2 && p.iter().all(|q| (q[2] - 5.0).abs() < 1e-9 && (q[0] - 10.0).abs() < 1e-9)
+            })
+            .map(|c| GeoSel { entity: "part".into(), feature: FeatureSel::Chain(c.id) })
+            .expect("a second rim edge")
+    };
+    // Control alone on macOS: a plain replace, not an add.
+    queue_edge_pick(&mut state, other.clone(), ctrl_only);
+    state.drain_actions();
+    assert_eq!(picks(&state), vec![other.clone()], "Control alone replaces the selection");
+    // The command modifier adds the first edge back.
+    queue_edge_pick(&mut state, edge.clone(), cmd);
+    state.drain_actions();
+    assert_eq!(picks(&state), vec![other, edge]);
 }

@@ -49,13 +49,21 @@ done
 install -m 644 RELEASE_NOTES.md TESTING.md LICENSE NOTICE README.md "$resources/"
 iconset="$work/CamCraft.iconset"
 mkdir -p "$iconset"
+# The logotype's generated sizes (cargo xtask logo, #1459); only 1024 px (512@2x) is scaled up from the 512 px one.
+logo_icon() {
+    if [ -f "assets/logo/icons/camcraft-$1.png" ]; then
+        echo "assets/logo/icons/camcraft-$1.png"
+    else
+        echo "assets/logo/icons/camcraft-512.png"
+    fi
+}
 for size in 16 32 128 256 512; do
-    sips -s format png -z "$size" "$size" assets/ui/cube.png \
+    sips -s format png -z "$size" "$size" "$(logo_icon "$size")" \
         --out "$iconset/icon_${size}x${size}.png" >/dev/null
 done
 for size in 16 32 128 256 512; do
     double=$((size * 2))
-    sips -s format png -z "$double" "$double" assets/ui/cube.png \
+    sips -s format png -z "$double" "$double" "$(logo_icon "$double")" \
         --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
 iconutil -c icns "$iconset" -o "$resources/CamCraft.icns"

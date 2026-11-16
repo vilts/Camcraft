@@ -1,0 +1,23 @@
+; wire-iso.cps refused probe: 22 warning(s), the program is never released
+warning: probing: operation "Probe1": this post script does not define onProbeGuard - it cannot write a protected (stop-on-contact) positioning move, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeMove - it cannot write a probing (skip) move, so the probe operation is refused
+warning: probing: operation "Probe1": this post script does not define onProbeRetreat - it cannot back off a probe trip incrementally, so the probe operation is refused
+warning: probing: this post script does not define onProbeResult - it cannot set a work offset or stop on a probing result, so the probe operation is refused
+warning: the generic wire EDM post writes wire words only a wire EDM reads - machine no machine is not declared kind wire_edm
+warning: operation Probe1: changes to tool 7 - a wire EDM mounts no tool (the wire is the condition's)
+warning: operation Probe1: is not wire EDM work (no EDM condition) - the wire post posts Wire Contour operations only
+warning: operation Probe1: a move outside a wire section - refused

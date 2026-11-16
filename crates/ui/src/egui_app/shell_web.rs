@@ -147,6 +147,8 @@ impl WebShell {
                 .write()
                 .register_native_texture(&rs.device, view.color_view(), wgpu::FilterMode::Linear);
         theme::apply(&cc.egui_ctx);
+        // A file the async picker reads wakes the next frame to land it.
+        crate::file_pick::set_repaint(&cc.egui_ctx);
 
         // The traced-stock eye: awaited on the event loop, not blocked on.
         // Until it lands (or if the device refuses it) the sheet stands.
@@ -252,6 +254,14 @@ impl eframe::App for WebShell {
         // (queued commands, an import, a playing simulation).
         if let Some(delay) = view_pass::state_redraw_delay(&self.state, std::time::Duration::MAX, false) {
             ui.ctx().request_repaint_after(delay);
+        }
+        // #31: a click that asked for a file chooser runs its action now,
+        // still inside the browser's pointerup handler (eframe runs the
+        // frame that sees a release there), where Safari lets it open.
+        // Last in the frame, after the 3D pass, like the next frame's drain.
+        let released = ui.input(|i| i.pointer.any_released());
+        if self.state.run_click_actions(released) {
+            ui.ctx().request_repaint();
         }
         // A tab has no window to close: Quit is answered, not obeyed.
         if std::mem::take(&mut self.state.request_quit) {

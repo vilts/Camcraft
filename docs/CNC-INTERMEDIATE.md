@@ -34,14 +34,14 @@ committed golden is a legal post input.
 | `PART LOAD [ADVANCE <µm>]` / `PART UNLOAD` | a part lifecycle event: `dump` brackets each section with them; ADVANCE rides the LOAD alone (the bar's next bite, µm) |
 | `PART TRANSFER <from> <to>` | the handoff step of the same family: station `from` (1-based, the order the machine file states its spindles) hands the part to station `to`; both operands required, a missing or zero-station number refuses by name |
 | `COMP LEFT <µm> [WEAR]` / `COMP RIGHT <µm> [WEAR]` / `COMP OFF` | cutter radius compensation in the control (M13.11): engage (G41 / G42, the register holding this radius) on the next motion record, or cancel (G40) on it. The motion records between an engage and its cancel are the PART contour the control offsets, not the cutter centre - except under `WEAR` (#38), where they are the cutter-centre path walked at this radius and the register holds only the wear delta (`properties.CompensationType` `"wear"`, else `"control"`) - a script that cannot say the words refuses by name |
-| `THREAD X.. Y.. Z.. EX.. EY.. EZ.. MAJOR.. MINOR.. LEAD.. HEIGHT.. FIRST.. MIN.. FINISH.. ANGLE.. SPRING.. PULLOUT.. HAND..` / `THREAD END` | a threading cycle (issue #34): opens / closes the span of explicit thread passes it stands for. X Y Z the cycle's start point (clearance radius, first station), EX EY EZ its end at the root, MAJOR / MINOR diameters, HEIGHT / FIRST / MIN / FINISH radial lengths and PULLOUT axial, all µm; LEAD (mm) and ANGLE (the compound infeed's included angle, degrees, 0 = radial) 6-decimal reals; SPRING the spring-pass count; HAND `right` or `left`, the hand the passes cut (#629: every helical half-turn in the span lays it). Every word required, once. The passes between are ordinary motion records - a script without `onThreadCycle` posts them unchanged |
+| `THREAD X.. Y.. Z.. EX.. EY.. EZ.. MAJOR.. MINOR.. LEAD.. HEIGHT.. FIRST.. MIN.. FINISH.. ANGLE.. SPRING.. PULLOUT.. HAND.. [ALT 1] [REP 1]` / `THREAD END` | a threading cycle (issue #34): opens / closes the span of explicit thread passes it stands for. X Y Z the cycle's start point (clearance radius, first station), EX EY EZ its end at the root, MAJOR / MINOR diameters, HEIGHT / FIRST / MIN / FINISH radial lengths and PULLOUT axial, all µm; LEAD (mm) and ANGLE (the compound infeed's included angle, degrees, 0 = radial) 6-decimal reals; SPRING the spring-pass count. FINISH is the finishing pass's own depth below the roughing pass before it (issue #417: a cycle roughs to HEIGHT - FINISH, then finishes); HAND `right` or `left`, the hand the passes cut (#629: every helical half-turn in the span lays it). Every word required, once, except `ALT 1` (issue #417): the passes alternate flanks along ANGLE's lines - written only when set, absent reads as 0; likewise `REP 1` (issue #418): every roughing depth is cut twice, the repeat the very same pass. The passes between are ordinary motion records - a script without `onThreadCycle` posts them unchanged |
 | `PROBE <µm>` | the measurement ask (M5.3 D): the deviation budget, in µm, that the finished part is to be probed to after this section's last cut. The number is the switch - no word when no ask - and the verdict it deserves (whether the program's own cuts can measure to it, and which pass owes a re-run) is the app post gate's, never the streams |
 | `GUARD <x> <y> <z> F <feed>` | a protected positioning move of a probe path (#174), µm: feed to the point, stop on contact and ALARM if the stylus trips on the way. Every non-rapid motion of a path carrying probing touches that is neither a touch nor its back-off posts as one (the descent to a touch's start, the travel between touches, the rise). Hook `onProbeGuard` (properties `X Y Z Feed`, `StartX/Y/Z`); a script without it is refused by name, once per operation - a plain feed would drive the stylus into an unexpected obstacle |
 | `PLASMA KERF<µm> [CONTROL] [PIERCE<µm>] [CUTH<µm>] [DELAY<ms>] [AUTOFEED] [REVERSED]` | a plasma section's header (#671), before its `SECTION`: the `.cl` v5 `; PLASMA` record without its `; ` (see "Plasma records" below, which also gives each word). Its properties hold until `ENDSECTION` |
 | `TORCH ON C<id> OUTER\|INNER\|OPEN [PARENT<id>] [SMALL<f×1000>]` / `TORCH OFF C<id>` | the torch struck before the next motion record / put out after the previous one (#671): the `.cl` v5 `; TORCH` records without their `; ` |
 | `START X <i> Y <i> Z <i>` / `END` | legacy `.cl` position lines: consumed silently (END ends the record span) |
 
-`CYCLE` TYPE ∈ SPOT DRILL PECK DEEP TAP FLOATINGTAP BORE BACKBORE. Word meanings
+`CYCLE` TYPE ∈ SPOT DRILL PECK DEEP TAP FLOATINGTAP BORE BACKBORE REAM. Word meanings
 match the `.cl` v3 `; CYCLE` marker the M1.6 goldens use, and one
 parser reads both: X Y center, Z (or `BZ`) bottom, R (or `RZ`)
 retract/feed plane, `ENTRY` entry plane, Q (or `PECK`) peck, P (or
@@ -97,7 +97,8 @@ behavior only):
 | `FeedReference` | `surface` when set |
 | `ToolNumber` `ToolName` | from `TOOL` |
 | `SpindleSpeed` | rpm (PARAM) |
-| `WorkOffset` `OriginX` `OriginY` `OriginZ` | WCS slot + machine origin (PARAMs) |
+| `WorkOffset` | the setup's work offset as a 1-based NUMBER (PARAM, #931): 1 is the first offset (`G54` on a Fanuc-style control), 6 the sixth. The post writes its own word for it. A script that declares `workOffsetIndex = true` receives the number and states the highest it can express as `workOffsetMax` (6 when unstated); the engine refuses a higher one by setup name. A script without the flag receives the word `G54`..`G59` for offsets 1-6 exactly as before and is refused any offset above 6 by setup name. The stream also reads the legacy words `G54`..`G59` as 1-6 (streams written before #931); any other value is refused by setup name. A script may define `workOffsetName(n)`, what its control calls offset n (`G55`, `G59.1`, `preset 2`) - display only, never the stream |
+| `OriginX` `OriginY` `OriginZ` | the setup's WCS origin, machine coordinates (PARAMs) |
 | `StockXYLeft/Right/Front/Back` `StockZTop` | stock bounds (PARAMs) |
 | `Coolant` | `off` / `mist` / `through-tool` (PARAM, #112) - absent means flood; the post picks the machine's code of that family, refusing by operation name when it states none; a script without `coolantModes = true` is refused any non-flood ask (#150) |
 | `AfterOperation` | `optional-stop` / `stop` / `home` (PARAM, #110) - absent means carry on; the post writes its dialect's M1 / M0 / home move after the section's spindle stop, or refuses by name; a script without `afterModes = true` is refused any stop or home ask by operation name |
@@ -110,15 +111,21 @@ behavior only):
 | `command` | per motion/cycle record: `Rapid` `Linear` `Circular` `Drilling` (the `onCommand` argument); part events set `PartLoading` / `PartUnloading` / `PartTransfer` for their dedicated hooks and never reach `onCommand` |
 | `Advance` | the `PART LOAD` ADVANCE in mm (present only on loads; an unload's properties carry no `Advance` key at all) |
 | `From` `To` | the `PART TRANSFER` stations, 1-based (present only on transfer events) |
+| `SetWorkOffset` | on a probing result (`onProbeResult`, #108): the work offset the measured deviation is written into, **0-based** (0 is the first offset, `G54`; -1 sets none). Not the same count as `WorkOffset`, which is 1-based: work offset n of a section is `SetWorkOffset` n-1 of a probe. A probe can only set offsets 1-6 (`0..=5`) |
 | `Tolerance` | the `PROBE` ask's deviation budget in mm (present only on probe events; the µm lattice word `PROBE <µm>` is its stream spelling) |
 | `CircularDirection` | `CW` / `CCW` (arcs) |
-| `CycleType` | cycle intent delivered to hooks: `SPOT` `DRILL` `PECK` `DEEP` `TAP` `BORE` `BACKBORE`; `FLOATINGTAP` is normalized to `TAP` here and distinguished by `TappingMode` |
+| `CycleType` | cycle intent delivered to hooks: `SPOT` `DRILL` `PECK` `DEEP` `TAP` `BORE` `BACKBORE` `REAM` (feed in, feed out at the same feed, no dwell: G85); `FLOATINGTAP` is normalized to `TAP` here and distinguished by `TappingMode` |
 | `TappingMode` | `rigid` for legacy `TAP`; `floating` only for the explicit `FLOATINGTAP` stream kind |
 | `EntryZ` `Q` `P` `FeedRate` | cycle entry plane, peck mm, dwell s, cutting feed mm/min (`null` for legacy markers) |
 | `ChainFeedRate` | optional-valued engine property: feed on the first subsequent non-rapid move in the expanded cycle chain, mm/min; `null` if absent; legacy posts may use it when cycle `FeedRate` is `null` |
 | `ChainBottomZ` | optional-valued engine property: lowest Z among subsequent non-rapid cycle-chain moves, mm; `null` when no cutting move follows; a native-cycle post validates its bottom against this value when present |
 | `LinearMovementIncludeOpts` | `{L:[1]}` on plunges (the skip-the-rapid convention) |
 | `PlasmaKerf` `PlasmaCompensation` `PierceHeight` `CutHeight` `PierceDelay` `PlasmaFeed` `PlasmaReversed` | the `PLASMA` header (#671), for the section: kerf mm; `control` (G41/G42 spans follow) / `computer`; pierce and cut height mm and pierce delay s - each ABSENT when unstated (the controller's AutoFS decides); `auto` (the lit moves carry no feed) / `stated`; the reversed cut direction. Cleared at `ENDSECTION` |
+| `EdmCondition` `WireSide` | a wire EDM section (#533): the machine's condition id the cut burns with, and `die` / `punch` (commentary). The moves are the wire-centre path (kerf in them, no feed). A script without `wireEdm = true` is refused the section by name |
+| `SinkerCondition` `ElectrodePickup` `EdmOrbit` `EdmOrbitRadius` | a Sinker Burn or Sinker Side Burn (#542, #545), before its section: the machine condition id the op names (absent when it names none), the electrode's pickup offset mm (the tool's `shank_len`), and for an orbit (#544) its geometry (`circular` / `vector` / `planetary`) and radius mm. The sinker post writes the condition and pickup through the machine's `edm.codes` (#290 D5), refuses a condition the machine's `edm.conditions` does not list, and refuses an orbit and a side burn by name (their explicit moves are not a straight burn). A script whose manifest `serves` does not name `sinker_edm` is refused the section by name |
+| `WireTaper` `WireU` `WireV` | a tapered wire section (#536): the stated taper in degrees (before the section), then before each leaning move the upper guide's offset from the lower one, mm; that move's X Y are the lower guide's. Both are computed from the move's pose and the machine's `edm` guide planes |
+| `WireFourAxis` | a 4-axis wire section (#537): the pairing rule in words (`arc length` or `sync points`), before the section; its leaning moves carry `WireU` `WireV` exactly as a tapered section's do, and no `WireTaper` |
+| `WireTaperDialect` `WireCorner` `WirePlane` `WireAngle` | a tapered section on an angle-word machine (#1164, `edm.taper_angle`): `angle`, the control's corner rule (`mitre` or `cone`) and the programmed plane's Z (the work's top), before the section; then before each written move the angle word (the stated taper signed by the machine's `positive` side rule, 0 for the move that stands the wire upright) - that move's X Y are the wire's point on the programmed plane, and no `WireU` `WireV` are sent. The cone rule's turning moves are the control's and are not sent |
 | `Contour` `ContourRole` `ParentContour` `SmallHole` | a `TORCH` record (#671): the contour id; on `onTorchOn` also `outer` / `inner` / `open`, the enclosing contour's id (absent = none) and the small-hole feed factor (absent = not small) |
 
 ## The hook contract
@@ -196,11 +203,29 @@ torch). `onThreadCycle()` /
 lifecycle, `onCommand` never sees them): properties `X Y Z`, `EndX
 EndY EndZ`, `MajorDiameter`, `MinorDiameter`, `Lead`, `ThreadHeight`,
 `FirstDepth`, `MinimumDepth`, `FinishAllowance`, `InfeedAngle`,
-`SpringPasses`, `PullOut`. Both are optional: the explicit passes
+`SpringPasses`, `PullOut`, `Alternating` (bool, #417),
+`RepeatEachDepth` (bool, #418). Both are optional: the explicit passes
 follow as motion records either way, and a script that writes the
 cycle skips them itself. `postOptions` is the document's post-option
 object (`engine::run_with`; `{ Threading: "G32" | "G76" }` from the
-app, `{}` from `run` and the CLI). `onClose`
+app, `{}` from `run` and the CLI). Its `Units` word (#902) is the
+document's unit, `"mm"` or `"inch"` (absent = mm; the CLI's `--units`):
+the unit the whole program is written in - every length / 25.4 and
+every feed in in/min on an inch program, with the dialect's unit word
+before any motion. The stream itself stays mm. A script that writes
+inch declares `programUnits = "mm inch"` in its manifest; an inch
+document on a script that does not is refused by name before any hook
+runs (`post::units`). `machine.units` is only the unit the machine
+file's own numbers were written in; no post takes the program's unit
+from it. `program` is the program's identity
+(#258, `engine::run_program_with`): `{ number, numbered, comment }` -
+`number` the program number (1 when the document states none; one file
+per operation counts up from it, #111; `programNumber` holds it too),
+`numbered` true only when the document stated it, `comment` the
+document's program comment (`""` for none). The app validates both at
+`SetProgramInfo` (1-9999; at most 40 printable ASCII characters, no
+`( ) % ; *`); a script applies its dialect's own narrower rule and
+refuses by name. `onClose`
 ends the run; its lines belong to no record.
 
 A parsed stream is normalized to program order before the hooks

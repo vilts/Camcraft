@@ -1,10 +1,14 @@
 //! Round 4's laws (Gate map (M11.4 C): covers
-//! motion::machining2d::adaptive::{lift, lift_link, lift_split, route,
+//! motion::machining2d::adaptive::{lift, lift_link, lift_split, lift_swept, route,
 //! star::wide_enough}): a microlift return is legal only over cleared
 //! stock, inside the area, off the orbit, never crossing another return
 //! on its plane - and a crossing one climbs to the next lift; the width
-//! test admits the star path only 1.4 D wide.
+//! test admits the star path only 1.4 D wide; a piece takes longer
+//! chords only where they leave no sliver (`lift_coarse`, issue #982),
+//! and the lifted plan is kept only at or under the spiral's reading.
 
+use super::lift::{LiftSpec, keeps};
+use super::lift_coarse::cut;
 use super::lift_link::{LinkLaw, Return, legs};
 use super::lift_split::{Piece, split, thin_turn};
 use super::raster::Raster;
@@ -29,9 +33,12 @@ fn channel() -> (Raster, Region) {
     (ras, rect(5.0, 5.0, 55.0, 35.0))
 }
 
+/// No swept stock: these laws are the cells' (`lift_swept` has its own).
+static NO_SWEEP: std::sync::LazyLock<super::lift_swept::Swept> = std::sync::LazyLock::new(|| super::lift_swept::Swept::new(5.0));
+
 fn law<'a>(ras: &'a Raster, center: &'a Region, links: &'a [Vec<super::lift_link::Leg>], orbit: (Point2, f64)) -> LinkLaw<'a> {
     let rim = crate::quality::rim_for(10.0, 0.1);
-    LinkLaw { ras, center, links, r: 5.0, rim, step: 0.5, bite: crate::load::deg_at_rim(0.005, 10.0, rim), orbit }
+    LinkLaw { ras, center, links, swept: &NO_SWEEP, r: 5.0, rim, step: 0.5, bite: crate::load::deg_at_rim(0.005, 10.0, rim), orbit }
 }
 
 fn ret(lift: f64, down: Point2) -> Return {
@@ -121,4 +128,79 @@ fn the_star_path_admits_only_areas_one_point_four_d_wide() {
     // of the opening - refused.
     let Ok(stub) = rect(5.0, 5.0, 35.0, 35.0).union(&rect(30.0, 14.0, 60.0, 26.0)) else { panic!("union") };
     assert!(matches!(wide_enough(&stub, half), Ok(false)));
+}
+
+/// A D10 biting 1 mm into the stock round a cleared R16 disc, along a
+/// quarter of the R12 circle: its own chords (one degree each) and what
+/// reads them.
+fn quarter_bite() -> (Raster, Vec<Point2>, LiftSpec) {
+    let Ok(mut ras) = Raster::from_region(&rect(0.0, 0.0, 60.0, 40.0), 0.1, 5.0) else { panic!("raster") };
+    let rim = crate::quality::rim_for(10.0, 0.1);
+    let ring = |rad: f64, a0: usize, a1: usize| -> Vec<Point2> {
+        (a0..=a1).map(|k| (k as f64).to_radians()).map(|a| Point2::new(30.0 + rad * a.cos(), 20.0 + rad * a.sin())).collect()
+    };
+    ras.walk(&ring(11.0, 0, 360), 5.0, rim, 0.5);
+    let spec = LiftSpec { r: 5.0, rim, step: 0.5, bite: crate::load::deg_at_rim(0.005, 10.0, rim), bound: 90.0, laps: (0, 0), orbit: (Point2::new(0.0, 0.0), 0.0) };
+    (ras, ring(12.0, 200, 290), spec)
+}
+
+/// Issue #982: longer chords cut inside the arc they replace and leave a
+/// sliver of stock on its outside, which the next piece would meet as
+/// engagement the spiral never planned. Such a piece is cut on its own
+/// chords, and the stock is what they leave; chords that leave nothing
+/// (a straight run's) are kept, and so are the moves they save.
+#[test]
+fn a_piece_takes_longer_chords_only_where_they_leave_no_sliver() {
+    let (ras0, fine, spec) = quarter_bite();
+    let coarse = thin_turn(&fine, 4f64.to_radians(), 0.01);
+    assert!(coarse.len() * 3 < fine.len(), "{} chords for {}", coarse.len(), fine.len());
+    // What each version leaves: the longer chords stand cells over.
+    let (mut own, mut long) = (ras0.clone(), ras0.clone());
+    own.walk(&fine, spec.r, spec.rim, spec.step);
+    let w = long.walk(&coarse, spec.r, spec.rim, spec.step);
+    assert!(w.0 <= spec.bound && long.stands_over(&own), "the fixture's longer chords read {} and leave no sliver", w.0);
+    let mut ras = ras0.clone();
+    let mut p = Piece { pts: coarse, lead: Vec::new(), tail: Vec::new(), fine: Some(fine.clone()) };
+    cut(&mut ras, &mut p, &spec);
+    assert_eq!(p.pts.len(), fine.len(), "the piece is cut on its own chords");
+    assert!(!ras.stands_over(&own) && !own.stands_over(&ras), "and leaves exactly what they leave");
+    // A straight run a millimetre into a channel's side: two points cut
+    // what its forty-one do.
+    let (mut ras, _) = channel();
+    let run: Vec<Point2> = (0..=40).map(|k| Point2::new(10.0 + k as f64, 23.0)).collect();
+    let mut q = Piece { pts: vec![run[0], run[40]], lead: Vec::new(), tail: Vec::new(), fine: Some(run) };
+    let w = cut(&mut ras, &mut q, &spec);
+    assert!(w.0 > spec.bite && w.0 <= spec.bound, "the run bites: {}", w.0);
+    assert_eq!(q.pts.len(), 2, "chords that leave no sliver are kept");
+    // Over the bound the longer chords were never taken (round 4's law).
+    let (mut ras, tight) = (ras0, LiftSpec { bound: 1.0, ..spec });
+    let mut p = Piece { pts: thin_turn(&fine, 4f64.to_radians(), 0.01), lead: Vec::new(), tail: Vec::new(), fine: Some(fine.clone()) };
+    cut(&mut ras, &mut p, &tight);
+    assert_eq!(p.pts.len(), fine.len());
+}
+
+/// Issue #982: the acceptance has no tolerance. One rim sample (half a
+/// degree) over the spiral's own reading - or over the bound, where the
+/// spiral read under it - drops the lifted plan; the spiral's own named
+/// overload is the most a lifted plan may read.
+#[test]
+fn the_lifted_plan_is_kept_only_at_or_under_the_spiral_reading() {
+    let bound = 47.5014;
+    assert!(keeps(47.5, 47.5, bound), "the spiral's own reading");
+    assert!(keeps(47.5, 40.0, bound), "under the bound, over a lighter spiral");
+    assert!(!keeps(48.0, 47.5, bound), "one sample over the bound");
+    assert!(keeps(49.0, 49.0, bound), "the spiral's own named overload");
+    assert!(!keeps(49.5, 49.0, bound), "one sample over that overload");
+}
+
+/// Issue #1169: a piece starting where the tool stands (the growth's
+/// last piece handing over to the first easing lap) is ridden on to at
+/// the floor - no retract and plunge on one spot; one starting anywhere
+/// else, with no air tail leading to it, is not.
+#[test]
+fn a_piece_starting_where_the_tool_stands_is_ridden_on_to() {
+    let at = Point2::new(5.135, 7.3118);
+    let piece = |from: Point2| Piece { pts: vec![from, Point2::new(5.135, 6.8)], lead: Vec::new(), tail: Vec::new(), fine: None };
+    assert_eq!(super::lift::ride(at, &[], &piece(at)), Some(Vec::new()));
+    assert_eq!(super::lift::ride(at, &[], &piece(Point2::new(5.135, 7.2))), None);
 }

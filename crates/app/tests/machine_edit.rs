@@ -8,7 +8,7 @@
 //! the `.mch` layout of `assets/machines/AGENTS.md`.
 //! Provenance: our own tests, specced from the issue's "Done means".
 //!
-//! Gate map (M4.4): covers app::machine::draft, app::machine::fields, app::machine::store, app::machine::library.
+//! Gate map (M4.4): covers app::machine, post::machine::draft, app::machine, post::machine::fields, app::machine, post::machine::store, app::machine, post::machine::library.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -326,7 +326,7 @@ fn refusals_on(m: &mut MachineDraft, label: &str, code: &str) -> Vec<String> {
 fn a_coolant_code_must_be_a_well_formed_m_word() {
     let d = dir("mcode_coolant");
     let mut m = MachineDraft::blank(Kind::Mill);
-    m.add_coolant("Mist").expect("adds");
+    m.add_coolant("Mist", "M7").expect("adds");
     for label in ["Coolant Flood code", "Coolant Mist code"] {
         for good in GOOD_M {
             assert_eq!(refusals_on(&mut m, label, good), Vec::<String>::new(), "{label} {good}");
@@ -339,8 +339,12 @@ fn a_coolant_code_must_be_a_well_formed_m_word() {
             assert!(matches!(m.save_as(Some(&d), "bad", false), Err(SaveError::Refused(_))), "{bad:?} saved");
             assert!(!d.join("bad.mch").exists());
         }
-        // Empty stays legal: the code is unstated.
-        assert_eq!(refusals_on(&mut m, label, ""), Vec::<String>::new());
+        // Empty is refused by name (#869): the editor never saves a
+        // coolant the posts would silently ignore.
+        let on = refusals_on(&mut m, label, "");
+        assert_eq!(on.len(), 1, "{label} empty: {on:?}");
+        assert!(on[0].contains("has no M code"), "{on:?}");
+        edit(&mut m, label, "M8");
     }
     assert_eq!(refusals_on(&mut m, "Coolant Flood code", "M"), [r#"coolant Flood: code "M" is not an M word like M8 (no number after M)"#]);
     assert!(refusals_on(&mut m, "Coolant Flood code", "M10000")[0].contains("above M9999"));

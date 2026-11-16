@@ -1,0 +1,160 @@
++++
+title = "AI agents (MCP)"
+description = "Let an AI agent drive CamCraft: setup, run modes, tools, undo and safety."
+weight = 2
+aliases = ["guide/mcp/"]
++++
+
+CamCraft includes a [Model Context Protocol](https://modelcontextprotocol.io)
+(MCP) server. An AI agent connected to it can build a job the same way you
+would in the window: import a model, set the stock, add tools and
+operations, generate toolpaths, verify them, post the NC program, and undo
+what it did. Every change an agent makes runs the same undoable command the
+window uses, so the checks and the undo history behave identically.
+
+## Starting the server
+
+The server is part of the command-line tool:
+
+```
+camcraft-cli mcp
+```
+
+It speaks JSON-RPC 2.0 over standard input and output, one message per
+line (the MCP stdio transport), so nothing else is ever printed on stdout.
+You normally do not run it by hand: an MCP client starts it as a child
+process and talks to it.
+
+### Run modes
+
+| Mode | Start | What the agent drives |
+|---|---|---|
+| **Headless** | `camcraft-cli mcp` | One document held in memory by the server. No window. |
+| **Attached to the open app** | Start the app with `camcraft-ui --mcp-port <port>` (or set `CAMCRAFT_MCP_PORT`), then the client runs `camcraft-cli mcp --connect 127.0.0.1:<port>` | The document in the open window, live: you watch the agent work, and its steps land on the window's undo history. |
+
+The attached mode is off unless you ask for it. The app listens on the
+loopback address (127.0.0.1) only, serves one client at a time, and
+disconnects a client that sends nothing for five minutes so the next one
+can connect. Port `0` picks a free port.
+
+### Setting up an MCP client
+
+Most MCP clients take a server entry made of a command and its arguments.
+In generic terms:
+
+```json
+{
+  "name": "camcraft",
+  "command": "camcraft-cli",
+  "args": ["mcp"]
+}
+```
+
+For the attached mode, use `"args": ["mcp", "--connect", "127.0.0.1:7777"]`
+after starting the app with `--mcp-port 7777`. The exact file and key
+names depend on your client; see its documentation. If `camcraft-cli` is
+not on your `PATH`, give its full path as the command.
+
+## What an agent can do
+
+The usual flow is `import_model`, `set_stock`, `add_tool`, `add_operation`,
+`generate`, `verify`, `post`. The server's reply to the client's first
+message says as much, and `get_job` returns the whole document at any
+time. The current, authoritative tool list is whatever the client's
+`tools/list` call returns; the groups below are the tools in the current
+`main`.
+
+| Area | Tools |
+|---|---|
+| Document and history | `open_project`, `save_project`, `get_job`, `undo`, `redo` |
+| Models | `import_model`, `move_model`, `repair_model`, `set_part_axes`, `lay_part_on_points`, `lay_part_on_face`, `align_part_cylinder` |
+| Setups and work offsets | `add_setup`, `activate_setup`, `set_wcs`, `set_wcs_from_features`, `set_wcs_circle_centre`, `place_setup_origin`, `set_work_offset`, `load_machine`, `set_workholding_max_rpm`, `set_stock`, `fit_stock`, `set_raw_stock_only` |
+| Fixtures and workholding | `add_fixture`, `remove_fixture`, `move_fixture`, `locate_part`, `get_fixture_findings`, `add_builtin_vise`, `set_vise`, `add_mod_vise_pair`, `set_mod_jaw`, `refit_mod_vise`, `add_accessory`, `set_accessory`, `add_fixture_plate`, `set_fixture_plate`, `place_on_plate`, `detect_plate_grid`, `get_plate_grid` |
+| Tools and holders | `list_tool_catalog`, `add_tool`, `set_tool`, `import_tool_library`, `export_tool_library`, `list_holder_library`, `set_tool_holder`, `get_tool_cutter_profile`, `set_tool_cutter_profile`, `set_tool_cutter_params` |
+| Tool bodies and numbers | `set_tool_number`, `get_tool_body`, `set_tool_body`, `set_lathe_tool_body`, `attach_tool_body_piece`, `remove_tool_body_piece`, `set_lathe_insert_zone`, `clear_tool_body` |
+| Operations | `list_operation_types`, `add_operation`, `edit_operation`, `delete_operation`, `rename_operation`, `reorder_operation` |
+| Picking geometry | `list_features`, `get_operation_geometry`, `set_operation_geometry`, `set_operation_area`, `detect_holes`, `detect_pockets` |
+| Generate, verify, post | `generate`, `verify`, `render_stock`, `get_post_options`, `set_post_options`, `post` |
+
+`list_operation_types` returns each operation kind's parameters, their
+types and defaults; `list_tool_catalog` and `list_holder_library` return the
+built-in tools and holders an agent can add.
+
+### Alignment and origins
+
+`align_part_cylinder` takes a cylinder-wall `pick` from `list_features`.
+Choose `target: "x"`, `"y"` or `"z"` (default Z). Optional `flip` reverses
+the axis; `angle_deg` turns the aligned part about it. This changes the
+part alignment, not the WCS.
+
+`place_setup_origin` keeps the WCS rotation. Set `source` to `model_box`
+or `stock_box`, with `point: "corner"` or `"centre"`. Use `source: "vertex"`
+with a vertex `pick` to place it on a feature. Both tools accept a named
+`setup`; omission uses the active setup. Each change is one undo step.
+
+### Post options
+
+`get_post_options {}` reads the document options. Give `setup` to read a
+named setup's resolved options and `follows_document` state.
+`set_post_options` uses the same explicit target: no `setup` changes the
+document, even when another setup is active. Omitted fields keep their
+current values.
+
+For example, `set_post_options {"setup":"Finish","per_op":true}` gives
+Finish its own options. `set_post_options {"setup":"Finish","follow":true}`
+returns it to following the document. Do not combine `follow: true` with
+option fields. The options include `skip_stops`, `per_op`, `threading`
+(`g32` or `g76`), `end_units` (`leave`, `inch`, `mm`), `smoothing`,
+`between_setups` and `explain`. Read `tools/list` for the accepted values.
+
+`detect_holes` reports holes it does not create in its `skipped` field.
+Read that field before assuming that every detected hole became an
+operation. A refused Bore is not silently replaced by Drill.
+
+## Example session
+
+Each call is a `tools/call`; the answers below are shortened.
+
+1. `import_model { "path": "bracket.step" }` - the model is added to the
+   document.
+2. `set_stock { "box": { "dx": 100, "dy": 60, "dz": 25 } }` - stock for the
+   active setup.
+3. `add_tool { "catalog": "<a name from list_tool_catalog>" }` - the tool
+   joins the document.
+4. `list_operation_types {}`, then `add_operation { "kind": "Pocket", "tool":
+   "<tool name>", "source": "bracket" }` - an operation seeded with the
+   kind's defaults. It is not generated yet.
+5. `generate {}` - toolpaths for every operation that is not current.
+6. `verify {}` - findings per operation and the program-level post gate;
+   `"ok"` is true only when a post would be written.
+7. `post { "output": "bracket.nc", "post": "<built-in post name or .cps path>" }` -
+   the written file names, or the refusal reasons.
+8. `undo {}` - takes back the last change if the result is not what you
+   wanted.
+
+## Undo and redo
+
+Each mutating tool is one undo step, and `undo` / `redo` walk the same
+history as Ctrl+Z / Ctrl+Y. In the attached mode that is the open window's
+history, so you can undo an agent's step by hand, and the agent can undo
+yours.
+
+## Refusals
+
+A tool that cannot do what it was asked answers with an error naming the
+tool and the reason, for example `edit_operation: ...`, and the document is
+unchanged. An argument the tool does not know is refused rather than
+ignored, so a typo never reads as "done". The same reasons the window gives
+apply: see [Reading a refusal](@/guide/reference/refusals.md). An unexpected internal
+fault is caught and reported as a refusal; it does not end the session.
+
+## Safety
+
+An agent is held to the same rules as you are. `verify` reports what would
+block the post, and `post` refuses with its reasons when an operation is
+stale, an operation's own checks found something unsafe, the simulation
+finds a gouge, or a machine limit is exceeded. There is no way for an agent
+to skip these checks. A posted program is still proved the usual way: look
+it over in the G-code viewer, and prove it on the machine (air cut, single
+block, feed override down) before cutting material. See
+[Posting](@/guide/check-and-post/posting.md).

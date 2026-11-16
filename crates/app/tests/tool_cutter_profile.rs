@@ -1,7 +1,8 @@
 //! #93 slice 2 acceptance: a milling tool's own cutter, neck and shank
 //! drawn as a spun outline lands through one undoable command
 //! (`SetToolCutter`), is refused by name when it disagrees with the
-//! tool's numbers, never moves an operation's stamp (display only),
+//! tool's numbers, moves an operation's stamp only by a neck the stack
+//! laws read (#852),
 //! survives delete/undo, saves and loads (an older file loads with no
 //! drawn cutter), holds a number edit that would break it, and is
 //! driven the same way over MCP.
@@ -79,17 +80,19 @@ fn refusal(r: Result<SetToolCutter, CommandError>) -> String {
 }
 
 #[test]
-fn a_drawn_cutter_lands_undoes_and_moves_no_stamp() {
+fn a_drawn_cutter_lands_undoes_and_moves_the_stamp_only_by_its_neck() {
     let (world, mut history) = world_with_op();
     let before = stamp(&world);
     assert!(before.is_some());
     history.execute(&world, SetToolCutter::new(&world, TOOL, Some(necked())).expect("drawn"));
     assert_eq!(drawn(&world), Some(8));
-    assert_eq!(stamp(&world), before, "a drawn cutter is display only: no operation goes stale");
+    // #852: the stack laws read a drawn neck, so its operations go stale.
+    assert_ne!(stamp(&world), before, "a drawn neck is a moved input of the reach laws");
     let mut plain = necked();
     plain.drain(3..5);
     history.execute(&world, SetToolCutter::new(&world, TOOL, Some(plain)).expect("plain"));
     assert_eq!(drawn(&world), Some(6));
+    assert_eq!(stamp(&world), before, "a drawn cutter with no neck moves no stamp");
     history.execute(&world, SetToolCutter::new(&world, TOOL, None).expect("clear"));
     assert_eq!(drawn(&world), None);
     assert!(history.undo(&world));

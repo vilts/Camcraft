@@ -106,9 +106,12 @@ pub(super) fn corners(l: &Loop, p: &ContourParams) -> Result<(), GenError> {
 
 /// The arc law over the fitted walk the post writes: an inside G2/G3
 /// (curving toward the tool) must not be tighter than the tool radius.
+/// The walk runs in the direction of travel, where the tool stands left
+/// under climb (G41) and right under conventional (G42) on either side
+/// (#1555) - not the stored ring's side `tool_left` reads.
 pub(super) fn arcs(walk: &[Seg], start: Point2, p: &ContourParams) -> Result<(), GenError> {
     let r = p.tool_diameter * 0.5;
-    let left = tool_left(p);
+    let left = p.climb;
     let mut at = start;
     for seg in walk {
         match seg {

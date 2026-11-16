@@ -6,11 +6,11 @@
 use crate::catalog_asset::{CATALOG_JSON, parse_catalog};
 use crate::tools::{Tool, ToolKind, ToolMaterial, catalog, probe_tool, torch_tool};
 
-const ORDER: [&str; 29] = [
+const ORDER: [&str; 32] = [
     "EM-0200-2FL", "EM-0300-2FL", "EM-0400-2FL", "EM-0600-4FL", "EM-0800-4FL", "EM-1000-4FL", "EM-1200-2FL",
     "BN-0600", "BN-1000", "BB-1000-R1", "DR-0200", "DR-0300", "DR-0400", "DR-0600", "CM-0400-90", "CM-0600-90",
     "CM-1000-90", "TAP-M4", "TAP-M6", "BR-1000", "TN-1600-0R8", "GT-0200", "GT-0300", "TD-0866-60", "TD-1732-60",
-    "FG-0600-04", "FG-1200-08", "PRB-0400", "PT-KERF-150",
+    "FG-0600-04", "FG-1200-08", "PRB-0400", "PT-KERF-150", "EDM-E10X6", "TM-0600-P125", "TMS-0600-P050-150",
 ];
 
 fn tool(name: &str) -> Tool {
@@ -52,6 +52,8 @@ fn the_json_catalog_keeps_the_old_tables_values() {
     assert_eq!(format!("{:?}", tool("PRB-0400")), format!("{:?}", probe_tool(4.0, 30.0)));
     // #670 (merged upstream while this PR was open): the torch row is torch_tool(1.5).
     assert_eq!(format!("{:?}", tool("PT-KERF-150")), format!("{:?}", torch_tool(1.5)));
+    // #541: the electrode row is electrode_tool(10, 6, 30, 15).
+    assert_eq!(format!("{:?}", tool("EDM-E10X6")), format!("{:?}", crate::electrode::electrode_tool(10.0, 6.0, 30.0, 15.0)));
 }
 
 #[test]
@@ -73,4 +75,18 @@ fn a_bad_catalog_is_a_named_error_not_a_panic() {
     assert!(err(file(ok, &[row("A", &good.replace("end_mill", "laser"))])).contains("'A'"));
     assert!(err(file(ok, &[row("A", &good.replace("\"rpm\":9000", "\"rpm\":0"))])).contains("'A' is refused"));
     assert!(err(file(ok, &[row("A", &good.replace("\"feed\"", "\"typo\":1,\"feed\""))])).contains("'A'"));
+}
+
+/// #1152: a library row states a body electrode's outline; the reader
+/// keeps it, and refuses by name a row whose sizes leave its outline.
+#[test]
+fn a_catalog_electrode_keeps_its_outline() {
+    let def = |x: f64| format!(
+        r#"{{"kind":"electrode","diameter":{x},"corner_r":0,"width":8,"flute_len":16,"shank_d":10,"shank_len":15,"holder_d":0,"holder_len":0,"material_group":"graphite","rpm":0,"feed":50,"outline":[[-5,-4],[5,-4],[5,0],[-1,0],[-1,4],[-5,4]]}}"#
+    );
+    let file = |d: String| format!(r#"{{"format":"camcraft-tools","version":1,"tools":[{{"name":"E-L","definition":{d}}}]}}"#);
+    let v = parse_catalog(&file(def(10.0))).expect("an outline electrode parses");
+    let ell = vec![[-5.0, -4.0], [5.0, -4.0], [5.0, 0.0], [-1.0, 0.0], [-1.0, 4.0], [-5.0, 4.0]];
+    assert_eq!(v[0].1, crate::electrode::electrode_outline_tool(&ell, 16.0, 15.0));
+    assert!(parse_catalog(&file(def(12.0))).expect_err("sizes off the outline").contains("'E-L' is refused"));
 }

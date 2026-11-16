@@ -50,12 +50,11 @@
 //! (our code) and the egui vendored sources; no HSMWorks material involved.
 
 use egui::{
-    Align, Align2, Color32, ComboBox, DragValue, FontId, Id, Label, Layout, Pos2, RichText, ScrollArea,
+    Align2, Color32, DragValue, FontId, Id, Pos2, ScrollArea,
     Sense, Shape, Stroke, TextEdit, Ui, Vec2, Window,
 };
 
 use camcraft_app::geometry::{quat_from_axis_angle, quat_from_euler, quat_mul, quat_to_euler};
-use camcraft_app::machine;
 use camcraft_app::model;
 use camcraft_app::operation::SrcRef;
 use camcraft_app::posting;
@@ -65,8 +64,7 @@ use camcraft_app::tools;
 use camcraft_app::units::{self, Unit};
 
 use crate::actions;
-use crate::interact;
-use crate::state::{CommandKind, ErrorScope, FixtureUi, ModelUi, PostView, State, UiTarget, quat_yaw_deg};
+use crate::state::{CommandKind, ErrorScope, ModelUi, State, UiTarget};
 
 use super::layout::hint;
 use super::panes::kind_name;
@@ -75,10 +73,10 @@ use super::theme::Tokens;
 // The value widgets graduated to `fields` with the property grid (user
 // review 2026-11-06); the setup pages below and the sibling modules keep
 // reading them through this path.
-pub(crate) use super::fields::{combo, combo_owned, field, num, num_feed, num_plain};
+pub(crate) use super::fields::{combo, field, num, num_feed, num_plain};
 
 /// Tool kind labels, same order as `ToolKind` (mirrors the tool page).
-const TOOL_KINDS: [&str; 13] = [
+const TOOL_KINDS: [&str; 16] = [
     "End mill",
     "Ball nose",
     "Bull nose",
@@ -93,6 +91,11 @@ const TOOL_KINDS: [&str; 13] = [
     "Touch probe",
     // #670: the kerf is its diameter; it turns no spindle.
     "Plasma torch",
+    // #541: diameter = X size, width = Y size; it turns no spindle.
+    "Sinker electrode",
+    // #894: rows of teeth at one pitch / one row over a pitch range.
+    "Thread mill",
+    "Single-form thread mill",
 ];
 
 /// The note gray the model page's notes use ([0.62,0.66,0.72]).
@@ -131,7 +134,7 @@ pub fn properties(ui: &mut Ui, state: &mut State, pal: &Tokens) {
                 state.sync_setup_ui();
                 ui.heading("Stock");
                 ui.separator();
-                stock_page(ui, state);
+                super::stock_page::stock_page(ui, state);
                 setup_error(ui, state);
             }
             UiTarget::Wcs => {
@@ -140,7 +143,7 @@ pub fn properties(ui: &mut Ui, state: &mut State, pal: &Tokens) {
                 let active = camcraft_app::setup::active(&state.world);
                 ui.heading(camcraft_app::setup::wcs_label(&state.world, active.as_deref()));
                 ui.separator();
-                wcs_page(ui, state);
+                super::wcs_page::wcs_page(ui, state);
                 // #343: the WCS node's dialog names its post word too.
                 if let Some(name) = active.as_deref() {
                     ui.separator();
@@ -177,156 +180,9 @@ pub fn properties(ui: &mut Ui, state: &mut State, pal: &Tokens) {
 
 fn setup_error(ui: &mut Ui, state: &State) {
     if let Some(msg) = state.error_for(ErrorScope::Setup).map(str::to_owned) {
-        ui.colored_label(super::colorvision::text_inks(ui, &state.world).error, msg);
+        super::error_text::error_text(ui, super::colorvision::text_inks(ui, &state.world).error, &msg);
     }
 }
-// --------------------------------------------------------------- stock page
-
-fn stock_page(ui: &mut Ui, state: &mut State) {
-    let u = state.units();
-    // The document's unit lens, straight off the world singleton - the
-    // click queues SetUnits; the numbers below re-render from the world
-    // next pass, so there is no mirror to keep in step.
-    ui.horizontal(|ui| {
-        ui.label("Units");
-        for cand in [Unit::Millimeters, Unit::Inches] {
-            if ui.radio(u == cand, cand.label()).clicked() && u != cand {
-                state.pending.push_back(CommandKind::SetUnits(cand));
-            }
-        }
-    });
-    ui.add_space(3.0);
-    ui.horizontal(|ui| {
-        for (i, name) in ["Box", "Cylinder", "From model"].iter().enumerate() {
-            if ui
-                .radio_value(&mut state.stock_ui.shape, i as i32, *name)
-                .changed()
-            {}
-        }
-    });
-    // #197: the models' size, right above the numbers it informs.
-    match super::stock_info::part_size_lines(&state.world, u) {
-        Some([size, extents]) => {
-            ui.label(size).on_hover_text("The models' bounding box - what Fit to Models wraps, plus the fit margin");
-            ui.label(RichText::new(extents).weak());
-        }
-        None => {
-            ui.label(RichText::new("No models yet - load one to see its size.").weak());
-        }
-    }
-    ui.add_space(3.0);
-    let shape = state.stock_ui.shape;
-    if shape == 1 {
-        field(ui, "Diameter");
-        num(ui, u, &mut state.stock_ui.diameter);
-        field(ui, "Height");
-        num(ui, u, &mut state.stock_ui.height);
-    } else if shape == 2 {
-        // Stock from a model: parts only, as the op Source picker.
-        let models: Vec<String> = model::model_entities(&state.world)
-            .into_iter()
-            .filter(|(_, e)| !model::is_fixture(&state.world, e))
-            .map(|(n, _)| n)
-            .collect();
-        field(ui, "Source");
-        if models.is_empty() {
-            ui.label("No models to take stock from.");
-        } else {
-            let mut idx = models
-                .iter()
-                .position(|m| *m == state.stock_ui.source)
-                .unwrap_or(models.len() - 1);
-            let before = idx;
-            combo_owned(ui, "stk_src", &mut idx, &models);
-            if idx != before {
-                state.stock_ui.source = models[idx.min(models.len() - 1)].clone();
-            }
-        }
-    } else {
-        field(ui, "Length (X)");
-        num(ui, u, &mut state.stock_ui.dx);
-        field(ui, "Width (Y)");
-        num(ui, u, &mut state.stock_ui.dy);
-        field(ui, "Height (Z)");
-        num(ui, u, &mut state.stock_ui.dz);
-    }
-    ui.add_space(6.0);
-    field(ui, "X center");
-    num(ui, u, &mut state.stock_ui.x);
-    field(ui, "Y center");
-    num(ui, u, &mut state.stock_ui.y);
-    field(ui, "Z bottom");
-    num(ui, u, &mut state.stock_ui.z);
-    field(ui, "Rotation (yaw deg)");
-    num_plain(ui, &mut state.stock_ui.yaw_deg);
-    ui.add_space(6.0);
-    // #198: a box can be fitted by a separate allowance on each side.
-    let per_side = state.stock_ui.shape == 0 && {
-        ui.checkbox(&mut state.stock_ui.fit_per_side, "Per side")
-            .on_hover_text("Fit to Models pads each face of the box by its own allowance");
-        state.stock_ui.fit_per_side
-    };
-    if per_side {
-        for (i, name) in ["-X", "+X", "-Y", "+Y", "Bottom", "Top"].iter().enumerate() {
-            field(ui, &format!("Fit margin {name}"));
-            num(ui, u, &mut state.stock_ui.fit_sides[i]);
-        }
-    } else {
-        field(ui, "Fit margin");
-        num(ui, u, &mut state.stock_ui.fit_margin);
-    }
-    let sides = state.stock_ui.fit_sides;
-    let shape = state.stock_ui.shape;
-    let (dx, dy, dz) = (state.stock_ui.dx, state.stock_ui.dy, state.stock_ui.dz);
-    let (diameter, height) = (state.stock_ui.diameter, state.stock_ui.height);
-    let source = state.stock_ui.source.clone();
-    let pos = [state.stock_ui.x, state.stock_ui.y, state.stock_ui.z];
-    let yaw = state.stock_ui.yaw_deg;
-    let margin = state.stock_ui.fit_margin;
-    // The stock pane edits the ACTIVE setup's stock entity (M3.2 A):
-    // with no setups in the document this resolves to the old global
-    // "Stock", so the legacy behavior is the degenerate case, not a
-    // branch. sync_setup_ui already mirrored this entity's numbers.
-    let active = camcraft_app::setup::active(&state.world);
-    let stock_name = camcraft_app::setup::stock_entity_name(&state.world, active.as_deref());
-    let has_stock = model::find_by_name(&state.world, &stock_name)
-        .is_some_and(|e| model::is_stock(&state.world, &e));
-    if let Some(s) = active.as_deref() {
-        ui.label(format!("Stock of setup {s}."));
-    }
-    ui.horizontal(|ui| {
-        if ui.button("Apply").clicked() {
-            let s = if shape == 1 {
-                StockShape::Cylinder { diameter, height }
-            } else if shape == 2 {
-                StockShape::FromModel {
-                    source: source.clone(),
-                }
-            } else {
-                StockShape::Box { dx, dy, dz }
-            };
-            state.pending.push_back(CommandKind::SetStock {
-                shape: s,
-                pos,
-                yaw_deg: yaw,
-            });
-        }
-        if ui.button("Fit to Models").clicked() {
-            let cmd = if per_side {
-                CommandKind::StockFitSides { sides }
-            } else {
-                CommandKind::StockFit { margin, shape }
-            };
-            state.pending.push_back(cmd);
-        }
-        if has_stock && ui.button("Delete").clicked() {
-            state
-                .pending
-                .push_back(CommandKind::DeleteByName(stock_name.clone()));
-        }
-    });
-}
-
 /// The document's post script (M3.3 A/B): setup furniture, read live
 /// off the world singleton like the machine section above. The label
 /// is exactly what the post resolves - one truth, so a pane can never
@@ -339,6 +195,8 @@ pub(super) fn post_section(ui: &mut Ui, state: &mut State) {
     let current = posting::post_of(&state.world);
     ui.label("Post");
     ui.label(posting::post_label(&state.world));
+    // #902: the unit the program is written in - the document's own.
+    super::post_options::units_row(ui, state, "Program units");
     post_offer_banner(ui, state);
     ui.horizontal(|ui| {
         // The registry by name; the combo OFFERS only the dialects
@@ -372,7 +230,7 @@ pub(super) fn post_section(ui: &mut Ui, state: &mut State) {
         if let Some(name) = pick {
             state.pending.push_back(CommandKind::SelectPostNamed(name));
         }
-        if ui.button("Load post (.cps)").clicked() {
+        if crate::browser_files::button(ui, state.browser_refusal_of(&CommandKind::SelectPostDialog), "Load post (.cps)", "") {
             state.pending.push_back(CommandKind::SelectPostDialog);
         }
         if matches!(current, PostRef::File(_)) && ui.button("Built-in").clicked() {
@@ -407,9 +265,12 @@ pub(super) fn post_section(ui: &mut Ui, state: &mut State) {
     if pick != per_op {
         state.pending.push_back(CommandKind::SetPerOpOutput(pick));
     }
+    // #258: the program's number and comment, each one undoable command.
+    super::program_info::program_rows(ui, state);
     super::post_options::threading_picker(ui, state);
     super::post_options::smoothing_switch(ui, state);
     super::post_options::end_units_picker(ui, state);
+    super::post_options::between_setups_picker(ui, state);
 }
 
 /// The post offer (M13.5 B): when the mounted machine's kind is not
@@ -446,231 +307,7 @@ fn post_offer_banner(ui: &mut Ui, state: &mut State) {
     }
 }
 
-/// The document's machine (M2.3 C, group completed by M3.3 stage C):
-/// setup furniture read live off the world singleton - no mirror to go
-/// stale. The overview grid is exactly what the file stated; a blank is
-/// "not stated", never an invented ceiling. The library combo picks a shipped
-/// machine BY NAME, "Load other" reaches any `.mch` through the file
-/// law, and "Edit" opens the draft editor; all three land on the
-/// same `LoadMachine` command, so every change here is undoable
-/// furniture, not a field poke. The kind line follows the DECLARED
-/// kind where the machine states one, the axis inventory otherwise.
-pub(super) fn machine_section(ui: &mut Ui, state: &mut State) {
-    let (path, m) = machine::of(&state.world);
-    ui.label("Machine");
-    let names: Vec<&str> = posting::MACHINES.iter().map(|(n, _)| *n).collect();
-    ui.horizontal(|ui| {
-        ui.label("Library");
-        let sel: Option<usize> = names.iter().position(|n| path == posting::builtin_path(n));
-        let text = match sel {
-            Some(i) => names[i].to_owned(),
-            None => "other".to_owned(),
-        };
-        let mut pick: Option<String> = None;
-        egui::ComboBox::from_id_salt("machine_library")
-            .selected_text(text)
-            .show_ui(ui, |ui| {
-                for (i, n) in names.iter().enumerate() {
-                    if ui.selectable_label(sel == Some(i), *n).clicked() {
-                        pick = Some((*n).to_owned());
-                    }
-                }
-            });
-        if let Some(name) = pick {
-            state
-                .pending
-                .push_back(CommandKind::LoadBuiltinMachine(name));
-        }
-    });
-    match &m {
-        Some(m) => {
-            let source = if path.is_empty() {
-                "not stated".to_owned()
-            } else {
-                match names.iter().find(|n| path == posting::builtin_path(n)) {
-                    Some(n) => format!("Built-in: {n}"),
-                    None => path.clone(),
-                }
-            };
-            super::machine_grid::machine_grid(ui, "machine_overview", m, state.units(), &[("Source", source)]);
-            ui.horizontal(|ui| {
-                if ui.button("Load other").clicked() {
-                    state.pending.push_back(CommandKind::LoadMachineDialog);
-                }
-                if ui.button("Edit").clicked() {
-                    state.pending.push_back(CommandKind::EditMachineDialog);
-                }
-                if ui.button("Clear").clicked() {
-                    state.pending.push_back(CommandKind::ClearMachine);
-                }
-            });
-        }
-        None => {
-            ui.label("No machine loaded - the checker states, it cannot judge.");
-            if ui.button("Load machine (.mch)").clicked() {
-                state.pending.push_back(CommandKind::LoadMachineDialog);
-            }
-        }
-    }
-}
-
-// ------------------------------------------------------------------ wcs page
-
-fn wcs_page(ui: &mut Ui, state: &mut State) {
-    let u = state.units();
-    field(ui, "X origin");
-    num(ui, u, &mut state.wcs_ui.x);
-    field(ui, "Y origin");
-    num(ui, u, &mut state.wcs_ui.y);
-    field(ui, "Z origin");
-    num(ui, u, &mut state.wcs_ui.z);
-    field(ui, "Tilt about X (roll)");
-    num_plain(ui, &mut state.wcs_ui.roll_deg);
-    field(ui, "Tilt about Y (pitch)");
-    num_plain(ui, &mut state.wcs_ui.pitch_deg);
-    field(ui, "Turn about Z (yaw)");
-    num_plain(ui, &mut state.wcs_ui.yaw_deg);
-    ui.add_space(6.0);
-    ui.label("Quarter-turns about world axes (apply immediately):");
-    const TURNS: [(&str, usize, f64); 6] = [
-        ("X+", 0, 1.0),
-        ("X-", 0, -1.0),
-        ("Y+", 1, 1.0),
-        ("Y-", 1, -1.0),
-        ("Z+", 2, 1.0),
-        ("Z-", 2, -1.0),
-    ];
-    for row in [0usize, 3] {
-        ui.horizontal(|ui| {
-            for (label, axis, sign) in TURNS[row..row + 3].iter() {
-                if ui.button(format!("Turn {label}")).clicked() {
-                    turn_wcs(state, *axis, *sign);
-                }
-            }
-        });
-    }
-    ui.horizontal(|ui| {
-        if ui.button("Level").clicked() {
-            state.wcs_ui.roll_deg = 0.0;
-            state.wcs_ui.pitch_deg = 0.0;
-            state.wcs_ui.yaw_deg = 0.0;
-            apply_wcs_drafts(state);
-        }
-        if ui.button("Set Origin").clicked() {
-            apply_wcs_drafts(state);
-        }
-    });
-
-    ui.add_space(6.0);
-    // Box-point anchoring (feedback 5, revised): the reference box is an
-    // explicit choice - stock or model - and the nine points of the chosen
-    // level can be clicked in the viewport as markers instead of hunting
-    // through the button grid. The buttons and the markers share
-    // `interact::anchor_points`, so what you click, what highlights, and
-    // what places are the same points by construction. This section is the
-    // imgui pane's origin picker (setup.rs, de272ca/067f3aa), restored:
-    // `interact.rs` kept the markers and the viewport pick law through the
-    // M-g retirement, but the widgets here died un-ported, leaving the pick
-    // mode unreachable (the crosses only render while `pick_anchor` is
-    // set). Behavior specced from published CAM setup practice; the grid
-    // and its math are ours.
-    const SOURCES: [&str; 2] = ["Stock box", "Model bounds"];
-    field(ui, "Anchor on");
-    ComboBox::from_id_salt("wcs_src")
-        .selected_text(SOURCES[state.wcs_ui.anchor_source.min(1)])
-        .show_ui(ui, |ui| {
-            for (i, s) in SOURCES.iter().enumerate() {
-                ui.selectable_value(&mut state.wcs_ui.anchor_source, i, *s);
-            }
-        });
-    match interact::anchor_reference(state) {
-        Some((_, what)) => {
-            let chosen = SOURCES[state.wcs_ui.anchor_source.min(1)];
-            if !chosen.eq_ignore_ascii_case(what) {
-                ui.label(format!("No {chosen} defined - anchoring on {what}."));
-            }
-            ui.horizontal(|ui| {
-                for (i, name) in ["Bottom", "Middle", "Top"].iter().enumerate() {
-                    ui.radio_value(&mut state.wcs_ui.anchor_z, i, *name);
-                }
-            });
-            ui.checkbox(&mut state.wcs_ui.pick_anchor, "Pick markers in viewport");
-            if state.wcs_ui.pick_anchor {
-                ui.label("Click a yellow marker in the viewport to set the origin.");
-            }
-            let pts = interact::anchor_points(state);
-            for row in 0..3usize {
-                ui.horizontal(|ui| {
-                    for col in 0..3usize {
-                        let k = row * 3 + col;
-                        let code = pts.get(k).map_or("?", |(_, name)| *name);
-                        let label = if state.wcs_ui.anchor_xy == k {
-                            format!("[{code}]")
-                        } else {
-                            code.to_owned()
-                        };
-                        if ui.button(label).clicked()
-                            && let Some((pos, _)) = pts.get(k)
-                        {
-                            state.wcs_ui.anchor_xy = k;
-                            state.wcs_ui.x = pos[0];
-                            state.wcs_ui.y = pos[1];
-                            state.wcs_ui.z = pos[2];
-                            apply_wcs_drafts(state);
-                        }
-                    }
-                });
-            }
-        }
-        None => {
-            ui.label("Import a model or set stock to anchor the origin on a point.");
-        }
-    }
-
-    ui.add_space(6.0);
-    // #342: the setup's one WCS, and the work offset its post writes. The
-    // dropdown that picks it is drawn under this page (#343), so the note
-    // names what this page shows, not where the choice lives.
-    let wcs_ctx = camcraft_app::setup::active(&state.world);
-    let label = camcraft_app::setup::wcs_label(&state.world, wcs_ctx.as_deref());
-    let line = match camcraft_app::setup::wcs_entity(&state.world, wcs_ctx.as_deref())
-        .and_then(|e| model::transform_of(&state.world, &e))
-    {
-        Some(loc) => format!(
-            "{label}: {}, {}, {}  yaw {:.1}",
-            units::len(loc.pos.x, u, 2),
-            units::len(loc.pos.y, u, 2),
-            units::len(loc.pos.z, u, 2),
-            quat_yaw_deg(loc.rot)
-        ),
-        None => format!("{label}: not placed (at the origin)"),
-    };
-    ui.label(line);
-    ui.label("Work offset: the G54-G59 slot this setup posts. It does not move the origin.");
-}
-
-fn apply_wcs_drafts(state: &mut State) {
-    state.pending.push_back(CommandKind::SetWcs {
-        pos: [state.wcs_ui.x, state.wcs_ui.y, state.wcs_ui.z],
-        roll_deg: state.wcs_ui.roll_deg,
-        pitch_deg: state.wcs_ui.pitch_deg,
-        yaw_deg: state.wcs_ui.yaw_deg,
-    });
-}
-
-fn turn_wcs(state: &mut State, axis: usize, sign: f64) {
-    let q = quat_from_euler(
-        state.wcs_ui.roll_deg.to_radians(),
-        state.wcs_ui.pitch_deg.to_radians(),
-        state.wcs_ui.yaw_deg.to_radians(),
-    );
-    let turn = quat_from_axis_angle(axis, sign * 90.0f64.to_radians());
-    let (r, p, y) = quat_to_euler(quat_mul(turn, q));
-    state.wcs_ui.roll_deg = r.to_degrees();
-    state.wcs_ui.pitch_deg = p.to_degrees();
-    state.wcs_ui.yaw_deg = y.to_degrees();
-    apply_wcs_drafts(state);
-}
+// The WCS page lives in `wcs_page` (#739 split it out at the 400-line law).
 
 /// Queue the Model page's placement draft as a `MoveModel` (M5.2 G) -
 /// the `apply_wcs_drafts` shape, one command kind over.
@@ -725,12 +362,10 @@ fn setups_page(ui: &mut Ui, state: &mut State) {
             });
         }
         ui.separator();
-        // A document with no setups still machines steel - the
-        // workholding section and the tool list belong to the implicit
-        // context too.
-        fixtures_section(ui, state, None);
-        ui.separator();
-        tool_list_section(ui, state, None);
+        // Workholding and the tool list of the implicit first setup live
+        // under its Fixtures and Tool list nodes in the browser (#1197),
+        // the same place as in a document with setups.
+        ui.label(super::setup_pages::WORKHOLDING_POINTER);
         sheet_footer(ui, state);
         return;
     }
@@ -751,6 +386,17 @@ fn setups_page(ui: &mut Ui, state: &mut State) {
                         .pending
                         .push_back(CommandKind::DeleteSetup(name.clone()));
                 }
+                // Alignment, work offset, workholding and tools live on
+                // the setup's own page: one click from here (#1104).
+                if ui.small_button("Open page").clicked() {
+                    // Activate it too, as the browser's Stock row does: the
+                    // fixture and tool pages edit only the active setup.
+                    super::browser_pane::focus(state, name);
+                    actions::target(
+                        state,
+                        UiTarget::SetupNode(name.clone(), crate::state::SetupPage::Settings),
+                    );
+                }
             });
         });
         if let Some(def) = camcraft_app::setup::def_of(&state.world, name) {
@@ -764,11 +410,6 @@ fn setups_page(ui: &mut Ui, state: &mut State) {
                 line.push_str(&format!(", datum from {}", def.datum_from));
             }
             ui.label(line);
-            super::setup_align_pick::picker(ui, state, name);
-            super::setup_plane_pick::row(ui, state, name);
-            super::setup_points_pick::row(ui, state, name);
-            super::setup_axis_pick::rows(ui, state, name);
-            super::setup_wcs_pick::picker(ui, state, name);
         }
     }
     ui.separator();
@@ -788,46 +429,10 @@ fn setups_page(ui: &mut Ui, state: &mut State) {
         }
     });
     ui.separator();
-    fixtures_section(ui, state, active.as_deref());
-    ui.separator();
-    tool_list_section(ui, state, active.as_deref());
     sheet_footer(ui, state);
-    ui.label("The Stock and Work offset pages edit the active setup's stock and work offset.");
-}
-
-/// The tool list of one setup context (M3.2 stage C): what goes into
-/// the spindle here, in change order, with the shop's time law behind
-/// the estimate. Read-only by law - tools live in the Tool Library and
-/// operations pick them; this page only reports what that wiring
-/// implies, so there is no draft and no command here.
-pub(super) fn tool_list_section(ui: &mut Ui, state: &mut State, ctx: Option<&str>) {
-    let u = state.units();
-    let rows = camcraft_app::tool_list::for_setup(&state.world, ctx);
-    if rows.is_empty() {
-        ui.label("Tool list: no generated operation in this setup yet.");
-        return;
-    }
-    ui.label("Tool list for this setup (in change order):");
-    for row in &rows {
-        ui.label(format!(
-            "    {}  {} op{}  {} change{}  cut {}  rapid {}  est {} min",
-            row.tool,
-            row.ops.len(),
-            if row.ops.len() == 1 { "" } else { "s" },
-            row.changes,
-            if row.changes == 1 { "" } else { "s" },
-            units::len(row.cut_mm, u, 2),
-            units::len(row.rapid_mm, u, 2),
-            camcraft_app::setup_sheet::minutes(row.minutes),
-        ));
-    }
-    ui.label(format!(
-        "    setup total: est {} min",
-        camcraft_app::setup_sheet::minutes(camcraft_app::tool_list::setup_minutes(
-            &state.world,
-            ctx,
-        )),
-    ));
+    ui.label(
+        "Each setup's alignment, work offset, fixtures and tool list are on its own          Setup page in the browser (Open page).",
+    );
 }
 
 /// The setup-sheet export row (M3.2 stage D). Writing a sheet is a
@@ -835,87 +440,14 @@ pub(super) fn tool_list_section(ui: &mut Ui, state: &mut State, ctx: Option<&str
 /// button queues the dialog arm and nothing touches the history.
 pub(super) fn sheet_footer(ui: &mut Ui, state: &mut State) {
     ui.horizontal(|ui| {
-        if ui.button("Export setup sheets…").clicked() {
+        if crate::browser_files::button(ui, state.browser_refusal_of(&CommandKind::SetupSheetDialog), "Export setup sheets…", "") {
             state.pending.push_back(CommandKind::SetupSheetDialog);
         }
         ui.label("(one page per setup, text)");
     });
 }
 
-/// The workholding section of the Setups page (M3.2 stage B): the
-/// solids the collision law sees in this context. A fixture is a plain
-/// model wearing the marker - the rows are that model, placed by the
-/// same `MoveFixture` any part uses - and the machine table is the one
-/// row nobody can edit: it is derived prose, what the `.mch` says the
-/// table is, never an entity. Import rides the model worker (no parse
-/// in a command constructor) and tags on landing.
-pub(super) fn fixtures_section(ui: &mut Ui, state: &mut State, ctx: Option<&str>) {
-    let u = state.units();
-    let fixtures = camcraft_app::fixture::tagged(&state.world, ctx);
-    let table = camcraft_app::fixture::table_box(&state.world, ctx);
-    // A draft whose row vanished (deleted or untagged, here or via
-    // undo) retires with it - the pane never edits a ghost.
-    if !state.fixture_ui.name.is_empty()
-        && !fixtures.iter().any(|(n, _)| n == &state.fixture_ui.name)
-    {
-        state.fixture_ui = FixtureUi::default();
-    }
-    state.retire_vise_opening_drafts();
-    state.retire_plate_place_drafts();
-    state.retire_mod_vise_drafts();
-    state.retire_accessory_size_drafts();
-    ui.label(if fixtures.is_empty() && table.is_none() {
-        "No workholding modeled: the collision checks see stock and part only."
-    } else {
-        "Workholding in this setup's collision checks:"
-    });
-    for (name, entity) in fixtures {
-        let loc = model::transform_of(&state.world, &entity).unwrap_or_default();
-        let fixed = camcraft_app::fixture::def_of(&state.world, &entity).is_some_and(|d| d.fixed);
-        super::fixture_rows::row(ui, state, &name, &loc, fixed);
-    }
-    if let Some(t) = table {
-        ui.label(format!(
-            "Machine/Table  span {} x {}  top Z {}  (from the machine file)",
-            units::len(t.max.x - t.min.x, u, 1),
-            units::len(t.max.y - t.min.y, u, 1),
-            units::len(t.max.z, u, 2),
-        ));
-    }
-    ui.horizontal_wrapped(|ui| {
-        if ui.button("Import fixture…").clicked() {
-            state.pending.push_back(CommandKind::ImportFixtureDialog);
-        }
-        // #788: a generic parametric vise, placed in one undoable step.
-        if ui.button("Add built-in vise…").clicked() {
-            state.pending.push_back(CommandKind::BuiltinViseDialog(ctx.unwrap_or_default().to_owned()));
-        }
-        // #789: parallels, blocks, strap clamps, soft jaws.
-        if ui.button("Add accessory…").clicked() {
-            state.pending.push_back(CommandKind::AccessoryDialog(ctx.unwrap_or_default().to_owned()));
-        }
-        // #819: a parametric grid plate, fixtures placed on its holes.
-        if ui.button("Add fixture plate…").clicked() {
-            state.pending.push_back(CommandKind::FixturePlateDialog(ctx.unwrap_or_default().to_owned()));
-        }
-        // The other way in: a model already imported - select its row
-        // in the browser and mark it. Offered only for exactly one
-        // selected model, so the button never guesses its target.
-        let sel: Vec<String> = model::selected_names(&state.world)
-            .into_iter()
-            .filter(|n| {
-                model::find_by_name(&state.world, n)
-                    .is_some_and(|e| model::is_model(&state.world, &e))
-            })
-            .collect();
-        if sel.len() == 1 && ui.button(format!("Mark {} as fixture", sel[0])).clicked() {
-            state.pending.push_back(CommandKind::TagFixture {
-                name: sel[0].clone(),
-                setup: ctx.map(str::to_owned),
-            });
-        }
-    });
-}
+pub(super) use super::fixtures_page::fixtures_section;
 
 // ----------------------------------------------------------------- tool page
 
@@ -981,17 +513,31 @@ fn tool_page(ui: &mut Ui, state: &mut State, name: &str) {
     let (new, export, import) = ui
         .horizontal_wrapped(|ui| {
             let new = ui.button("New tool…").clicked();
-            let export = ui
-                .button("Export library…")
-                .on_hover_text("write the document's tools to a CamCraft tool library file")
-                .clicked();
-            let import = ui
-                .button("Import library…")
-                .on_hover_text("add the tools of a CamCraft tool library file (one undo step; taken names are never overwritten)")
-                .clicked();
+            let export = crate::browser_files::button(
+                ui,
+                state.in_browser(crate::browser_files::NO_EXPORT),
+                "Export library…",
+                "write the document's tools to a CamCraft tool library file",
+            );
+            let import = crate::browser_files::button(
+                ui,
+                state.in_browser(crate::browser_files::NEEDS_PICKER),
+                "Import library…",
+                "import the tools of a CamCraft tool library file (one undo step; the mode beside it says what happens to a name the document has)",
+            );
+            tool_import_mode_combo(ui, &mut state.tool_import_mode);
             (new, export, import)
         })
         .inner;
+    // #889: whether an import takes each tool's holder body from the file.
+    let mut holders = state.import_tool_holders;
+    if ui
+        .checkbox(&mut holders, "Import tool holders")
+        .on_hover_text("take each tool's holder body from the library file; unticked, tools arrive with their holder cylinder only")
+        .changed()
+    {
+        state.set_import_tool_holders(holders);
+    }
     if new {
         actions::open_tool_editor(state, "");
     }
@@ -1002,7 +548,7 @@ fn tool_page(ui: &mut Ui, state: &mut State, name: &str) {
         state.import_tool_library_dialog();
     }
     if let Some(msg) = state.error_for(ErrorScope::Tool).map(str::to_owned) {
-        ui.colored_label(super::colorvision::text_inks(ui, &state.world).error, msg);
+        super::error_text::error_text(ui, super::colorvision::text_inks(ui, &state.world).error, &msg);
     }
     ui.separator();
     ui.heading("Catalog");
@@ -1010,6 +556,7 @@ fn tool_page(ui: &mut Ui, state: &mut State, name: &str) {
         let taken = model::find_by_name(&state.world, cname).is_some();
         let clicked = ui
             .horizontal(|ui| {
+                super::tool_icons::glyph(ui, super::tool_icons::catalog_row_icon(&ct));
                 ui.label(format!(
                     "{}  Ø{} {}",
                     cname,
@@ -1044,211 +591,6 @@ fn tool_page(ui: &mut Ui, state: &mut State, name: &str) {
 /// reach the world, through the same commands the dock's field list used
 /// to carry. Delete stays a library verb (the dock owns it), which also
 /// keeps every button label unique across the two surfaces.
-/// M1.7d: the G-code viewer. The program one successful post wrote,
-/// line-numbered and monospaced, with the scroll cursor (the line at
-/// the window's middle) published through `PostView::line` for the
-/// viewport's amber segment (`shell::gcode_segment`). It shows the
-/// retained text, not a re-read of the file: text and positions came
-/// from the same engine run, so a highlighted line always highlights
-/// the move that line posts, even if something edits the file after.
-pub(crate) fn gcode_window(ctx: &egui::Context, state: &mut State) {
-    let Some(view) = state.post_view.as_mut() else {
-        return;
-    };
-    if !view.open {
-        return; // closed by ✖ or a document switch: allocate nothing
-    }
-    let stem = view
-        .path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("program")
-        .to_owned();
-    let mut open = view.open;
-    let warn_ink = super::colorvision::palette_of(&state.world).text_on(super::theme::current().ink).warn;
-    // Disjoint field borrows: the closure writes `line` and reads
-    // `program` at once, and `open` is a copy resolved after the pass.
-    let PostView {
-        program,
-        line,
-        blocks,
-        trace,
-        not_judged,
-        ..
-    } = view;
-    // The trace pane's selection is DERIVED (the block owning the
-    // scroll cursor), never stored - the one cursor law the viewer
-    // already obeys, applied to a second view of the same evidence.
-    let owning = |ln: usize| -> Option<usize> {
-        blocks
-            .iter()
-            .position(|b| ln >= b.first && ln < b.last.max(b.first + 1))
-    };
-    Window::new(format!("G-code - {stem}"))
-        .id(Id::new("gcode-viewer"))
-        .open(&mut open)
-        .default_size([560.0, 400.0])
-        .show(ctx, |ui| {
-            let jump = std::cell::Cell::new(None::<usize>);
-            ui.horizontal(|ui| {
-                // Stage D: the debugging trace, beside the program it
-                // explains. Off by default - the plain viewer draws
-                // exactly as it always did.
-                ui.checkbox(trace, "trace");
-                // The header's not-judged line: same row as the
-                // checkbox, so a judged program's viewer geometry is
-                // untouched. Hover shows the whole reason.
-                if let Some(line) = not_judged.as_deref() {
-                    ui.add(
-                        Label::new(
-                            egui::RichText::new(format!("WARNING: {line}"))
-                                .color(warn_ink),
-                        )
-                        .truncate(),
-                    )
-                    .on_hover_text(line);
-                }
-            });
-            let trace_on = *trace;
-            let sel = owning(*line);
-            // Trace off: the listing is the window's direct child -
-            // byte-for-byte the geometry every cursor-law test was
-            // written against. Trace on: egui 0.36's Sides, sized to
-            // the listing's left (300 px) and the rest to the
-            // program. (A `horizontal` of `allocate_ui` panes was
-            // tried first and is wrong inside an auto-shrinking
-            // Window: the child measures available_width as its
-            // desired width, the window grows to satisfy it, and the
-            // next frame's cursor law reads a rectangle it never
-            // wrote. Sides asks each child only for a row during
-            // sizing, so the window's rect stays the user's.)
-            if trace_on {
-                let h = ui.available_height();
-                egui::containers::Sides::new()
-                    .shrink_right()
-                    .height(h)
-                    .show(
-                        ui,
-                        |ui| {
-                            ui.allocate_ui(Vec2::new(300.0, h), |ui| {
-                                ScrollArea::vertical()
-                                    .id_salt("gcode-trace-list")
-                                    .auto_shrink([false, false])
-                                    .show(ui, |ui| {
-                                        for (i, b) in blocks.iter().enumerate() {
-                                            let txt = format!("{:>4}  {}", b.first + 1, b.label);
-                                            let rt = egui::RichText::new(txt)
-                                                .monospace()
-                                                .size(11.0)
-                                                .color(if sel == Some(i) {
-                                                    ui.visuals().strong_text_color()
-                                                } else {
-                                                    ui.visuals().text_color()
-                                                });
-                                            let r = ui.add(
-                                                Label::new(rt)
-                                                    .selectable(false)
-                                                    .sense(Sense::click()),
-                                            );
-                                            if r.clicked() {
-                                                jump.set(Some(b.first));
-                                            }
-                                        }
-                                    });
-                            });
-                        },
-                        |ui| {
-                            gcode_listing(
-                                ui,
-                                program.as_str(),
-                                line,
-                                blocks.as_slice(),
-                                true,
-                                &jump,
-                            );
-                        },
-                    );
-            } else {
-                gcode_listing(ui, program.as_str(), line, blocks.as_slice(), false, &jump);
-            }
-        });
-    view.open = open;
-}
-
-/// The program listing: every line, uniformly `row_h` tall, with the
-/// scroll cursor law the viewer is tested against (the middle row of
-/// the clip rect IS the published line). Drawn as the window's direct
-/// child or to the right of the trace panel - one geometry, two
-/// hosts. While the trace is open, lines outside the block under
-/// study rest weak; a row of the clicked block centers itself, so the
-/// cursor law reads the selection back next frame - the pane stores
-/// no second truth about the scroll.
-fn gcode_listing(
-    ui: &mut Ui,
-    program: &str,
-    line: &mut usize,
-    blocks: &[camcraft_app::post::TraceBlock],
-    trace_on: bool,
-    jump: &std::cell::Cell<Option<usize>>,
-) {
-    ScrollArea::vertical()
-        .id_salt("gcode-scroll")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            // The scroll offset is read, not stored: egui lays the
-            // inner ui out at `-offset`, so the clip rect's center
-            // against the content top names the middle row - that row
-            // is the sync cursor. Uniform rows (one monospace label
-            // per line, spacing fixed) are what make the division
-            // exact.
-            let n = program.lines().count();
-            let row_h = ui.text_style_height(&egui::TextStyle::Monospace);
-            ui.spacing_mut().item_spacing.y = 0.0;
-            let top = ui.min_rect().min.y;
-            let vis = ui.clip_rect();
-            *line = (((vis.center().y - top) / row_h).max(0.0) as usize).min(n.saturating_sub(1));
-            let want = trace_on
-                .then(|| {
-                    blocks
-                        .iter()
-                        .position(|b| *line >= b.first && *line < b.last.max(b.first + 1))
-                        .map(|bi| (blocks[bi].first, blocks[bi].last))
-                })
-                .flatten();
-            let width = ui.available_width();
-            for (i, ln) in program.lines().enumerate() {
-                let label = format!("{:>4}  {}", i + 1, ln);
-                let mut rt = egui::RichText::new(label).monospace();
-                if let Some((a, b)) = want
-                    && !(i >= a && i < b.max(a + 1))
-                {
-                    rt = rt.weak();
-                }
-                // Every row is a left-to-right box exactly `width` by
-                // `row_h`, so the text starts at the left edge (#256:
-                // `add_sized` centred it) and the cursor arithmetic
-                // above stays exact over a long program instead of
-                // drifting a row. `truncate` keeps a line wider than
-                // the window on its one row (egui shows the whole line
-                // on hover) rather than wrapping it onto a second.
-                let resp = ui
-                    .allocate_ui_with_layout(
-                        Vec2::new(width, row_h),
-                        Layout::left_to_right(Align::Center),
-                        |ui| {
-                            ui.set_min_size(Vec2::new(width, row_h));
-                            ui.add(Label::new(rt).selectable(false).truncate())
-                        },
-                    )
-                    .inner;
-                if jump.get() == Some(i) {
-                    resp.scroll_to_me(Some(Align::Center));
-                    jump.set(None);
-                }
-            }
-        });
-}
-
 pub(crate) fn tool_editor_window(ctx: &egui::Context, state: &mut State) {
     let u = state.units();
     let Some(_subject) = state.tool_editor.clone() else {
@@ -1369,17 +711,28 @@ pub(crate) fn tool_editor_window(ctx: &egui::Context, state: &mut State) {
                         {
                             state.tool_ui.tip_angle = 90.0;
                         }
+                        // The thread mills (#894): a form and a pitch.
+                        super::tool_thread_mill_row::seed(&mut state.tool_ui);
                         // The torch (#670): no spindle, no corner - a
                         // kerf. Leaving it, a spinning kind needs an rpm.
-                        if state.tool_ui.tool_kind() == tools::ToolKind::Torch {
+                        // The sinker electrode (#541) turns none either.
+                        if matches!(state.tool_ui.tool_kind(), tools::ToolKind::Torch | tools::ToolKind::Electrode) {
                             state.tool_ui.rpm = 0.0;
                             state.tool_ui.corner_r = 0.0;
-                        } else if before == 12 && (state.tool_ui.rpm.is_nan() || state.tool_ui.rpm <= 0.0) {
+                        } else if (before == 12 || before == 13) && (state.tool_ui.rpm.is_nan() || state.tool_ui.rpm <= 0.0) {
                             state.tool_ui.rpm = 10000.0;
                         }
                     }
                     let torch = state.tool_ui.tool_kind() == tools::ToolKind::Torch;
-                    if torch {
+                    let electrode = state.tool_ui.tool_kind() == tools::ToolKind::Electrode;
+                    if electrode {
+                        // #541: the burning face's two sides.
+                        field(ui, "Electrode X size");
+                        num(ui, u, &mut state.tool_ui.diameter);
+                        field(ui, "Electrode Y size");
+                        num(ui, u, &mut state.tool_ui.width);
+                        ui.label("flute length = the electrode's length below the holder; shank length = its pickup offset");
+                    } else if torch {
                         // The kerf width IS the torch's diameter (#669 /
                         // #670): every offset reads radius = kerf / 2.
                         field(ui, "Kerf width");
@@ -1415,6 +768,10 @@ pub(crate) fn tool_editor_window(ctx: &egui::Context, state: &mut State) {
                     }
                     // #630: which point of the nose the lathe posts write.
                     super::tool_orientation_row::orientation_row(ui, state);
+                    // #894: a thread mill's pitch (range) and form angle.
+                    super::tool_thread_mill_row::thread_mill_rows(ui, state);
+                    // #891: a lathe steel's surface speed, feed per rev, clamp.
+                    super::tool_turning_row::turning_rows(ui, state);
                     if state.tool_ui.kind == 7 {
                         field(ui, "Blade width");
                         num(ui, u, &mut state.tool_ui.width);
@@ -1448,7 +805,10 @@ pub(crate) fn tool_editor_window(ctx: &egui::Context, state: &mut State) {
                         field(ui, "Corner radius");
                         ui.label(format!("{} {}", units::len(state.tool_ui.diameter * 0.5, u, 3), u.suffix()));
                         ui.label("half the diameter - a ball nose's whole tip is its ball");
-                    } else if !matches!(state.tool_ui.tool_kind(), tools::ToolKind::Tap | tools::ToolKind::Torch) {
+                    } else if !matches!(
+                        state.tool_ui.tool_kind(),
+                        tools::ToolKind::Tap | tools::ToolKind::Torch | tools::ToolKind::Electrode | tools::ToolKind::ThreadMill | tools::ToolKind::ThreadMillSingle
+                    ) {
                         field(ui, "Corner radius");
                         num(ui, u, &mut state.tool_ui.corner_r);
                     }
@@ -1467,12 +827,14 @@ pub(crate) fn tool_editor_window(ctx: &egui::Context, state: &mut State) {
                         TextEdit::singleline(&mut state.tool_ui.material_group)
                             .desired_width(140.0),
                     );
-                    if !torch {
+                    super::tool_catalog_rows::catalog_rows(ui, &mut state.tool_ui);
+                    if !torch && !electrode {
                         field(ui, "Spindle rpm");
                         num_plain(ui, &mut state.tool_ui.rpm);
                     }
                     field(ui, &format!("Feed ({})", u.feed_suffix()));
                     num_feed(ui, u, &mut state.tool_ui.feed);
+                    super::tool_cutting_rows::cutting_rows(ui, &mut state.tool_ui, u, torch);
                     // M11.3: an entry may plunge into solid only with a
                     // centre-cutting tool; otherwise it helixes, ramps,
                     // or the operation is refused by name.
@@ -1504,10 +866,9 @@ pub(crate) fn tool_editor_window(ctx: &egui::Context, state: &mut State) {
             };
             if exists {
                 if ui.button("Apply").clicked() {
-                    state.pending.push_back(CommandKind::ChangeTool {
-                        name: name_now.clone(),
-                        tool: state.tool_ui.to_tool(),
-                    });
+                    // #93 slice 3: a landed drawn cutter rides the edit.
+                    let apply = state.apply_tool_numbers(&name_now);
+                    state.pending.push_back(apply);
                     push_number_if_changed(state, &name_now);
                 }
             } else {
@@ -1524,7 +885,7 @@ pub(crate) fn tool_editor_window(ctx: &egui::Context, state: &mut State) {
                 }
             }
             if let Some(msg) = state.error_for(ErrorScope::Tool).map(str::to_owned) {
-                ui.colored_label(super::colorvision::text_inks(ui, &state.world).error, msg);
+                super::error_text::error_text(ui, super::colorvision::text_inks(ui, &state.world).error, &msg);
             }
             close_clicked = ui.button("Close").clicked();
         });
@@ -1677,6 +1038,22 @@ fn model_page(ui: &mut Ui, state: &mut State, name: String) {
     };
     let tris = model::facets_of(&state.world, &entity).map_or(0, |f| f.len());
     ui.label(format!("{tris} triangle(s)"));
+    // #864: a model imported coarser than the importer promises says so,
+    // with the error it carries and what that does to the checks.
+    if let Some(chord) = camcraft_app::model_fidelity::chord_of(&state.world, &entity) {
+        ui.label(camcraft_app::mesh_open::summary(&state.world, &entity, chord));
+        // #1610: an incomplete model's line already says what to do.
+        if camcraft_app::mesh_open::hole_of(&state.world, &entity).is_none() {
+            hint(
+            ui,
+            "This model was too large to import at full detail. Gouge checks against it are \
+             stricter to make up for that; when it is too coarse to check at all, its operations \
+             are refused at the post. Raise the STEP facet budget below and import the file \
+             again to clear this.",
+            );
+        }
+    }
+    super::step_budget_row::row(ui, state, &entity);
     if let Some(a) = model::entity_world_aabb(&state.world, &entity) {
         ui.label(format!(
             "{} x {} x {} {}",
@@ -1794,88 +1171,31 @@ fn model_page(ui: &mut Ui, state: &mut State, name: String) {
     ui.label("Selected now: Del removes it (undo restores).");
 }
 
+/// #899: the Import library mode picker (view state; the import is the command).
+fn tool_import_mode_combo(ui: &mut egui::Ui, mode: &mut camcraft_app::commands::ImportMode) {
+    use camcraft_app::commands::ImportMode;
+    egui::ComboBox::from_id_salt("tool_import_mode")
+        .selected_text(match mode {
+            ImportMode::Add => "Add (rename duplicates)",
+            ImportMode::Update => "Update same-named",
+            ImportMode::Replace => "Replace library",
+        })
+        .show_ui(ui, |ui| {
+            ui.selectable_value(mode, ImportMode::Add, "Add (rename duplicates)")
+                .on_hover_text("an identical tool is skipped, a different tool of a taken name comes in as \"Name (2)\"");
+            ui.selectable_value(mode, ImportMode::Update, "Update same-named")
+                .on_hover_text("a same-named tool takes the file's definition in place (number kept; operations using it go Stale); new names are added");
+            ui.selectable_value(mode, ImportMode::Replace, "Replace library")
+                .on_hover_text("update, and tools the file lacks are removed - refused if an operation uses one");
+        });
+}
+
 #[cfg(test)]
 mod turn_tests {
-    //! The turn/Level buttons are commands of their own now: the world -
-    //! and with it the viewport gizmo - moves on the press. Moved verbatim
-    //! from the retired imgui setup.rs at M-g; the code under test is
-    //! pages.rs's own `turn_wcs`/`apply_wcs_drafts`.
+    //! The page tests that stayed with pages.rs; the WCS turn tests moved
+    //! with `turn_wcs` to `wcs_page_tests` (#739).
 
     use super::*;
-    use camcraft_app::geometry::{Point3, transform_point};
-
-    fn place(state: &mut State, pos: [f64; 3], yaw_deg: f64) {
-        state.pending.push_back(CommandKind::SetWcs {
-            pos,
-            roll_deg: 0.0,
-            pitch_deg: 0.0,
-            yaw_deg,
-        });
-        state.drain_actions();
-    }
-
-    fn location(state: &State, slot: &str) -> camcraft_app::schema::Location {
-        let entity = model::find_by_name(&state.world, slot).expect("offset entity");
-        model::transform_of(&state.world, &entity).expect("location")
-    }
-
-    #[test]
-    fn a_turn_moves_the_world_not_just_the_drafts() {
-        let mut state = State::new();
-        place(&mut state, [10.0, 0.0, 0.0], 0.0);
-        state.sync_setup_ui();
-        turn_wcs(&mut state, 0, 1.0); // X+ quarter about the world X
-        state.drain_actions();
-        let loc = location(&state, "G54");
-        assert_eq!([loc.pos.x, loc.pos.y, loc.pos.z], [10.0, 0.0, 0.0]);
-        // Right-hand +90 about X takes +Z to -Y.
-        let p = transform_point(Point3::new(0.0, 0.0, 1.0), loc.pos, loc.rot);
-        assert!(
-            [(p.x - 10.0), (p.y + 1.0), p.z]
-                .iter()
-                .all(|v| v.abs() < 1e-9),
-            "{p:?}"
-        );
-    }
-
-    #[test]
-    fn four_turns_about_one_axis_return_to_the_start() {
-        let mut state = State::new();
-        place(&mut state, [0.0, 0.0, 0.0], 30.0);
-        state.sync_setup_ui();
-        for _ in 0..4 {
-            turn_wcs(&mut state, 2, 1.0);
-        }
-        state.drain_actions();
-        let loc = location(&state, "G54");
-        // Same rotation as the 30-degree start: quaternion equal up to sign.
-        let start = quat_from_euler(0.0, 0.0, 30.0f64.to_radians());
-        let dot: f64 = start.iter().zip(loc.rot).map(|(a, b)| a * b).sum();
-        assert!(
-            (dot.abs() - 1.0).abs() < 1e-9,
-            "closed the circle: {:?}",
-            loc.rot
-        );
-    }
-
-    #[test]
-    fn turning_an_unplaced_wcs_applies_the_typed_position() {
-        let mut state = State::new();
-        state.wcs_ui.x = 5.0;
-        turn_wcs(&mut state, 1, -1.0); // Y- quarter
-        state.drain_actions();
-        let loc = location(&state, "G54");
-        assert_eq!([loc.pos.x, loc.pos.y, loc.pos.z], [5.0, 0.0, 0.0]);
-        // Right-hand -90 about Y takes +X to +Z: the drafts, not just a
-        // rotation, rode along.
-        let p = transform_point(Point3::new(1.0, 0.0, 0.0), loc.pos, loc.rot);
-        assert!(
-            [(p.x - 5.0), p.y, (p.z - 1.0)]
-                .iter()
-                .all(|v| v.abs() < 1e-9),
-            "{p:?}"
-        );
-    }
 
     /// M1.4: opening the editor is pure view state - the named path
     /// re-fetches the draft from the world (every field starts at the

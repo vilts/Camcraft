@@ -66,8 +66,9 @@ The model must sit with its mounting face down, on the machine table.
 
 - **Fixed jaw opening.** A vise model from a vendor has one jaw opening.
   Model it at the opening you will use, or use the built-in parametric vises
-  (#788, in PR #802, which is not merged yet).
-- **Fixture plate hole grid.** Placing a grid of holes on a plate in one step
-  is planned (#819) and is not available yet. Use **Locate part…** for now.
+  (shipped in PR #802, #788).
+- **Fixture plate hole grid.** Built-in fixture plates place fixtures on a
+  grid of holes in one step (shipped in PR #823, #819). Use **Locate part…**
+  to place a fixture that is not on a plate grid.
 - **Check clearances.** The model is only as accurate as the vendor's file.
   Check the clearance against the real hardware before a first cut.

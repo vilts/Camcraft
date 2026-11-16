@@ -2,7 +2,8 @@
 
 use super::types::{FixturePart, Warning};
 
-use crate::cl::{is_vertical, Move, MoveKind, Toolpath};
+use super::upright::is_upright;
+use crate::cl::{Move, MoveKind, Toolpath};
 use crate::geo2d::{Point2, Region};
 use crate::geometry::Point3;
 pub use crate::tools::ToolGeom;
@@ -46,6 +47,51 @@ pub(super) fn orient(a: Point2, b: Point2, c: Point2) -> f64 {
 pub(super) fn proper_cross(a0: Point2, a1: Point2, b0: Point2, b1: Point2) -> bool {
     let (oa, ob) = (orient(a0, a1, b0), orient(a0, a1, b1));
     let (oc, od) = (orient(b0, b1, a0), orient(b0, b1, a1));
+    oa != 0.0
+        && ob != 0.0
+        && oc != 0.0
+        && od != 0.0
+        && ((oa > 0.0) != (ob > 0.0))
+        && ((oc > 0.0) != (od > 0.0))
+}
+
+/// How near two chord end points stand, in XY, to be read as ONE shared
+/// vertex by the crossing law (a), mm: 1e-9 (1 pm). A vertex reached
+/// twice - an orbit closing on its start, a microlift return landing on
+/// a chord end, a ring starting on the last ring's vertex - lands within
+/// a few ulps of itself: f64 rounding of a coordinate of 1e4 mm (a 10 m
+/// workspace) is ~2e-12 mm, a hundred-odd times below this. Cutting
+/// tolerances are microns (the verifier's own is 5e-3 mm), a million
+/// times above it, so a pair this close is one vertex, never two cuts.
+///
+/// It is a point-to-point DISTANCE, compared as one (no raw cross
+/// product), so it holds the same for a 1 um chord and a 1 m chord.
+/// Issue #1129: this law is the reference; the adaptive planner's own
+/// plan check (`motion` `adaptive::guard::crosses`, #1048's `TOUCH`)
+/// asks the same question first and should use or match this constant,
+/// so a plan it accepts is never held by this law for a rounding.
+pub const CROSSING_TOUCH: f64 = 1e-9;
+
+/// Proper crossing for the crossing law (a) (#1129): [`proper_cross`],
+/// with an end point that stands within [`CROSSING_TOUCH`] of one of the
+/// other chord's END points read as on that chord's line (orientation
+/// 0, a touch) - so a shared vertex a rounding apart touches, exactly as
+/// an exactly shared vertex always has.
+///
+/// Deliberately NOT "within the tolerance of the other chord's LINE":
+/// a walk can pass through a chord at a vertex standing a picometre off
+/// that chord's interior, and both of its chords there would then read
+/// as touches - a real crossing of any depth hidden (the #1134 review's
+/// pass-through probe). Away from the other chord's end points the
+/// exact sign stays the law, so such a pass-through still reports.
+/// A non-finite end never compares near, so it keeps the exact reading.
+pub(super) fn proper_cross_touch(a0: Point2, a1: Point2, b0: Point2, b1: Point2) -> bool {
+    let near = |p: Point2, q: Point2| (p.x - q.x).hypot(p.y - q.y) <= CROSSING_TOUCH;
+    let side = |p: Point2, q0: Point2, q1: Point2| {
+        if near(p, q0) || near(p, q1) { 0.0 } else { orient(q0, q1, p) }
+    };
+    let (oa, ob) = (side(b0, a0, a1), side(b1, a0, a1));
+    let (oc, od) = (side(a0, b0, b1), side(a1, b0, b1));
     oa != 0.0
         && ob != 0.0
         && oc != 0.0
@@ -156,7 +202,8 @@ pub fn bands_vs_fixtures_held(
     // fixture law only - against stock the housing stands down by the kerf
     // reasoning that already excuses the holder band there.
     let spindle = spindle.map(|(sr, sl)| (FixturePart::Spindle, holder.top, sr, sl));
-    let mut bands = vec![(FixturePart::Shank, tool.flute_len, tool.shank_radius, tool.shank_len)];
+    // #852: the shank as swept - a drawn neck's bands, or the cylinder.
+    let mut bands: Vec<_> = holder.shank_bands(tool).iter().map(|b| (FixturePart::Shank, b.above, b.r, b.len)).collect();
     bands.extend(holder.bands.iter().map(|b| (FixturePart::Holder, b.above, b.r, b.len)));
     for (i, m) in path.moves.iter().enumerate() {
         if m.kind == MoveKind::Rapid {
@@ -174,13 +221,14 @@ pub fn bands_vs_fixtures_held(
         // swept path shifts to the band's mid-height point on the
         // leaning axis, the radius gains the half-length's horizontal
         // spread, and the z planes gain the half-length's vertical
-        // reach plus the disc's own radius. An ENCLOSING model can
+        // reach plus the disc rim's exact dip, R·sin θ (#1303,
+        // [`super::tilt_band`]). An ENCLOSING model can
         // over-report a graze; it cannot hide a crash - the tilted
         // truth (a swept tilted cylinder against a box) is worth
         // measuring exactly when stage B's generators start leaning
         // real stock paths. The prismatic branch is bit-identical to
         // the law's own history: same sums, same comparisons.
-        let lean = m.axis.filter(|a| !is_vertical(a));
+        let lean = m.axis.filter(|a| !is_upright(a));
         let mut struck = None;
         for (part, above, band_r, band_len) in bands.iter().copied().chain(spindle) {
             // Unlike law (c), a band THINNER than the flute still
@@ -296,11 +344,12 @@ pub fn rapids_vs_fixtures_held(
         // along the whole lean run - in a capsule that is never
         // smaller: the centre chord moved half the lean aside, and the
         // radius grown by the parallelogram's own half-diagonal. The
-        // z window spans both tips' axis reach plus the disc. Over-
+        // z window spans both tips' axis reach plus the disc's rim
+        // dip. Over-
         // report a graze, never hide a crash - the bands law's exact
         // precedent. The prismatic branch stays bit-identical to the
         // law's own history: same `rapid_hits_box`, same sums.
-        match m.axis.filter(|a| !is_vertical(a)) {
+        match m.axis.filter(|a| !is_upright(a)) {
             None => {
                 // The flute disc first, its verdict as ever; then the
                 // rest of the stack (#424) - shank, holder, the housing
@@ -321,19 +370,19 @@ pub fn rapids_vs_fixtures_held(
                 }
             }
             Some(a) => {
-                let lean_xy = (a[0] * a[0] + a[1] * a[1]).sqrt();
-                // |Q|/2: the parallelogram (chord ⊕ lean run) is exactly
-                // contained in the capsule of radius half the run about
-                // its centre line - every point sits |Q|/2 or less off it.
-                let run2 = 0.5 * tool.flute_len * lean_xy;
-                let r_use = tool.radius + run2;
-                let (ox, oy) = (0.5 * tool.flute_len * a[0], 0.5 * tool.flute_len * a[1]);
-                let (x0, y0) = (m.from.x + ox, m.from.y + oy);
-                let (x1, y1) = (m.to.x + ox, m.to.y + oy);
-                let za = m.from.z + tool.flute_len * a[2];
-                let zb = m.to.z + tool.flute_len * a[2];
-                let z_lo = m.from.z.min(m.to.z).min(za).min(zb) - tool.radius;
-                let z_hi = m.from.z.max(m.to.z).max(za).max(zb) + tool.radius;
+                // The flute as a leaning band from the tip, the one
+                // column of [`super::tilt_band`] (#1303). Half the lean
+                // run aside and the radius grown by it: the
+                // parallelogram (chord ⊕ lean run) is exactly contained
+                // in the capsule of radius half the run about its
+                // centre line. In z, both tips' axis reach plus the
+                // disc rim's exact dip R·sin θ.
+                let col = super::tilt_band::lean(&a, 0.0, tool.radius, tool.flute_len);
+                let r_use = col.r;
+                let (x0, y0) = (m.from.x + col.off.0, m.from.y + col.off.1);
+                let (x1, y1) = (m.to.x + col.off.0, m.to.y + col.off.1);
+                let z_lo = m.from.z.min(m.to.z) + col.lo - col.dip;
+                let z_hi = m.from.z.max(m.to.z) + col.hi + col.dip;
                 if fixtures.iter().any(|b| {
                     crate::fixture::band_hits_box(x0, y0, x1, y1, z_lo, z_hi, r_use, b)
                 }) {

@@ -74,6 +74,7 @@ fn assert_long_bar_exit(tag: &str, mesh: Mesh, diameter: f64, params: OpParams, 
         )
         .expect("lathe"),
     );
+    history.execute(&world, camcraft_app::commands::SelectPost::new(&world, camcraft_app::schema::PostRef::Named("Fanuc Lathe".into())).expect("lathe post"));
     let name = "TN-1600-0R8";
     let tool = catalog()
         .into_iter()

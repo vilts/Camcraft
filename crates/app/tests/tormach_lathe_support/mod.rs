@@ -13,7 +13,7 @@
 use flecs_ecs::prelude::World;
 
 use camcraft_app::cl::ThreadHand;
-use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, ImportModel, LoadMachine, SelectPost, SetStock};
+use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, ImportModel, LoadMachine, SelectPost, SetStock, SetUnits};
 use camcraft_app::geometry::{Mesh, Point3, Triangle};
 use camcraft_app::machine::{Coolant, Machine};
 use camcraft_app::operation::{Height, OpParams, SrcRef};
@@ -65,6 +65,22 @@ pub fn lathe(inch: bool) -> Machine {
     }
 }
 
+/// The stock a hand-built stream states before its section (#1604: the
+/// post orders the moves around G30 by it): a round bar of this radius
+/// about the axis, its face at `top`, and the section's ClearancePlane
+/// `clear`, all world mm - the PARAMs `post::dump` writes.
+pub fn stock_params(radius: f64, top: f64, clear: f64) -> Vec<cnc::Record> {
+    let p = |name: &str, v: f64| cnc::Record::Param { name: name.into(), value: serde_json::json!(v) };
+    vec![
+        p("StockXYLeft", -radius),
+        p("StockXYRight", radius),
+        p("StockXYFront", -radius),
+        p("StockXYBack", radius),
+        p("StockZTop", top),
+        p("ClearancePlane", clear),
+    ]
+}
+
 pub fn lathe_mch(inch: bool) -> serde_json::Value {
     camcraft_app::post::machine::mirror(&lathe(inch))
 }
@@ -81,6 +97,11 @@ pub fn world_with(
     let at = Location { pos: Point3::new(0.0, 0.0, z0), ..Location::default() };
     history.execute(&world, SetStock::new(&world, stock, at).expect("stock"));
     history.execute(&world, LoadMachine::new(&world, "lathe.mch".into(), Some(lathe(inch))).expect("lathe"));
+    // #902: the program's unit is the document's - an inch run is an
+    // inch document (on the inch machine file it always ran on).
+    if inch {
+        history.execute(&world, SetUnits::new(&world, camcraft_app::units::Unit::Inches).expect("inch document"));
+    }
     for t in tools {
         let tool = catalog().into_iter().find(|(n, _)| n == t).map(|(_, t)| t).expect("catalog entry");
         history.execute(&world, AddTool::new(&world, t, tool).expect("tool"));
@@ -142,6 +163,7 @@ pub fn thread_world_with(inch: bool, hand: ThreadHand, pitch: f64, depth: f64) -
         infeed: 0.4,
         feed: 120.0,
         plunge_feed: 40.0,
+        infeed_plan: Default::default(),
         hand,
     };
     create(&world, &mut history, "TH1", "TD-1732-60", params);
@@ -158,7 +180,9 @@ pub fn g76() -> PostOptions {
 
 /// Records through the script with these options: (program, warnings).
 pub fn post(world: &World, records: &[cnc::Record], options: PostOptions) -> (String, Vec<String>) {
-    let out = engine::run_with(CPS, &posting::machine_value(world), &cnc::serialize(records), &posting::options_value(options))
+    let mut opts = posting::options_value(options);
+    opts["Units"] = serde_json::json!(posting::unit_word(camcraft_app::units::of(world)));
+    let out = engine::run_with(CPS, &posting::machine_value(world), &cnc::serialize(records), &opts)
         .expect("the script runs");
     (out.program, out.warnings)
 }

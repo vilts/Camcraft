@@ -62,7 +62,9 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                 });
             }
             if tab == SEC_PASSES {
-                prop_row(ui, "Stepover", |ui| num(ui, u, stepover));
+                if !strategy.steps_by_load() {
+                    prop_row(ui, "Stepover", |ui| num(ui, u, stepover));
+                }
                 prop_row(ui, "Stock to leave", |ui| num(ui, u, stock_to_leave));
                 let mut st_idx = match strategy {
                     PocketStrategy::Zigzag => 0,
@@ -85,7 +87,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                         _ => PocketStrategy::Zigzag,
                     };
                 }
-                if matches!(strategy, PocketStrategy::Adaptive | PocketStrategy::OffsetRings) {
+                if strategy.steps_by_load() {
                     super::load_field::optimal_load_field(ui, optimal_load);
                 }
                 if matches!(strategy, PocketStrategy::Adaptive) {
@@ -122,6 +124,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             entry_ramp,
             steep_stepover,
             pencil_reference,
+            fill_openings,
         } => {
             if tab == SEC_HEIGHTS {
                 height_editor(
@@ -256,6 +259,9 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                         hint(ui, "None: every concave corner whose locus rests on the solid is cleaned. Stated: the pen whose leftovers this op cleans - it must be fatter than the op's ball, and the path names it if it is not");
                     }
                 }
+                // The land model (#1196): Off is the model itself.
+                auto_opt(ui, "Fill openings", "Off", fill_openings, "model surface", 5.0, |ui, d| num(ui, u, d));
+                hint(ui, "Off: the path follows the model, holes and all. Stated: closed holes and pockets a disk this wide cannot enter are lidded at their rim and flown over - the walls stay uncut; the gouge check still uses the real model");
                 prop_row(ui, "Tolerance", |ui| num(ui, u, tolerance));
                 hint(ui, "the finish budget: levels drop by 2 x sqrt(tool radius x tolerance), so the cusp under the ball stays within it");
                 hint(ui, "stepdown follows from tolerance and tool - it is not a second knob");

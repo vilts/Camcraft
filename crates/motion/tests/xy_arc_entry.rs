@@ -38,6 +38,7 @@ fn round() -> Region {
 
 fn pp(entry: Entry3D, strategy: PocketStrategy, links: Links) -> PocketParams {
     PocketParams {
+        blend_radius: None,
         tool_diameter: 2.0 * R,
         stepover: 2.5,
         stock_to_leave: 0.0,
@@ -87,6 +88,7 @@ fn check(t: &Toolpath, r: &Region) -> Vec<Warning> {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(t, &cx)
 }

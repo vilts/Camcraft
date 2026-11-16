@@ -116,3 +116,96 @@ fn a_stray_click_on_the_setup_page_names_the_axis_pick_and_a_mode_choice_arms() 
     assert_eq!(harness.state().state.geo_pick, GeoPick::Vertex);
     assert!(harness.query_by_label("Stop picking +Y").is_some());
 }
+
+/// Every painted shape of the last frame, groups flattened.
+fn shapes(h: &Harness<'static, ShellUi>) -> Vec<egui::Shape> {
+    fn walk(s: &egui::Shape, out: &mut Vec<egui::Shape>) {
+        match s {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+            other => out.push(other.clone()),
+        }
+    }
+    let mut out = Vec::new();
+    for c in &h.output().shapes {
+        walk(&c.shape, &mut out);
+    }
+    out
+}
+
+/// #738: the alignment picks are painted so they can be seen - a picked
+/// face filled with the pick violet, semi-transparent (every facet of it,
+/// not only the outline); picked points as round filled discs; a picked
+/// edge as a bold stroke, well over the 1 px hover outline.
+#[test]
+fn picked_faces_fill_points_are_discs_and_edges_are_bold() {
+    use crate::align_pick_viz::{EDGE_PX, FACE_ALPHA, PICK_RGB8, POINT_ALPHA, POINT_RADIUS_PX};
+    let mut harness = shell_harness();
+    harness.state_mut().state.pending.push_back(CommandKind::CreateSetup { name: None, datum_from: None });
+    harness.run();
+    crate::actions::target(
+        &mut harness.state_mut().state,
+        UiTarget::SetupNode("Setup1".into(), crate::state::SetupPage::Settings),
+    );
+    harness.run();
+    let f = {
+        let w = &harness.state().state.world;
+        let e = model::find_by_name(w, "Block").expect("the seed's Block");
+        model::features_of(w, &e).expect("features")
+    };
+    let top = f.faces.iter().find(|x| x.normal[2] > 0.99).expect("the top face");
+    let sel = |feature| camcraft_app::operation::GeoSel { entity: "Block".into(), feature };
+    // #771: each method's row waits behind the plane dropdown.
+    let method = |h: &mut Harness<'static, ShellUi>, from: &str, to: &str| {
+        h.get_by(|n| n.role() == egui::accesskit::Role::ComboBox && n.value().as_deref() == Some(from)).click();
+        h.run();
+        h.get_by_label(to).click();
+        h.run();
+    };
+    let [r, g, b] = PICK_RGB8;
+
+    method(&mut harness, "Axes", "Face");
+    crate::plane_pick::arm(&mut harness.state_mut().state, "Setup1");
+    crate::plane_pick::take(&mut harness.state_mut().state, sel(FeatureSel::Face(top.id)));
+    harness.run();
+    let fill = egui::Color32::from_rgba_unmultiplied(r, g, b, FACE_ALPHA);
+    let filled: usize = shapes(&harness)
+        .iter()
+        .filter_map(|s| match s {
+            egui::Shape::Mesh(m) if m.vertices.iter().all(|v| v.color == fill) => Some(m.indices.len() / 3),
+            _ => None,
+        })
+        .sum();
+    assert_eq!(filled, top.facets.len(), "every facet of the face is filled with the pick violet");
+    assert!(fill.a() > 0 && fill.a() < 255, "semi-transparent");
+    assert!(harness.query_by_label_contains("1 face selected").is_some(), "the row counts the face");
+
+    method(&mut harness, "Face", "Points");
+    crate::points_pick::arm(&mut harness.state_mut().state, "Setup1");
+    for vi in camcraft_app::geometry::feature::corner_verts(&f).into_iter().take(2) {
+        let id = camcraft_app::geometry::feature::vertex_id(&f, vi).expect("a corner id");
+        crate::points_pick::take(&mut harness.state_mut().state, sel(FeatureSel::Vertex(id)));
+    }
+    harness.run();
+    let disc = egui::Color32::from_rgba_unmultiplied(r, g, b, POINT_ALPHA);
+    let discs = shapes(&harness)
+        .iter()
+        .filter(|s| matches!(s, egui::Shape::Circle(c) if c.fill == disc && c.radius >= POINT_RADIUS_PX))
+        .count();
+    assert_eq!(discs, 2, "two picked points, two filled discs");
+    assert!(harness.query_by_label_contains("2 points selected").is_some(), "the row counts the points");
+
+    method(&mut harness, "Points", "Axes");
+    crate::axis_pick::arm(&mut harness.state_mut().state, "Setup1", camcraft_app::pick::InPlaneAxis::Y);
+    let edge = camcraft_app::geometry::feature::chains(&f).into_iter().find(|c| !c.closed).expect("a straight edge");
+    crate::axis_pick::take(&mut harness.state_mut().state, sel(FeatureSel::Chain(edge.id)));
+    harness.run();
+    let ink = egui::Color32::from_rgb(r, g, b);
+    let bold = shapes(&harness)
+        .iter()
+        .filter(|s| matches!(s, egui::Shape::LineSegment { stroke, .. } if stroke.color == ink && stroke.width >= EDGE_PX))
+        .count();
+    assert!(bold >= 1, "the picked edge is drawn bold");
+    const { assert!(EDGE_PX >= 3.0, "bold is well over the 1 px hover outline") };
+    assert!(harness.query_by_label_contains("edge on ").is_some(), "the row names the edge");
+    assert!(harness.query_all_by_label_contains("0x").next().is_none(), "no internal id on the page");
+}

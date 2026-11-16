@@ -62,7 +62,7 @@ pub(super) fn req_model(env: &Env, name: &str) -> Result<Entity, String> {
 }
 
 /// One `{model, id}` pick, the model checked to be a part.
-fn pick_of(env: &Env, v: &Value) -> Result<GeoSel, String> {
+pub(super) fn pick_of(env: &Env, v: &Value) -> Result<GeoSel, String> {
     let Value::Object(m) = v else {
         return Err(format!("a pick is an object {{\"model\", \"id\"}}, got {v}"));
     };
@@ -94,7 +94,7 @@ pub(super) fn picks_view(items: &[GeoSel]) -> Vec<Value> {
 
 /// The feature-kind door: refusals the generation walks make by name,
 /// said at the pick instead, before anything lands in the History.
-fn kind_door(label: &str, params: &OpParams, items: &[GeoSel]) -> Result<(), String> {
+pub(super) fn kind_door(label: &str, params: &OpParams, items: &[GeoSel]) -> Result<(), String> {
     let first = |pred: fn(&FeatureSel) -> bool| items.iter().find(|g| pred(&g.feature));
     if matches!(params, OpParams::MultiAxisContour { .. }) {
         // Its picks ARE the path: curves only (selection's drive_chains).

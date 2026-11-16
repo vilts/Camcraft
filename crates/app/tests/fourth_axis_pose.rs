@@ -9,8 +9,8 @@
 //! Provenance: our own tests over our own commands, machine file and posts;
 //! RS-274's A as a rotation about X, and our `cl::pose` law.
 //!
-//! Gate map (M4.4): covers app::machine (judge: the pose gate),
-//! app::posting (post_setup), app::post (tormach.cps, fanuc.cps).
+//! Gate map (M4.4): covers app::machine, post::machine (judge: the pose gate),
+//! app::posting (post_setup), post::post (tormach.cps, fanuc.cps).
 
 use camcraft_app::commands::{
     AddTool, CreateOperation, GenerateOperation, History, ImportModel, LoadMachine, SelectPost,
@@ -90,6 +90,8 @@ fn under_flat() -> OpParams {
         helix_radius: 1.0,
         links: camcraft_app::links::Links::PLANAR,
         tilt: Some(UNDER),
+        extend_start: 0.0,
+        extend_end: 0.0,
     }
 }
 
@@ -98,6 +100,8 @@ fn build() -> World {
     let world = camcraft_app::world::new_world();
     let mut h = History::default();
     h.execute(&world, ok(LoadMachine::builtin(&world, ARC4), "machine"));
+    // #902: the inch program these numbers read is an inch document's.
+    h.execute(&world, ok(camcraft_app::commands::SetUnits::new(&world, camcraft_app::units::Unit::Inches), "inch document"));
     h.execute(&world, ok(SelectPost::new(&world, PostRef::Named("Tormach PathPilot".into())), "post"));
     let stock = SetStock::new(
         &world,
@@ -242,7 +246,11 @@ fn the_fanuc_dialect_refuses_a_b_on_an_a_only_table() {
             })
         };
         cnc::serialize(&[
+            // #1633: the section states its clearance, as `post::dump` does.
+            cnc::Record::Param { name: "ClearancePlane".into(), value: serde_json::json!(5.0) },
             cnc::Record::Tool { number: 1, name: "EM".into() },
+            // #1359: a feed with the spindle stopped is refused by name.
+            cnc::Record::Param { name: "SpindleSpeed".into(), value: serde_json::json!(6000) },
             cnc::Record::Section { begin: true },
             mv(-5.0),
             mv(-6.0),
@@ -287,7 +295,11 @@ fn the_fanuc_dialect_refuses_a_lone_a_stated_along_minus_x() {
         })
     };
     let stream = cnc::serialize(&[
+        // #1633: the section states its clearance, as `post::dump` does.
+        cnc::Record::Param { name: "ClearancePlane".into(), value: serde_json::json!(5.0) },
         cnc::Record::Tool { number: 1, name: "EM".into() },
+        // #1359: a feed with the spindle stopped is refused by name.
+        cnc::Record::Param { name: "SpindleSpeed".into(), value: serde_json::json!(6000) },
         cnc::Record::Section { begin: true },
         mv(-5.0),
         mv(-6.0),
@@ -309,28 +321,38 @@ fn the_fanuc_dialect_refuses_a_lone_a_stated_along_minus_x() {
     assert!(plus.program.contains("A-45"), "{}", plus.program);
 }
 
-/// Two tilted feeds at `abc`, for the letter-writing dialects.
+/// A rapid to `abc`, then two tilted feeds there, for the letter-writing
+/// dialects. The rapid places the rotary first: a feed that turns it
+/// from an angle the post never placed is refused by name once the
+/// machine states a rotary rate (#885).
 fn tilted(abc: [f64; 3]) -> String {
-    let mv = |z: f64| {
-        cnc::Record::Move(cnc::MoveRec {
-            kind: camcraft_app::cl::MoveKind::Feed,
-            x: 0.0,
-            y: 0.0,
-            z,
-            feed: Some(300.0),
-            center: None,
-            ccw: false,
-            plane: Default::default(),
-            abc: Some(abc),
-        })
-    };
+    let mv = |z: f64| tilted_move(abc, z, camcraft_app::cl::MoveKind::Feed);
     cnc::serialize(&[
+        // #1633: the section states its clearance, as `post::dump` does.
+        cnc::Record::Param { name: "ClearancePlane".into(), value: serde_json::json!(5.0) },
         cnc::Record::Tool { number: 1, name: "EM".into() },
+        // #1359: a feed with the spindle stopped is refused by name.
+        cnc::Record::Param { name: "SpindleSpeed".into(), value: serde_json::json!(6000) },
         cnc::Record::Section { begin: true },
+        tilted_move(abc, 5.0, camcraft_app::cl::MoveKind::Rapid),
         mv(-5.0),
         mv(-6.0),
         cnc::Record::Section { begin: false },
     ])
+}
+
+fn tilted_move(abc: [f64; 3], z: f64, kind: camcraft_app::cl::MoveKind) -> cnc::Record {
+    cnc::Record::Move(cnc::MoveRec {
+        kind,
+        x: 0.0,
+        y: 0.0,
+        z,
+        feed: (kind == camcraft_app::cl::MoveKind::Feed).then_some(300.0),
+        center: None,
+        ccw: false,
+        plane: Default::default(),
+        abc: Some(abc),
+    })
 }
 
 fn post_file(name: &str) -> String {
@@ -345,7 +367,7 @@ fn run_dnm(m: &Machine, abc: [f64; 3]) -> engine::PostOutput {
 }
 
 fn dnm() -> Machine {
-    let text = MACHINES.iter().find(|(n, _)| *n == "Doosan DNM 5700").map(|(_, t)| *t).expect("shipped");
+    let text = MACHINES.iter().find(|(n, _)| *n == "Doosan DNM 5700 + rotary table").map(|(_, t)| *t).expect("shipped");
     ok(parse_mch(text), "parses")
 }
 

@@ -73,6 +73,7 @@ fn cp(side: Side, climb: bool, blend: bool) -> ContourParams {
 
 fn pp(strategy: PocketStrategy, blend: bool) -> PocketParams {
     PocketParams {
+        blend_radius: None,
         links: camcraft_motion::links::Links::PLANAR,
         tool_diameter: 8.0,
         stepover: 3.0,

@@ -29,6 +29,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             infeed,
             feed,
             plunge_feed,
+            infeed_plan,
             hand,
         } => {
             if tab == SEC_HEIGHTS {
@@ -60,6 +61,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                 hint(ui, "radial depth of the groove, crest to root - the deepest rung stands this far under the turned skin");
                 prop_row(ui, "Infeed", |ui| num(ui, u, infeed));
                 hint(ui, "radial growth per pass of the growing wave; the last pass reaches full depth and the turns between them are the spring pass");
+                super::thread_infeed_page::rows(ui, u, infeed_plan);
                 // #629: the hand, by name. The draft takes the pick;
                 // Apply rides EditOperationParams, so it undoes.
                 // The row lays right to left: Left first reads "Right

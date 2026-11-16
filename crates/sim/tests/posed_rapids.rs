@@ -79,6 +79,7 @@ fn judge(p: &Toolpath, top: f64, x1: f64) -> Vec<Warning> {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(p, &cx)
 }

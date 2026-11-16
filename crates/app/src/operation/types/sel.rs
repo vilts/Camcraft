@@ -2,8 +2,12 @@
 
 use crate::machining2d::Lead;
 
-/// Work coordinate system slots - the machine offsets posted as G54..G59.
-pub const WCS_SLOTS: [&str; 6] = ["G54", "G55", "G56", "G57", "G58", "G59"];
+/// The legacy work-offset ENTITY names (#931): the implicit setup's WCS
+/// is `G54`, and files before v54 named per-slot WCS entities
+/// `<setup>/G54`..`<setup>/G59`. Reservations and migrations read them;
+/// they are never a G-code word - the setup's post names its offsets
+/// (`crate::setup_offsets`).
+pub(crate) const LEGACY_WCS_NAMES: [&str; 6] = ["G54", "G55", "G56", "G57", "G58", "G59"];
 
 
 /// Where the operation's boundary geometry comes from. Names, never
@@ -281,6 +285,19 @@ pub enum OpType {
     /// probe - the stored kind id never moves - and listed in the 2D
     /// mill section by display order.
     TrochoidalSlot,
+    /// Wire EDM contour (#532): one closed profile cut through the
+    /// workpiece by a vertical wire, offset to a stated punch / die
+    /// side - the wire EDM's family (see [`crate::wire_edm`]).
+    /// Appended: stored kind ids never move.
+    WireContour,
+    /// Sinker EDM burn to depth (#541): one electrode fed down Z to a
+    /// depth read from a stated datum (see [`crate::sinker`]). Appended:
+    /// stored kind ids never move.
+    SinkerBurn,
+    /// Sinker EDM side burn (#545): a lateral electrode move that burns
+    /// one wall out by a stated amount (see [`crate::sinker_side`]).
+    /// Appended: stored kind ids never move.
+    SinkerSideBurn,
 }
 
 impl core::fmt::Display for OpType {

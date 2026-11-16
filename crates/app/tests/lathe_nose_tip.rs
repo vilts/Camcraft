@@ -7,7 +7,7 @@
 //! the verifier and the stock sim judge stays the nose centre.
 //!
 //! Gate map (M4.4): covers app::posting (op_streams, the nose module),
-//! app::orientation, app::commands (ChangeTool on a lathe tool).
+//! tools::orientation, app::commands (ChangeTool on a lathe tool).
 //! Lane shape: seconds.
 
 use flecs_ecs::prelude::World;
@@ -151,7 +151,7 @@ fn an_od_finish_posts_the_finished_diameter_and_the_shoulder_posts_z0() {
     assert!(!text.contains("X20.65"), "never the nose centre's 19.05 + 2r: {text}");
     // The shoulder face runs at Z0 into the neck's corner - never at
     // the nose centre's Z r.
-    assert!(text.contains("X19.05 Z0 "), "the shoulder at Z0 posts Z0 into the neck: {text}");
+    assert!(text.contains("X19.05 Z0. "), "the shoulder at Z0 posts Z0 into the neck: {text}");
     assert!(!text.contains("X20.65 Z0.8 "), "never the nose centre's corner: {text}");
     // The verifier's and the stock sim's truth is untouched: the cache
     // still rides the nose centre at 19.05/2 + r.
@@ -164,7 +164,7 @@ fn a_face_posts_its_plane_and_reaches_the_axis_with_the_nose() {
     let (world, mut history) = bar_world();
     create(&world, &mut history, "F1", facing());
     let text = program(&world);
-    assert!(text.contains("X-1.6 Z15 "), "the last pass faces Z15 with the nose centre on the axis: {text}");
+    assert!(text.contains("X-1.6 Z15. "), "the last pass faces Z15 with the nose centre on the axis: {text}");
     assert!(!text.contains("Z15.8"), "never the nose centre's Z: {text}");
 }
 

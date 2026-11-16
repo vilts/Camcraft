@@ -12,6 +12,8 @@
 //! published verification literature; every algorithm here is ours.
 //! No flecs, no schema.
 
+// #1442: lathe chucks generated from their figures.
+pub mod chuck;
 pub mod fixture;
 // #339: a fixture's closed mesh as the narrow phase of the steel laws.
 pub mod fixture_mesh;

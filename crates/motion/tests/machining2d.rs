@@ -547,8 +547,10 @@ fn climb_and_conventional_reverse_the_travel() {
     p.climb = false;
     let down = contour(&rect(0.0, 0.0, 20.0, 20.0), &p).unwrap();
     let (a, b) = (level_xy(&up, 0.0), level_xy(&down, 0.0));
-    assert!(shoelace(&a) > 0.0, "climb keeps the canonical orientation");
-    assert!(shoelace(&b) < 0.0, "conventional reverses it");
+    // #1555: climb (M3) keeps the material right of travel - clockwise
+    // round an outside wall; conventional is the reverse.
+    assert!(shoelace(&a) < 0.0, "climb runs clockwise round the part");
+    assert!(shoelace(&b) > 0.0, "conventional runs counter-clockwise");
     // The chorded polygons agree to the flattening's own word: chord
     // endpoints ride the fitted circle measured from each run's start,
     // so the mirror images differ by sub-step chords, not by geometry.
@@ -976,6 +978,7 @@ fn contour_is_deterministic() {
 
 fn pp() -> PocketParams {
     PocketParams {
+        blend_radius: None,
         links: camcraft_motion::links::Links::PLANAR,
         tool_diameter: 10.0,
         stepover: 5.0,

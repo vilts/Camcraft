@@ -3,7 +3,9 @@
 //! half-outline, Parametric (drawn from its numbers) or Custom (a table
 //! of points with optional arcs that must keep agreeing with them), the
 //! shared flat side view that follows every keystroke, the live refusal
-//! by name, and Apply cutter, which queues the one command.
+//! by name, and Apply cutter, which queues the one command. #93
+//! slice 3: the kind's parameters sit above the points
+//! (`tool_cutter_params`) and drive the outline.
 //! Provenance: our own pane over `app::cutter_profile` and
 //! `app::tool_cutter`; the side view is the handbook's tool drawing. No
 //! vendor material consulted.
@@ -43,6 +45,11 @@ pub(super) fn cutter_section(ui: &mut Ui, state: &mut State, exists: bool, u: Un
             state.set_cutter_custom(true);
         }
     });
+    // #93 slice 3: the kind's parameters, editing the draft numbers -
+    // re-synced at once so outline and numbers agree this very frame.
+    super::tool_cutter_params::params_block(ui, state, u);
+    state.sync_tool_cutter_ui();
+    let custom = state.tool_cutter_ui.custom;
     let (insert, remove) = points_grid(ui, u, &mut state.tool_cutter_ui.points, custom, "tool_cutter_points");
     if let Some(i) = insert {
         state.insert_cutter_point(i);
@@ -77,11 +84,13 @@ pub(super) fn cutter_section(ui: &mut Ui, state: &mut State, exists: bool, u: Un
             ui.colored_label(BAD, e.to_string());
         }
     }
-    let can = custom || landed.is_some();
+    // #93 slice 3: edited numbers make an Apply worth landing too.
+    let moved = state.editor_tool_changed();
+    let can = custom || landed.is_some() || moved;
     if ui
         .add_enabled(can, egui::Button::new("Apply cutter"))
         .on_hover_text(if custom {
-            "land the drawn cutter on the tool (one undo step); toolpaths and checks keep reading the numbers"
+            "land the drawn cutter, and any edited numbers with it, on the tool (one undo step); toolpaths and checks keep reading the numbers"
         } else {
             "drop the drawn cutter: the outline its numbers draw again (one undo step)"
         })

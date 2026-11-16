@@ -9,7 +9,7 @@
 //! a Gouge warning, and a warned path never posts.
 //!
 //! Gate map (silent-gouge fix): covers app::operation (generate, job),
-//! app::machining2d (contour_on_part), app::verify (model law,
+//! motion::machining2d (contour_on_part), sim::verify (model law,
 //! solid_hits), app::posting, app::commands.
 
 use camcraft_app::cl::{MoveKind, Toolpath};
@@ -213,6 +213,7 @@ fn depth_verify(t: &Toolpath, region: &Region, model: Option<&[Triangle]>, leave
             finish_tol: None,
             fixtures: &[],
             spindle: None,
+            ..Default::default()
         },
     )
 }

@@ -71,6 +71,7 @@ fn od_world(bar: bool) -> (World, History) {
         history.execute(&world, SetStock::new(&world, shape, at).expect("bar stock"));
     }
     history.execute(&world, LoadMachine::new(&world, "lathe.mch".into(), Some(machine("lathe"))).expect("lathe"));
+    history.execute(&world, camcraft_app::commands::SelectPost::new(&world, camcraft_app::schema::PostRef::Named("Fanuc Lathe".into())).expect("lathe post"));
     add_tool(&world, &mut history, INSERT);
     history.execute(&world, ImportModel::from_mesh("step", stepped()));
     (world, history)
@@ -243,6 +244,7 @@ fn a_grooving_blade_holder_is_judged_by_its_band_and_a_fat_one_rubs_the_groove_w
     let shape = camcraft_app::stock::StockShape::Cylinder { diameter: 20.0, height: 44.0 };
     history.execute(&world, SetStock::new(&world, shape, at).expect("bar stock"));
     history.execute(&world, LoadMachine::new(&world, "lathe.mch".into(), Some(machine("lathe"))).expect("lathe"));
+    history.execute(&world, camcraft_app::commands::SelectPost::new(&world, camcraft_app::schema::PostRef::Named("Fanuc Lathe".into())).expect("lathe post"));
     add_tool(&world, &mut history, "GT-0200");
     let grooved = revolve(&[(0.0, -16.0), (6.0, -16.0), (6.0, -6.8), (4.0, -6.8), (4.0, -3.6), (6.0, -3.6), (6.0, 28.0), (0.0, 28.0)]);
     history.execute(&world, ImportModel::from_mesh("bar", grooved));

@@ -37,6 +37,7 @@ fn chamfer_params() -> ChamferParams {
         feed: 500.0,
         plunge_feed: 100.0,
         climb: true,
+        inside: false,
     }
 }
 

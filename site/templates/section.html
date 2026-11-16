@@ -3,13 +3,28 @@
 {% block title %}{{ section.title }} - {{ config.title }}{% endblock title %}
 {% block description %}{{ section.description | default(value=config.description) }}{% endblock description %}
 {% block content %}
+{% set is_guide = section.relative_path == "guide/_index.md" or "guide/_index.md" in section.ancestors %}
+{% if is_guide %}
+{% set active_permalink = section.permalink %}
+<div class="guide-layout">
+  {% include "guide-nav.html" %}
+  <div class="guide-content">
+{% endif %}
 <article class="doc">
   <h1>{{ section.title }}</h1>
   {{ section.content | safe }}
   <ol class="toc">
+    {% for path in section.subsections %}
+    {% set child = get_section(path=path) %}
+    <li><a href="{{ child.permalink }}">{{ child.title }}</a>{% if child.description %} - {{ child.description }}{% endif %}</li>
+    {% endfor %}
     {% for p in section.pages %}
     <li><a href="{{ p.permalink }}">{{ p.title }}</a>{% if p.description %} - {{ p.description }}{% endif %}</li>
     {% endfor %}
   </ol>
 </article>
+{% if is_guide %}
+  </div>
+</div>
+{% endif %}
 {% endblock content %}

@@ -86,12 +86,13 @@ pub fn drill(p: &CycleParams) -> Result<Toolpath, GenError> {
         // (a folded counterbore) has a ring the cycle's single radius
         // cannot reach. Refused here, by name, not left to the
         // verifier's generic gouge after the fact.
-        if matches!(kind, CycleKind::Bore | CycleKind::BackBore) {
+        if matches!(kind, CycleKind::Bore | CycleKind::BackBore | CycleKind::Ream) {
             if h.stepped {
                 return Err(GenError::invalid_at(
                     format!(
-                        "bore cycle at ({}, {}): that hole is a counterbore - the cycle would bore \
+                        "{} cycle at ({}, {}): that hole is a counterbore - the cycle would bore \
                          the narrow dia. {} through and miss the ring",
+                        if kind == CycleKind::Ream { "ream" } else { "bore" },
                         h.xy.x,
                         h.xy.y,
                         2.0 * h.radius
@@ -102,7 +103,8 @@ pub fn drill(p: &CycleParams) -> Result<Toolpath, GenError> {
             if 0.5 * d > h.radius + FIT_TOL {
                 return Err(GenError::invalid_at(
                     format!(
-                        "bore tool dia. {d} will not enter the dia. {} hole at ({}, {})",
+                        "{} tool dia. {d} will not enter the dia. {} hole at ({}, {})",
+                        if kind == CycleKind::Ream { "ream" } else { "bore" },
                         2.0 * h.radius,
                         h.xy.x,
                         h.xy.y
@@ -158,6 +160,13 @@ pub fn drill(p: &CycleParams) -> Result<Toolpath, GenError> {
                 b.push(MoveKind::Plunge, Point3::new(h.xy.x, h.xy.y, bottom), Some(p.plunge_feed));
                 b.push(MoveKind::Feed, Point3::new(h.xy.x, h.xy.y, p.r_z), Some(p.feed));
             }
+            CycleKind::Ream => {
+                // G85: one F word drives both directions, so the chain
+                // feeds out at the feed it fed in at - what the canned
+                // cycle does is what the verifier and simulation read.
+                b.push(MoveKind::Plunge, Point3::new(h.xy.x, h.xy.y, bottom), Some(p.plunge_feed));
+                b.push(MoveKind::Feed, Point3::new(h.xy.x, h.xy.y, p.r_z), Some(p.plunge_feed));
+            }
         }
         let dwell = match kind {
             CycleKind::Spot | CycleKind::Drill | CycleKind::Deep | CycleKind::Bore | CycleKind::FloatingTap => p.dwell,
@@ -195,7 +204,9 @@ pub fn drill(p: &CycleParams) -> Result<Toolpath, GenError> {
 /// `at` is the hole's mouth: the sentence names its X and Y, the
 /// refusal points at it (#261 part 2).
 pub(super) fn refuse_solid_cycle(tool: &crate::tools::Tool, kind: CycleKind, at: Point3) -> Result<(), GenError> {
-    if tool.center_cutting || matches!(kind, CycleKind::Tap | CycleKind::FloatingTap | CycleKind::Bore | CycleKind::BackBore) {
+    if tool.center_cutting
+        || matches!(kind, CycleKind::Tap | CycleKind::FloatingTap | CycleKind::Bore | CycleKind::BackBore | CycleKind::Ream)
+    {
         return Ok(());
     }
     let (x, y) = (at.x, at.y);
@@ -219,6 +230,7 @@ pub(super) fn resolve_choice(p: &CycleParams) -> CycleKind {
         CycleChoice::FloatingTap => CycleKind::FloatingTap,
         CycleChoice::Bore => CycleKind::Bore,
         CycleChoice::BackBore => CycleKind::BackBore,
+        CycleChoice::Ream => CycleKind::Ream,
     }
 }
 

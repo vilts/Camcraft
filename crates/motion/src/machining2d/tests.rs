@@ -162,8 +162,9 @@ fn signed_walk(pts: &[Point2]) -> f64 {
 fn contour_inside_shrinks_and_flips_travel() {
     // A 20x20 square region eroded by r = 3 gives the sharp inset
     // [23,37]^2 (negative round offset keeps convex corners sharp);
-    // climb under Inside travels the loop reversed, so material stays
-    // on the left of a CCW-normalized ring - the walk is clockwise.
+    // #1555: climb (M3) keeps the material on the RIGHT of travel, and
+    // inside a bore the material stands outside the ring - so climb
+    // walks the stored CCW ring as it is: counter-clockwise.
     let region = Region::new(vec![sq(20.0, 20.0, 40.0, 40.0)]).expect("test square");
     let path = contour(&region, &contour_side(Side::Inside)).expect("inside contour");
     let pts = cut_xy(&path);
@@ -191,26 +192,26 @@ fn contour_inside_shrinks_and_flips_travel() {
             && corner(23.0, 37.0),
         "inset ring corners missing: {pts:?}"
     );
-    assert!(signed_walk(ring) < 0.0, "expected clockwise travel");
+    assert!(signed_walk(ring) > 0.0, "climb inside a bore runs counter-clockwise (M3)");
 }
 
 #[test]
-fn conventional_inside_travels_forward() {
+fn conventional_inside_travels_reversed() {
     // Climb is the process, not a winding: conventional Inside walks
-    // the stored (CCW) ring and keeps material on the left that way.
+    // the stored (CCW) ring reversed, the material on the left (#1555).
     let region = Region::new(vec![sq(20.0, 20.0, 40.0, 40.0)]).expect("test square");
     let mut p = contour_side(Side::Inside);
     p.climb = false;
     let path = contour(&region, &p).expect("inside contour");
     let pts = cut_xy(&path);
-    // M8.2 A: the certified dive leads, the stored CCW ring follows.
+    // M8.2 A: the certified dive leads, the reversed ring follows.
     let (dive, ring) = pts.split_first().expect("a dive and a ring");
     assert!(
         dive.x > 23.0 && dive.x < 37.0 && dive.y > 23.0 && dive.y < 37.0,
         "the dive must land inside the inset, not on its wall: {dive:?}"
     );
     assert!(ring.iter().all(|q| (q.x - 23.0).abs() < 1e-6 || (q.x - 37.0).abs() < 1e-6));
-    assert!(signed_walk(ring) > 0.0, "expected counterclockwise travel");
+    assert!(signed_walk(ring) < 0.0, "conventional inside a bore runs clockwise (M3)");
 }
 
 #[test]
@@ -254,6 +255,7 @@ fn bore_params(holes: Vec<BoreHole>, dia: f64) -> BoreParams {
         links: crate::links::Links::PLANAR,
         holes,
         tool_diameter: dia,
+        corner_radius: 0.0,
         stock_to_leave: 0.0,
         stepdown: 2.0,
         through_allowance: 1.0,
@@ -270,19 +272,20 @@ fn bore_params(holes: Vec<BoreHole>, dia: f64) -> BoreParams {
 
 #[test]
 fn bore_rides_the_wall_circle() {
-    // A 6 mm mill boring a 20 mm hole keeps its CENTER 7 mm from the
+    // A 6 mm mill boring a 16 mm hole keeps its CENTER 5 mm from the
     // axis - the wall circle minus one tool radius, at every cut move.
-    let path = bore(&bore_params(vec![bore_hole([0.0, 0.0], 10.0, false)], 6.0))
-        .expect("a 6 mm mill fits a 20 mm bore");
+    // (#1556: the 20 mm hole this read once left a core - refused now.)
+    let path = bore(&bore_params(vec![bore_hole([0.0, 0.0], 8.0, false)], 6.0))
+        .expect("a 6 mm mill fits a 16 mm bore");
     let cuts: Vec<_> = path.moves.iter().filter(|m| m.kind != MoveKind::Rapid).collect();
     assert!(!cuts.is_empty(), "a bored hole posts cut moves");
     for m in &cuts {
         // Radial sweeps pass through the center by law; ring chords
-        // and arcs stand on rc = 7 (lattice is 1 um).
+        // and arcs stand on rc = 5 (lattice is 1 um).
         let rad = (m.to.x * m.to.x + m.to.y * m.to.y).sqrt();
         let from = (m.from.x * m.from.x + m.from.y * m.from.y).sqrt();
         assert!(
-            (rad - 7.0).abs() < 1e-3 || rad < 7.0 + 1e-3,
+            (rad - 5.0).abs() < 1e-3 || rad < 5.0 + 1e-3,
             "cut point left the bore circle: {:?}", m.to
         );
         let _ = from;
@@ -305,85 +308,4 @@ fn bore_declines_the_counterbore_fold() {
     let err = bore(&bore_params(vec![bore_hole([3.0, 4.0], 6.0, true)], 4.0))
         .expect_err("a stepped hole is declined by name");
     assert!(format!("{err:?}").contains("counterbore fold"), "{err:?}");
-}
-
-fn thread_params(pitch: f64, dia: f64, holes: Vec<ThreadHole>) -> ThreadParams {
-    ThreadParams {
-        holes,
-        pitch,
-        tool_diameter: dia,
-        infeed: 0.4,
-        clearance_z: 5.0,
-        retract_z: None,
-        feed: 400.0,
-        plunge_feed: 120.0,
-        climb: true,
-    }
-}
-
-fn thread_hole(xy: [f64; 2], radius: f64) -> ThreadHole {
-    ThreadHole {
-        xy: Point2::new(xy[0], xy[1]),
-        radius,
-        top_z: 0.0,
-        floor_z: -6.0,
-        stepped: false,
-    }
-}
-
-#[test]
-fn thread_helix_leads_by_the_pitch() {
-    // Pitch 2 mm: each half-arc drops exactly 1 mm until the floor.
-    let path = thread_mill(&thread_params(2.0, 4.0, vec![thread_hole([0.0, 0.0], 5.0)]))
-        .expect("a 4 mm mill threads an M9-ish bore");
-    let arcs: Vec<_> = path
-        .moves
-        .iter()
-        .filter(|m| m.arc.is_some() && m.kind == MoveKind::Feed && m.to.z < 0.0 - 1e-12)
-        .collect();
-    assert!(arcs.len() >= 4, "a helix posts its half-turns: {}", arcs.len());
-    // Consecutive arc ends sit pitch/2 apart (descending, rising on
-    // the retract) or level (floor spirals, retract mirror joints).
-    for w in arcs.windows(2) {
-        let dz = (w[0].to.z - w[1].to.z).abs();
-        assert!(dz == 0.0 || (dz - 1.0).abs() < 1e-9, "lead drift: {dz}");
-    }
-    // The retract closes the ride: some feed move ends back on the
-    // tangent start point (rho_0, top_z) = (3, 0).
-    assert!(
-        path.moves.iter().any(|m| m.kind == MoveKind::Feed
-            && (m.to.x - 3.0).abs() < 1e-3 && m.to.y.abs() < 1e-3 && m.to.z.abs() < 1e-9),
-        "the reversed ride must land where it started"
-    );
-}
-
-#[test]
-fn thread_refuses_a_mill_wider_than_the_drill() {
-    let err = thread_mill(&thread_params(2.0, 12.0, vec![thread_hole([0.0, 0.0], 5.0)]))
-        .expect_err("no air to enter");
-    assert!(format!("{err:?}").contains("no air to enter"), "{err:?}");
-}
-
-#[test]
-fn thread_refuses_a_pitch_it_cannot_state() {
-    let err = thread_mill(&thread_params(0.0, 4.0, vec![thread_hole([0.0, 0.0], 5.0)]))
-        .expect_err("the tap law's twin");
-    assert!(format!("{err:?}").contains("positive pitch"), "{err:?}");
-}
-
-#[test]
-fn thread_infeed_travel_is_the_standards_depth() {
-    // H = 0.5413 * pitch: with infeed = H/ceil the last arc lands on
-    // rho_end = R + H - r; here 5 + 1.0826 - 2 = 4.0826 (+ lattice).
-    let pitch = 2.0;
-    let h = THREAD_DEPTH_PER_PITCH * pitch;
-    let path = thread_mill(&thread_params(pitch, 4.0, vec![thread_hole([0.0, 0.0], 5.0)]))
-        .expect("valid");
-    let far = path
-        .moves
-        .iter()
-        .filter(|m| m.kind == MoveKind::Feed)
-        .map(|m| (m.to.x * m.to.x + m.to.y * m.to.y).sqrt())
-        .fold(0.0_f64, f64::max);
-    assert!((far - (5.0 + h - 2.0)).abs() < 1e-3, "reached {far}, wanted {}", 5.0 + h - 2.0);
 }

@@ -9,7 +9,7 @@ use flecs_ecs::prelude::World;
 
 use crate::commands::{Command, CommandError};
 use crate::model;
-use crate::schema::{Location, STOCK_NAME, WCS_SLOTS, ToolBody, ToolDef};
+use crate::schema::{Location, STOCK_NAME, LEGACY_WCS_NAMES, ToolBody, ToolDef};
 use crate::tools::Tool;
 
 pub(super) fn reserved(world: &World, name: &str) -> Option<CommandError> {
@@ -21,7 +21,7 @@ pub(super) fn reserved(world: &World, name: &str) -> Option<CommandError> {
     // so a tool cannot squat on the entity a future setup will lazily
     // spawn.
     let taken = name == STOCK_NAME
-        || WCS_SLOTS.contains(&name)
+        || LEGACY_WCS_NAMES.contains(&name)
         || crate::setup::is_furniture_shape(name)
         || crate::setup::names(world).iter().any(|s| {
                 crate::setup::stock_entity_name(world, Some(s)) == name
@@ -33,6 +33,28 @@ pub(super) fn reserved(world: &World, name: &str) -> Option<CommandError> {
         )));
     }
     None
+}
+
+/// #898: store the catalog facts trimmed (blank = not stated), and
+/// refuse ones that cannot be kept (helix outside 0..=90, too long) by
+/// the tool's name, before anything enters the history.
+fn catalog_gate(name: &str, tool: &mut Tool) -> Result<(), CommandError> {
+    tool.catalog = tool.catalog.normalized();
+    match tool.catalog.refusal() {
+        Some(why) => Err(CommandError::Invalid(format!("tool '{name}': {why}"))),
+        None => Ok(()),
+    }
+}
+
+/// #890: refuse a per-material cutting-data table that cannot be kept
+/// (non-finite or non-positive rpm / feed, a material twice) by the
+/// tool's name, before anything enters the history.
+fn cutting_gate(name: &str, tool: &Tool) -> Result<(), CommandError> {
+    let torch = tool.kind == crate::tools::ToolKind::Torch;
+    match camcraft_tools::cutting_rows::refusal(&tool.cutting, torch) {
+        Some(why) => Err(CommandError::Invalid(format!("tool '{name}': {why}"))),
+        None => Ok(()),
+    }
 }
 
 /// Which holder a new tool starts with (#828).
@@ -60,9 +82,16 @@ pub struct AddTool {
 }
 
 impl AddTool {
-    pub fn new(world: &World, name: &str, tool: Tool) -> Result<Self, CommandError> {
+    pub fn new(world: &World, name: &str, mut tool: Tool) -> Result<Self, CommandError> {
         if let Some(err) = reserved(world, name) {
             return Err(err);
+        }
+        catalog_gate(name, &mut tool)?;
+        cutting_gate(name, &tool)?;
+        // #890: a tool entering a document with a stated material runs
+        // its row for that material (one undo step with the add).
+        if let Some(seeded) = crate::cutting_rows::seeded_for(&tool, crate::cutting::material_of(world)) {
+            tool = seeded;
         }
         // #670: a torch stating a spindle speed is refused by name.
         if let Some(why) = tool.torch_refusal() {
@@ -168,6 +197,15 @@ pub struct ChangeTool {
 
 impl ChangeTool {
     pub fn new(world: &World, name: &str, next: Tool) -> Result<Self, CommandError> {
+        Self::judged(world, name, next, true)
+    }
+
+    /// Every `new` law; `judge_cutter: false` skips the drawn cutter's
+    /// agreement - only for `ReshapeTool` (#93 slice 3), which lands a
+    /// cutter checked against `next` in the same undo step.
+    pub(crate) fn judged(world: &World, name: &str, mut next: Tool, judge_cutter: bool) -> Result<Self, CommandError> {
+        catalog_gate(name, &mut next)?;
+        cutting_gate(name, &next)?;
         if let Some(why) = next.torch_refusal() {
             return Err(CommandError::Invalid(format!("tool '{name}': {why}")));
         }
@@ -181,6 +219,16 @@ impl ChangeTool {
         };
         let prev = model::tool_of(world, &entity)
             .ok_or_else(|| CommandError::Invalid(format!("'{name}' is not a tool")))?;
+        // #890: an edit of the per-material table that leaves the
+        // running numbers alone loads the document material's row into
+        // them; an edit that states rpm / feed itself keeps its own.
+        if next.cutting != prev.cutting
+            && next.rpm == prev.rpm
+            && next.feed == prev.feed
+            && let Some(seeded) = crate::cutting_rows::seeded_for(&next, crate::cutting::material_of(world))
+        {
+            next = seeded;
+        }
         // The tool law (M10.1 B): a retype that would leave an operation
         // holding a tool its family cannot cut with is refused by name.
         if let Some(msg) =
@@ -197,7 +245,7 @@ impl ChangeTool {
         // #93 slice 2: a drawn cutter states the numbers it was drawn
         // to; an edit that leaves it disagreeing is refused by name
         // (clear it back to the numbers' outline first).
-        if let Some(c) = crate::tool_cutter::cutter_of(world, &entity) {
+        if let Some(c) = crate::tool_cutter::cutter_of(world, &entity).filter(|_| judge_cutter) {
             camcraft_tools::cutter_profile::agrees(&next, &c).map_err(|e| {
                 CommandError::Invalid(format!(
                     "tool '{name}': the drawn cutter profile no longer fits: {e} - reset the cutter profile to Parametric first"

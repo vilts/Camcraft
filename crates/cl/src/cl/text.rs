@@ -38,7 +38,7 @@ impl std::fmt::Display for TextError {
 
 impl std::error::Error for TextError {}
 
-const CYCLE_KINDS: [(&str, CycleKind); 8] = [
+const CYCLE_KINDS: [(&str, CycleKind); 9] = [
     ("Spot", CycleKind::Spot),
     ("Drill", CycleKind::Drill),
     ("Peck", CycleKind::Peck),
@@ -47,6 +47,7 @@ const CYCLE_KINDS: [(&str, CycleKind); 8] = [
     ("FloatingTap", CycleKind::FloatingTap),
     ("Bore", CycleKind::Bore),
     ("BackBore", CycleKind::BackBore),
+    ("Ream", CycleKind::Ream),
 ];
 
 fn q(mm: f64) -> i64 {

@@ -99,16 +99,29 @@ fn a_whole_part_pocket_clears_the_stock_around_the_part_never_its_section() {
     clears_around_the_part(pocket(20.0, 5.0), "2D Pocket", R - CHORD);
 }
 
-fn adaptive() -> OpParams {
+/// The optimal load the debug suite runs 2D Adaptive at (issue #1716).
+/// The region law and the disc law do not read the load: the part's
+/// section is an island and the corner G2 sits at R at every ring step.
+/// At 40% of D the HSM plan takes about 1 s in debug; at the default
+/// 14.6% it takes about 130 s. The default load runs in the release
+/// lane (`a_whole_part_adaptive_at_the_default_load_keeps_the_full_tool_radius_off_the_part`).
+const LOAD: f64 = 0.4;
+
+fn adaptive_at(load: f64) -> OpParams {
     let mut p = operation::retype_params(&pocket(20.0, 5.0), OpType::Adaptive2D as usize);
-    if let OpParams::Adaptive2D { top_z, bottom_z, stepdown, stepover, .. } = &mut p {
+    if let OpParams::Adaptive2D { top_z, bottom_z, stepdown, stepover, optimal_load, .. } = &mut p {
         *top_z = Height::fixed(20.0);
         *bottom_z = Height::fixed(5.0);
         *stepdown = 5.0;
         *stepover = 4.0;
+        *optimal_load = load;
     }
     assert_eq!(p.kind(), OpType::Adaptive2D);
     p
+}
+
+fn adaptive() -> OpParams {
+    adaptive_at(LOAD)
 }
 
 /// The region law under 2D Adaptive: the part's section is an island,
@@ -125,6 +138,14 @@ fn a_whole_part_adaptive_clears_the_stock_around_the_part_never_its_section() {
 #[test]
 fn a_whole_part_adaptive_keeps_the_full_tool_radius_off_the_part() {
     clears_around_the_part(adaptive(), "2D Adaptive", R - CHORD);
+}
+
+/// The same disc law at the kind's default optimal load: the ring step
+/// a user gets when the load is not changed.
+#[test]
+#[ignore = "heavy lane (release): the HSM plan at the default load takes about 130 s in debug (issue #1716)"]
+fn a_whole_part_adaptive_at_the_default_load_keeps_the_full_tool_radius_off_the_part() {
+    clears_around_the_part(adaptive_at(camcraft_app::load::DEFAULT_OPTIMAL_LOAD), "2D Adaptive (default load)", R - CHORD);
 }
 
 #[test]
@@ -165,6 +186,7 @@ fn a_feed_chorded_across_the_parts_corner_reads_a_gouge() {
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     let gouges = |t: &Toolpath| -> Vec<usize> {
         verify(t, &cx).into_iter().filter_map(|w| if let Warning::Gouge { at } = w { Some(at) } else { None }).collect()

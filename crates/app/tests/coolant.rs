@@ -75,7 +75,7 @@ fn has_word(line: &str, code: &str) -> bool {
     line.split_whitespace().any(|w| w.trim_end_matches('*') == code)
 }
 
-const MILLS: [&str; 5] = ["Fanuc", "Haas", "Siemens 840D", "Heidenhain", "Mazak"];
+const MILLS: [&str; 7] = ["Fanuc", "Haas", "Siemens 840D", "Heidenhain", "Mazak", "grblHAL", "TinyG"];
 
 fn script(name: &str) -> &'static str {
     posting::BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, s)| *s).expect("a built-in")
@@ -162,12 +162,14 @@ fn every_mill_post_switches_flood_then_mist_with_m9_before_the_tool_change_and_t
         let tool_word = |w: &str| w.starts_with("TOOL") || (w.starts_with('T') && w[1..].starts_with(|c: char| c.is_ascii_digit() || c == '='));
         let second_call = lines[off1..m7].iter().any(|l| l.split_whitespace().any(tool_word));
         assert!(second_call, "{name}: the tool change lies between M9 and M7: {}", out.program);
-        assert_eq!(lines[off1..].iter().filter(|l| on("M9")(l)).count(), 2, "{name}: one off per section");
+        // TinyG explicitly shuts outputs off again before each manual tool stop.
+        let expected = if name == "TinyG" { 3 } else { 2 };
+        assert_eq!(lines[off1..].iter().filter(|l| on("M9")(l)).count(), expected, "{name}: section ends plus the manual-change safety off");
     }
 }
 
 #[test]
-fn coolant_off_writes_no_fluid_words_for_its_section() {
+fn coolant_off_never_turns_fluid_on_for_its_section() {
     let (world, _h) = two_faces(CoolantMode::Off, CoolantMode::Flood);
     for name in MILLS {
         let out = post_with(&world, script(name));
@@ -175,8 +177,14 @@ fn coolant_off_writes_no_fluid_words_for_its_section() {
         let lines: Vec<&str> = out.program.lines().collect();
         let m8 = index_of(&lines, 0, |l| has_word(l, "M8")).expect("op 2 floods");
         let m9s: Vec<usize> = (0..lines.len()).filter(|&i| has_word(lines[i], "M9")).collect();
-        assert_eq!(m9s.len(), 1, "{name}: only the flooded section switches off: {}", out.program);
-        assert!(m9s[0] > m8, "{name}: the dry op wrote no off word before the flood");
+        if name == "TinyG" {
+            assert_eq!(m9s.len(), 3, "two manual-change safety offs and one flooded-section end");
+            assert!(m9s[0] < m8 && m9s[1] < m8 && m9s[2] > m8);
+            assert!(!lines[..m8].iter().any(|l| has_word(l, "M7") || has_word(l, "M8")), "dry section never enables coolant");
+        } else {
+            assert_eq!(m9s.len(), 1, "{name}: only the flooded section switches off: {}", out.program);
+            assert!(m9s[0] > m8, "{name}: the dry op wrote no off word before the flood");
+        }
     }
 }
 

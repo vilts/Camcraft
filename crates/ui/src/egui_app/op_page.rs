@@ -20,6 +20,7 @@ use camcraft_app::verify::Warning;
 
 use crate::operations::{fold_warnings, unresolved_note};
 use crate::state::{CommandKind, ErrorScope, State};
+use crate::shortcut_keys::chord;
 
 use super::colorvision::text_inks;
 use super::fields::combo_owned;
@@ -38,10 +39,17 @@ const BAR_RESERVE: f32 = 120.0;
 /// nothing is selected (M9.1): the kind comes from the button you
 /// pressed, so this page points at the doors that press it.
 pub(super) fn no_operation_page(ui: &mut Ui) {
-    ui.heading("Operations");
-    ui.separator();
-    ui.label("No operation to show.");
-    ui.label("Click one in the browser, or pick a kind from the ribbon's family doors - the new operation opens its own page straight away.");
+    ui.add_space(8.0);
+    ui.heading("No operation selected");
+    ui.add_space(4.0);
+    ui.label("Select an operation in the browser to edit its parameters, or create a new one.");
+    ui.add_space(10.0);
+    ui.strong("Get started");
+    ui.label("1. Set up stock, WCS, and tools in the Setup section.");
+    ui.label("2. Create an operation from the ribbon (2D, 3D, Drill, or Multi-axis).");
+    ui.label("3. Pick geometry, adjust parameters, then Generate and Simulate.");
+    ui.add_space(8.0);
+    ui.small("Tip: keep the Browser and Properties panes open while you work.");
 }
 
 pub(super) fn operation_page(ui: &mut Ui, state: &mut State, name: &str, pal: &Tokens) {
@@ -102,6 +110,7 @@ pub(super) fn operation_page(ui: &mut Ui, state: &mut State, name: &str, pal: &T
         // (`State::op_tab`), never a command, never saved.
         let kind = state.op_ui.params.kind();
         let tab = super::op_tabs::tab_bar(ui, kind, &mut state.op_tab, pal);
+        super::geo_page::pick_mode_line(ui, state);
         if tab == SEC_GEO {
             super::geo_page::pick_block(ui, state, &target, live_setup.as_deref());
         }
@@ -140,21 +149,29 @@ pub(super) fn operation_page(ui: &mut Ui, state: &mut State, name: &str, pal: &T
 
 /// Tool, Source and Setup as label | control rows of the header grid.
 fn header_rows(ui: &mut Ui, state: &mut State, target: &str, live: Option<&Operation>, exists: bool) {
+    // #535: a kind that mounts no library tool (the wire EDM's) has no
+    // Tool row - and must not adopt the rack's first tool into its draft.
+    let toolless = !state.op_ui.params.kind().info().mounts_tool();
     let mut tools = state.tool_names();
-    if !state.op_ui.tool.is_empty() && !tools.contains(&state.op_ui.tool) {
+    if toolless {
+        tools.clear();
+    } else if !state.op_ui.tool.is_empty() && !tools.contains(&state.op_ui.tool) {
         tools.push(state.op_ui.tool.clone());
     } else if state.op_ui.tool.is_empty()
         && let Some(first) = tools.first()
     {
         state.op_ui.tool = first.clone();
     }
-    ui.label("Tool");
-    if tools.is_empty() {
+    if toolless {
+        // no row: the wire is the machine's
+    } else if tools.is_empty() {
+        ui.label("Tool");
         ui.label("none").on_hover_text("no tools in the document - the Tools page has a catalog");
     } else {
+        ui.label("Tool");
         let mut t_idx = tools.iter().position(|t| *t == state.op_ui.tool).unwrap_or(0);
         let before = t_idx;
-        combo_owned(ui, "op_tool", &mut t_idx, &tools);
+        ui.horizontal(|ui| { super::tool_icons::named_glyph(ui, &state.world, &state.op_ui.tool); super::tool_icons::tool_combo(ui, &state.world, "op_tool", &mut t_idx, &tools); });
         if t_idx != before
             && let Some(t) = tools.get(t_idx)
         {
@@ -168,8 +185,14 @@ fn header_rows(ui: &mut Ui, state: &mut State, target: &str, live: Option<&Opera
             }
         }
     }
-    ui.end_row();
-    coolant_row(ui, state, target, live);
+    if !toolless {
+        ui.end_row();
+    }
+    // #535: a wire EDM flushes with dielectric, which no coolant code
+    // of the machine states - no coolant row (the post ignores it).
+    if state.op_ui.params.kind().info().family() != camcraft_app::operation::Family::WireEdm {
+        coolant_row(ui, state, target, live);
+    }
 
     // Source: the stock or one of the user's parts - never a work
     // offset (G54...), a setup or a fixture (user review 2026-11-06).
@@ -340,34 +363,37 @@ fn actions(ui: &mut Ui, state: &mut State, target: &str, live: Option<&Operation
         // frames it (view state, like every camera move - no command).
         match state.refusal_focus() {
             Some(p) => {
-                let text = egui::RichText::new(msg).color(inks.error).underline();
-                let r = ui.add(egui::Label::new(text).sense(egui::Sense::click()).wrap());
+                let text = egui::RichText::new(&msg).color(inks.error).underline();
+                let r = super::error_text::error_rich(ui, text, &msg, true);
                 if r.on_hover_text(REFUSAL_LINK_HINT).clicked() {
                     crate::actions::frame_at(state, p);
                 }
             }
             None => {
-                ui.colored_label(inks.error, msg);
+                super::error_text::error_text(ui, inks.error, &msg);
             }
         }
     } else if !unchanged && let Some(why) = &apply_hint {
         // Enabled, but the door will refuse: a safety line, not help.
         ui.colored_label(inks.warn, why);
     }
+    let commit_hint = format!("Commit the edited parameters ({} undoes)", chord("Z"));
+    let clear_hint = format!("Remove the generated path and keep the operation ({} restores it)", chord("Z"));
+    let delete_hint = format!("Delete the operation and its toolpath ({} restores both)", chord("Z"));
     let bar = [
         Action { label: "Generate", kind: ActionKind::Primary, enabled: true, hint: Some("Compute the toolpath (applies pending edits first)"), why_not: None },
         Action {
             label: "Apply",
             kind: ActionKind::Secondary,
             enabled: !unchanged,
-            hint: apply_hint.as_deref().or(Some("Commit the edited parameters (Ctrl+Z undoes)")),
+            hint: apply_hint.as_deref().or(Some(commit_hint.as_str())),
             why_not: apply_hint.as_deref(),
         },
         Action {
             label: "Clear toolpath",
             kind: ActionKind::Secondary,
             enabled: has_path,
-            hint: Some("Remove the generated path and keep the operation (Ctrl+Z restores it)"),
+            hint: Some(clear_hint.as_str()),
             why_not: Some("Nothing generated yet - there is no toolpath to clear"),
         },
         Action {
@@ -381,7 +407,7 @@ fn actions(ui: &mut Ui, state: &mut State, target: &str, live: Option<&Operation
             label: "Delete operation",
             kind: ActionKind::Destructive,
             enabled: exists,
-            hint: Some("Delete the operation and its toolpath (Ctrl+Z restores both)"),
+            hint: Some(delete_hint.as_str()),
             why_not: Some("The operation is gone"),
         },
     ];

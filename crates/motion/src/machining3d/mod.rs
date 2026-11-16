@@ -101,6 +101,7 @@ mod feed;
 mod hsm;
 mod ladder;
 mod level_ctx;
+mod open_side;
 mod params;
 mod rest;
 mod shell;
@@ -117,6 +118,7 @@ pub use entry::{
     pocket3d_with_rest_prev,
 };
 pub use feed::{engagement_on, optimize_feed, FFO_FLOOR};
+pub use open_side::{open_sides, OPEN_SLACK};
 pub use hsm::{NARROW_HELIX, REST_RINGS, SHELL_RINGS};
 pub use params::{engagement_step, Entry3D, Pocket3DParams};
 pub use rest::material_above;

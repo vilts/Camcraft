@@ -104,11 +104,12 @@ fn poly_max(pts: &[Point3], tube: Tube) -> Option<f64> {
 }
 
 /// The outermost outward coordinate of any stock facet - a curved one
-/// as its sagitta slab - inside `tube`, or `None` when the tube meets
-/// no facet. A slab's
-/// outermost point in the tube lies on one of its five faces (the tube
-/// is unbounded along the line), so clipping them suffices.
-fn tube_max(mesh: &StockMesh, tube: Tube) -> Option<f64> {
+/// as its sagitta slab, grown by `grow` along its normal on a coarse
+/// model (#1053) - inside `tube`, or `None` when the tube meets no
+/// facet. A slab's outermost point in the tube lies on one of its five
+/// faces (the tube is unbounded along the line), so clipping them suffices.
+fn tube_max(mesh: &StockMesh, tube: Tube, grow: f64) -> Option<f64> {
+    let g = if grow.is_finite() { grow.max(0.0) } else { 0.0 };
     let mut best: Option<f64> = None;
     let mut take = |m: Option<f64>| {
         if let Some(m) = m {
@@ -117,9 +118,10 @@ fn tube_max(mesh: &StockMesh, tube: Tube) -> Option<f64> {
     };
     for (tri, &s) in mesh.tris.iter().zip(&mesh.sag) {
         let v = [tri.a, tri.b, tri.c];
-        let n = if s > 0.0 && s.is_finite() { unit_normal(tri) } else { None };
+        let s = if s.is_finite() { s.max(0.0) } else { 0.0 } + g;
+        let n = if s > 0.0 { unit_normal(tri) } else { None };
         let Some(n) = n else {
-            take(poly_max(&v, tube));
+            take(poly_max(&v, tube).map(|m| m + g));
             continue;
         };
         let off = |p: Point3, k: f64| Point3::new(p.x + k * n.x, p.y + k * n.y, p.z + k * n.z);
@@ -167,10 +169,17 @@ fn clip(poly: &[(f64, f64, f64)], inside: impl Fn(&(f64, f64, f64)) -> f64) -> V
 /// A round well inside `raw` (a stepped bar's smaller section, an
 /// off-axis cylinder, a boss) is read at its sagitta slabs, so the
 /// entry is never nearer the axis than its true curved surface.
+#[cfg(test)]
 pub(super) fn entry(mesh: &StockMesh, raw: f64, line: Line, half: f64) -> Option<f64> {
+    entry_grown(mesh, raw, line, half, 0.0)
+}
+
+/// [`entry`] on a coarse model whose facets are trusted only within
+/// `grow` along their normals (#1053; `raw` already includes `grow`).
+pub(super) fn entry_grown(mesh: &StockMesh, raw: f64, line: Line, half: f64, grow: f64) -> Option<f64> {
     let edge = (line.t.abs() - half).max(0.0);
     let circ = (edge < raw).then(|| (raw * raw - edge * edge).max(0.0).sqrt())?;
-    let Some(m) = tube_max(mesh, Tube { line, hw: half, hz: half }) else { return Some(circ) };
+    let Some(m) = tube_max(mesh, Tube { line, hw: half, hz: half }, grow) else { return Some(circ) };
     Some(face_or_circ(m, circ, raw, edge))
 }
 
@@ -190,8 +199,8 @@ fn face_or_circ(m: f64, circ: f64, raw: f64, edge: f64) -> f64 {
 /// meets no facet - the tube is unbounded along its line, so a solid
 /// it entered would cross its wall: nothing is there. A non-finite
 /// reading is `NaN`, which no holder clears.
-pub(super) fn tube_reach(mesh: &StockMesh, raw: f64, tube: Tube) -> Option<f64> {
-    let m = tube_max(mesh, tube)?;
+pub(super) fn tube_reach(mesh: &StockMesh, raw: f64, tube: Tube, grow: f64) -> Option<f64> {
+    let m = tube_max(mesh, tube, grow)?;
     if !(m.is_finite() && raw.is_finite()) {
         return Some(f64::NAN);
     }

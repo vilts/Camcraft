@@ -6,7 +6,9 @@
 //! design; no vendor source.
 
 use super::probe::{Atom, Frame};
-use super::swept::{Body, chord_dip, pen};
+use super::hole_wall::wall_excuse;
+use super::swept::{Body, pen};
+use super::thread_bore::{excused, ThreadBore};
 use crate::geometry::{Point3, Triangle};
 
 /// Facets whose XY box spans more cells than this ride the always-asked
@@ -129,9 +131,12 @@ impl<'a> SolidIndex<'a> {
 
     /// Does the assembly swept from `fr`'s tip along the local move `d`
     /// share volume with the solid beyond `allow`? `grow` widens every
-    /// atom (the arc chords' sagitta); `hole_walls` grants the
-    /// containment kinds their tessellated rims ([`chord_dip`]).
-    pub(super) fn hits(&mut self, fr: &Frame, d: [f64; 3], atoms: &[Atom], allow: f64, grow: f64, hole_walls: bool) -> bool {
+    /// atom (the arc chords' sagitta); `walls` are the containment
+    /// kinds' hole axes in `fr`'s XY, whose round walls' tessellation is
+    /// excused ([`wall_excuse`], #1205) - empty for every other law;
+    /// `bores` grants a thread mill its threads ([`super::thread_bore`], #1071).
+    #[allow(clippy::too_many_arguments)] // the sweep, its atoms and the two grants
+    pub(super) fn hits(&mut self, fr: &Frame, d: [f64; 3], atoms: &[Atom], allow: f64, grow: f64, walls: &[[f64; 2]], bores: &[ThreadBore]) -> bool {
         let len = atoms.iter().map(|a| a.z1).fold(0.0, f64::max);
         let (p0, p1) = (fr.up(0.0), fr.up(len));
         let e = fr.end(d);
@@ -161,8 +166,13 @@ impl<'a> SolidIndex<'a> {
                 let body = Body::new(&t, d);
                 for a in set {
                     let pen = pen(&body, a, allow, allow, grow, &mut pts);
-                    if pen > allow && !(hole_walls && pen <= chord_dip(&t, d, a, allow, grow) + allow) {
-                        return true;
+                    if pen > allow {
+                        let ex = wall_excuse(&t, d, a, allow, grow, walls);
+                        // #1071: a thread being cut into its own minor wall.
+                        let threaded = upright && excused(bores, &self.facets[f as usize], p0, q0, a.rho_max() + grow, allow);
+                        if pen > ex + allow && !threaded {
+                            return true;
+                        }
                     }
                 }
             }
@@ -213,6 +223,41 @@ impl<'a> SolidIndex<'a> {
             }
         }
         true
+    }
+
+    /// Where the vertical through `(x, y)` crosses the solid's facets,
+    /// highest first: `(z, up)`, `up` at a facet whose outward normal
+    /// points up (leaving the solid on the way up), `!up` at a
+    /// down-facing one (the same winding `slice::shadow_above` reads).
+    /// `None` when the vertical grazes an edge or a vertex: the caller
+    /// retries a hair aside ([`Self::inside`]'s rule). Vertical facets
+    /// carry no crossing; their neighbours do.
+    pub(super) fn column(&mut self, x: f64, y: f64) -> Option<Vec<(f64, bool)>> {
+        self.gather([x, y, self.lo[2]], [x, y, self.hi[2]]);
+        let mut out = Vec::new();
+        for &f in &self.cand {
+            let t = &self.facets[f as usize];
+            let o = |a: Point3, b: Point3| (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+            let area = (t.b.x - t.a.x) * (t.c.y - t.a.y) - (t.b.y - t.a.y) * (t.c.x - t.a.x);
+            if area == 0.0 {
+                continue;
+            }
+            let s = area.signum();
+            let (e1, e2, e3) = (o(t.a, t.b) * s, o(t.b, t.c) * s, o(t.c, t.a) * s);
+            if e1 < 0.0 || e2 < 0.0 || e3 < 0.0 {
+                continue;
+            }
+            if e1 == 0.0 || e2 == 0.0 || e3 == 0.0 || area.is_nan() || e1.is_nan() || e2.is_nan() || e3.is_nan() {
+                return None;
+            }
+            let z = (e2 * t.a.z + e3 * t.b.z + e1 * t.c.z) / area.abs();
+            if !z.is_finite() {
+                return None;
+            }
+            out.push((z, area > 0.0));
+        }
+        out.sort_by(|a, b| b.0.total_cmp(&a.0));
+        Some(out)
     }
 }
 

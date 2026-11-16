@@ -1,8 +1,8 @@
-//! #557 in the surface: the Setups page's "Axes in the plane" rows arm
-//! the axis draft (Edge mode for an edge, Vertex mode for two points), a
-//! pick lands in the draft (never in an operation), a face is refused by
-//! name, Apply queues `TurnPartInPlane` and the drain lands it as one
-//! undo unit. The work offset is not touched.
+//! #557 in the surface, full 3D since #769: the Setups page's part-axes
+//! rows arm the axis draft (Edge mode for an edge, Vertex mode for two
+//! points), a pick lands in the draft (never in an operation), a face
+//! is refused by name, Apply queues `AlignPartFromAxes` and the drain
+//! lands it as one undo unit. The work offset is not touched.
 //! Provenance: our own page law; no vendor material consulted.
 
 use egui::{Event, Key, Modifiers, Vec2};
@@ -124,7 +124,7 @@ fn an_edge_picked_for_y_turns_the_part_through_the_command_and_undoes() {
     assert!(kept.picking.is_none() && kept.applied, "a landed turn stops collecting, the picks kept");
     assert!(apply_disabled(&h), "the same picks again are no turn");
     assert!(h.query_by_label_contains("tick Flip").is_some(), "the greyed Apply says Flip re-applies");
-    assert!(h.state().status.contains("turned in the plane"), "{}", h.state().status);
+    assert!(h.state().status.contains("aligned from its picks"), "{}", h.state().status);
     assert_eq!(camcraft_app::setup::work_offset(&h.state().world, "Setup1"), None, "the work offset is untouched");
     key(&mut h, Key::Z);
     assert_eq!(setup_align::stored(&h.state().world, "Setup1"), None, "undo restores as modelled");
@@ -179,6 +179,53 @@ fn an_upright_edge_greys_apply_out_with_the_reason() {
     // Arming the plane row stops the axis pick: one draft collects.
     crate::plane_pick::arm(h.state_mut(), "Setup1");
     assert!(!crate::axis_pick::collecting(h.state()));
+}
+
+/// #769: two perpendicular picks - one an upright edge that #557 alone
+/// refused - define the full 3D frame. Apply is on, the words say the
+/// alignment, the part lands with the picks on their axes and +Z where
+/// the right-hand rule puts it (their cross), the work offset is never
+/// touched, and one undo takes it back.
+#[test]
+fn two_picks_with_an_upright_edge_align_the_part_in_full_3d() {
+    let mut h = harness();
+    h.get_by_label("Pick +Y edge").click();
+    h.run();
+    // The upright front-left edge (x = 0, y = 0), its walked direction.
+    let f = features(h.state());
+    let (id, walked_z) = feature::chains(&f)
+        .into_iter()
+        .find_map(|c| {
+            let p = feature::chain_points(&f, &c);
+            (p.len() == 2 && p[0][0] == 0.0 && p[0][1] == 0.0 && p[1][0] == 0.0 && p[1][1] == 0.0)
+                .then_some((c.id, p[1][2] - p[0][2]))
+        })
+        .expect("the upright front edge");
+    crate::axis_pick::take(h.state_mut(), GeoSel { entity: "part".into(), feature: FeatureSel::Chain(id) });
+    h.run();
+    // +X: the top front edge, its walked direction.
+    let (edge, walked_x) = front_top_edge(h.state());
+    h.get_by_label("Pick +X edge").click();
+    h.run();
+    crate::axis_pick::take(h.state_mut(), edge);
+    h.run();
+    assert!(!apply_disabled(&h), "the two picks define the frame - Apply is on");
+    assert!(h.query_by_label_contains("aligns the part").is_some(), "the words say the full 3D alignment");
+    h.get_by_label("Apply axes").click();
+    h.run();
+    assert!(h.state().status.contains("aligned from its picks"), "{}", h.state().status);
+    // The picked directions land exactly; +Z lands on their cross.
+    let y = held_dir(h.state(), [0.0, 0.0, walked_z]).expect("held");
+    assert!((y[1] - 1.0).abs() < 1e-9, "the upright edge runs +Y: {y:?}");
+    let x = held_dir(h.state(), walked_x).expect("held");
+    assert!((x[0] - 1.0).abs() < 1e-9, "the top edge runs +X: {x:?}");
+    // cross(walked_x, (0, 0, walked_z)) = (0, -dx*dz, 0).
+    let c = [0.0, -walked_x[0] * walked_z, 0.0];
+    let z = held_dir(h.state(), c).expect("held");
+    assert!((z[2] - 1.0).abs() < 1e-9, "+Z lands on the picks' cross: {z:?}");
+    assert_eq!(camcraft_app::setup::work_offset(&h.state().world, "Setup1"), None, "the work offset is untouched");
+    key(&mut h, Key::Z);
+    assert_eq!(setup_align::stored(&h.state().world, "Setup1"), None, "undo restores as modelled");
 }
 
 #[test]

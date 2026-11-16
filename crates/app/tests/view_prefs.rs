@@ -6,6 +6,8 @@
 //!
 //! Provenance: our own tests, specced from the issue's "Done means".
 //!
+//! #889: the tool-holder import choice rides the same file.
+//!
 //! Gate map (M4.4): covers app::prefs, app::commands (theme, color_vision).
 
 use std::path::PathBuf;
@@ -26,13 +28,13 @@ fn dir(tag: &str) -> PathBuf {
 #[test]
 fn the_preferences_survive_a_restart() {
     let path = dir("restart").join(FILE_NAME);
-    let chosen = ViewPrefs { theme: ThemeRef::Named("light".into()), color_vision: ColorVision::Tritan };
+    let chosen = ViewPrefs { theme: ThemeRef::Named("light".into()), color_vision: ColorVision::Tritan, skip_tool_holders: false };
     prefs::save(&path, &chosen).expect("save");
     let (back, note) = prefs::load(&path);
     assert_eq!(back, chosen);
     assert_eq!(note, None);
     // A theme file rides its path; Dark and Off write no key.
-    let file = ViewPrefs { theme: ThemeRef::File("C:/themes/mine.json".into()), color_vision: ColorVision::Off };
+    let file = ViewPrefs { theme: ThemeRef::File("C:/themes/mine.json".into()), color_vision: ColorVision::Off, skip_tool_holders: false };
     prefs::save(&path, &file).expect("save");
     assert_eq!(prefs::load(&path).0, file);
     prefs::save(&path, &ViewPrefs::default()).expect("save");
@@ -72,7 +74,7 @@ fn an_unknown_value_falls_back_alone_and_is_named() {
     )
     .expect("write fixture");
     let (p, note) = prefs::load(&path);
-    assert_eq!(p, ViewPrefs { theme: ThemeRef::Dark, color_vision: ColorVision::Tritan }, "the rest survives");
+    assert_eq!(p, ViewPrefs { theme: ThemeRef::Dark, color_vision: ColorVision::Tritan, skip_tool_holders: false }, "the rest survives");
     assert!(note.expect("named").contains("theme 'solarpunk' is not a built-in"));
     std::fs::write(&path, r#"{"format": "camcraft-prefs/1", "colorVision": "sepia"}"#).expect("write fixture");
     let (p, note) = prefs::load(&path);
@@ -110,4 +112,23 @@ fn the_project_file_never_carries_the_colour_vision_mode() {
     camcraft_app::project::load(&w, &path).expect("re-open here");
     assert_eq!(color_vision_of(&w), ColorVision::Tritan, "the viewer's mode outlives the document");
     assert_eq!(theme_of(&w), ThemeRef::Dark);
+}
+
+/// #889: the "Import tool holders" choice is the person's, kept here -
+/// written only when off, so a file from before it (or with it on)
+/// reads as on, and an off choice survives a restart.
+#[test]
+fn the_tool_holder_import_choice_survives_a_restart() {
+    let on = ViewPrefs::default();
+    assert!(!on.skip_tool_holders, "holders are imported by default");
+    assert!(!on.to_json().contains("importToolHolders"), "on is the absent key: {}", on.to_json());
+    let path = dir("holders").join(FILE_NAME);
+    let off = ViewPrefs { skip_tool_holders: true, ..ViewPrefs::default() };
+    prefs::save(&path, &off).expect("save");
+    let (back, note) = prefs::load(&path);
+    assert_eq!(note, None);
+    assert!(back.skip_tool_holders, "off survives: {back:?}");
+    let older = format!("{{\"format\":\"{FORMAT}\",\"colorVision\":\"tritan\"}}");
+    let (p, _) = ViewPrefs::from_json(&older).expect("an older file reads");
+    assert!(!p.skip_tool_holders, "a file without the key imports holders");
 }

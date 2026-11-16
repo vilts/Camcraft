@@ -1,7 +1,9 @@
-//! `SetSetupWorkOffset` (#196, #342): label a setup's one WCS with the
-//! `G54`..`G59` word the post writes for it, or clear the label back to
-//! the `G54` default. Only the word changes - the setup's WCS origin, and
-//! every height measured from it, stay where they are.
+//! `SetSetupWorkOffset` (#196, #342, #931): label a setup's one WCS with
+//! the work offset (a 0-based pick, offset `pick + 1`) its post writes
+//! for it, or clear the label back to offset 1. Only the offset changes -
+//! the setup's WCS origin, and every height measured from it, stay where
+//! they are. The limit is the setup's own post's (`setup_offsets::check`);
+//! core keeps only a sanity bound.
 //!
 //! Provenance: our own design; RS-274 / ISO 6983 work-offset selection
 //! (one of six controller zero registers per clamping) is general
@@ -14,7 +16,8 @@ use flecs_ecs::prelude::World;
 
 use crate::commands::{Command, CommandError};
 use crate::model;
-use crate::schema::{SetupDef, WCS_SLOTS};
+use crate::schema::SetupDef;
+use crate::setup_offsets;
 
 /// Write a setup's work-offset word. `None` clears the label.
 pub struct SetSetupWorkOffset {
@@ -31,17 +34,23 @@ impl SetSetupWorkOffset {
             .entity_view(world)
             .try_get::<&SetupDef>(|d| d.work_offset)
             .ok_or_else(|| CommandError::Invalid(format!("'{setup}' is not a setup")))?;
-        if let Some(i) = slot
-            && i >= WCS_SLOTS.len()
-        {
-            return Err(CommandError::Invalid(format!(
-                "work offset #{i} does not exist - the slots are G54 to G59"
-            )));
+        if let Some(i) = slot {
+            if i > setup_offsets::MAX_SLOT {
+                return Err(CommandError::Invalid(format!(
+                    "work offset {} does not exist - offsets run 1 to {}",
+                    i.saturating_add(1),
+                    setup_offsets::MAX_SLOT + 1
+                )));
+            }
+            // #931: the setup's own post bounds the offset, by name.
+            let n = u32::try_from(i).map_or(u32::MAX, |i| i.saturating_add(1));
+            setup_offsets::check(world, setup, n).map_err(CommandError::Invalid)?;
         }
         if prev == slot {
+            let n = u32::try_from(slot.unwrap_or(0)).map_or(u32::MAX, |i| i.saturating_add(1));
             return Err(CommandError::Invalid(format!(
                 "setup '{setup}' already posts at {}",
-                slot.and_then(|i| WCS_SLOTS.get(i)).copied().unwrap_or("G54")
+                setup_offsets::offset_name(world, Some(setup), n)
             )));
         }
         Ok(SetSetupWorkOffset {

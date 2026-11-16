@@ -1,10 +1,11 @@
 //! Which shape of a modelled tool body each law judges (#835). The
 //! verdict laws - reach (c), the mid-turn sweep (c3), the solid (b2),
-//! containment and rotary laws, and the fixture laws - read the body's
-//! band stack, the shape the simulation draws. The laws that read one
-//! cylinder by construction keep the cylinder enclosing the body and say
-//! so by name: the drill-reach and cross-drill refusals, and the touch
-//! probe's stylus reach (its stem and holder are one band). The stepped
+//! containment and rotary laws, the fixture laws and (#842) the drill
+//! reach, cross-drill and touch-probe stylus laws - read the body's
+//! band stack, the shape the simulation draws. Only a body whose stack
+//! does not fit the tool's record ([`falls_back`]) is judged by the
+//! cylinder enclosing it, and a refusal naming the holder, or the probe
+//! path, then says so by name. The stepped
 //! reading of a solid of revolution is machine-tool handbook practice;
 //! our own design, no vendor source consulted.
 
@@ -12,6 +13,16 @@ use camcraft_tools::holder_profile::HolderProfile;
 
 use crate::machining2d::GenError;
 use crate::tools::Tool;
+use crate::verify::BodyBands;
+
+/// Does a tool carrying `body` fall back to the cylinder enclosing it
+/// (#842)? Its band stack does not fit the judged record `tool`
+/// ([`BodyBands::of`]), so every stack law reads that cylinder instead.
+#[must_use]
+pub fn falls_back(tool: &Tool, body: &HolderProfile) -> bool {
+    let g = tool.geom();
+    BodyBands::of(&g, &crate::tool_body::stack(&g, Some(body))).is_none()
+}
 
 /// The words every kept-cylinder law adds for a tool with a body.
 #[must_use]
@@ -34,15 +45,13 @@ pub fn name_enclosure(e: GenError, tool: &Tool, body: Option<&HolderProfile>) ->
         return e;
     }
     let say = |m: String| if m.contains("holder") { format!("{m} ({})", enclosure_words(tool)) } else { m };
-    match e {
-        GenError::Invalid(m) => GenError::Invalid(say(m)),
-        GenError::At { msg, at } => GenError::At { msg: say(msg), at },
-        other => other,
-    }
+    // #871: `map_msg` rewrites a located or ghost-carrying refusal's
+    // sentence alike, its spot and ghost riding along.
+    e.map_msg(say)
 }
 
-/// The touch probe's note for a tool with a body: its stylus reach
-/// reads stem and holder as one enclosing band.
+/// The touch probe's note for a tool whose body its stylus reach reads
+/// as one enclosing band (#842: a body that does not fit the stylus).
 #[must_use]
 pub fn probe_note(tool: &Tool, body: Option<&HolderProfile>) -> Option<String> {
     body.map(|_| format!("probe reach: {}", enclosure_words(tool)))

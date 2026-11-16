@@ -42,8 +42,8 @@
 //! the handbook end-mill side views; no vendor material.
 //!
 //! Gate map (M13.7 A): covers app::operation (generate, the verify
-//! context's cutter, tool_law), app::machining2d (contour_on_part,
-//! contour_depth), app::verify (section law b, solid law b2,
+//! context's cutter, tool_law), motion::machining2d (contour_on_part,
+//! contour_depth), sim::verify (section law b, solid law b2,
 //! Cutter::judged).
 
 use camcraft_app::cl::{MoveKind, Toolpath};
@@ -221,6 +221,7 @@ fn judge(path: &Toolpath, cutter: Option<Cutter>, leave: f64) -> Vec<Warning> {
             finish_tol: None,
             fixtures: &[],
             spindle: None,
+            ..Default::default()
         },
     )
 }

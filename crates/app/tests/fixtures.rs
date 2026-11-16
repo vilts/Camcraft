@@ -4,7 +4,7 @@
 //! without it, and every fixture command round-trips through the
 //! history - including the marker surviving a plain tree delete.
 //!
-//! Gate map (M4.4): covers app::cl, app::commands, app::fixture, app::geo2d, app::geometry, app::machine, app::model, app::operation, app::posting, app::schema, app::setup, app::stock, app::tools, app::verify, app::world.
+//! Gate map (M4.4): covers cl::cl, app::commands, app::fixture, sim::fixture, geometry::geo2d, app::geometry, app::machine, post::machine, app::model, app::operation, app::posting, app::schema, app::setup, geometry::geometry::stock, tools::tools, sim::verify, app::world.
 
 use camcraft_app::cl::{Move, MoveKind, Toolpath};
 use camcraft_app::commands::{
@@ -136,6 +136,7 @@ fn ctx<'a>(
         finish_tol: None,
         fixtures,
         spindle,
+        ..Default::default()
     }
 }
 

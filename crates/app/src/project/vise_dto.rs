@@ -7,7 +7,10 @@
 //! A self-centering vise (#787) adds an optional `self_centering` key
 //! (its clamping range floor and dovetail lip). A build without it reads
 //! such a vise's zero housing as a broken standard vise and keeps the
-//! facets as plain steel - never wrong steel.
+//! facets as plain steel - never wrong steel. Its grip step (#1274) is
+//! two more optional keys, written only when the step is on, so a vise
+//! without one saves byte for byte as before and older files read as no
+//! step; the project version does not move.
 //!
 //! Provenance: our own wire shape over `vise::ViseParams`.
 
@@ -45,6 +48,14 @@ pub struct SelfCenteringDto {
     pub lip_height: f64,
     #[serde(default)]
     pub lip_depth: f64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub grip_depth: f64,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub grip_width: f64,
+}
+
+fn is_zero(v: &f64) -> bool {
+    *v == 0.0
 }
 
 impl ViseDto {
@@ -69,6 +80,8 @@ impl ViseDto {
                     min_opening: sc.min_opening,
                     lip_height: sc.lip_height,
                     lip_depth: sc.lip_depth,
+                    grip_depth: sc.grip_depth,
+                    grip_width: sc.grip_width,
                 }),
             },
         }
@@ -98,6 +111,8 @@ impl ViseDto {
                     min_opening: d.min_opening,
                     lip_height: d.lip_height,
                     lip_depth: d.lip_depth,
+                    grip_depth: d.grip_depth,
+                    grip_width: d.grip_width,
                 })
             }),
         }

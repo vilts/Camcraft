@@ -71,7 +71,7 @@ impl RepairModel {
                 report.vertices_after, report.triangles_after
             )));
         }
-        let inner = UpdateModel::new(world, name, report.mesh.clone())?;
+        let inner = UpdateModel::new(world, name, report.mesh.clone())?.keeping_fidelity();
         Ok(RepairModel {
             name: name.to_string(),
             weld_tol,

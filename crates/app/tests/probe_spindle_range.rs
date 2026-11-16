@@ -5,7 +5,7 @@
 //! states a spindle minimum (the Tormach 770MX: 175 rpm) was refused at
 //! post. Every cutter is still judged by its own rpm.
 //!
-//! Gate map (#565): covers app::machine (check_document spindle clause),
+//! Gate map (#565): covers app::machine, post::machine (check_document spindle clause),
 //! app::posting (posted_rpm).
 //! Provenance: our own fixtures; the shipped Tormach 770MX machine file.
 

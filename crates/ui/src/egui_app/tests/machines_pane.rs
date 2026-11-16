@@ -118,6 +118,28 @@ fn selecting_a_shipped_machine_shows_its_sheet_and_a_clean_validation() {
     assert_no_commands(&h);
 }
 
+/// #786: the Spindle group states rigid tapping in words - the 770M's
+/// "no" says what it does to a program.
+#[test]
+fn the_sheet_states_rigid_tapping_in_words() {
+    let mut h = blank_harness();
+    h.run();
+    open_machines(&mut h);
+    let m = h
+        .state()
+        .state
+        .machines_pane
+        .list
+        .as_ref()
+        .and_then(|l| l.iter().find(|e| e.name == "Tormach 770M").cloned())
+        .expect("the library lists the 770M");
+    h.get_by_label(&row_label(&m)).click();
+    h.run_steps(2);
+    h.get_by_label("Rigid tapping");
+    h.get_by_label("no - tap cycles are refused");
+    assert_no_commands(&h);
+}
+
 #[test]
 fn a_refused_machine_file_shows_each_refusal_by_name() {
     let text = r#"{
@@ -295,4 +317,15 @@ fn use_for_this_setup_replaces_an_own_machine_and_leaves_the_document_alone() {
     let world = &h.state().state.world;
     assert_eq!(camcraft_app::machine::of(world), own_before, "undo restores the setup's machine");
     assert_eq!(camcraft_app::machine::document_of(world), doc_before);
+}
+
+/// #1119: the Machines pane's kind filter combo carries an accessible name.
+#[test]
+fn the_machines_pane_names_every_input() {
+    let mut h = blank_harness();
+    h.run();
+    open_machines(&mut h);
+    let (bad, seen) = super::super::fixture_plate_tests::unnamed_inputs(&h);
+    assert!(seen >= 1, "only {seen} inputs found in the machines pane");
+    assert!(bad.is_empty(), "unnamed inputs in machines pane: {bad:?}");
 }

@@ -12,11 +12,11 @@ summary (failing binaries named) and a non-zero exit on any failure.
 | Tier | When | What |
 |---|---|---|
 | `quick` | every patch (agent / gate-runner), ~minutes | what the diff touches, in debug |
-| `batch` | before committing a batch; `ci.yml` when run by hand | every debug suite minus `SLOW_BINARIES`, ui (CWD `crates/ui`), clippy `-D warnings` |
-| `release` | at a cut; `nightly.yml` when run by hand | everything: all debug suites incl. slow and kernel, ui, clippy, then `--release -- --ignored` for motion and app |
+| `batch` | before committing a batch | every debug suite minus `SLOW_BINARIES`, ui (CWD `crates/ui`), clippy `-D warnings` |
+| `release` | at a cut | everything: all debug suites incl. slow and kernel, ui, clippy, then `--release -- --ignored` for motion and app |
 
-Both workflows are `workflow_dispatch` only (the Actions budget): nothing
-runs on push, PR or a schedule.
+The tiers run locally only (the Actions budget): nothing runs on push, PR or a
+schedule.
 
 The command is the same on every OS:
 

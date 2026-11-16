@@ -76,11 +76,42 @@ fn patched(base: &OpParams, patch: &Value) -> Result<OpParams, String> {
     let Value::Object(back) = project::params_to_json(&next) else {
         return Err("the patched parameters could not be read back".into());
     };
-    let back = back.get(&key).and_then(Value::as_object).cloned().unwrap_or_default();
+    let mut back = back.get(&key).and_then(Value::as_object).cloned().unwrap_or_default();
+    // An opt-in flag (`blend_turns`) is written only when ON, so `false`
+    // never comes back: it is kept when `true` would have come back.
+    for (k, v) in patch {
+        if *v == Value::Bool(false) && !back.contains_key(k) && flag_kept(&key, &fields_of(base), k) {
+            back.insert(k.clone(), Value::Bool(false));
+        }
+    }
     if let Some(path) = lost(patch, &back, "") {
         return Err(format!("bad params patch: unknown field {path} - a {key} operation has no field \"{path}\"; see list_operation_types"));
     }
     Ok(next)
+}
+
+/// The kind's field object of `p`, without its tag.
+fn fields_of(p: &OpParams) -> Map<String, Value> {
+    match project::params_to_json(p) {
+        Value::Object(tagged) => tagged.into_iter().next().and_then(|(_, v)| match v {
+            Value::Object(m) => Some(m),
+            _ => None,
+        }),
+        _ => None,
+    }
+    .unwrap_or_default()
+}
+
+/// True when the kind `key` has a boolean field `k`: set to `true`, it
+/// survives the typed round-trip. A misspelled key never does.
+fn flag_kept(key: &str, fields: &Map<String, Value>, k: &str) -> bool {
+    let mut probe = fields.clone();
+    probe.insert(k.to_owned(), Value::Bool(true));
+    let mut tagged = Map::new();
+    tagged.insert(key.to_owned(), Value::Object(probe));
+    project::params_from_json(&Value::Object(tagged))
+        .map(|p| fields_of(&p).get(k) == Some(&Value::Bool(true)))
+        .unwrap_or(false)
 }
 
 /// The first key path of `patch` (dotted, e.g. `clearance_z.ofset`) the
@@ -88,7 +119,7 @@ fn patched(base: &OpParams, patch: &Value) -> Result<OpParams, String> {
 /// removal (RFC 7386) and has nothing to keep; an object is checked key
 /// by key against what came back; any other value is a leaf that must
 /// simply be present.
-fn lost(patch: &Map<String, Value>, back: &Map<String, Value>, prefix: &str) -> Option<String> {
+pub(super) fn lost(patch: &Map<String, Value>, back: &Map<String, Value>, prefix: &str) -> Option<String> {
     for (k, v) in patch {
         if v.is_null() {
             continue;
@@ -114,7 +145,7 @@ fn lost(patch: &Map<String, Value>, back: &Map<String, Value>, prefix: &str) -> 
     None
 }
 
-fn merge(target: &mut Value, patch: &Value) {
+pub(super) fn merge(target: &mut Value, patch: &Value) {
     match (target, patch) {
         (Value::Object(t), Value::Object(p)) => {
             for (k, v) in p {
@@ -185,7 +216,11 @@ pub(super) fn set_stock(env: &mut Env, a: &Map<String, Value>) -> Result<Value, 
 
 pub(super) fn add_operation(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
     let kind = kind_index(req_str(a, "kind")?)?;
-    let tool = req_str(a, "tool")?;
+    // A kind that mounts no library tool (the Wire Contour, #1108) takes
+    // none: an absent or empty "tool" is no tool. A tool named anyway
+    // goes to the command, which refuses it in its own words.
+    let mounts = KindInfo::ALL.get(kind).is_none_or(|k| k.mounts_tool());
+    let tool = if mounts { req_str(a, "tool")? } else { opt_str(a, "tool")?.unwrap_or("") };
     let label = KindInfo::ALL.get(kind).map_or("Operation", |k| k.label);
     let name = match opt_str(a, "name")? {
         Some(n) => n.to_owned(),
@@ -203,6 +238,9 @@ pub(super) fn add_operation(env: &mut Env, a: &Map<String, Value>) -> Result<Val
     // The seed helix follows the tool, as the app's quick-add does.
     if let Some(t) = model::find_by_name(&env.world, tool).and_then(|e| model::tool_of(&env.world, &e)) {
         operation::seed_helix_for_tool(&mut params, t.diameter);
+        // #890: the feed from the tool's row for the document material;
+        // an explicit params patch below still wins.
+        crate::cutting_rows::seed_feed_for_tool(&env.world, &mut params, &t);
     }
     if let Some(patch) = a.get("params") {
         params = patched(&params, patch)?;
@@ -227,12 +265,14 @@ pub(super) fn edit_operation(env: &mut Env, a: &Map<String, Value>) -> Result<Va
 /// The app's Detect holes button over MCP (#312): the operation's
 /// source read for holes now (`operation::detect_holes`, the button's
 /// own rule) and stored as one undoable parameter edit. Answers with
-/// how many axial and radial holes went in.
+/// how many axial and radial holes went in, and (#1556) a sentence per
+/// hole left out because the op cannot make it.
 pub(super) fn detect_holes(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
     let key = find_op(env, req_str(a, "name")?)?;
     let e = model::find_by_name(&env.world, &key).ok_or_else(|| format!("no operation named '{key}'"))?;
     let op = model::operation_of(&env.world, &e).ok_or_else(|| format!("'{key}' is not an operation"))?;
-    let next = operation::detect_holes(&env.world, &key, &op.params, op.setup.as_deref(), &op.src)?;
+    let operation::DetectedHoles { params: next, skipped } =
+        operation::detect_holes(&env.world, &key, &op.params, op.setup.as_deref(), &op.src)?;
     let (holes, radial) = match &next {
         OpParams::Drill { holes, cross, .. } => (holes.len(), cross.len()),
         OpParams::Bore { holes, .. } | OpParams::Thread { holes, .. } => (holes.len(), 0),
@@ -240,7 +280,9 @@ pub(super) fn detect_holes(env: &mut Env, a: &Map<String, Value>) -> Result<Valu
     };
     let cmd = EditOperationParams::new(&env.world, &key, next).map_err(cmd_err)?;
     env.history.execute(&env.world, cmd);
-    Ok(json!({ "operation": key, "holes": holes, "radial_holes": radial, "status": "stale" }))
+    // #1556: each hole the op's kind could not take, named - the GUI's
+    // status line reads the same sentences.
+    Ok(json!({ "operation": key, "holes": holes, "radial_holes": radial, "skipped": skipped, "status": "stale" }))
 }
 
 pub(super) fn delete_operation(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {

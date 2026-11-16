@@ -44,7 +44,8 @@
 
 use std::slice;
 
-use crate::cl::{is_vertical, Move, Toolpath};
+use super::upright::is_upright;
+use crate::cl::{Move, Toolpath};
 use crate::fixture::{FixtureBox, FIXTURE_HIT_TOL};
 use crate::fixture_mesh::{FixtureMesh, MeshedFixture};
 use crate::geometry::Point3;
@@ -71,8 +72,13 @@ pub struct SteelBand {
 /// states it, then the flute.
 #[must_use]
 pub fn steel_stack(tool: &ToolGeom, holder: &HolderStack, spindle: Option<(f64, f64)>) -> Vec<SteelBand> {
-    let (fl, sl) = (tool.flute_len, tool.shank_len);
-    let mut out = vec![SteelBand { part: FixturePart::Shank, lo: fl, hi: fl + sl, r: tool.shank_radius }];
+    let fl = tool.flute_len;
+    // #852: the shank as swept - a drawn neck's bands, or the cylinder.
+    let mut out: Vec<SteelBand> = holder
+        .shank_bands(tool)
+        .iter()
+        .map(|b| SteelBand { part: FixturePart::Shank, lo: b.above, hi: b.above + b.len, r: b.r })
+        .collect();
     // #368: what stands above the shank - the holder's own bands, the
     // same `HolderStack` the box laws (c2/d2) sweep.
     out.extend(holder.bands.iter().map(|b| SteelBand {
@@ -262,7 +268,7 @@ fn judge(
         }
         return mesh_posed::judge_c(mesh, m, (pose.prev_c, pose.to), steel, rapids, fixed);
     }
-    let up = |a: Option<[f64; 3]>| a.is_none_or(|a| is_vertical(&a));
+    let up = |a: Option<[f64; 3]>| a.is_none_or(|a| is_upright(&a));
     if up(pose.from) && up(pose.to) {
         return judge_move(mesh, m, steel, rapids);
     }

@@ -8,7 +8,7 @@ use super::*;
 
 fn g54(h: &Harness<'static, ShellUi>) -> [f64; 3] {
     let st = &h.state().state;
-    let e = model::find_by_name(&st.world, WCS_SLOTS[0]).expect("G54");
+    let e = model::find_by_name(&st.world, "G54").expect("G54");
     let p = model::transform_of(&st.world, &e).unwrap_or_default().pos;
     [p.x, p.y, p.z]
 }
@@ -94,7 +94,7 @@ fn align_wcs_321_places_g54_from_the_face_and_edge_picks() {
     assert!((p[1] - block_loc.pos.y).abs() < 1e-6, "on the front edge: {p:?}");
     let rot = {
         let st = &harness.state().state;
-        let e = model::find_by_name(&st.world, WCS_SLOTS[0]).expect("G54");
+        let e = model::find_by_name(&st.world, "G54").expect("G54");
         model::transform_of(&st.world, &e).unwrap_or_default().rot
     };
     let x = camcraft_app::geometry::quat_rotate_point(rot, camcraft_app::geometry::Point3::new(1.0, 0.0, 0.0));

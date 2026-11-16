@@ -71,6 +71,7 @@ fn judge_with(p: &Toolpath, mode: Mode, tool: &ToolGeom, stock_top_z: f64, z_tol
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(p, &cx)
 }
@@ -361,8 +362,9 @@ fn a_context_the_law_cannot_read_convicts_every_rapid() {
 #[test]
 fn a_rapid_on_a_pose_that_is_no_direction_convicts_itself() {
     // A stated zero axis cannot place the body: never read as upright.
+    // The verify door (#1312) also refuses the axis itself by name.
     let w = judge(&chain((30.0, 0.0, 0.0), &[(R, (25.0, 0.0, 0.0), Some([0.0, 0.0, 0.0]))]));
-    assert_eq!(w, vec![Warning::RapidInStock { at: 0 }], "{w:?}");
+    assert_eq!(w, vec![Warning::NonFinite { at: 0 }, Warning::RapidInStock { at: 0 }], "{w:?}");
 }
 
 #[test]

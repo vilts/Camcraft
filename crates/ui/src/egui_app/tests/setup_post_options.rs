@@ -27,15 +27,19 @@ fn the_option_switches_land_on_the_active_setups_own_options() {
     assert_eq!(setup_post_options::own(&state.world, Some("Setup2")), Some(own));
     assert_eq!(setup_post_options::document(&state.world), PostOptions::default(), "the document is untouched");
     assert_eq!(setup_post_options::of(&state.world, Some("Setup1")), PostOptions::default(), "Setup1 follows it");
-    // Setup1 active: the same switch now edits the document's.
+    // Setup1 active: with two setups the same switch now makes Setup1's
+    // own options (#1526) - the document's, which a later setup would
+    // follow, never move from a setup's page.
     run(&mut state, CommandKind::ActivateSetup(Some("Setup1".into())));
     run(&mut state, CommandKind::SetSkipStops(true));
-    assert!(setup_post_options::document(&state.world).skip_stops);
+    assert!(setup_post_options::own(&state.world, Some("Setup1")).is_some_and(|o| o.skip_stops));
+    assert!(!setup_post_options::document(&state.world).skip_stops);
     // Undo walks every step back.
     for _ in 0..5 {
         run(&mut state, CommandKind::Undo);
     }
     assert_eq!(setup_post_options::own(&state.world, Some("Setup2")), None);
+    assert_eq!(setup_post_options::own(&state.world, Some("Setup1")), None);
     assert_eq!(setup_post_options::document(&state.world), PostOptions::default());
 }
 

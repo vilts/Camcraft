@@ -27,6 +27,7 @@ use crate::entry_arc::{ArcLead, arc_lead_swept, pts_dir, push_arc_lead, seg_dir}
 use crate::geo2d::{Point2, Region};
 use crate::geometry::Point3;
 use crate::links::{helix_turns, plan_zig_capped, push_zig};
+use crate::ring_zig::push_zig_ring;
 
 use super::arcs::{ARC_FIT_TOL, Seg};
 use super::levels::{Cert, Motion};
@@ -115,8 +116,13 @@ fn descent_from(m: &Motion, prev_z: f64, ramp: bool) -> f64 {
 /// level's solid - it takes the helix, then the ramp, or the operation is
 /// refused by name. `zig` selects the angle-bounded ramp (a level
 /// transition the user set to Ramp) over the entry's single chord.
+/// A proved pre-drilled hole (#1449) is taken ahead of every arm.
 pub(super) fn plan(arm: Entry3D, zig: bool, l: &Lvl, leg: Point2, z: f64, prev_z: f64, m: &Motion) -> Descent {
-    with_arc(arm, zig, l, leg, z, prev_z, m).unwrap_or_else(|| plan_core(arm, zig, l, leg, z, prev_z, m))
+    if let Some(d) = super::predrilled::entry(l, z, m) {
+        return d;
+    }
+    let d = with_arc(arm, zig, l, leg, z, prev_z, m).unwrap_or_else(|| plan_core(arm, zig, l, leg, z, prev_z, m));
+    super::predrilled::unserved(d, z, m)
 }
 
 /// [`plan`] onto the pass start itself, without the horizontal arc.
@@ -143,11 +149,11 @@ pub(super) fn plan_core(arm: Entry3D, zig: bool, l: &Lvl, leg: Point2, z: f64, p
 }
 
 /// The ramp fallback: the zig-zag along the first cut at the entry's
-/// ramp angle (the transition's when the entry sets none) - every point
+/// ramp angle (3 deg when the entry sets none) - every point
 /// on the proved cut.
 pub(super) fn ramp_fallback(l: &Lvl, z: f64, prev_z: f64, m: &Motion) -> Option<Descent> {
     let a = &m.links.approach;
-    let angle = if a.ramp_zigs() { a.ramp_angle } else { m.links.ramp_angle };
+    let angle = if a.ramp_zigs() { a.ramp_angle } else { crate::links::DEFAULT_RAMP_ANGLE };
     let zf = descent_from(m, prev_z, true);
     plan_zig_capped(l.pass, zf - z, angle, a.ramp_max_len).map(|(pre, n)| Descent::Zig(pre, n, zf))
 }
@@ -215,6 +221,16 @@ pub(super) fn plan_arm(arm: Entry3D, zig: bool, l: &Lvl, leg: Point2, z: f64, pr
                 None => Descent::Sub("the first cut is too short for the entry ramp's angle and length"),
             }
         }
+        // #1609: on a ring (the circular kernel) the chord from the
+        // tool's XY is a steep dive or no move at all - the ring
+        // returns to its own start, so a level change's chord has no
+        // length. The ramp rides the ring at the ramp angle instead
+        // (the entry's, 3 deg by default), as the helix's stand-
+        // down does; a ring too short for it dives at the plunge feed,
+        // named. #1665: the bore's chord runs from the last ring start
+        // to the centre, one ring radius - the same steep dive.
+        Entry3D::Ramp if m.ring_zig => ramp_fallback(l, z, prev_z, m)
+            .unwrap_or(Descent::Sub("the ring is too short to ramp at the angle")),
         Entry3D::Ramp if l.cen.chord_ok(leg, e) => {
             // The leg limit takes the chord's last stretch: a piece of
             // the proved chord, re-proved after the lattice snap.
@@ -315,7 +331,11 @@ pub(super) fn push(b: &mut PathBuilder, d: &Descent, l: &Lvl, z: f64, tz: f64, m
                 b.push(MoveKind::Rapid, Point3::new(e.x, e.y, tz), None);
             }
             b.push(MoveKind::Rapid, Point3::new(e.x, e.y, *zf), None);
-            push_zig(b, pre, *n, *zf, z, fd);
+            // #1558: a ring's ramp rides the ring's own arcs.
+            match l.walk.and_then(<[Seg]>::first) {
+                Some(Seg::Arc { center, ccw, .. }) if m.ring_zig => push_zig_ring(b, pre, *center, *ccw, *n, *zf, z, fd),
+                _ => push_zig(b, pre, *n, *zf, z, fd),
+            }
             Vec::new()
         }
         Descent::Helix(h) => {

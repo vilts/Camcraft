@@ -183,6 +183,7 @@ fn depth_verify(t: &camcraft_motion::cl::Toolpath, region: &Region, f: &[Triangl
             finish_tol: None,
             fixtures: &[],
             spindle: None,
+            ..Default::default()
         },
     )
 }

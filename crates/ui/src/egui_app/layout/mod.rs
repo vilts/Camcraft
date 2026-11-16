@@ -11,10 +11,14 @@
 //! `status_banner`, `action_bar`, ...) live in `form` and are re-exported
 //! here: one layout module for the dock and the pages alike.
 
+mod controls;
 mod form;
+pub(crate) use controls::*;
 pub(crate) use form::*;
 #[cfg(test)]
 mod banner_tests;
+#[cfg(test)]
+mod form_seam_tests;
 
 use egui::{Rect, Sense, Ui, Vec2};
 use egui_dock::{DockState, Node, NodePath, Split, SurfaceIndex};

@@ -58,12 +58,8 @@ impl PlaceModVisePair {
         let entity = model::find_by_name(world, plate).ok_or_else(|| CommandError::NotFound(plate.to_owned()))?;
         let plate_at = model::transform_of(world, &entity).unwrap_or_default();
         let setup = fixture::def_of(world, &entity).and_then(|d| d.setup);
-        let stock = model::stock_world_aabb_for(world, setup.as_deref()).ok_or_else(|| {
-            CommandError::Invalid(format!(
-                "{} has no stock to fit the mod vise to",
-                setup.as_deref().map_or_else(|| "the setup".to_owned(), |s| format!("setup '{s}'"))
-            ))
-        })?;
+        let stock = model::stock_world_aabb_for(world, setup.as_deref())
+            .ok_or_else(|| CommandError::Needs(crate::vise_fit::no_stock_message(setup.as_deref(), "the mod vise to")))?;
         let fit = modvise::fit_pair(&def, plate_at, fixed, adjustable, at, yaw_deg, &stock)
             .map_err(|e| CommandError::Invalid(format!("mod vise on '{plate}': {e}")))?;
         let fixed_cmd = block(world, plate, setup.as_deref(), fixed.with_slide(0.0), &fit.fixed_at, fit.yaw_deg)?;
@@ -109,30 +105,43 @@ impl Command for PlaceModVisePair {
 /// vise jaw blocks (#820 review): the edit keeps each block on its named
 /// hole with its slide, but the stock stays put. Refused by name when it
 /// puts a block's clamping face into the stock (or deeper in); a face it
-/// lifts off the stock is a warning. Re-fitting a placed pair is #832.
+/// lifts off the stock is a warning (re-fit it: `RefitModVise`, #832).
 pub(crate) fn jaws_after_reseat(world: &World, moves: &[RiderMove]) -> Result<Vec<String>, CommandError> {
-    let deep = crate::fixture_clash::PENETRATION_MM;
     let mut warnings = Vec::new();
     for m in moves {
         let Some(def) = model::find_by_name(world, &m.name).and_then(|e| fixture::def_of(world, &e)) else { continue };
         let Some(jaw) = def.mod_jaw.as_ref() else { continue };
         let Some(stock) = model::stock_world_aabb_for(world, def.setup.as_deref()) else { continue };
-        let (Some(before), Some(after)) = (modvise::reach::face_gap(jaw, m.before, &stock), modvise::reach::face_gap(jaw, m.after, &stock)) else {
-            continue;
-        };
-        let side = jaw.side.word();
-        if after < -deep && after < before - deep {
-            return Err(CommandError::Invalid(format!(
-                "the plate edit would put mod vise '{}''s {side} jaw {:.3} mm into the stock - re-place the pair after changing the grid",
-                m.name, -after
-            )));
-        }
-        if after > deep && after > before + deep {
-            warnings.push(format!(
-                "the plate edit leaves mod vise '{}''s {side} jaw {:.3} mm off the stock - re-place the pair to clamp it",
-                m.name, after
-            ));
-        }
+        let before = modvise::reach::face_gap(jaw, m.before, &stock);
+        let after = modvise::reach::face_gap(jaw, m.after, &stock);
+        warnings.extend(judge_face(&m.name, jaw, before, after, "the plate edit", "re-place the pair after changing the grid")?);
     }
     Ok(warnings)
+}
+
+/// One jaw block's clamping face moved from gap `before` to gap `after`
+/// against the stock (`modvise::reach::face_gap`) by `cause`. Refused by
+/// name when it ends in the stock deeper than it started; a face lifted
+/// off the stock is a warning. A face that was not in front of the stock
+/// before (`None`) was clear (#832, the #833 review's probe: a stock
+/// moved beside the jaws, then a plate edit that brings a jaw 16 mm into
+/// it, must not pass on a warning); one not in front after reaches into
+/// nothing. `hint` says what to do instead.
+pub(crate) fn judge_face(name: &str, jaw: &JawParams, before: Option<f64>, after: Option<f64>, cause: &str, hint: &str) -> Result<Option<String>, CommandError> {
+    let deep = crate::fixture_clash::PENETRATION_MM;
+    let Some(after) = after else { return Ok(None) };
+    let side = jaw.side.word();
+    if after < -deep && before.is_none_or(|b| after < b - deep) {
+        return Err(CommandError::Invalid(format!(
+            "{cause} would put mod vise '{name}''s {side} jaw {:.3} mm into the stock - {hint}",
+            -after
+        )));
+    }
+    if let Some(before) = before
+        && after > deep
+        && after > before + deep
+    {
+        return Ok(Some(format!("{cause} leaves mod vise '{name}''s {side} jaw {after:.3} mm off the stock - re-fit the pair to clamp it")));
+    }
+    Ok(None)
 }

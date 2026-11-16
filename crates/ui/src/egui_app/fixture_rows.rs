@@ -20,7 +20,7 @@ use camcraft_app::{fixture, model, units};
 use crate::state::{CommandKind, FixtureUi, State, quat_yaw_deg};
 
 use super::layout::prop_row;
-use super::fields::{num, num_plain};
+use super::fields::{num_plain_row, num_row};
 
 const FIXED_HELP: &str = "On: a table or tailstock - it stands still while a rotary turns the part, \
      so it is collision-checked in the machine frame. Off: a chuck, turning with the part.";
@@ -114,7 +114,7 @@ fn vise_opening(ui: &mut Ui, state: &mut State, name: &str) {
     ));
     let mut set = None;
     prop_row(ui, "Jaw opening", |ui| {
-        num(ui, u, state.vise_opening_draft(name, params.opening));
+        num_row(ui, u, state.vise_opening_draft(name, params.opening));
     });
     ui.horizontal(|ui| {
         ui.add_space(12.0);
@@ -140,10 +140,10 @@ fn vise_opening(ui: &mut Ui, state: &mut State, name: &str) {
 fn place_form(ui: &mut Ui, state: &mut State, name: &str) {
     let u = state.units();
     let d = &mut state.fixture_ui;
-    prop_row(ui, "Place X", |ui| num(ui, u, &mut d.x));
-    prop_row(ui, "Place Y", |ui| num(ui, u, &mut d.y));
-    prop_row(ui, "Place Z", |ui| num(ui, u, &mut d.z));
-    prop_row(ui, "Place yaw", |ui| num_plain(ui, &mut d.yaw_deg));
+    prop_row(ui, "Place X", |ui| num_row(ui, u, &mut d.x));
+    prop_row(ui, "Place Y", |ui| num_row(ui, u, &mut d.y));
+    prop_row(ui, "Place Z", |ui| num_row(ui, u, &mut d.z));
+    prop_row(ui, "Place yaw", |ui| num_plain_row(ui, &mut d.yaw_deg));
     ui.horizontal(|ui| {
         ui.add_space(12.0);
         if ui.small_button("Apply").clicked() {

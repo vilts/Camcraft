@@ -12,7 +12,7 @@
 //! operations suite's slab-and-boss, the rotary suite's turned bar).
 //!
 //! Gate map (M11.3): covers app::operation (generate, plunge_solid
-//! audit_posed / guard_posed / audit_bar), app::multiaxis (contour5d,
+//! audit_posed / guard_posed / audit_bar), motion::multiaxis (contour5d,
 //! rough, rotary_offset, rotary_bar, rotary twins under the law),
 //! motion::plunge_law (Bar, first_bar_plunge).
 

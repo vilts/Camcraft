@@ -1,6 +1,6 @@
 //! The Setups page's "Lay on a plane" row (#330): pick one flat face in
 //! the viewport (#554: a face only - an edge cannot set a plane; edges
-//! set an axis in the "Axes in the plane" rows), choose G17 (XY), G18
+//! set an axis in the "Part axes" rows), choose G17 (XY), G18
 //! (ZX) or G19 (YZ), lay the face down on it (the default, #606) or up,
 //! optionally set the face onto the plane's level, and Apply. The pick draft is view state (`crate::plane_pick`); Apply queues
 //! `CommandKind::LayPartOnPlane`, the undoable `AlignPartToSetup`. The
@@ -17,6 +17,7 @@ use camcraft_app::cl::ArcPlane;
 use camcraft_app::commands::AlignPartToSetup;
 use camcraft_app::pick::{self, PlaneLay};
 
+use crate::pick_words;
 use crate::state::{CommandKind, State};
 
 const PLANES: [ArcPlane; 3] = [ArcPlane::Xy, ArcPlane::Xz, ArcPlane::Yz];
@@ -56,8 +57,7 @@ pub(super) fn row(ui: &mut Ui, state: &mut State, setup: &str) {
     ui.horizontal(|ui| {
         ui.label("    Lay on a plane - pick a face");
         let pick_text = if armed { "Stop picking" } else { "Pick a face" };
-        if ui
-            .selectable_label(armed, pick_text)
+        if super::pick_button::pick_button(ui, armed, pick_text)
             .on_hover_text("Click one flat face in the viewport; it is laid on the plane.")
             .clicked()
         {
@@ -94,19 +94,19 @@ pub(super) fn row(ui: &mut Ui, state: &mut State, setup: &str) {
         let lay = PlaneLay { plane: d.plane, flip: d.flip, place: d.place };
         // The command's own check: a refused pick, or one that gives the
         // alignment the setup already holds, greys Apply out with the why.
-        let check = AlignPartToSetup::check_lay(&state.world, setup, &picks, lay).map_err(|e| e.to_string());
+        let check = AlignPartToSetup::check_lay(&state.world, setup, &picks, lay).map_err(|e| pick_words::plain(&e.to_string()));
         let side = pick::plane_side(&state.world, &picks).ok();
-        // #330 (reopened): the picked face's words carry its long id, so
-        // they get a line of their own - Apply sat after them and ran off
-        // the pane's right edge, leaving only the alignment row's Apply
-        // (a turn about the bounds centre) in reach.
-        let words: Vec<String> = picks.iter().map(|g| format!("{} of '{}'", g.feature, g.entity)).collect();
-        let text = if words.is_empty() { "nothing picked yet".to_owned() } else { words.join(", ") };
+        // #738: the count and the kind, never the face's internal id, on
+        // a line of its own (#330: Apply stays in the narrow pane).
+        let text = if picks.is_empty() { "nothing picked yet".to_owned() } else { pick_words::selected(&picks) };
         ui.label(RichText::new(format!("      Picked: {text}")).weak());
         ui.horizontal(|ui| {
             ui.label("     ");
             let tip = match &check {
-                Ok(()) => format!("Turn the part so the picked face lies on {}.", pick::plane_label(d.plane)),
+                Ok(()) => format!(
+                    "Turn the part from where it sits now so the picked face lies on {} (one undo step).",
+                    pick::plane_label(d.plane)
+                ),
                 Err(why) => why.clone(),
             };
             if ui

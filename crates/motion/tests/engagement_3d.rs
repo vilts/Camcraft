@@ -157,6 +157,7 @@ fn the_planar_ladder_still_slows_its_link_and_first_diameter() {
     // first tool diameter of the first pass, then the cutting feed.
     let r = rect(0.0, 0.0, 40.0, 30.0);
     let pp = |links: Links| PocketParams {
+        blend_radius: None,
         tool_diameter: 6.0,
         stepover: 2.5,
         stock_to_leave: 0.0,

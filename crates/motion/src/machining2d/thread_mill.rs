@@ -1,316 +1,334 @@
-//! Helical thread milling: 3-axis interpolation to an internal thread
-//! (M2.4 C).
+//! Helical thread milling: 3-axis interpolation of internal and external threads with a single-form or multi-form thread mill (M2.4 C, reworked by #894).
 //!
-//! Provenance: helical (circular-interpolation) thread milling is
-//! documented in machine-tool handbooks and published CAM literature:
-//! a small thread mill rides a helix whose lead is the thread pitch,
-//! stepping radially outward by a fraction of the thread depth each
-//! turn until the finished flank is reached, then retracts back up
-//! the path it came (the flutes cut both ways - the handbook's reason
-//! a thread mill is ground for it). The radial distance from an
-//! internal thread's minor cylinder to its major one is
-//! `0.5413 x pitch` - the ISO 724 basic-triangle relation, a public
-//! standard. Written clean-room from those two statements. The
-//! spindle-sync word a RIGID TAP needs is a different machine's
-//! problem and rides the M3.3 machine definitions, per the ROADMAP:
-//! every move this kernel posts is plain G1/G2/G3 three-axis
-//! interpolation.
+//! Provenance: helical-interpolation thread milling as the public
+//! machine-tool handbooks describe it (Machinery's Handbook, "Thread
+//! milling"; Smid, "CNC Programming Handbook", the helical milling and
+//! thread milling chapters): the cutter orbits the thread axis on a
+//! helix whose lead is the pitch; a single-form cutter rides one turn
+//! per thread, a multi-form cutter finishes every thread its teeth span
+//! in one revolution; the tool enters and leaves on a tangential arc;
+//! the depth may be taken in several radial passes; the feed is stated
+//! at the cutting edge and programmed at the tool centre, scaled by
+//! centre-circle over edge-circle. Thread depths are the ISO metric
+//! profile's (ISO 724: internal 0.5413 x pitch; ISO 965-1 / DIN 13:
+//! external 0.6134 x pitch). Screw handedness and the G2/G3 sense are
+//! RS-274 / ISO 6983's ([`ThreadHand`]). Written clean-room from those
+//! statements; no CAM product's output was consulted.
 //!
-//! The law in one line: the drill hole the model shows is the thread's
-//! MINOR cylinder (what CAD draws of a threaded bore). The cutter
-//! center starts at `R_min - r` - rim tangent to the wall, cutting
-//! nothing - and each turn steps out by `infeed` while the helix
-//! descends at exactly `pitch` per turn; turns end when BOTH the floor
-//! and the major circle `R_min + H - r` are reached, so total radial
-//! travel is the standard's depth `H = 0.5413 x pitch` stated once,
-//! not guessed. Until the floor arrives the ride is a true-pitch
-//! helix; after it, the radius keeps stepping in place - a finishing
-//! spiral at depth, which is what a thread that is still short of its
-//! major circle needs.
+//! The law in one paragraph. The model's wall is the thread's MINOR
+//! cylinder on a hole (what CAD draws of a tapped bore) and its MAJOR
+//! cylinder on a boss. Radial pass `i` of `n` puts the tooth crests
+//! `depth x i / n` into that wall, so the last pass lands on the full
+//! thread depth and no pass goes past it. With the spindle turning
+//! clockwise seen from above (M3), climb milling orbits an internal
+//! thread counter-clockwise and an external one clockwise; the hand then
+//! fixes the axial direction (right-hand: counter-clockwise rises), so a
+//! right-hand internal climb cut starts at the bottom and winds up. Every
+//! pass rides the SAME helix - it meets angle zero at the same height -
+//! so later passes deepen the groove the first one opened. The lead arcs
+//! travel axially at the helix's own rate per unit of path, so the tooth
+//! stays in the groove while it engages (on a hole the lead-in is the
+//! semicircle from the axis, which by the inscribed-angle theorem is on
+//! the helix at every point).
 //!
-//! Prime Directive: the whole disc must stand inside the minor
-//! cylinder to plunge at the axis at all (a mill wider than the drill
-//! hole is refused by name); the retract is the recorded ride run
-//! BACKWARDS at feed - never a rapid through a fresh flank; stepped
-//! holes decline with the counterbore-fold word the boring ride
-//! speaks; an unstated pitch is the M1.6 tap refusal's twin.
+//! Prime Directive: the tool tip never goes below the feature's floor
+//! (a through hole's floor is one pitch below its exit); no rapid runs
+//! below the feature's top - every move in the bore or beside the boss
+//! is a feed; a mill too wide for the hole, a stepped hole, an unstated
+//! pitch, an infeed past the thread depth, a run-out above the link
+//! plane or an R plane under a feature's top (#1212: the rapid stops at
+//! the R plane and the feed starts there, as on a drill cycle) is
+//! refused by name.
 
-use crate::cl::{lattice, MoveKind, PathBuilder, Toolpath};
+use crate::cl::ThreadHand;
 use crate::geo2d::Point2;
 use crate::geometry::Point3;
 
 use super::face::GenError;
+pub use super::thread_passes::{PassSchedule, ThreadPasses, MAX_SPRING_PASSES};
 
-/// The ISO 724 radial depth of an internal metric thread, in the one
-/// constant this kernel borrows from a published standard.
-pub const THREAD_DEPTH_PER_PITCH: f64 = 0.5413;
+pub use camcraft_tools::thread_mill::{
+    EXTERNAL_DEPTH_PER_PITCH as EXTERNAL_THREAD_DEPTH_PER_PITCH, INTERNAL_DEPTH_PER_PITCH as THREAD_DEPTH_PER_PITCH,
+};
 
-/// One bore to thread: wall = the minor cylinder, depths in world Z.
+/// One feature to thread, depths in world Z. On a hole `radius` is the
+/// minor radius (the drilled wall); on a boss it is the major radius.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ThreadHole {
     pub xy: Point2,
-    /// The model's wall: the thread's minor radius.
     pub radius: f64,
     pub top_z: f64,
+    /// The lowest height the tool tip may reach: a blind hole's floor,
+    /// a boss's shoulder.
     pub floor_z: f64,
     pub stepped: bool,
+    /// A through hole: the tip may run one pitch past `floor_z`, so the
+    /// thread is cut whole at the exit.
+    pub through: bool,
 }
 
 impl ThreadHole {
     fn all_finite(&self) -> bool {
-        self.xy.x.is_finite()
-            && self.xy.y.is_finite()
-            && self.radius.is_finite()
-            && self.top_z.is_finite()
-            && self.floor_z.is_finite()
+        [self.xy.x, self.xy.y, self.radius, self.top_z, self.floor_z].into_iter().all(f64::is_finite)
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThreadParams {
     pub holes: Vec<ThreadHole>,
-    /// Lead per turn, mm - the tool's pitch, handed down by the app's
-    /// dispatch (the tap law reads the same tool field).
+    /// The thread's lead per turn, mm.
     pub pitch: f64,
+    /// Across the tooth crests.
     pub tool_diameter: f64,
-    /// Radial step per turn; the ride lands on the major circle
-    /// whatever this is (turns count up to cover BOTH jobs).
+    /// Rows of teeth along the axis: 1 rides one turn per thread (a
+    /// single-form mill), more finish `rows` threads per revolution.
+    pub rows: u32,
+    /// Radial depth per roughing pass (the first, largest one on a
+    /// constant-area schedule); the last pass lands on the thread depth
+    /// less the allowance.
     pub infeed: f64,
+    /// A boss (external thread) instead of a hole.
+    pub external: bool,
+    pub hand: ThreadHand,
+    /// Climb milling (the orbit sense follows the spindle, #988).
+    pub climb: bool,
+    /// Pass schedule, finish and spring passes, allowance, spindle and
+    /// cutter hand (#988); the default is the #894 ride.
+    pub passes: ThreadPasses,
     pub clearance_z: f64,
+    /// The R plane (#1212): where every feature's rapid stops and its
+    /// feed begins, as on a drill cycle. `None` stops at each feature's
+    /// own top (the #894 ride). Never below a feature's top, never above
+    /// the link plane - both refused by name.
+    pub r_z: Option<f64>,
+    /// The plane links between features travel at; `None` = clearance.
     pub retract_z: Option<f64>,
+    /// Feed at the cutting edge (the thread's own circle), mm/min.
     pub feed: f64,
     pub plunge_feed: f64,
-    /// CCW when true (the standard read for a right-hand thread).
-    pub climb: bool,
 }
 
 impl ThreadParams {
+    /// The radial thread depth this ride cuts, mm.
+    #[must_use]
+    pub fn depth(&self) -> f64 {
+        self.pitch * if self.external { EXTERNAL_THREAD_DEPTH_PER_PITCH } else { THREAD_DEPTH_PER_PITCH }
+    }
+
+    /// Orbit sense: counter-clockwise seen from +Z when true. Climb
+    /// under M3 orbits a hole counter-clockwise and a boss clockwise;
+    /// an M4 spindle (a left-hand-cut mill, #988) flips both.
+    #[must_use]
+    pub fn ccw(&self) -> bool {
+        (self.climb != self.external) != self.passes.spindle_reverse
+    }
+
+    /// Does the helix rise (+Z) as it winds?
+    #[must_use]
+    pub fn rising(&self) -> bool {
+        ThreadHand::of_turn(self.ccw(), 1.0) == Some(self.hand)
+    }
+
+    pub(super) fn link_z(&self) -> f64 {
+        self.retract_z.unwrap_or(self.clearance_z)
+    }
+
     pub(super) fn validate(&self) -> Result<(), GenError> {
-        let mut finite = [
-            self.pitch,
-            self.tool_diameter,
-            self.infeed,
-            self.clearance_z,
-            self.feed,
-            self.plunge_feed,
-        ]
-        .into_iter()
-        .all(f64::is_finite);
+        let bad = |m: &str| Err(GenError::Invalid(m.into()));
+        let mut finite = [self.pitch, self.tool_diameter, self.infeed, self.clearance_z, self.feed, self.plunge_feed]
+            .into_iter()
+            .all(f64::is_finite);
         finite &= self.retract_z.is_none_or(f64::is_finite);
+        finite &= self.r_z.is_none_or(f64::is_finite);
         finite &= self.holes.iter().all(ThreadHole::all_finite);
         if !finite {
-            return Err(GenError::Invalid("parameters must be finite".into()));
+            return bad("parameters must be finite");
         }
         if self.holes.is_empty() {
-            return Err(GenError::Invalid("thread milling needs at least one hole".into()));
+            return bad(if self.external {
+                "thread milling needs at least one boss"
+            } else {
+                "thread milling needs at least one hole"
+            });
         }
         if self.pitch <= 0.0 {
-            return Err(GenError::Invalid(
-                "a thread mill needs a positive pitch to time its helix against".into(),
-            ));
+            return bad("a thread mill needs a positive pitch to time its helix against");
         }
         if self.tool_diameter <= 0.0 {
-            return Err(GenError::Invalid("tool diameter must be positive".into()));
+            return bad("tool diameter must be positive");
         }
-        let h = THREAD_DEPTH_PER_PITCH * self.pitch;
-        if self.infeed <= 0.0 || self.infeed > h {
+        if self.rows == 0 {
+            return bad("a thread mill needs at least one row of teeth");
+        }
+        let h = self.depth();
+        if self.tool_diameter * 0.5 <= h {
             return Err(GenError::Invalid(format!(
-                "infeed must sit between 0 and the {} mm thread depth this pitch stands at",
-                h
+                "a {} mm thread mill is no wider than twice the {h} mm thread depth - its teeth leave no core",
+                self.tool_diameter
             )));
         }
+        if self.infeed <= 0.0 || self.infeed > h + 1e-9 {
+            return Err(GenError::Invalid(format!(
+                "infeed must sit between 0 and the {h} mm thread depth this pitch stands at"
+            )));
+        }
+        if let Some(why) = self.passes.refusal(Some(h), self.infeed) {
+            return Err(GenError::Invalid(why));
+        }
         if self.feed <= 0.0 || self.plunge_feed <= 0.0 {
-            return Err(GenError::Invalid("feeds must be positive".into()));
+            return bad("feeds must be positive");
         }
-        if self.clearance_z < self.holes.iter().map(|x| x.top_z).fold(0.0_f64, f64::max) {
-            return Err(GenError::Invalid("clearance plane below a hole entry".into()));
+        let top = self.holes.iter().map(|x| x.top_z).fold(f64::NEG_INFINITY, f64::max);
+        if self.clearance_z < top {
+            return bad("clearance plane below a thread's entry");
         }
-        for x in &self.holes {
-            if x.radius <= 0.0 {
-                return Err(GenError::Invalid("hole radius must be positive".into()));
+        if self.link_z() < top || self.link_z() > self.clearance_z {
+            return bad("retract plane must stand between the threads' entries and the clearance plane");
+        }
+        if let Some(r) = self.r_z {
+            if r > self.link_z() + 1e-9 {
+                return Err(GenError::Invalid(format!(
+                    "the R plane at z {r} stands above the {} mm retract plane the threads link at - lower the R plane or raise the retract plane",
+                    self.link_z()
+                )));
             }
-            if x.floor_z >= x.top_z {
-                return Err(GenError::Invalid(
-                    "a threaded hole must have its floor below its entry".into(),
-                ));
-            }
-            // #261 part 2: a refusal about this hole points at its mouth.
-            let mouth = Point3::new(x.xy.x, x.xy.y, x.top_z);
-            if x.stepped {
+            // #1212: the rapid stops at R, so R under a feature's top
+            // would rapid into it. Refused by name, never clamped.
+            if let Some(x) = self.holes.iter().find(|x| r < x.top_z - 1e-9) {
+                let what = if self.external { "boss" } else { "hole" };
                 return Err(GenError::invalid_at(
                     format!(
-                        "hole at ({}, {}) carries a counterbore fold - thread milling cuts the \
-                         wall it can see and would silently miss the ring it cannot",
-                        x.xy.x, x.xy.y
+                        "the R plane at z {r} is below the top of the {what} at ({}, {}) at z {} - the rapid down to R would run into it; raise the R plane (feed starts here) to z {} or above",
+                        x.xy.x, x.xy.y, x.top_z, x.top_z
                     ),
-                    mouth,
+                    Point3::new(x.xy.x, x.xy.y, x.top_z),
                 ));
             }
-            // The air door: the whole disc must stand inside the minor
-            // cylinder to plunge at the axis, and the tangent start
-            // circle R_min - r must be a real circle the helix can
-            // begin its orbit on.
-            if self.tool_diameter * 0.5 >= x.radius {
-                return Err(GenError::invalid_at(
-                    format!(
-                        "a {} mm thread mill has no air to enter the {} mm drill hole at ({}, {})",
-                        self.tool_diameter,
-                        x.radius * 2.0,
-                        x.xy.x,
-                        x.xy.y
-                    ),
-                    mouth,
+        }
+        self.holes.iter().try_for_each(|x| self.validate_hole(x, h))
+    }
+
+    fn validate_hole(&self, x: &ThreadHole, h: f64) -> Result<(), GenError> {
+        if x.radius <= 0.0 {
+            return Err(GenError::Invalid("thread radius must be positive".into()));
+        }
+        if x.floor_z >= x.top_z {
+            return Err(GenError::Invalid("a thread must have its floor below its entry".into()));
+        }
+        // #261 part 2: a refusal about this feature points at its mouth.
+        let mouth = Point3::new(x.xy.x, x.xy.y, x.top_z);
+        let at = |m: String| Err(GenError::invalid_at(m, mouth));
+        if self.external {
+            if x.radius <= h {
+                return at(format!(
+                    "the {} mm boss at ({}, {}) is thinner than the {h} mm thread is deep",
+                    x.radius * 2.0,
+                    x.xy.x,
+                    x.xy.y
                 ));
             }
+            return Ok(());
+        }
+        if x.stepped {
+            return at(format!(
+                "hole at ({}, {}) carries a counterbore fold - thread milling cuts the \
+                 wall it can see and would silently miss the ring it cannot",
+                x.xy.x, x.xy.y
+            ));
+        }
+        // The air door: the whole cutter must stand inside the minor
+        // cylinder to travel the axis, and the first pass's centre
+        // circle must be a real circle.
+        if self.tool_diameter * 0.5 >= x.radius {
+            return at(format!(
+                "a {} mm thread mill has no air to enter the {} mm drill hole at ({}, {})",
+                self.tool_diameter,
+                x.radius * 2.0,
+                x.xy.x,
+                x.xy.y
+            ));
         }
         Ok(())
     }
 }
 
-/// One recorded ride move - the kernel collects these so the retract
-/// can post them BACKWARDS, the thread mill's own law.
-#[derive(Clone, Copy)]
-enum Step {
-    Line(Point3),
-    Arc { to: Point3, center: Point2, ccw: bool },
+/// One radial pass: its centre-circle radius, the axial travel of its
+/// lead arcs and the feed programmed at the tool centre.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct Pass {
+    pub rho: f64,
+    pub lead_z: f64,
+    pub feed: f64,
 }
 
-fn run_steps(b: &mut PathBuilder, steps: &[Step], feed: f64, reverse: bool, ride_start: Point3) {
-    if !reverse {
-        for s in steps {
-            match s {
-                Step::Line(to) => b.push(MoveKind::Feed, *to, Some(feed)),
-                Step::Arc { to, center, ccw } => {
-                    b.push_arc(MoveKind::Feed, *to, Some(feed), *center, *ccw);
-                }
-            }
+/// What one feature's ride is made of: the passes, the low tip height
+/// of each axial level, the turns per level and the heights that bound
+/// the ride.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct HolePlan {
+    pub passes: Vec<Pass>,
+    /// The largest lead-arc axial travel: every pass's helix starts
+    /// this far above its level's low height, so all passes share one
+    /// helix.
+    pub lead_max: f64,
+    pub lows: Vec<f64>,
+    pub turns: u32,
+    /// Where the rapid stops and the feed begins: the R plane (or the
+    /// feature's top when none is stated), or the ride's own highest tip
+    /// height when that stands higher.
+    pub rapid_z: f64,
+}
+
+impl HolePlan {
+    pub(super) fn of(p: &ThreadParams, x: &ThreadHole) -> Result<Self, GenError> {
+        let r = p.tool_diameter * 0.5;
+        let h = p.depth();
+        let passes: Vec<Pass> = p
+            .passes
+            .depths(h, p.infeed)
+            .into_iter()
+            .map(|d| {
+                let (rho, lead_z, scale) = if p.external {
+                    let rho = x.radius + r - d;
+                    // A quarter arc of the tool's own radius: its axial
+                    // travel at the helix's rate per unit of path.
+                    (rho, p.pitch * r / (4.0 * rho), rho / (rho - r))
+                } else {
+                    let rho = x.radius - r + d;
+                    // The semicircle from the axis: a quarter pitch.
+                    (rho, p.pitch * 0.25, rho / (rho + r))
+                };
+                Pass { rho, lead_z, feed: (p.feed * scale * 1000.0).round() / 1000.0 }
+            })
+            .collect();
+        let lead_max = passes.iter().map(|q| q.lead_z).fold(0.0, f64::max);
+        let floor = if x.through { x.floor_z - p.pitch } else { x.floor_z };
+        let span = x.top_z - floor - lead_max;
+        let per_level = f64::from(p.rows) * p.pitch;
+        let (turns, levels) = if p.rows == 1 {
+            (((span / p.pitch) - 1e-9).ceil().clamp(1.0, 100_000.0) as u32, 1)
+        } else {
+            (1, ((span / per_level) - 1e-9).ceil().clamp(1.0, 100_000.0) as u32)
+        };
+        let lows: Vec<f64> = (0..levels).map(|k| floor + f64::from(k) * per_level).collect();
+        let last = lows.last().copied().unwrap_or(floor);
+        let run_out = last + 2.0 * lead_max + f64::from(turns) * p.pitch;
+        if !(run_out.is_finite() && passes.iter().all(|q| q.rho.is_finite() && q.rho > 0.0 && q.feed > 0.0)) {
+            return Err(GenError::Invalid("thread ride left the finite horizon".into()));
         }
-        return;
-    }
-    // The mirror ride: step i ran start_i -> end_i forward; walking
-    // backwards the tool lands on start_i, and an arc reversed swaps
-    // its ends and its turn direction about the same center.
-    let end_of = |i: usize| -> Point3 {
-        match &steps[i] {
-            Step::Line(to) | Step::Arc { to, .. } => *to,
+        if run_out > p.link_z() + 1e-9 {
+            return Err(GenError::invalid_at(
+                format!(
+                    "the thread at ({}, {}) runs out {run_out} mm high, above the {} mm retract plane - raise the plane",
+                    x.xy.x,
+                    x.xy.y,
+                    p.link_z()
+                ),
+                Point3::new(x.xy.x, x.xy.y, x.top_z),
+            ));
         }
-    };
-    for i in (0..steps.len()).rev() {
-        let start = if i == 0 { ride_start } else { end_of(i - 1) };
-        match &steps[i] {
-            Step::Line(_) => b.push(MoveKind::Feed, start, Some(feed)),
-            Step::Arc { center, ccw, .. } => {
-                b.push_arc(MoveKind::Feed, start, Some(feed), *center, !ccw);
-            }
-        }
+        Ok(Self { passes, lead_max, lows, turns, rapid_z: p.r_z.unwrap_or(x.top_z).max(x.top_z).max(run_out) })
     }
 }
 
-/// Helical thread milling over a hole list. Per hole: rapid down the
-/// axis's air, feed out to the tangent circle, the ride (helix with
-/// per-turn infeed, then an in-place finishing spiral), the reversed
-/// ride as retract, and a clearance rapid at the axis.
-pub fn thread_mill(p: &ThreadParams) -> Result<Toolpath, GenError> {
-    p.validate()?;
-    let r = p.tool_diameter * 0.5;
-    let h = THREAD_DEPTH_PER_PITCH * p.pitch;
-    let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
-
-    for x in &p.holes {
-        let rho_end = x.radius + h - r; // major circle, minus one tool
-        let rho_0 = x.radius - r; // tangent: rim on the wall, no cut yet
-        let span = x.top_z - x.floor_z;
-        let n_z = (span / p.pitch).ceil().max(1.0) as u32;
-        let n_r = ((h / p.infeed).ceil().max(1.0)) as u32;
-        // Turn 0 is the tangent ride (infeed count starts at one);
-        // the turns then run until BOTH jobs are done. Turns past the
-        // floor-count ride flat at depth, stepping out - the finishing
-        // spiral the last fraction of the depth needs.
-        let turns = n_z.max(n_r).max(1) + 1;
-
-        // Air moves first: down the axis (the door proved the whole
-        // disc fits inside the hole), then the tangent feed-out.
-        b.push(
-            MoveKind::Rapid,
-            Point3::new(lattice(x.xy.x), lattice(x.xy.y), p.clearance_z),
-            None,
-        );
-        b.push(
-            MoveKind::Rapid,
-            Point3::new(lattice(x.xy.x), lattice(x.xy.y), x.top_z),
-            None,
-        );
-        b.push(
-            MoveKind::Feed,
-            Point3::new(lattice(x.xy.x + rho_0), lattice(x.xy.y), x.top_z),
-            Some(p.plunge_feed),
-        );
-
-        // The ride. Per turn t: a radial infeed step (t > 0, only
-        // while the radius still travels), then two half-arcs whose
-        // Z drops pitch/2 each until the floor, flat after it.
-        let mut ride: Vec<Step> = Vec::with_capacity(turns as usize * 3);
-        for t in 0..turns {
-            // This turn's circle; the z the turn opens at is the
-            // previous arc's end (top_z for turn 0).
-            let rho = if t == 0 {
-                rho_0
-            } else {
-                (rho_0 + p.infeed * t as f64).min(rho_end.max(rho_0))
-            };
-            if t > 0 {
-                let z = ride
-                    .last()
-                    .map(|s| match s {
-                        Step::Line(to) | Step::Arc { to, .. } => to.z,
-                    })
-                    .unwrap_or(x.top_z);
-                ride.push(Step::Line(Point3::new(
-                    lattice(x.xy.x + rho),
-                    lattice(x.xy.y),
-                    z,
-                )));
-            }
-            for j in 1..=2 {
-                // Half-arc j of turn t: forward half count k = 2t + j;
-                // the lead is exact pitch per turn until the floor,
-                // then the ride goes flat and only spirals out.
-                let k = (2 * t + j) as f64;
-                let z = (x.top_z - p.pitch * k / 2.0).max(x.floor_z);
-                let px = if j % 2 == 1 { x.xy.x - rho } else { x.xy.x + rho };
-                ride.push(Step::Arc {
-                    to: Point3::new(lattice(px), lattice(x.xy.y), z),
-                    center: x.xy,
-                    ccw: p.climb,
-                });
-            }
-        }
-        // The last arc must land EXACTLY on the floor when the depth
-        // job finishes first, and on the major circle when the radius
-        // job does - both are true by construction: z clamps at
-        // floor_z, rho clamps at rho_end.
-        let ride_start = b.at();
-        run_steps(&mut b, &ride, p.feed, false, ride_start);
-        // Retract: the same ride backwards, at feed - a thread mill
-        // leaves through its own groove (the handbook's reason its
-        // flutes cut both ways).
-        run_steps(&mut b, &ride, p.plunge_feed, true, ride_start);
-        // Up the axis's air.
-        b.push(
-            MoveKind::Rapid,
-            Point3::new(lattice(x.xy.x), lattice(x.xy.y), x.top_z),
-            None,
-        );
-        b.push(
-            MoveKind::Rapid,
-            Point3::new(lattice(x.xy.x), lattice(x.xy.y), p.clearance_z),
-            None,
-        );
-    }
-
-    let path = b.finish();
-    if !path.all_finite() {
-        return Err(GenError::Invalid("path left the finite horizon".into()));
-    }
-    Ok(path)
-}
+pub use super::thread_ride::thread_mill;

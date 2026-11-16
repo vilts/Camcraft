@@ -37,10 +37,37 @@ blockquote { margin: 1em 0; padding: 8px 16px; border-left: 4px solid var(--acce
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin-top: 24px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 4px 18px 12px; }
 .card h2 { border: 0; margin-top: 0.8em; }
+.button { display: inline-block; padding: 8px 16px; border-radius: 6px; background: var(--accent); color: var(--bg); font-weight: 600; text-decoration: none; }
 .crumbs { margin: 0; font-size: 0.9rem; }
 .pagetoc { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 8px 16px; margin-bottom: 1.5em; }
 .pagetoc ul { margin: 4px 0; }
 .toc li { margin: 4px 0; }
+.guide-layout { display: grid; grid-template-columns: 190px minmax(0, 1fr); gap: 24px; }
+.guide-content { min-width: 0; }
+.guide-nav { align-self: start; position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; border-right: 1px solid var(--line); padding-right: 16px; font-size: 0.9rem; }
+.guide-groups { list-style: none; margin: 12px 0; padding: 0; }
+.guide-groups > li { margin: 8px 0; }
+.guide-groups summary { cursor: pointer; }
+.guide-groups ul { padding-left: 20px; }
+.guide-groups li li { margin: 6px 0; }
+.guide-nav [aria-current="page"] { color: var(--fg); font-weight: 700; }
+@media (max-width: 720px) {
+  .guide-layout { grid-template-columns: minmax(0, 1fr); }
+  .guide-nav { position: static; max-height: none; border-right: 0; border-bottom: 1px solid var(--line); padding-right: 0; }
+}
 .pager { display: flex; justify-content: space-between; gap: 16px; margin-top: 32px; padding-top: 12px; border-top: 1px solid var(--line); }
 .foot { border-top: 1px solid var(--line); color: var(--muted); font-size: 0.9rem; padding-top: 12px; padding-bottom: 24px; }
 .small { font-size: 0.82rem; }
+/* Search box in the header (#1245): results are a dropdown under the field. */
+.visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.search { position: relative; flex: 1 1 200px; max-width: 320px; margin: 0 0 0 auto; }
+.search input { width: 100%; font: inherit; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+.search input:focus-visible, .search-results a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.search-results { position: absolute; top: 100%; left: 0; right: 0; z-index: 20; margin: 4px 0 0; padding: 4px; list-style: none; max-height: 60vh; overflow-y: auto; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.18); }
+.search-results[hidden] { display: none; }
+.search-results li { margin: 0; }
+.search-results a { display: block; padding: 6px 8px; border-radius: 4px; color: var(--fg); text-decoration: none; }
+.search-results a:hover, .search-results a:focus-visible { background: var(--card); }
+.search-results a small { display: block; color: var(--muted); font-size: 0.85rem; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-results .search-empty { padding: 6px 8px; color: var(--muted); font-size: 0.9rem; }
+@media (max-width: 600px) { .search { flex-basis: 100%; max-width: none; margin: 0; } }

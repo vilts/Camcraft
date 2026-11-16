@@ -199,7 +199,13 @@ fn the_refusal_names_a_fitting_catalog_entry() {
     let (world, _h) = world_with(None, &[]);
     let cat = catalog();
     for info in camcraft_app::operation::KindInfo::ALL {
-        let why = tool_gate::create_refusal(&world, info).expect("an empty rack refuses every kind");
+        // #532: a kind that mounts no library tool (the wire EDM's) is
+        // never refused for an empty rack - it needs no tool to exist.
+        if !info.mounts_tool() {
+            assert_eq!(tool_gate::create_refusal(&world, info), None, "{}", info.label);
+            continue;
+        }
+        let why = tool_gate::create_refusal(&world, info).expect("an empty rack refuses every kind that mounts a tool");
         assert!(why.starts_with("No "), "{why}");
         let named = why
             .split_once(" - add '")
@@ -215,7 +221,7 @@ fn the_refusal_names_a_fitting_catalog_entry() {
     }
     for (ty, want) in [
         (OpType::Drill, "'DR-0600' (6 mm drill)"),
-        (OpType::Thread, "'TAP-M6' (6 mm tap)"),
+        (OpType::Thread, "'TM-0600-P125' (6 mm thread mill)"),
         (OpType::BoringTurning, "'BR-1000' (10 mm boring bar)"),
         (OpType::GrooveFinish, "'GT-0300' (3 mm grooving blade)"),
         (OpType::Threading, "'TD-1732-60' (1.732 mm threading insert)"),

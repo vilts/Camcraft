@@ -11,6 +11,7 @@ use camcraft_app::geometry::{Point3, quat_from_euler};
 use camcraft_app::model;
 use camcraft_app::schema::Location;
 use camcraft_app::vise::{self, ViseParams};
+use camcraft_app::vise_fit;
 
 use super::{ErrorScope, FixtureLibDialog, State};
 
@@ -30,6 +31,10 @@ pub struct ViseDraft {
     pub pos: [f64; 3],
     pub yaw_deg: f64,
     pub error: Option<String>,
+    /// What fitting would do right now, refreshed each frame by the
+    /// dialog from the app's `vise_fit::preview` (`None` before the first
+    /// frame: Fit stands as ticked).
+    pub fit: Option<vise_fit::VisePreview>,
 }
 
 impl ViseDraft {
@@ -38,7 +43,7 @@ impl ViseDraft {
     pub fn new(setup: String, size: usize) -> Self {
         let size = size.min(vise::presets().count().saturating_sub(1));
         let params = vise::preset(size).map_or_else(empty_params, vise::ViseSize::half_open);
-        Self { setup, size, params, fit_stock: true, pos: [0.0; 3], yaw_deg: 0.0, error: None }
+        Self { setup, size, params, fit_stock: true, pos: [0.0; 3], yaw_deg: 0.0, error: None, fit: None }
     }
 
     /// Pick size row `size`: its figures replace the draft's.

@@ -1,6 +1,7 @@
 //! The XY trace of one move for law (b)'s whole-move wall reading
 //! (#905): a straight move's segment, or an XY arc's true circle, with
-//! the exact least distance from that trace to a wall edge. Specced from
+//! the exact least distance from that trace to a wall edge (an XZ / YZ
+//! arc's footprint is [`super::arc_wall_plane`]'s, #946). Specced from
 //! elementary plane geometry (point-circle distance along the radius,
 //! line-circle intersection); no sampling.
 //!
@@ -23,7 +24,7 @@
 //! keeps the distance from ever reading farther than the truth.
 
 use super::arc_bulge::ARC_PAD;
-use super::laws::{dist2_segs, orient, proper_cross};
+use super::laws::{dist2_seg, dist2_segs, orient, proper_cross, CROSSING_TOUCH};
 use crate::cl::Move;
 use crate::geo2d::Point2;
 use std::f64::consts::PI;
@@ -36,6 +37,10 @@ pub(super) enum Trace {
     Seg(Point2, Point2),
     /// An XY arc (a helix included: its XY trace is the arc).
     Arc(XyArc),
+    /// A helical XZ / YZ arc's footprint: a polyline through points of
+    /// it, every piece read `pad` nearer than it stands (#946,
+    /// [`super::arc_wall_plane`]).
+    Poly(Vec<Point2>, f64),
     /// An arc whose centre or radius is not a number: the law fails
     /// closed on it.
     Unread,
@@ -56,19 +61,19 @@ pub(super) struct XyArc {
 }
 
 impl Trace {
-    /// The trace of `m`, or `None` for an arc in XZ or YZ (its XY trace
-    /// is not a circle; the law points read it as before).
-    pub(super) fn of(m: &Move) -> Option<Trace> {
+    /// The trace of `m`. An arc in XZ or YZ has a footprint that is not
+    /// a circle: [`super::arc_wall_plane`] reads it (#946).
+    pub(super) fn of(m: &Move) -> Trace {
         let from = Point2::new(m.from.x, m.from.y);
         let to = Point2::new(m.to.x, m.to.y);
-        let Some(arc) = m.arc else { return Some(Trace::Seg(from, to)) };
+        let Some(arc) = m.arc else { return Trace::Seg(from, to) };
         if !arc.plane.is_xy() {
-            return None;
+            return super::arc_wall_plane::trace(m, arc);
         }
         let c = arc.center;
         let (ra, rb) = ((from.x - c.x).hypot(from.y - c.y), (to.x - c.x).hypot(to.y - c.y));
         if !(c.x.is_finite() && c.y.is_finite() && ra.is_finite() && rb.is_finite()) {
-            return Some(Trace::Unread);
+            return Trace::Unread;
         }
         let (a, b) = if arc.ccw { (from, to) } else { (to, from) };
         let a0 = (a.y - c.y).atan2(a.x - c.x);
@@ -77,9 +82,9 @@ impl Trace {
         // The chord law's own degeneracies (`cl::arc_chords`): it cuts
         // these as the straight chord, so that is what is read.
         if ra.max(rb) <= f64::EPSILON || !sweep.is_finite() || sweep <= 0.0 {
-            return Some(Trace::Seg(from, to));
+            return Trace::Seg(from, to);
         }
-        Some(Trace::Arc(XyArc {
+        Trace::Arc(XyArc {
             c,
             r_lo: (ra.min(rb) - ARC_PAD).max(0.0),
             r_hi: ra.max(rb) + ARC_PAD,
@@ -87,7 +92,7 @@ impl Trace {
             b,
             a0,
             sweep,
-        }))
+        })
     }
 
     /// Whether the trace comes nearer than `floor` to the edge `p`-`q`.
@@ -98,6 +103,10 @@ impl Trace {
             Trace::Seg(a, b) => dist2_segs(*a, *b, p, q) < floor * floor,
             // A NaN distance reads near: the law fails closed.
             Trace::Arc(arc) => arc.dist_seg(p, q).ge(&floor).not(),
+            Trace::Poly(pts, pad) => {
+                let f = floor + pad;
+                pts.windows(2).any(|w| dist2_segs(w[0], w[1], p, q).ge(&(f * f)).not())
+            }
             Trace::Unread => true,
         }
     }
@@ -108,6 +117,34 @@ impl Trace {
         match self {
             Trace::Seg(a, b) => proper_cross(*a, *b, p, q),
             Trace::Arc(arc) => arc.crosses(p, q),
+            Trace::Poly(pts, _) => pts.windows(2).any(|w| proper_cross(w[0], w[1], p, q)),
+            Trace::Unread => false,
+        }
+    }
+
+    /// Whether the trace passes through the loop vertex `v` from one side
+    /// of the loop to the other (#1659): `v` lies on the trace's interior
+    /// (within [`CROSSING_TOUCH`]) and its neighbours `u` and `w` stand
+    /// on opposite sides farther than [`CROSSING_TOUCH`] from the trace.
+    /// A row through a vertex of the rim crosses as truly as one that
+    /// cuts an edge's interior, but [`Self::crosses`] counts only the
+    /// second. A touch (both neighbours on one side) or a neighbour on
+    /// the trace itself is no crossing.
+    pub(super) fn through(&self, u: Point2, v: Point2, w: Point2) -> bool {
+        let seg = |a: Point2, b: Point2| {
+            let touch2 = CROSSING_TOUCH * CROSSING_TOUCH;
+            let len2 = (b.x - a.x).powi(2) + (b.y - a.y).powi(2);
+            let end = |e: Point2| (v.x - e.x).powi(2) + (v.y - e.y).powi(2) <= touch2;
+            let (su, sw) = (orient(a, b, u), orient(a, b, w));
+            // Orientation is distance times length: keep the touch band in mm.
+            let band = CROSSING_TOUCH * len2.sqrt();
+            let opposite = (su > band && sw < -band) || (sw > band && su < -band);
+            len2 > touch2 && dist2_seg(v, a, b) <= touch2 && !end(a) && !end(b) && opposite
+        };
+        match self {
+            Trace::Seg(a, b) => seg(*a, *b),
+            Trace::Arc(arc) => arc.through(u, v, w),
+            Trace::Poly(pts, _) => pts.windows(2).any(|p| seg(p[0], p[1])),
             Trace::Unread => false,
         }
     }
@@ -132,11 +169,13 @@ impl XyArc {
         // Where the segment crosses the lines through the centre and each
         // arc end: between two such breaks it is wholly in or out of the
         // wedge.
-        let mut ts = vec![0.0, 1.0];
-        for e in [self.a, self.b] {
+        // A fixed buffer, no allocation per edge: an unused break repeats
+        // 1.0, a zero-length piece that is never in the wedge alone.
+        let mut ts = [0.0, 1.0, 1.0, 1.0];
+        for (k, e) in [self.a, self.b].into_iter().enumerate() {
             let (o0, o1) = (orient(self.c, e, p), orient(self.c, e, q));
             if (o0 > 0.0) != (o1 > 0.0) && o0 != o1 {
-                ts.push((o0 / (o0 - o1)).clamp(0.0, 1.0));
+                ts[2 + k] = (o0 / (o0 - o1)).clamp(0.0, 1.0);
             }
         }
         ts.sort_by(f64::total_cmp);
@@ -164,6 +203,22 @@ impl XyArc {
             best = best.min(gap);
         }
         best
+    }
+
+    /// [`Trace::through`] for the arc, on the circle through the band's
+    /// middle: `v` on that circle strictly inside the sweep, `u` and `w`
+    /// on opposite sides farther than [`CROSSING_TOUCH`] from it.
+    fn through(&self, u: Point2, v: Point2, w: Point2) -> bool {
+        let r = 0.5 * (self.r_lo + self.r_hi);
+        let th = (v.y - self.c.y).atan2(v.x - self.c.x);
+        let off = (th - self.a0).rem_euclid(2.0 * PI);
+        let (du, dw) = (self.rho(u) - r, self.rho(w) - r);
+        let opposite = (du > CROSSING_TOUCH && dw < -CROSSING_TOUCH)
+            || (dw > CROSSING_TOUCH && du < -CROSSING_TOUCH);
+        (self.rho(v) - r).abs() <= CROSSING_TOUCH
+            && off > 0.0
+            && off < self.sweep
+            && opposite
     }
 
     /// A transversal crossing of the segment's interior with the arc's
@@ -200,6 +255,51 @@ mod tests {
     use crate::cl::MoveKind;
     use crate::geometry::Point3;
 
+    #[test]
+    fn rim_vertex_segment_neighbours_need_distance_band() {
+        let v = Point2::new(0.0, 0.0);
+        for length in [0.01, 1000.0] {
+            let a = Point2::new(-length, 0.0);
+            let b = Point2::new(length, 0.0);
+            for trace in [Trace::Seg(a, b), Trace::Poly(vec![a, b], 0.0)] {
+                for (du, dw) in [(0.25, -0.25), (0.25, -4.0), (4.0, -0.25)] {
+                    let u = Point2::new(-length * 0.5, du * CROSSING_TOUCH);
+                    let w = Point2::new(length * 0.5, dw * CROSSING_TOUCH);
+                    assert!(!trace.through(u, v, w), "near-line neighbour is a touch");
+                }
+                let u = Point2::new(-length * 0.5, 4.0 * CROSSING_TOUCH);
+                let w = Point2::new(length * 0.5, -4.0 * CROSSING_TOUCH);
+                assert!(trace.through(u, v, w), "true vertex crossing survives");
+                assert!(trace.through(w, v, u), "reversed crossing survives");
+                assert!(!trace.through(u, a, w), "trace endpoint is only a touch");
+            }
+        }
+    }
+
+    #[test]
+    fn rim_vertex_arc_neighbours_need_distance_band() {
+        let m = Move::new(
+            MoveKind::Feed,
+            Point3::new(10.0, 0.0, 0.0),
+            Point3::new(-10.0, 0.0, 0.0),
+            Some(100.0),
+        )
+        .with_arc(Point2::new(0.0, 0.0), true);
+        let trace = Trace::of(&m);
+        let v = Point2::new(0.0, 10.0);
+        for (du, dw) in [(0.25, -0.25), (0.25, -4.0), (4.0, -0.25)] {
+            let u = Point2::new(0.0, 10.0 + du * CROSSING_TOUCH);
+            let w = Point2::new(0.0, 10.0 + dw * CROSSING_TOUCH);
+            assert!(!trace.through(u, v, w), "near-circle neighbour is a touch");
+        }
+        let u = Point2::new(0.0, 10.0 + 4.0 * CROSSING_TOUCH);
+        let w = Point2::new(0.0, 10.0 - 4.0 * CROSSING_TOUCH);
+        assert!(trace.through(u, v, w), "true circle crossing survives");
+        assert!(trace.through(w, v, u), "reversed circle crossing survives");
+        assert!(!trace.through(u, Point2::new(10.0, 0.0), w));
+        assert!(!trace.through(u, Point2::new(0.0, -10.0), w));
+        assert!(!trace.through(u, v, u), "same-side neighbours only touch");
+    }
     /// The exact distance agrees with a dense sampling of the arc and
     /// the segment (never farther than the samples; within their
     /// spacing of them: up to 0.044 mm on the 4.5 rad arc, which meets
@@ -219,7 +319,7 @@ mod tests {
         for (s0, s1, ccw) in [(0.3, 1.4, true), (2.0, 0.1, false), (-1.0, 3.5, true), (4.0, 0.5, true)] {
             let at = |a: f64| Point3::new(c.x + r * f64::cos(a), c.y + r * f64::sin(a), 0.0);
             let m = Move::new(MoveKind::Feed, at(s0), at(s1), Some(100.0)).with_arc(c, ccw);
-            let Some(Trace::Arc(arc)) = Trace::of(&m) else { panic!("an xy arc") };
+            let Trace::Arc(arc) = Trace::of(&m) else { panic!("an xy arc") };
             let pts: Vec<Point2> = m.chords(1e-5).into_iter().flat_map(|(a, b)| [a, b]).collect();
             for _ in 0..200 {
                 let p = Point2::new(c.x - 25.0 + 50.0 * rnd(), c.y - 25.0 + 50.0 * rnd());

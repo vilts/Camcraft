@@ -2,7 +2,9 @@
 
 use super::kernel::{MAX_CELLS_PER_AXIS, StockError, part_surface};
 use super::scan_arc::ScanArc;
+use super::field_lathe::LatheAxis;
 use super::scan_hidden::{hidden_rest, HiddenRest, ScanBudget};
+use super::scan_turned::TurnedBand;
 
 use crate::cl::{Move, MoveKind};
 use crate::geo2d::Point2;
@@ -89,7 +91,7 @@ pub fn envelope_scan(
     r: f64,
     tol: f64,
 ) -> Result<EnvelopeReport, StockError> {
-    envelope_scan_lift(facets, moves, r, tol, r, ScanBudget::SHIPPED)
+    envelope_scan_lift(facets, moves, r, tol, r, ScanBudget::SHIPPED, (None, 0.0))
 }
 
 /// `envelope_scan` under a stated hidden-rest budget (M13.1): the
@@ -102,7 +104,7 @@ pub fn envelope_scan_within(
     tol: f64,
     budget: ScanBudget,
 ) -> Result<EnvelopeReport, StockError> {
-    envelope_scan_lift(facets, moves, r, tol, r, budget)
+    envelope_scan_lift(facets, moves, r, tol, r, budget, (None, 0.0))
 }
 
 /// The same law for a path whose positions ARE the envelope centers
@@ -119,7 +121,23 @@ pub fn envelope_scan_centers(
     r: f64,
     tol: f64,
 ) -> Result<EnvelopeReport, StockError> {
-    envelope_scan_lift(facets, moves, r, tol, 0.0, ScanBudget::SHIPPED)
+    envelope_scan_turned(facets, moves, r, tol, (None, 0.0))
+}
+
+/// `envelope_scan_centers` for a turning path whose spindle is known
+/// (#1408, `scan_turned`): the hidden-rest half reads each hidden top
+/// on its orbit about `axis`, excuses one outside the axial band the
+/// nose centres travel or one the nose (grown by the op's `leave`)
+/// cannot touch, and lets `leave` stand. `(None, _)` is
+/// `envelope_scan_centers`, bit for bit.
+pub fn envelope_scan_turned(
+    facets: &[Triangle],
+    moves: &[Move],
+    r: f64,
+    tol: f64,
+    (axis, leave): (Option<LatheAxis>, f64),
+) -> Result<EnvelopeReport, StockError> {
+    envelope_scan_lift(facets, moves, r, tol, 0.0, ScanBudget::SHIPPED, (axis, leave))
 }
 
 fn envelope_scan_lift(
@@ -129,6 +147,7 @@ fn envelope_scan_lift(
     tol: f64,
     center_lift: f64,
     budget: ScanBudget,
+    (axis, leave): (Option<LatheAxis>, f64),
 ) -> Result<EnvelopeReport, StockError> {
     if !(r.is_finite() && r > 0.0) {
         return Err(StockError::Invalid(format!(
@@ -240,7 +259,10 @@ fn envelope_scan_lift(
     // visible surface OCCLUDES - a ceiling's shadow over a floor -
     // judged by this same distance law. The union lives in the FIELD:
     // the ridge numbers above stand as computed, predicate untouched.
-    match hidden_rest(facets, &segs, &arcs, &part, (x0, y0, cell), nx, ny, r, floor, budget) {
+    // #1408: a turning path's hidden tops read as the turning work
+    // sees them (`scan_turned`); a mill's band is `None`.
+    let band = axis.and_then(|a| TurnedBand::of(a, &segs, facets, (r, leave, tol)));
+    match hidden_rest(facets, &segs, &arcs, &part, (x0, y0, cell), nx, ny, r, floor, budget, band.as_ref()) {
         Ok((hidden, hidden_at)) => {
             if hidden > rep.rest_mm {
                 rep.rest_mm = hidden;

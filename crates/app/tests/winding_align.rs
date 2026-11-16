@@ -4,7 +4,8 @@
 //! two edges no longer lay a plane - refused as edges, whatever the
 //! winding); the same cube wound outward still works; an open box, a body
 //! wound both ways and a non-manifold body refuse by name. The shipped
-//! test models (STL, OBJ, STEP) read as outward.
+//! test models (STL, OBJ, STEP) read as outward; the inside-out STL
+//! fixture is turned outward at import and says so (#1672, #1752).
 //! Provenance: our own fixtures over the divergence-theorem volume sign.
 //!
 //! Gate map (#366): covers app::pick::winding, app::pick::align
@@ -180,13 +181,29 @@ fn the_shipped_test_models_read_as_outward() {
 }
 
 #[test]
-fn the_inside_out_stl_fixture_reads_inside_out_and_refuses() {
+fn the_inside_out_stl_fixture_is_turned_outward_at_import_and_lays() {
     // testdata/models/cube_inside_out.stl: a 20 x 20 x 10 block exported
     // inside-out (winding and stored normals both inward) - the GUI repro.
+    // #1672 (PR #1686): the importer turns a closed, isolated inward body
+    // outward and notes it (#1752: this test still expected the old
+    // refusal). The refusal of an inside-out body that reaches the world
+    // unturned stays pinned by the in-memory tests above; a nested inward
+    // shell, which cannot be turned safely, is refused at import
+    // (import_outward.rs).
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/cube_inside_out.stl");
+    let g = import::load_model_graded(&path).expect("the fixture imports");
+    assert_eq!(g.notes.len(), 1, "one note for the turn: {:?}", g.notes);
+    assert!(
+        g.notes[0].contains("1 closed solid(s) wound inward") && g.notes[0].contains("12 facet(s) reversed"),
+        "the import notes the turn of all 12 facets: {:?}",
+        g.notes
+    );
+    assert_eq!(winding_of(&g.mesh.facets).bodies, vec![BodyWinding::Outward]);
+    // The plain loader gives the same turned mesh.
     let m = import::load_model(&path).expect("the fixture imports");
-    let wind = winding_of(&m.facets);
-    assert_eq!(wind.bodies, vec![BodyWinding::InsideOut]);
+    assert_eq!(m, g.mesh);
     let w = world_of(m);
-    assert_named(&lay_on_plane(&w, &[face(&w, TOP)], G17).expect_err("refused"), "inside-out");
+    let a = lay_on_plane(&w, &[face(&w, TOP)], PlaneLay { plane: ArcPlane::Xy, flip: true, place: false })
+        .expect("the turned block lays on its top face");
+    assert!(a.rot[3].abs() < 1e-9, "a half turn, as the outward block: {a:?}");
 }

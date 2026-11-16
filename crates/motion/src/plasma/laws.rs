@@ -3,7 +3,8 @@
 //!
 //! - **Kerf law.** Every lit move of a closed contour keeps its kerf off
 //!   the part: no chord point lies inside the part grown by kerf / 2
-//!   (less [`KERF_TOL`]). A cut that would reach the part is refused by
+//!   (less [`super::KERF_TOL`], itself less a coarse model's excess while a
+//!   positive tolerance is left - #1053). A cut that would reach the part is refused by
 //!   name, never trimmed.
 //! - **Cover law** (#676 decision 12, #672). Every edge of a closed
 //!   contour is reached by its own cut's kerf: no point of the nominal
@@ -35,7 +36,6 @@ use crate::machining2d::GenError;
 use super::emit::FIT_TOL;
 use super::nest::Contour;
 use super::ring::{dist, unit};
-use super::KERF_TOL;
 
 /// How far apart (mm) the contour and the chords are sampled.
 const STEP: f64 = 0.25;
@@ -75,9 +75,10 @@ pub(super) fn cover_law(
     spans: &[TorchSpan],
     cs: &[Contour],
     order: &[usize],
-    kerf: f64,
+    (kerf, tol): (f64, f64),
 ) -> Result<(), GenError> {
-    let reach = kerf + KERF_TOL;
+    // `tol` is [`super::KERF_TOL`], less a coarse model's excess (#1053).
+    let reach = kerf + tol;
     for (sp, &k) in spans.iter().zip(order) {
         let Some(c) = cs.get(k) else { continue };
         if c.role == ContourRole::Open || sp.role == ContourRole::Open {

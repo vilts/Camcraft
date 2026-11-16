@@ -22,10 +22,11 @@
 //!   then calls the very function it called before #326, so an untouched
 //!   setup is byte-identical (paths, stamps, posts and saved files).
 //! - **Refuse what is not verified.** Generation in an aligned setup is
-//!   wired for the 2D milling kinds over a whole model or the stock;
-//!   every other kind, a pick, area controls, a tilt and a non-mill
-//!   machine are refused by name ([`generation_problem`]) - never cut in
-//!   the unaligned frame.
+//!   wired for `Face`, `Contour`, `Pocket`, `Adaptive2D`, `Pocket3D`
+//!   and `Finish3D` over a whole model, the stock, or picked features.
+//!   The 3D kinds also resolve area controls in the setup frame.
+//!   Other kinds, 2D area controls, a tilt and a non-mill machine are
+//!   refused by name ([`generation_problem`]).
 
 use flecs_ecs::core::EntityViewGet; // try_get is not re-exported in prelude (0.2.2)
 use flecs_ecs::prelude::{Entity, World};
@@ -153,8 +154,22 @@ pub fn solid_aabb_in(world: &World, declared: Option<&str>) -> Option<Aabb> {
     if alignment(world, declared).is_none() {
         return model::solid_world_aabb(world);
     }
+    models_aabb_in(world, declared, |_| true)
+}
+
+/// The PARTS' bounds in a setup's frame - every model but the fixtures
+/// (vises, accessories, plates, tagged meshes) of any setup: what the
+/// Top/Bottom of Model heights stand for (#1529). Fixtures are judged
+/// by the collision laws, never measured as the part.
+#[must_use]
+pub fn part_aabb_in(world: &World, declared: Option<&str>) -> Option<Aabb> {
+    models_aabb_in(world, declared, |e| !model::is_fixture(world, e))
+}
+
+fn models_aabb_in(world: &World, declared: Option<&str>, keep: impl Fn(&Entity) -> bool) -> Option<Aabb> {
     let tris: Vec<Triangle> = model::model_entities(world)
         .into_iter()
+        .filter(|(_, e)| keep(e))
         .filter_map(|(_, e)| facets_in(world, &e, declared))
         .flatten()
         .collect();
@@ -178,12 +193,14 @@ pub fn solid_radius_about_in(world: &World, declared: Option<&str>, c: [f64; 2])
 }
 
 /// The parts (fixtures left out) as the machine must leave them, in a
-/// setup's frame - the program sim's gouge target.
+/// setup's frame - the program sim's gouge target. A model that is only
+/// the stock's source is stock, not part (#1094, `stock_source`).
 #[must_use]
 pub fn parts_facets_in(world: &World, declared: Option<&str>) -> Vec<Triangle> {
+    let skip = crate::stock_source::stock_only_model(world);
     model::model_entities(world)
         .into_iter()
-        .filter(|(_, e)| !model::is_fixture(world, e))
+        .filter(|(_, e)| crate::stock_source::judged(world, e, skip))
         .filter_map(|(_, e)| facets_in(world, &e, declared))
         .flatten()
         .collect()
@@ -349,6 +366,7 @@ fn verified_kind(params: &crate::operation::OpParams) -> bool {
     matches!(
         params,
         OpParams::Face { .. } | OpParams::Pocket { .. } | OpParams::Contour { .. } | OpParams::Adaptive2D { .. }
+            | OpParams::Pocket3D { .. } | OpParams::Finish3D { .. }
     )
 }
 
@@ -359,27 +377,27 @@ fn verified_kind(params: &crate::operation::OpParams) -> bool {
 /// in the unaligned frame.
 #[must_use]
 pub fn generation_problem(world: &World, op: &crate::schema::Operation) -> Option<String> {
-    use crate::operation::SrcRef;
     let setup = crate::setup::effective(world, op.setup.as_deref())?;
     stored(world, &setup)?;
     let head = format!("setup '{setup}' holds the part turned (part alignment)");
-    if crate::machine::kind_of_setup(world, Some(&setup)) != crate::machine::Kind::Mill {
-        return Some(format!("{head} - an aligned part is not supported yet on a lathe or mill-turn machine"));
+    let kind = crate::machine::kind_of_setup(world, Some(&setup));
+    if kind != crate::machine::Kind::Mill {
+        let name = crate::stock_sim::machine_kind_name(kind);
+        return Some(format!("{head} - an aligned part is not supported yet on a {name} machine"));
     }
     if !verified_kind(&op.params) {
         return Some(format!(
-            "{head} - {} is not supported yet in an aligned setup (Face, 2D Contour, 2D Pocket and \
-             2D Adaptive are); set the setup's part alignment back to As modelled, or machine it in another setup",
+            "{head} - {} is not supported yet in an aligned setup (Face, 2D Contour, 2D Pocket, \
+             2D Adaptive, 3D Pocket and 3D Finish are); set the setup's part alignment back to As modelled, or machine it in another setup",
             op.params.kind().info().label
         ));
     }
     if op.params.tilt().is_some() {
         return Some(format!("{head} - a tilted plane is not supported yet in an aligned setup"));
     }
-    if matches!(op.src, SrcRef::Selection(_)) {
-        return Some(format!("{head} - picked faces and edges are not supported yet in an aligned setup; pick a whole model or the stock"));
-    }
-    if !op.area.is_default() {
+    // #1743: 3D boundaries read the same aligned facets and picks as generation.
+    let area_verified = matches!(op.params, crate::operation::OpParams::Pocket3D { .. } | crate::operation::OpParams::Finish3D { .. });
+    if !op.area.is_default() && !area_verified {
         return Some(format!("{head} - area controls are not supported yet in an aligned setup"));
     }
     None

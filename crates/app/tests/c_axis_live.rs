@@ -7,13 +7,14 @@
 //! refuses by name what it cannot voice - a machine without live-tool
 //! words, a tip C does not turn onto the station - while a post that
 //! does not declare `liveTooling` (every mill post) is refused by the
-//! engine.
+//! engine. A C-turning rapid on a machine that states no C rate is
+//! refused by name too (#966): the bench states one so it posts.
 //!
 //! Regenerate the golden after an intentional change:
 //! `WRITE_GOLDEN=1 cargo test -p camcraft-app --test c_axis_live`
 //!
 //! Gate map (M4.4): covers camcraft_app::operation (rotary_gate's C
-//! stamp), camcraft_app::cl (stamp_c), camcraft_app::post (the dump's
+//! stamp), cl::cl (stamp_c), post::post (the dump's
 //! C word, the engine's liveTooling refusal, fanuc-lathe.cps).
 //! Lane shape (M4.4): all tests here run in seconds.
 
@@ -55,11 +56,31 @@ fn mill_turn(live: Option<LiveToolCodes>) -> Machine {
             AxisLimits { name: "X".into(), feed: Some(4000.0), ..Default::default() },
             AxisLimits { name: "Y".into(), feed: Some(4000.0), ..Default::default() },
             AxisLimits { name: "Z".into(), feed: Some(4000.0), ..Default::default() },
-            AxisLimits { name: "C".into(), rotary: true, axis: Some([0.0, 0.0, 1.0]), ..Default::default() },
+            // A stated C rate (deg/min, the shipped millturn.mch's
+            // figures): the post caps every C-turning G01 by it (#966).
+            AxisLimits {
+                name: "C".into(),
+                rotary: true,
+                axis: Some([0.0, 0.0, 1.0]),
+                feed: Some(C_RATE),
+                rapid: Some(2.0 * C_RATE),
+                ..Default::default()
+            },
         ],
         live_tool: live,
         ..Default::default()
     }
+}
+
+const C_RATE: f64 = 6000.0;
+
+/// The bench whose C states neither a travel nor a rate (#966).
+fn unrated(live: Option<LiveToolCodes>) -> Machine {
+    let mut m = mill_turn(live);
+    for a in m.axes.iter_mut().filter(|a| a.rotary) {
+        (a.feed, a.rapid) = (None, None);
+    }
+    m
 }
 
 /// The turned bar standing on the spindle: wall r6, shoulder, neck r5.
@@ -163,6 +184,53 @@ fn a_rotary_contour_on_the_spindle_states_c_on_every_move_and_posts() {
     }
     assert!(out.program.lines().any(|l| l.starts_with("G01 X") && l.contains(" C")), "X Z C blocks");
     assert!(!out.program.contains("M03"), "no turning spindle in a C section");
+}
+
+/// Every X Z C G01 holds X/Z to `feed` and C to `c_rate` (deg/min),
+/// read back from its words and F the way the control drives them.
+fn assert_feeds_within(program: &str, feed: f64, c_rate: f64) {
+    let word = |l: &str, k: char| l.split(' ').find_map(|w| w.strip_prefix(k).and_then(|v| v.parse::<f64>().ok()));
+    let mut at: Option<(f64, f64, f64)> = None;
+    let mut turned = 0;
+    for l in program.lines() {
+        let (x, z, c) = (word(l, 'X'), word(l, 'Z'), word(l, 'C'));
+        if l.starts_with("G01")
+            && let (Some(x), Some(z), Some(c), Some(f), Some((r0, z0, c0))) = (x, z, c, word(l, 'F'), at)
+        {
+            let (dr, dz, dc) = (x / 2.0 - r0, z - z0, c - c0);
+            let lcmd = (dr * dr + dz * dz + dc * dc).sqrt();
+            if lcmd > 1e-9 {
+                let lin = (dr * dr + dz * dz).sqrt();
+                // One decimal of F and three of each word: a hair of slack.
+                assert!(f * lin / lcmd <= feed * 1.001 + 0.1, "linear rate past {feed}: {l}");
+                assert!(f * dc.abs() / lcmd <= c_rate * 1.001 + 0.1, "C rate past {c_rate}: {l}");
+                turned += usize::from(dc.abs() > 1e-9);
+            }
+        }
+        let prev = at.unwrap_or((0.0, 0.0, 0.0));
+        if x.is_some() || z.is_some() || c.is_some() {
+            at = Some((x.map_or(prev.0, |x| x / 2.0), z.unwrap_or(prev.1), c.unwrap_or(prev.2)));
+        }
+    }
+    assert!(turned > 0, "the program carries C-turning blocks to judge");
+}
+
+/// #966: on a machine that states no C travel and no C rate, the
+/// contour's C-turning link rapids are refused by name - never posted
+/// at the max linear feed scaled by the C turn. The same path on the
+/// bench that states its C rate posts with every F inside it.
+#[test]
+fn a_c_turning_rapid_without_a_stated_c_rate_is_refused_by_name() {
+    let w = world();
+    let (path, _warns) = operation::generate(&w, &contour(), "C wrap").expect("generates; posting is what refuses");
+    let rapids_turn = path.moves.windows(2).any(|p| p[1].kind == MoveKind::Rapid && p[0].rotary != p[1].rotary);
+    assert!(rapids_turn, "the contour links by C-turning rapids");
+    let bare = engine::run(LATHE_CPS, &post::machine::mirror(&unrated(Some(codes()))), &stream(&path)).expect("runs");
+    let named = "a C-axis rapid that turns C, but the machine file states no C rate";
+    assert!(bare.warnings.iter().any(|w| w.contains(named)), "refused by name: {:?}", bare.warnings);
+    let rated = engine::run(LATHE_CPS, &post::machine::mirror(&mill_turn(Some(codes()))), &stream(&path)).expect("runs");
+    assert!(rated.warnings.is_empty(), "{:?}", rated.warnings);
+    assert_feeds_within(&rated.program, 4000.0, C_RATE);
 }
 
 /// One and a half turns of a wrapped helix at r 10, 2 mm a turn,

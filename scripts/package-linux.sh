@@ -63,7 +63,12 @@ exec /usr/lib/camcraft/$binary "\$@"
 EOF
     chmod 755 "$pkg_root/usr/bin/$command_name"
 done
-install -m 644 assets/ui/cube.png "$pkg_root/usr/share/pixmaps/camcraft.png"
+install -m 644 assets/logo/icons/camcraft-256.png "$pkg_root/usr/share/pixmaps/camcraft.png"
+for size in 16 32 48 64 128 256 512; do
+    mkdir -p "$pkg_root/usr/share/icons/hicolor/${size}x${size}/apps"
+    install -m 644 "assets/logo/icons/camcraft-$size.png" \
+        "$pkg_root/usr/share/icons/hicolor/${size}x${size}/apps/camcraft.png"
+done
 cat > "$pkg_root/usr/share/applications/camcraft.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
@@ -116,6 +121,7 @@ cp -a "%{camcraft_package_root}/usr/." "%{buildroot}/usr/"
 /usr/lib/camcraft
 /usr/share/applications/camcraft.desktop
 /usr/share/pixmaps/camcraft.png
+/usr/share/icons/hicolor/*/apps/camcraft.png
 EOF
 rpmbuild -bb --define "_topdir $rpm_dir" \
     --define "camcraft_package_root $pkg_root" "$rpm_dir/SPECS/camcraft.spec"

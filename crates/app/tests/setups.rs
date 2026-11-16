@@ -6,7 +6,7 @@
 //! does not delete, activation is inert, and moving an operation keeps
 //! its stamp and lets the staleness machinery answer.
 //!
-//! Gate map (M4.4): covers app::commands, app::geometry, app::model, app::operation, app::posting, app::rest, app::schema, app::setup, app::stock, app::tools, app::world.
+//! Gate map (M4.4): covers app::commands, app::geometry, app::model, app::operation, app::posting, app::rest, app::schema, app::setup, geometry::geometry::stock, tools::tools, app::world.
 
 use flecs_ecs::prelude::World;
 

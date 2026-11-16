@@ -9,7 +9,7 @@
 //! ISO 6983 (G20 / G21) and the 840D family's public programming manual
 //! (G71 / G710).
 //!
-//! Gate map (M4.4): covers app::post (fanuc.cps, haas.cps, mazak.cps,
+//! Gate map (M4.4): covers post::post (fanuc.cps, haas.cps, mazak.cps,
 //! sinumerik.cps, doosan-dnm.cps opening block).
 
 use camcraft_app::machine::parse_mch;

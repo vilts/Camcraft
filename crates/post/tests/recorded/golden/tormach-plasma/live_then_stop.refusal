@@ -1,0 +1,7 @@
+; tormach-plasma.cps refused live_then_stop: 6 warning(s), the program is never released
+warning: operation Cross drill: asks an optional stop after it, but this post script does not declare afterModes (it does not read PARAM AfterOperation) - set the operation to Continue or use a post that reads it
+warning: operation Cross drill: is C-axis live-tool work (the spindle turns as C under a radial live tool), but this post script does not declare liveTooling - use a lathe post that voices the C axis
+warning: operation Face one: states 1200 rpm - a plasma torch turns no spindle (PathPilot plasma takes no S, M3, M4 or M5)
+warning: the Tormach 1300PL plasma post writes torch words (M200, G15, G16, M205) only a plasma table reads - TESTBENCH MILL-TURN LIVE is not declared a plasma machine
+warning: operation Cross drill: states 3000 rpm - a plasma torch turns no spindle (PathPilot plasma takes no S, M3, M4 or M5)
+warning: operation Face two: states 1500 rpm - a plasma torch turns no spindle (PathPilot plasma takes no S, M3, M4 or M5)

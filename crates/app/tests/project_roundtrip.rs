@@ -1,7 +1,7 @@
 //! M1.1 acceptance: save/load round-trips are byte-identical; a wrong
 //! version or corrupt file is a clean error.
 //!
-//! Gate map (M4.4): covers app::commands, app::drilling, app::finishing3d, app::geometry, app::machine, app::machining2d, app::machining3d, app::model, app::operation, app::posting, app::project, app::schema, app::setup, app::stock, app::tools, app::units, app::world.
+//! Gate map (M4.4): covers app::commands, motion::drilling, motion::finishing3d, app::geometry, app::machine, post::machine, motion::machining2d, motion::machining3d, app::model, app::operation, app::posting, app::project, app::schema, app::setup, geometry::geometry::stock, tools::tools, app::units, app::world.
 
 use std::path::PathBuf;
 
@@ -966,7 +966,7 @@ fn v5_roundtrips_retract_and_auto() {
             "Pocket1",
             "EM-0400-2FL",
             SrcRef::Stock,
-            OpParams::Pocket { tilt: None,
+            OpParams::Pocket { blend_radius: None, tilt: None,
                 links: camcraft_app::links::Links::PLANAR,
                 stepover: 1.0,
                 stock_to_leave: 0.0,
@@ -5352,4 +5352,68 @@ fn a_blade_corner_round_trips_and_old_blades_take_the_left_corner() {
     let again = std::fs::read_to_string(&path).expect("reread");
     let _ = std::fs::remove_file(&path);
     assert_eq!(again, text, "byte-identical round trip");
+}
+
+/// #1196: a current-version 3D finish op, with or without the land
+/// model's `fill_openings` key - the one shape both tests below read.
+fn finish3d_text(extra: &str) -> String {
+    format!(
+        r#"{{
+        "version": {v},
+        "entities": [
+            {{"name": "T1", "translation": [0.0, 0.0, 0.0], "kind": "tool",
+             "tool": {{"kind": "ball_nose", "diameter": 6.0, "corner_r": 3.0,
+                      "flute_len": 15.0, "shank_d": 8.0, "shank_len": 40.0,
+                      "holder_d": 44.0, "holder_len": 35.0,
+                      "material_group": "general", "rpm": 9000.0, "feed": 1500.0}}}},
+            {{"name": "F1", "translation": [0.0, 0.0, 0.0], "kind": "operation",
+             "operation": {{"tool": "T1", "src": "stock", "params": {{"finish3d": {{
+                 "tolerance": 0.1,
+                 "clearance_z": {{"reference": "fixed", "offset": 25.0}},
+                 "top_z": {{"reference": "top_of_model", "offset": 0.0}},
+                 "bottom_z": {{"reference": "bottom_of_model", "offset": 0.0}},
+                 "feed": 500.0, "plunge_feed": 100.0, "climb": true{extra}}}}}}}}}
+        ]
+    }}"#,
+        v = project::PROJECT_VERSION
+    )
+}
+
+fn fill_of(world: &flecs_ecs::prelude::World) -> Option<f64> {
+    let e = model::find_by_name(world, "F1").expect("op");
+    let o = model::operation_of(world, &e).expect("operation");
+    let OpParams::Finish3D { fill_openings, .. } = &o.params else {
+        panic!("finish3d params expected, got {:?}", o.params);
+    };
+    *fill_openings
+}
+
+#[test]
+fn finish3d_fill_openings_round_trips_through_save_and_load() {
+    let world = new_world();
+    project::open(&world, &finish3d_text(", \"fill_openings\": 5.0")).expect("the land key must read");
+    assert_eq!(fill_of(&world), Some(5.0));
+    let path = tmp_path("fill_rt");
+    project::save(&world, &path).expect("save");
+    let first = std::fs::read_to_string(&path).expect("read");
+    let world2 = new_world();
+    project::load(&world2, &path).expect("reload");
+    project::save(&world2, &path).expect("resave");
+    let second = std::fs::read_to_string(&path).expect("reread");
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(fill_of(&world2), Some(5.0), "Some(5.0) saves and loads as Some(5.0)");
+    assert!(first.contains("\"fill_openings\": 5.0"), "{first}");
+    assert_eq!(first, second, "the land key round-trips byte-identically");
+}
+
+#[test]
+fn finish3d_file_without_fill_openings_reads_none() {
+    let world = new_world();
+    project::open(&world, &finish3d_text("")).expect("an older finish3d file must read");
+    assert_eq!(fill_of(&world), None, "absent key means no land model");
+    let path = tmp_path("fill_none");
+    project::save(&world, &path).expect("save");
+    let saved = std::fs::read_to_string(&path).expect("read");
+    let _ = std::fs::remove_file(&path);
+    assert!(!saved.contains("fill_openings"), "None is absent, not null: {saved}");
 }

@@ -4,7 +4,7 @@
 //! the mesh law clears it, while the same vise as an open sheet keeps
 //! the box verdict and a jaw moved into the pass still blocks the post.
 //!
-//! Gate map (M4.4): covers app::fixture, app::operation, app::posting, app::verify.
+//! Gate map (M4.4): covers app::fixture, sim::fixture, app::operation, app::posting, sim::verify.
 
 use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, SetStock, TagFixture};
 use camcraft_app::fixture;

@@ -37,6 +37,7 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
 AppPublisher={#AppName} project
+SetupIconFile=..\..\assets\logo\icons\camcraft.ico
 VersionInfoVersion={#AppVersion}
 VersionInfoDescription={#AppName} setup
 ; Per-user by default: "lowest" needs no elevation and {autopf} then resolves

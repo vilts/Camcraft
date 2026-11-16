@@ -45,7 +45,7 @@ pub(super) fn lead_in(s: Point2, t: Point2, air: Point2, lead: Lead) -> (Point2,
             // so the quarter arm's radius-vector cross would vanish. The
             // surviving law is its limit: arrive at s moving along +t means
             // turning ccw iff air bears left of t - cross(air, t) < 0.
-            // air_side puts climb's air right of t: cw; conventional ccw
+            // air_side puts climb's air left of t: ccw; conventional cw
             // (arcs.rs and machining2d.rs derive this from the law, never
             // hardcode it).
             let o = Point2::new(s.x + air.x * radius, s.y + air.y * radius);
@@ -81,7 +81,7 @@ pub(super) fn lead_out(e: Point2, t: Point2, air: Point2, lead: Lead) -> Vec<Seg
             // overruning tangentially, sweep the semicircle out through
             // air, and stand off the wall 2*radius on the normal, moving
             // parallel to where the cut was going. Same sign law at the
-            // tangent point as the lead-in: climb cw, conventional ccw.
+            // tangent point as the lead-in: climb ccw, conventional cw.
             let o = Point2::new(e.x + air.x * radius, e.y + air.y * radius);
             let q = Point2::new(e.x + air.x * 2.0 * radius, e.y + air.y * 2.0 * radius);
             let ccw = (air.x * t.y - air.y * t.x) < 0.0;

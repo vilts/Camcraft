@@ -6,9 +6,9 @@
 //! Every fixture here is a posed 5-axis contour over a standing bar
 //! and a dome - the two shapes the pivot bug was measured on.
 //!
-//! Gate map (M4.4): covers app::verify (sim::verify contact law, the
+//! Gate map (M4.4): covers sim::verify (sim::verify contact law, the
 //! Envelope branch of engine, the all-air verdict `cuts_no_material`),
-//! app::multiaxis (contour5d stamp).
+//! motion::multiaxis (contour5d stamp).
 //! Lane shape (M4.4): structural (f2) verdicts run in seconds; the
 //! full envelope scans ride the same binary because these fixtures
 //! are small (a 64-gon bar, a 16x8 dome).
@@ -119,6 +119,7 @@ fn ctx<'a>(region: &'a Region, facets: &'a [Triangle], tool: &'a ToolGeom) -> Ve
         finish_tol: Some(TOL),
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     }
 }
 

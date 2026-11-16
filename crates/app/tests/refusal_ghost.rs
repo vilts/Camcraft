@@ -8,7 +8,7 @@
 //! material consulted.
 //!
 //! Gate map (#261): covers app::commands (operation::generate),
-//! app::operation (generate), app::posting, app::stock_sim, app::script.
+//! app::operation (generate), app::posting, app::stock_sim, sim::stock_sim, app::script.
 
 use flecs_ecs::prelude::World;
 
@@ -50,6 +50,8 @@ fn slot_world(center_cutting: bool) -> World {
         helix_radius: 1.5,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
+        extend_start: 0.0,
+        extend_end: 0.0,
     };
     h.execute(&world, CreateOperation::new(&world, "SLT", "EM", SrcRef::Stock, slot).expect("create"));
     world

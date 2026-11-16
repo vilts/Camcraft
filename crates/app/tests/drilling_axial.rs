@@ -14,7 +14,7 @@
 //!
 //! Gate map (M4.4): covers camcraft_app::operation (the axial arm of
 //! generate, holes_of), camcraft_app::commands (family gate,
-//! Create/GenerateOperation), camcraft_app::machine (the lathe kind),
+//! Create/GenerateOperation), camcraft_app::machine, post::machine (the lathe kind),
 //! camcraft_app::posting (the cycle words on a lathe document).
 //! Lane shape (M4.4): all tests here run in seconds.
 
@@ -137,6 +137,7 @@ fn lathe_world_with(bar: Mesh) -> (World, History) {
     );
     let cmd = LoadMachine::new(&world, "lathe.mch".into(), Some(machine("lathe")));
     history.execute(&world, cmd.expect("lathe"));
+    history.execute(&world, camcraft_app::commands::SelectPost::new(&world, camcraft_app::schema::PostRef::Named("Fanuc Lathe".into())).expect("lathe post"));
     add_tool(&world, &mut history, "DR-0400");
     add_tool(&world, &mut history, "EM-0400-2FL");
     history.execute(&world, ImportModel::from_mesh("bar", bar));

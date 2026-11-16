@@ -1,0 +1,2 @@
+; carvera.cps refused rotary: 1 warning(s), the program is never released
+warning: tilted move - the Carvera post is 3-axis (the 4th axis module is not supported yet)

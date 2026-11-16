@@ -237,7 +237,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             entry,
             helix_radius,
             optimal_load,
-            blend_turns,
+            blend_turns, blend_radius,
             tilt,
         } => {
             if tab == SEC_LEADS {
@@ -269,11 +269,15 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                 });
             }
             if tab == SEC_PASSES {
-                prop_row(ui, "Stepover", |ui| num(ui, u, stepover));
+                // #1512: one radial-step field - Stepover, or the
+                // Optimal load below for the strategies it spaces.
+                if !strategy.steps_by_load() {
+                    prop_row(ui, "Stepover", |ui| num(ui, u, stepover));
+                }
                 prop_row(ui, "Stock to leave", |ui| num(ui, u, stock_to_leave));
                 // M11.1 C: pass corners and row-to-row links round on
                 // one arc inside the cleared area where it is legal.
-                check_row(ui, "Arc turns at corners and links", blend_turns);
+                super::kind_editors::arc_turn_rows(ui, u, "Arc turns at corners and links", blend_turns, blend_radius);
                 // M5.1 H: the 2-D combo offers Adaptive beside the 3-D
                 // one's - the law runs on the plane now, so hiding the
                 // choice would make a file that carries it display a
@@ -297,7 +301,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                         _ => PocketStrategy::Zigzag,
                     };
                 }
-                if matches!(strategy, PocketStrategy::Adaptive | PocketStrategy::OffsetRings) {
+                if strategy.steps_by_load() {
                     super::load_field::optimal_load_field(ui, optimal_load);
                 }
                 if let Some(note) = &auto_note {
@@ -328,7 +332,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             climb,
             entry,
             helix_radius,
-            optimal_load,
+            optimal_load, method, troch, blend_turns, blend_radius,
             tilt,
         } => roughing2d_pane(
             ui,
@@ -349,8 +353,8 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             climb,
             entry,
             helix_radius,
-            Some(optimal_load),
-            links,
+            Some(optimal_load), Some((method, troch)),
+            links, (blend_turns, blend_radius),
             tilt,
         ),
         OpParams::Offset2D {
@@ -366,7 +370,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             plunge_feed,
             climb,
             entry,
-            helix_radius,
+            helix_radius, blend_turns, blend_radius,
             tilt,
         } => roughing2d_pane(
             ui,
@@ -387,8 +391,8 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             climb,
             entry,
             helix_radius,
-            None,
-            links,
+            None, None,
+            links, (blend_turns, blend_radius),
             tilt,
         ),
         _ => {}

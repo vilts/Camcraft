@@ -232,6 +232,7 @@ pub fn cycle_name(kind: CycleKind) -> &'static str {
         CycleKind::FloatingTap => "FLOATINGTAP",
         CycleKind::Bore => "BORE",
         CycleKind::BackBore => "BACKBORE",
+        CycleKind::Ream => "REAM",
     }
 }
 
@@ -1020,6 +1021,7 @@ fn cycle_kind(name: &str) -> Option<CycleKind> {
         "FLOATINGTAP" => CycleKind::FloatingTap,
         "BORE" => CycleKind::Bore,
         "BACKBORE" => CycleKind::BackBore,
+        "REAM" => CycleKind::Ream,
         _ => return None,
     })
 }

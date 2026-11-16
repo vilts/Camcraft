@@ -70,6 +70,14 @@ impl State {
                 self.status = String::from("cancelled - the document stays open");
             }
             UnsavedChoice::DontSave => self.run_confirmed(action),
+            UnsavedChoice::Save if self.browser_build => {
+                // #1431: the browser's Save is a download.
+                if self.download_project(false) {
+                    self.run_confirmed(action);
+                } else {
+                    self.status.push_str(" - the document stays open");
+                }
+            }
             UnsavedChoice::Save => {
                 let Some(path) = self.project_path.clone().or_else(|| save_project_dialog(None))
                 else {

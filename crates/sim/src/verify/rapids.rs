@@ -103,7 +103,8 @@ pub(super) fn rapids_in_stock(
             }
             let (a, b) = (xy(&m.from), xy(&m.to));
             let (dx, dy) = (b.x - a.x, b.y - a.y);
-            let d = cx.tool.radius - cx.gouge_tol;
+            // #904: the footprint gives a coarse model's excess back.
+            let d = cx.tool.radius - cx.tightened(cx.gouge_tol);
             if dx * dx + dy * dy <= cx.z_tol * cx.z_tol {
                 // Issue #96: a vertical retract rides the tool's own
                 // kerf, but a vertical rapid DOWN is judged by its
@@ -143,7 +144,7 @@ pub(super) fn rapids_in_stock(
                             .any(|(q, rho)| rest.in_stock(q) && low + cutter.lift_at(rho) < rest.surface_before(q, i))
                     })
                 });
-            let bad = marched || rest.hidden_along(a, b, low, cx.tool.radius - cx.gouge_tol, i);
+            let bad = marched || rest.hidden_along(a, b, low, d, i);
             if !bad {
                 continue;
             }

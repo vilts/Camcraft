@@ -89,6 +89,13 @@ fn a_clicked_tilted_face_is_turned_flat_onto_g17_not_only_moved() {
     assert!(n0[2].abs() > 0.1 && n0[2].abs() < 0.9, "the face starts tilted: {n0:?}");
 
     // Arm the row by its own button, then click the tilted face.
+    // #771: the face row sits behind the "Plane orientation" dropdown.
+    harness
+        .get_by(|n| n.role() == egui::accesskit::Role::ComboBox && n.value().as_deref() == Some("Axes"))
+        .click();
+    harness.run();
+    harness.get_by_label("Face").click();
+    harness.run();
     harness.get_by_label("Pick a face").click();
     harness.run();
     assert!(harness.state().state.plane_pick.is_some(), "the row is armed");

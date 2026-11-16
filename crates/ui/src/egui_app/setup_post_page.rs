@@ -3,7 +3,7 @@
 //! document's until the setup takes its own (`SetupOwnPostOptions`, one
 //! undoable command); the export queues the dialog arm and writes a file,
 //! nothing enters the history (the setup-sheet law).
-//! Provenance: our own page law (issue #389); no vendor material consulted.
+//! Provenance: our own page law (issues #389, #1526); no vendor material consulted.
 
 use egui::{RichText, Ui};
 
@@ -31,12 +31,27 @@ pub(super) fn options_ownership(ui: &mut Ui, state: &mut State, ctx: Option<&str
         "Skip pauses and homes, Output and Threading above are the document's, shared by every setup that follows it."
     };
     ui.label(RichText::new(note).weak());
+    // #1526: say by name where an option changed on this page lands.
+    ui.label(options_target_line(name, state.post_options_target().as_deref() == Some(name)));
+}
+
+/// Where a post option changed on setup `name`'s page lands (#1526, the
+/// #1515 page line): `own` - that setup's own options, nothing else
+/// moves; else the document's, named as such.
+pub(super) fn options_target_line(name: &str, own: bool) -> String {
+    if own {
+        format!("A post option changed on this page is {name}'s own - no other setup changes.")
+    } else {
+        "A post option changed on this page sets the document's post options - every setup without its own uses them."
+            .to_owned()
+    }
 }
 
 /// The setup's own tool-list export row.
 pub(super) fn tool_list_export(ui: &mut Ui, state: &mut State, ctx: Option<&str>) {
     ui.horizontal(|ui| {
-        if ui.button("Export tool list…").clicked() {
+        let why = state.browser_refusal_of(&CommandKind::ToolListExportDialog(None));
+        if crate::browser_files::button(ui, why, "Export tool list…", "") {
             state.pending.push_back(CommandKind::ToolListExportDialog(ctx.map(str::to_owned)));
         }
         ui.label(RichText::new("(this setup's tools: CSV or text)").weak());

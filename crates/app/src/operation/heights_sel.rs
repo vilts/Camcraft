@@ -173,6 +173,14 @@ pub fn depth_sane(
             (Some(t), Some(c)) => t >= c,
             _ => true,
         },
+        // #1409: a Facing whose top meets its facing plane is a part
+        // already at length - legal to create, and its generate says
+        // "nothing to face" by name, rather than this door calling a
+        // level window an upward cut.
+        OpParams::Facing { .. } => match (r.top, r.bottom) {
+            (Some(t), Some(b)) => t >= b,
+            _ => true,
+        },
         _ => match (r.top, r.bottom) {
             (Some(t), Some(b)) => t > b,
             _ => true,

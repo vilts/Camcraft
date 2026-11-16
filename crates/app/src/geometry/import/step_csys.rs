@@ -226,6 +226,7 @@ impl ToolCsysReport {
 /// the file itself can't be read (syntax, no DATA section, a length unit
 /// that can't be converted); a bad placement is a refusal in the report.
 pub fn read_tool_csys(data: &[u8]) -> Result<ToolCsysReport, ImportError> {
+    super::step_depth::check(data)?; // #1075: refuse before ruststep can overflow
     if data.is_empty() {
         return Err(ImportError::Empty);
     }

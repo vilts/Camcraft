@@ -32,5 +32,60 @@ pub fn tooling_refusals(v: &serde_json::Value) -> Vec<(String, String)> {
 /// Why a stored machine's tooling keys cannot be meant, by key.
 #[must_use]
 pub fn tooling_refusal(m: &Machine) -> Option<String> {
-    m.tooling_refusal(Some(&holder_lookup))
+    m.tooling_refusal(Some(&holder_lookup)).or_else(|| edm_refusal(m))
+}
+
+/// Why a stored EDM machine's `edm.codes` cannot be meant (#535): the
+/// `condition` code is a template that selects the op's condition by
+/// its id, so one without `{id}` would select nothing - the same law
+/// the wire post refuses by (#533), asked at the machine door so an
+/// edit never mounts it.
+#[must_use]
+pub fn edm_refusal(m: &Machine) -> Option<String> {
+    for (k, t) in &m.edm_codes {
+        if t.trim().is_empty() {
+            return Some(format!("edm.codes.{k} is blank - write the control's text or remove the code"));
+        }
+        if t.contains('(') || t.contains(')') {
+            return Some(format!("edm.codes.{k} {t:?} holds a bracket - a code is a word the control executes, never commentary"));
+        }
+    }
+    if let Some(t) = m.edm_codes.get("condition")
+        && !t.contains("{id}")
+    {
+        return Some(format!(
+            "edm.codes.condition {t:?} states no {{id}} - the control would select no condition (write e.g. \"E{{id}}\")"
+        ));
+    }
+    let conds = m.edm.as_ref().map_or(&[][..], |e| e.conditions.as_slice());
+    for (i, c) in conds.iter().enumerate() {
+        if c.id.trim().is_empty() {
+            return Some(format!("EDM condition {} states no id - the control selects it by its id", i + 1));
+        }
+        if conds.iter().skip(i + 1).any(|d| d.id == c.id) {
+            return Some(format!("EDM condition id {:?} is stated twice", c.id));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn edm_refusal_names_the_code_or_condition_that_cannot_be_meant() {
+        let mut m = Machine::default();
+        assert_eq!(edm_refusal(&m), None, "nothing stated, nothing refused");
+        m.edm_codes.insert("condition".into(), "FX-COND".into());
+        assert!(edm_refusal(&m).is_some_and(|r| r.contains("edm.codes.condition") && r.contains("{id}")));
+        m.edm_codes.insert("condition".into(), "FX-COND {id}".into());
+        assert_eq!(edm_refusal(&m), None);
+        m.edm_codes.insert("cut".into(), " ".into());
+        assert!(edm_refusal(&m).is_some_and(|r| r.contains("edm.codes.cut")));
+        m.edm_codes.remove("cut");
+        let c = camcraft_post::machine::Condition { id: "C1".into(), ..Default::default() };
+        m.edm = Some(camcraft_post::machine::Edm { conditions: vec![c.clone(), c], ..Default::default() });
+        assert!(edm_refusal(&m).is_some_and(|r| r.contains("twice")));
+    }
 }

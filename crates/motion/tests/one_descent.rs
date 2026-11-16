@@ -78,6 +78,7 @@ fn check(t: &Toolpath, region: &Region, model: Option<&[Triangle]>, mode: Mode, 
         finish_tol: None,
         fixtures: &[],
         spindle: None,
+        ..Default::default()
     };
     verify(t, &cx)
 }

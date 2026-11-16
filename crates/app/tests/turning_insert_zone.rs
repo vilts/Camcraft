@@ -67,6 +67,7 @@ fn od_world(bar: bool) -> (World, History) {
         history.execute(&world, SetStock::new(&world, shape, at).expect("bar stock"));
     }
     history.execute(&world, LoadMachine::new(&world, "lathe.mch".into(), Some(machine("lathe"))).expect("lathe"));
+    history.execute(&world, camcraft_app::commands::SelectPost::new(&world, camcraft_app::schema::PostRef::Named("Fanuc Lathe".into())).expect("lathe post"));
     add_tool(&world, &mut history, INSERT);
     let stepped = revolve(&[(0.0, -16.0), (12.0, -16.0), (12.0, 0.0), (6.0, 0.0), (6.0, 20.0), (0.0, 20.0)]);
     history.execute(&world, ImportModel::from_mesh("step", stepped));

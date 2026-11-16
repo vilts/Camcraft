@@ -12,7 +12,7 @@
 //!
 //! Gate map (#319): covers app::operation (carried_stock, job, stamp),
 //! app::rest::across (carried_stock_block, carried_stock_body,
-//! carried_digest), app::stock_sim (simulate_document's carry refusal),
+//! carried_digest), app::stock_sim, sim::stock_sim (simulate_document's carry refusal),
 //! app::posting (the gate's cached warnings).
 //! Lane shape (M4.4): all tests here run in seconds.
 

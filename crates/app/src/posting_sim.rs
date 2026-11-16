@@ -29,6 +29,12 @@
 //! cannot show that verdict (no stamp, not fresh, or the op list itself
 //! unreadable) has no judge at all, and then the not-judged line is a
 //! blocking problem - two missing verdicts never add up to a pass.
+//!
+//! One input of that verdict is not in the stamp: the parts beside an
+//! op's source its part laws keep (#1607, #1621). A part moved, added or
+//! un-tagged after generation leaves the op fresh, so with the sim silent
+//! those parts are judged again live (`operation::kept_rejudge`, #1628):
+//! a cut into one is a blocking problem naming the op and the part.
 
 use crate::model;
 use crate::operation::{self, OpStatus};
@@ -46,9 +52,30 @@ pub struct SimClause {
     pub not_judged: Option<String>,
 }
 
-/// Run the program sim and read its outcome for the gate.
+/// Run the program sim and read its outcome for the gate. A void
+/// raw-stock-only mark (#1094) and a verdict judged off the shipped
+/// carry engine (#1168) ride the visible, non-blocking line.
 #[must_use]
 pub fn sim_clause(world: &World) -> SimClause {
+    let mut clause = judge_clause(world);
+    // #1168: a verdict the field engine judged says so, never silently.
+    // #874: and a verdict read on stock turned side-on.
+    let notes = [crate::stock_source::void_note(world), crate::stock_sim::carry_engine_note(), crate::stock_sim::carry::side_on_note(world)];
+    for note in notes.into_iter().flatten() {
+        clause.not_judged = Some(match clause.not_judged.take() {
+            Some(line) => format!("{line}; note: {note}"),
+            None => format!("note: {note}"),
+        });
+    }
+    clause
+}
+
+fn judge_clause(world: &World) -> SimClause {
+    // #1094: a stock source marked raw stock only, with no other model,
+    // leaves nothing judged as the part - refused by name, never passed.
+    if let Some(why) = crate::stock_source::nothing_judged(world) {
+        return SimClause { problem: Some(why), not_judged: None };
+    }
     match crate::stock_sim::simulate_document(world) {
         Ok(sim) if sim.dev.gouge_cells > 0 => {
             let u = crate::units::of(world);
@@ -65,10 +92,11 @@ pub fn sim_clause(world: &World) -> SimClause {
             );
             SimClause {
                 problem: Some(format!(
-                    "gouge: program cuts below the model in {} cell(s), worst {} {}{at}",
+                    "gouge: program cuts below the model in {} cell(s), worst {} {}{at}{}",
                     sim.dev.gouge_cells,
                     crate::units::len(sim.dev.max_gouge, u, 2),
-                    u.suffix()
+                    u.suffix(),
+                    crate::stock_source::gouge_hint(world, sim.dev.max_gouge_at).unwrap_or_default() // #1094
                 )),
                 not_judged: None,
             }
@@ -76,9 +104,10 @@ pub fn sim_clause(world: &World) -> SimClause {
         Ok(_) => SimClause::default(),
         Err(reason) => {
             let line = format!("{NOT_JUDGED}: {reason}");
-            let problem = uncovered(world).map(|why| {
-                format!("{line} - and {why}, so nothing judged it; refusing")
-            });
+            let problem = uncovered(world)
+                .map(|why| format!("{line} - and {why}, so nothing judged it; refusing"))
+                // #1628: the parts beside an op's source, judged again live.
+                .or_else(|| kept_moved(world).map(|why| format!("{line} - and {why}")));
             SimClause {
                 problem,
                 not_judged: Some(line),
@@ -111,4 +140,23 @@ fn uncovered(world: &World) -> Option<String> {
         }
     }
     None
+}
+
+/// The first program op whose cached path now cuts a part its part laws
+/// keep beside its source (#1628, `operation::kept_rejudge`): those parts
+/// are not stamp inputs, so with no program sim to judge them live they
+/// are judged here, against the parts as they stand. Run only once every
+/// op is covered (fresh, stamped, with a path); an op whose cache already
+/// blocks is left to its own findings.
+fn kept_moved(world: &World) -> Option<String> {
+    let ops = crate::posting::program_ops(world).ok()?;
+    ops.iter().find_map(|(name, e)| {
+        let op = model::operation_of(world, e)?;
+        let tp = model::toolpath_of(world, e)?;
+        // A convicted op is refused by its own cached findings, by name.
+        if tp.warnings.iter().any(crate::verify::Warning::blocks_post) {
+            return None;
+        }
+        operation::kept_rejudge::moved_part_problem(world, name, &op, &tp.path)
+    })
 }

@@ -108,7 +108,13 @@ pub fn build(source: &str, axis: [f64; 3], offset: f64, placed: Vec<Triangle>) -
         .map(|t| [[t.a.x, t.a.y, t.a.z], [t.b.x, t.b.y, t.b.z], [t.c.x, t.c.y, t.c.z]])
         .collect();
     let profile = HolderProfile::envelope(&tris).map_err(|e| e.to_string())?;
-    Ok(ToolBody { source: source.to_owned(), facets: Arc::from(placed), frame: BodyFrame::Spindle { axis, offset, profile }, spun: None, machine_default: false })
+    let facets: Arc<[Triangle]> = Arc::from(placed);
+    let pieces = vec![crate::tool_body_assembly::BodyPiece {
+        source: source.to_owned(),
+        facets: Arc::clone(&facets),
+        csys: Vec::new(),
+    }];
+    Ok(ToolBody { source: source.to_owned(), facets, frame: BodyFrame::Spindle { axis, offset, profile }, spun: None, machine_default: false, pieces })
 }
 
 /// What a drawn (spun) holder body is called where a file name would be.
@@ -128,6 +134,7 @@ pub fn build_spun(spun: SpunProfile) -> ToolBody {
         frame: BodyFrame::Spindle { axis: [0.0, 0.0, 1.0], offset: 0.0, profile: spun.holder_profile() },
         spun: Some(spun),
         machine_default: false,
+        pieces: Vec::new(),
     }
 }
 

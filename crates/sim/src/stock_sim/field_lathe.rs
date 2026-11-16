@@ -94,7 +94,7 @@ impl LatheAxis {
     }
 
     /// `q` split about the axis: (radial vector, station).
-    fn split(&self, q: Point3) -> ([f64; 3], f64) {
+    pub(super) fn split(&self, q: Point3) -> ([f64; 3], f64) {
         let w = [q.x - self.origin.x, q.y - self.origin.y, q.z - self.origin.z];
         let d = self.dir;
         let s = w[0] * d[0] + w[1] * d[1] + w[2] * d[2];

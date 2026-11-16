@@ -10,6 +10,11 @@
 //!   WCS is placed - the same reading the post makes.
 //! - **About the part centre**, the centre of the parts' bounds stays
 //!   where it is (the presets' pivot: a flip keeps its footprint).
+//! - **By, not to (#738).** [`turned_by`] turns the part from where it
+//!   sits NOW (composed onto the held alignment) - the Setups page's
+//!   preset and "Turn by" rows, so they never wipe a picker's move.
+//!   [`turned`] keeps the absolute "to these angles from as modelled"
+//!   reading (`AlignPartToSetup::turn`, the presets' `angles`).
 //!
 //! Provenance: our own design (#606, the maintainer's "it shifts the
 //! model relative to the origin"); a turn about a fixed point is
@@ -53,6 +58,63 @@ pub fn wcs_origin(world: &World, setup: &str) -> Point3 {
     crate::setup::wcs_entity(world, Some(setup))
         .and_then(|e| model::transform_of(world, &e))
         .map_or(Point3::ZERO, |l| l.pos)
+}
+
+/// The centre of the parts' bounds as the alignment `held` (document ->
+/// setup frame) holds them (#738): what a move from the part's CURRENT
+/// pose turns about. The identity reads [`setup_align::part_centre`]
+/// itself. `None` with no part geometry.
+#[must_use]
+pub fn held_centre(world: &World, held: Location) -> Option<Point3> {
+    if held == Location::default() {
+        return setup_align::part_centre(world);
+    }
+    let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+    let mut any = false;
+    for (_, e) in model::model_entities(world) {
+        if model::is_fixture(world, &e) {
+            continue;
+        }
+        for t in model::world_facets(world, &e).unwrap_or_default() {
+            for p in [t.a, t.b, t.c] {
+                let q = transform_point(p, held.pos, held.rot);
+                for (i, v) in [q.x, q.y, q.z].into_iter().enumerate() {
+                    if v.is_finite() {
+                        lo[i] = lo[i].min(v);
+                        hi[i] = hi[i].max(v);
+                        any = true;
+                    }
+                }
+            }
+        }
+    }
+    any.then(|| Point3::new(0.5 * (lo[0] + hi[0]), 0.5 * (lo[1] + hi[1]), 0.5 * (lo[2] + hi[2])))
+}
+
+/// A turn by `rot` from where the part sits NOW (#738): the step about
+/// `pivot` - the setup's WCS origin, or the parts' bounds centre as held -
+/// composed onto the setup's held alignment. The Setups page's "Start from
+/// a preset" and "Turn by" rows queue this, so they never discard what a
+/// face, three-point or axis pick did. An identity turn changes nothing
+/// (the command then says the setup already holds the part that way).
+pub fn turned_by(world: &World, setup: &str, rot: [f64; 4], pivot: TurnPivot) -> Result<Option<Location>, String> {
+    let held = setup_align::stored(world, setup).unwrap_or_default();
+    if setup_align::is_identity_rot(rot) {
+        return Ok(setup_align::stored(world, setup));
+    }
+    let c = held_centre(world, held).ok_or("there is no part to align - import a model first")?;
+    let o = match pivot {
+        TurnPivot::WcsOrigin => wcs_origin(world, setup),
+        TurnPivot::PartCentre => c,
+    };
+    let ro = quat_rotate_point(rot, o);
+    let step = Location { pos: Point3::new(o.x - ro.x, o.y - ro.y, o.z - ro.z), rot };
+    let out = setup_align::compose(step, held);
+    let finite = [out.pos.x, out.pos.y, out.pos.z].iter().chain(&out.rot).all(|v| v.is_finite());
+    if !finite {
+        return Err("the turn is not finite".into());
+    }
+    Ok(Some(out))
 }
 
 /// The alignment that holds the parts turned by `rot` (from as modelled)

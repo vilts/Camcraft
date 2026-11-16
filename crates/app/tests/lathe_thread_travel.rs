@@ -5,7 +5,7 @@
 //! reaches the radius. A thread now passes the built-in Lathe, and a
 //! real over-travel is still refused by name.
 //!
-//! Gate map (#631): covers app::machine (check_document's travel law).
+//! Gate map (#631): covers app::machine, post::machine (check_document's travel law).
 //! Provenance: our own fixtures (the lathe_post_g76 thread bar).
 
 use flecs_ecs::prelude::World;
@@ -90,6 +90,7 @@ fn thread_on(mch: &str) -> World {
         infeed: 0.4,
         feed: 120.0,
         plunge_feed: 40.0,
+        infeed_plan: Default::default(),
         hand: camcraft_app::cl::ThreadHand::Right,
     };
     h.execute(&world, CreateOperation::new(&world, "TH1", "TD-1732-60", SrcRef::Entity("bar".into()), params).expect("create"));

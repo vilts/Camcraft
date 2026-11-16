@@ -1,5 +1,6 @@
 //! Built-in workholding accessories (#789, part of #339): parallels,
-//! 1-2-3 blocks, step blocks, strap (toe) clamps and soft jaws, each
+//! 1-2-3 blocks, step blocks, strap (toe) clamps, soft jaws and rotary
+//! subplates (#821: the base plate a 4th axis stands on), each
 //! generated from a few dimensions and placed through the fixture
 //! library's insert path (`commands::InsertAccessory`) - a model wearing
 //! `FixtureDef`, judged by the same fixture laws as any meshed fixture.
@@ -14,7 +15,12 @@
 //! +y from y = 0, centred in x. Strap clamp: the toe tip at x = 0, the
 //! strap running toward +x, centred in y; its underside at the clamp
 //! height (the clamped face), the heel block under its far end, the stud
-//! between them from the table up through the strap.
+//! between them from the table up through the strap. Rotary subplate
+//! (#821): the origin on its first locating pin bore, on the underside,
+//! +x toward the second bore (the way `plate::mount` seats a dowel pair).
+//! Lathe chucks (#1442: 3-jaw, 4-jaw, collet) break the underside rule:
+//! their frame's z = 0 is the face the work stands on, +z the spindle
+//! axis out of it, the body below (`camcraft_sim::chuck`).
 //!
 //! Provenance: our own generic geometry and figures (common inch sizes of
 //! shop accessories); no vendor model copied.
@@ -24,7 +30,11 @@ use serde::{Deserialize, Serialize};
 use crate::geometry::{Aabb, Point3, Triangle, quat_conjugate, quat_rotate_point};
 use crate::schema::Location;
 
+pub use camcraft_sim::chuck::{ColletChuck, JawChuck};
+
+pub mod chuck;
 pub mod mesh;
+pub mod subplate;
 
 const IN: f64 = 25.4;
 /// No accessory dimension past this (mm): a typo, never a real part.
@@ -60,10 +70,40 @@ pub enum Accessory {
     },
     /// A soft jaw: a block that stands in for a vise jaw.
     SoftJaw { width: f64, height: f64, thickness: f64 },
+    /// A rotary subplate (#821): the base plate a 4th axis is bolted to,
+    /// located on a fixture plate's dowel pair by two pin bores
+    /// `bore_spacing` apart. `bore_x` is the first bore's distance from
+    /// the -x end, `bore_y` the bores' distance from the -y edge. It does
+    /// not turn: it raises the rotary's centerline by its `thickness`.
+    RotarySubplate {
+        length: f64,
+        width: f64,
+        thickness: f64,
+        bore_spacing: f64,
+        bore_x: f64,
+        bore_y: f64,
+        bore_diameter: f64,
+    },
+    /// A self-centring 3-jaw lathe chuck (#1442).
+    ThreeJawChuck(JawChuck),
+    /// A 4-jaw lathe chuck (#1442), its jaws closed evenly.
+    FourJawChuck(JawChuck),
+    /// A collet chuck (#1442).
+    ColletChuck(ColletChuck),
 }
 
 /// The kinds, in the order the dialog lists them.
-pub const KINDS: [&str; 5] = ["parallels", "block", "step_block", "strap_clamp", "soft_jaw"];
+pub const KINDS: [&str; 9] = [
+    "parallels",
+    "block",
+    "step_block",
+    "strap_clamp",
+    "soft_jaw",
+    "rotary_subplate",
+    "three_jaw_chuck",
+    "four_jaw_chuck",
+    "collet_chuck",
+];
 
 /// One named dimension: the file/MCP key, the label the UI shows, and
 /// the value.
@@ -94,6 +134,8 @@ impl Accessory {
                 clamp_height: IN,
             },
             "soft_jaw" => Self::SoftJaw { width: 6.0 * IN, height: 2.0 * IN, thickness: 0.75 * IN },
+            "rotary_subplate" => subplate::generic(),
+            "three_jaw_chuck" | "four_jaw_chuck" | "collet_chuck" => return chuck::generic(kind),
             _ => return None,
         })
     }
@@ -107,6 +149,10 @@ impl Accessory {
             Self::StepBlock { .. } => "step_block",
             Self::StrapClamp { .. } => "strap_clamp",
             Self::SoftJaw { .. } => "soft_jaw",
+            Self::RotarySubplate { .. } => "rotary_subplate",
+            Self::ThreeJawChuck(_) => "three_jaw_chuck",
+            Self::FourJawChuck(_) => "four_jaw_chuck",
+            Self::ColletChuck(_) => "collet_chuck",
         }
     }
 
@@ -155,6 +201,17 @@ impl Accessory {
             Self::SoftJaw { width, height, thickness } => {
                 vec![d("width", "Width", width), d("height", "Height", height), d("thickness", "Thickness", thickness)]
             }
+            Self::RotarySubplate { length, width, thickness, bore_spacing, bore_x, bore_y, bore_diameter } => vec![
+                d("length", "Length", length),
+                d("width", "Width", width),
+                d("thickness", "Thickness (raises the rotary)", thickness),
+                d("bore_spacing", "Pin bore spacing", bore_spacing),
+                d("bore_x", "First bore from the -X end", bore_x),
+                d("bore_y", "Bores from the -Y edge", bore_y),
+                d("bore_diameter", "Pin bore diameter", bore_diameter),
+            ],
+            Self::ThreeJawChuck(c) | Self::FourJawChuck(c) => c.dims_mut().into_iter().map(|(k, l, v)| d(k, l, v)).collect(),
+            Self::ColletChuck(c) => c.dims_mut().into_iter().map(|(k, l, v)| d(k, l, v)).collect(),
         }
     }
 
@@ -219,6 +276,10 @@ impl Accessory {
                 }
                 Ok(())
             }
+            Self::RotarySubplate { .. } => subplate::check(self),
+            Self::ThreeJawChuck(c) => c.check(what, 3),
+            Self::FourJawChuck(c) => c.check(what, 4),
+            Self::ColletChuck(c) => c.check(what),
             _ => Ok(()),
         }
     }
@@ -251,6 +312,10 @@ pub fn label_of(kind: &str) -> &'static str {
         "step_block" => "Step block",
         "strap_clamp" => "Strap clamp",
         "soft_jaw" => "Soft jaw",
+        "rotary_subplate" => "Rotary subplate",
+        "three_jaw_chuck" => "3-jaw chuck",
+        "four_jaw_chuck" => "4-jaw chuck",
+        "collet_chuck" => "Collet chuck",
         _ => "Accessory",
     }
 }

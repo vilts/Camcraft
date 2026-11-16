@@ -30,7 +30,7 @@
 use std::collections::BTreeSet;
 
 use super::{EntityKind, ProjectError, ProjectFile, WcsDto, corrupt};
-use crate::schema::WCS_SLOTS;
+use crate::schema::LEGACY_WCS_NAMES;
 
 /// Run the rung on a file read at version `from` (already stepped to 53
 /// or read at 54+). Returns the load notes.
@@ -61,7 +61,7 @@ pub(super) fn settle(file: &mut ProjectFile, from: u32) -> Result<Vec<String>, P
         };
         let slot = match s.work_offset.as_deref() {
             None => 0,
-            Some(w) => WCS_SLOTS.iter().position(|x| *x == w).ok_or_else(|| {
+            Some(w) => LEGACY_WCS_NAMES.iter().position(|x| *x == w).ok_or_else(|| {
                 corrupt(format!("setup '{name}' picks unknown work offset {w:?}"))
             })?,
         };
@@ -78,13 +78,13 @@ pub(super) fn settle(file: &mut ProjectFile, from: u32) -> Result<Vec<String>, P
             .get(slot)
             .filter(|w| !w.is_empty())
             .cloned()
-            .unwrap_or_else(|| format!("{name}/{}", WCS_SLOTS[slot]));
+            .unwrap_or_else(|| format!("{name}/{}", LEGACY_WCS_NAMES[slot]));
         keep.insert(posted.clone());
         setups.insert(name);
         s.wcs = WcsDto::One(posted);
     }
     if setups.is_empty() {
-        keep.insert(WCS_SLOTS[0].to_owned());
+        keep.insert(LEGACY_WCS_NAMES[0].to_owned());
     }
     // Operations in a setup the file does not hold posted at
     // `<setup>/G54`; the v54 law reads `<setup>/WCS` for them.
@@ -96,7 +96,7 @@ pub(super) fn settle(file: &mut ProjectFile, from: u32) -> Result<Vec<String>, P
         .collect();
     let mut renames: Vec<(String, String)> = Vec::new();
     for s in &dangling {
-        let old = format!("{s}/{}", WCS_SLOTS[0]);
+        let old = format!("{s}/{}", LEGACY_WCS_NAMES[0]);
         let new = format!("{s}/{}", crate::setup::WCS_SUFFIX);
         if file.entities.iter().any(|d| d.name == new) {
             return Err(corrupt(format!("'{new}' already exists - cannot carry '{old}' onto it")));
@@ -133,8 +133,8 @@ pub(super) fn settle(file: &mut ProjectFile, from: u32) -> Result<Vec<String>, P
 /// A pre-v54 offset row the validator would accept: a slot name (bare or
 /// under a setup) and no solid, tool, operation or setup payload.
 fn well_formed(dto: &super::EntityDto) -> bool {
-    let named = WCS_SLOTS.contains(&dto.name.as_str())
-        || dto.name.rsplit_once('/').is_some_and(|(_, last)| WCS_SLOTS.contains(&last));
+    let named = LEGACY_WCS_NAMES.contains(&dto.name.as_str())
+        || dto.name.rsplit_once('/').is_some_and(|(_, last)| LEGACY_WCS_NAMES.contains(&last));
     named
         && dto.facets.is_none()
         && dto.stock.is_none()

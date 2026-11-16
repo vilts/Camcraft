@@ -13,7 +13,7 @@ use camcraft_app::{fixture, model, units};
 
 use crate::state::{CommandKind, State};
 
-use super::fields::num_plain;
+use super::fields::{named, num_plain_by};
 
 /// The plate lines of fixture `name`'s row.
 pub(super) fn plate_rows(ui: &mut Ui, state: &mut State, name: &str) {
@@ -79,11 +79,12 @@ fn place_picker(ui: &mut Ui, state: &mut State, name: &str) {
     let Some(def) = def else { return };
     let mut go = false;
     egui::CollapsingHeader::new("Place on plate…").id_salt(("plate-place", name)).show(ui, |ui| {
-        egui::ComboBox::from_id_salt(("plate-pick", name)).selected_text(draft.plate.clone()).show_ui(ui, |ui| {
+        let pick = egui::ComboBox::from_id_salt(("plate-pick", name)).selected_text(draft.plate.clone()).show_ui(ui, |ui| {
             for p in &plates {
                 ui.selectable_value(&mut draft.plate, p.clone(), p);
             }
         });
+        named(pick.response, "Plate to place on");
         ui.horizontal(|ui| {
             ui.radio_value(&mut draft.dowels, false, "Hole");
             if def.dowels.is_some() {
@@ -92,32 +93,36 @@ fn place_picker(ui: &mut Ui, state: &mut State, name: &str) {
         });
         if draft.dowels {
             ui.horizontal(|ui| {
-                ui.label("Dowels");
-                ui.add(egui::TextEdit::singleline(&mut draft.dowel_a).desired_width(40.0));
-                ui.add(egui::TextEdit::singleline(&mut draft.dowel_b).desired_width(40.0));
+                let l = ui.label("Dowels");
+                ui.add(egui::TextEdit::singleline(&mut draft.dowel_a).desired_width(40.0)).labelled_by(l.id);
+                ui.add(egui::TextEdit::singleline(&mut draft.dowel_b).desired_width(40.0)).labelled_by(l.id);
             });
         } else {
             let g = &def.holes;
             draft.row = draft.row.min(g.rows.saturating_sub(1));
             draft.col = draft.col.min(g.cols.saturating_sub(1));
             ui.horizontal(|ui| {
-                ui.label("Row");
+                let l = ui.label("Row");
                 egui::ComboBox::from_id_salt(("plate-row", name)).selected_text(plate::row_letters(draft.row)).show_ui(ui, |ui| {
                     for r in 0..g.rows {
                         ui.selectable_value(&mut draft.row, r, plate::row_letters(r));
                     }
-                });
-                ui.label("Column");
+                })
+                .response
+                .labelled_by(l.id);
+                let l = ui.label("Column");
                 egui::ComboBox::from_id_salt(("plate-col", name)).selected_text((draft.col + 1).to_string()).show_ui(ui, |ui| {
                     for c in 0..g.cols {
                         ui.selectable_value(&mut draft.col, c, (c + 1).to_string());
                     }
-                });
+                })
+                .response
+                .labelled_by(l.id);
             });
         }
         ui.horizontal(|ui| {
-            ui.label("Turn (deg)");
-            num_plain(ui, &mut draft.yaw_deg);
+            let l = ui.label("Turn (deg)");
+            num_plain_by(ui, &mut draft.yaw_deg, l.id);
         });
         go = ui.button("Place on grid").clicked();
     });

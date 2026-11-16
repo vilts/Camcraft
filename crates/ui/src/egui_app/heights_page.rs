@@ -14,7 +14,6 @@
 use egui::{Label, RichText, Ui};
 
 use camcraft_app::operation::{Height, HeightReference, SrcRef};
-use camcraft_app::schema::WCS_SLOTS;
 use camcraft_app::units;
 
 use crate::operations::{height_echo, offset_label};
@@ -106,15 +105,12 @@ fn height_tag_is_bottom(tag: &str) -> bool {
 
 /// Where the read-only work-offset row points the user (#329).
 pub(crate) const SETUP_OFFSET_HINT: &str =
-    "program zero is the setup's WCS: its work offset (G54-G59) is set on the WCS page or the Setups page";
+    "program zero is the setup's WCS: its work offset (named by the setup's post) is set on the WCS page or the Setups page";
 
 /// The read-only work-offset row's text: the setup's resolved word, and
 /// where it is set.
 pub(crate) fn setup_offset_text(world: &flecs_ecs::prelude::World, setup: Option<&str>) -> String {
-    let word = WCS_SLOTS
-        .get(camcraft_app::setup::wcs_slot(world, setup))
-        .copied()
-        .unwrap_or("G54");
+    let word = camcraft_app::setup::wcs_name(world, setup);
     match camcraft_app::setup::effective(world, setup) {
         Some(s) => format!("WCS ({word})  (from setup {s})"),
         None => format!("WCS ({word})"),
@@ -173,7 +169,9 @@ mod offset_hint_tests {
     fn offset_hint_names_the_real_pages_in_plain_words() {
         assert!(SETUP_OFFSET_HINT.contains("WCS page"), "{SETUP_OFFSET_HINT}");
         assert!(SETUP_OFFSET_HINT.contains("Setups page"), "{SETUP_OFFSET_HINT}");
-        assert!(SETUP_OFFSET_HINT.contains("work offset (G54-G59)"), "{SETUP_OFFSET_HINT}");
+        assert!(SETUP_OFFSET_HINT.contains("work offset (named by the setup's post)"), "{SETUP_OFFSET_HINT}");
+        // #931: the post names the offsets - no fixed G54-G59 range.
+        assert!(!SETUP_OFFSET_HINT.contains("G54"), "{SETUP_OFFSET_HINT}");
         assert!(!SETUP_OFFSET_HINT.contains("word"), "{SETUP_OFFSET_HINT}");
     }
 }

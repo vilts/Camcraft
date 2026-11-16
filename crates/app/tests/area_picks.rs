@@ -53,9 +53,10 @@ fn the_picks_spell_an_open_chain_or_closed_rings_before_generate() {
     assert!(shape(&world, &all).is_closed(), "the four sides close");
     let top = pick("part", top_face(&world, "part", 10.0));
     assert_eq!(shape(&world, &top).summary(), "1 face loop, closed");
-    // Two opposite sides do not touch: named, not guessed.
+    // #1727: two opposite sides do not touch - two open chains, the
+    // area between them (touching chains are refused, boundary_chains).
     let apart = vec![all[0].clone(), all[2].clone()];
-    assert!(matches!(shape(&world, &apart), PickShape::Invalid(ref why) if why.contains("separate open runs")));
+    assert!(matches!(shape(&world, &apart), PickShape::Chains { picks: 2, ref chains } if chains.len() == 2));
     assert!(matches!(shape(&world, &[]), PickShape::Invalid(_)));
 }
 

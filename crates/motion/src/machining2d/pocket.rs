@@ -15,60 +15,13 @@ use super::arcs::{ARC_FIT_TOL, Seg, fit_arcs};
 use super::arc_cross::post_crossing_free;
 use super::arc_proof::{ProofTally, fit_proved};
 use super::fillet::{Legal, fillet_corners};
-use super::fillet_tally::{FilletTally, fillet_floor};
-use super::ring::ring_is_circular;
+use super::fillet_tally::{FilletTally, corner_arc_radius, fillet_floor};
 use super::waterscan::{scan_row, waterline_passes};
 use super::slots::chord_clears;
 use super::pocket_hsm::adaptive_passes;
-/// How a pocket is filled: straight rows back and forth, or closed rings
-/// marching inward.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PocketStrategy {
-    Zigzag,
-    Waterline,
-    /// HSM adaptive clearing (M11.4 C, `adaptive`): a spiral out of
-    /// the entry bore, then engagement fronts against the in-process
-    /// stock with smooth stay-down links and trochoidal arcs in narrow
-    /// channels, every cut measured to hold the `optimal_load` (ae/D,
-    /// `crate::load`). The 3-D ladder plans every closed level area
-    /// with the same planner (`machining3d::hsm`, M11.4's per-level
-    /// port) and falls back to [`PocketStrategy::OffsetRings`] by name
-    /// where the planner refuses a level.
-    Adaptive,
-    /// The pre-M11.4 C adaptive (M2.1c's law, planar since M5.1 H):
-    /// the Waterline ring tiling spaced at `optimal_load` x D instead
-    /// of a free stepover - concentric rings, kept as an explicit
-    /// choice so every program it posted stays byte-identical.
-    OffsetRings,
-    /// Waterline where the pocket's outer boundary is round enough for
-    /// rings to be the honest shape, Zigzag otherwise. The resolution is
-    /// [`PocketStrategy::resolve`] - the panel quotes it verbatim, so an
-    /// Auto pocket never hides which path it is cutting.
-    Auto,
-}
+use super::predrilled::PreHole;
+pub use super::pocket_strategy::PocketStrategy;
 
-impl PocketStrategy {
-    /// What Auto picks for a cutter-center ring: fitted arcs must carry
-    /// at least 90% of the boundary's length AND agree on a center
-    /// within a quarter stepover - a family of true circles, not corners
-    /// that happen to round - and the stepover must still be inside
-    /// waterline's reach (rings a whole stepover apart leave a band no
-    /// ring's edge reaches when the step exceeds one radius; zigzag
-    /// clears the same floor honestly). Any other strategy answers as
-    /// itself.
-    pub fn resolve(self, outer_ring: &[Point2], stepover: f64, tool_diameter: f64, tol: f64) -> Self {
-        match self {
-            PocketStrategy::Auto
-                if ring_is_circular(outer_ring, tol, stepover)
-                    && stepover <= tool_diameter * 0.5 =>
-            {
-                PocketStrategy::Waterline
-            }
-            PocketStrategy::Auto => PocketStrategy::Zigzag,
-            s => s,
-        }
-    }
-}
 
 /// 2D pocketing: clear every bit of material inside a region down to
 /// `bottom_z`. Islands (region holes) are never entered; the cutter
@@ -121,6 +74,11 @@ pub struct PocketParams {
     /// path's notes, with the worst corner rest. `false` - every
     /// pre-M11.1 file - is the sharp walk, unchanged to the byte.
     pub blend_turns: bool,
+    /// The corner arc's radius (#1733), read only with `blend_turns`:
+    /// `None` is the tool radius every earlier file blends at; a smaller
+    /// one leaves less corner rest. The law still shrinks a corner that
+    /// has no room; `corner_arc_radius` is the door.
+    pub blend_radius: Option<f64>,
     /// Level transitions and links (M11.2 C/D); [`Links::PLANAR`] is
     /// the ladder every earlier pocket posted.
     pub links: Links,
@@ -177,9 +135,11 @@ impl PocketParams {
             }
         };
         if self.tiling_step() > reach {
-            return Err(GenError::Invalid(
-                "stepover leaves bands the tool cannot reach".into(),
-            ));
+            let what = if self.strategy.steps_by_load() { "optimal-load step" } else { "stepover" };
+            return Err(GenError::Invalid(format!(
+                "{what} {:.3} mm leaves bands the tool cannot reach (at most {reach:.3} mm for this strategy)",
+                self.tiling_step()
+            )));
         }
         if self.feed <= 0.0 || self.plunge_feed <= 0.0 {
             return Err(GenError::Invalid("feeds must be positive".into()));
@@ -197,6 +157,9 @@ impl PocketParams {
             return Err(GenError::Invalid("retract plane sits inside the material".into()));
         }
         self.links.validate().map_err(|e| GenError::Invalid(e.into()))?;
+        if self.blend_turns {
+            corner_arc_radius(self.blend_radius, self.tool_diameter).map_err(GenError::Invalid)?;
+        }
         if self.entry == Entry3D::Helix || self.links.transition == Some(Entry3D::Helix) {
             let r = self.tool_diameter * 0.5;
             if self.helix_radius <= 0.0 || self.helix_radius > r {
@@ -224,12 +187,7 @@ impl PocketParams {
     /// plan and the reach door both ask this one function, mirroring
     /// `Pocket3DParams::tiling_step` (M5.1 H).
     fn tiling_step(&self) -> f64 {
-        match self.strategy {
-            PocketStrategy::Adaptive | PocketStrategy::OffsetRings => {
-                load_step(self.tool_diameter, self.optimal_load)
-            }
-            _ => self.stepover,
-        }
+        if self.strategy.steps_by_load() { load_step(self.tool_diameter, self.optimal_load) } else { self.stepover }
     }
 }
 
@@ -249,16 +207,41 @@ impl PocketParams {
 /// lift-rapid-plunge. Rapids inside the footprint below the safe plane
 /// are the verifier's business (step 7).
 pub fn pocket(region: &Region, p: &PocketParams) -> Result<Toolpath, GenError> {
+    pocket_entered(region, p, &[])
+}
+
+/// [`pocket`] with the holes the caller proved open (#1449): read only
+/// when `p.links.approach.predrilled` asks (`predrilled.rs`).
+pub fn pocket_entered(region: &Region, p: &PocketParams, holes: &[PreHole]) -> Result<Toolpath, GenError> {
     p.validate()?;
     if region.is_empty() {
         return Err(GenError::Empty("empty pocket region".into()));
     }
-    let r = p.tool_diameter * 0.5;
-    let center = region.offset(-(r + p.stock_to_leave))?;
+    let center = region.offset(-(p.tool_diameter * 0.5 + p.stock_to_leave))?;
     if center.is_empty() {
         // Material exists that no legal tool position can reach.
         return Err(GenError::Invalid("pocket is narrower than the tool".into()));
     }
+    pocket_over(region, &center, p, Vec::new(), false, holes)
+}
+
+/// The pocket passes over a given cutter-center area: [`pocket`]'s body
+/// once the area is known, shared with rest machining (`rest2d`, #1446),
+/// whose area is the part of the pocket's own that touches the rest
+/// material. `center` must lie inside `region` eroded by the tool radius
+/// plus the stock to leave; `notes` are said first on the path.
+/// `hold_crossings` holds every fitted arc to the crossing law on the
+/// posted path (`arc_cross`): rest areas have thin horns where two
+/// fitted arcs can cross within tolerance. `holes` are the proved
+/// pre-drilled entries (#1449; rest machining passes none).
+pub(super) fn pocket_over(
+    region: &Region,
+    center: &Region,
+    p: &PocketParams,
+    notes: Vec<String>,
+    hold_crossings: bool,
+    holes: &[PreHole],
+) -> Result<Toolpath, GenError> {
     // Auto commits to a shape here, from the region's own outline - the
     // outermost loop (largest area; holes and islands never decide the
     // pocket's strategy). The panel quotes the same law on the same
@@ -276,18 +259,21 @@ pub fn pocket(region: &Region, p: &PocketParams) -> Result<Toolpath, GenError> {
         s => s,
     };
     let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
+    notes.into_iter().for_each(|n| b.note(n));
     // The HSM plan may choose where its entry stands (`pocket_hsm`).
     let (passes, strategy, room, joins) = match strategy {
         PocketStrategy::Adaptive => {
-            let (passes, notes, s, room, joins) = adaptive_passes(&center, p, "this pocket", true)?;
+            let (passes, notes, s, room, joins) = adaptive_passes(center, p, "this pocket", true)?;
             notes.into_iter().for_each(|n| b.note(n));
             (passes, s, room, joins)
         }
-        s => (plan_passes(&center, p.tiling_step(), p.climb, s)?, s, None, Vec::new()),
+        s => (plan_passes(center, p.tiling_step(), p.climb, s)?, s, None, Vec::new()),
     };
     // The horizontal arc entry (M11.3) lands on the first pass: a closed
     // first ring starts mid its longest edge, where an arc has room.
     let passes = if p.links.approach.arc_xy && room.is_none() { super::descent_xy::reseat_first(passes) } else { passes };
+    // #1449: a proved hole re-seats the plan on itself (not the HSM plan's own bore).
+    let passes = super::predrilled::reseat(passes, holes, center, p.links.approach.predrilled && room.is_none());
     let zs = cut_levels(p.top_z, p.bottom_z, p.stepdown)?;
     // Waterline rings circle around material, so they get the arc fitter
     // (rings straight enough to be lines stay exactly that); zigzag rows
@@ -302,7 +288,7 @@ pub fn pocket(region: &Region, p: &PocketParams) -> Result<Toolpath, GenError> {
     };
     let mut proof = ProofTally::default();
     let mut fit_pass = |pass: &[Point2], tol: f64| -> Vec<Seg> {
-        if strategy == PocketStrategy::Adaptive { fit_proved(pass, tol, &center, &mut proof) } else { fit_arcs(pass, tol) }
+        if strategy == PocketStrategy::Adaptive { fit_proved(pass, tol, center, &mut proof) } else { fit_arcs(pass, tol) }
     };
     // The HSM plan's entry may orbit a narrowed helix (`pocket_hsm`).
     let helix_r = room.as_ref().map_or(p.helix_radius, |e| e.helix_r);
@@ -312,12 +298,14 @@ pub fn pocket(region: &Region, p: &PocketParams) -> Result<Toolpath, GenError> {
         .with_links(p.links, helix_r)
         .with_top(p.top_z)
         .with_xy_arc(p.links.approach.arc_xy)
-        .with_microlift(joins);
+        .with_microlift(joins)
+        .with_holes(holes);
     // The walks: fitted where the strategy fits, then - opted in - the
     // corner fillets, proved inside the cutter-center area. Passes are
     // one plan at every level, so the plan's refusals are said once.
     let runs: Option<Vec<Vec<Seg>>> = if p.blend_turns {
-        let legal = Legal { region: &center, inside: true, air_left: None };
+        let legal = Legal { region: center, inside: true, air_left: None };
+        let rho = corner_arc_radius(p.blend_radius, p.tool_diameter).map_err(GenError::Invalid)?;
         let mut tally = FilletTally::default();
         let runs = passes
             .iter()
@@ -329,7 +317,7 @@ pub fn pocket(region: &Region, p: &PocketParams) -> Result<Toolpath, GenError> {
                     Some(tol) => fit_pass(pass, tol),
                     None => vec![Seg::Line(rest.to_vec())],
                 };
-                let (walk, t) = fillet_corners(&walk, *first, r, ARC_FIT_TOL, &legal);
+                let (walk, t) = fillet_corners(&walk, *first, rho, ARC_FIT_TOL, &legal);
                 tally.add(t);
                 walk
             })
@@ -350,10 +338,10 @@ pub fn pocket(region: &Region, p: &PocketParams) -> Result<Toolpath, GenError> {
     // a user-set transition are proved against the whole center area.
     let cert = match &room {
         Some(e) => Cert::Stadium { a: e.seed, b: e.seed, h: e.clear, tess: &e.tess },
-        None => Cert::Region(&center),
+        None => Cert::Region(center),
     };
     let post = |b: &mut PathBuilder, runs: Option<&[Vec<Seg>]>| {
-        run_level_walks(b, &passes, &zs, &motion, runs, Some(&cert), Some(&Cert::Region(&center)));
+        run_level_walks(b, &passes, &zs, &motion, runs, Some(&cert), Some(&Cert::Region(center)));
         let cur = b.at();
         b.push(MoveKind::Rapid, Point3::new(cur.x, cur.y, p.clearance_z), None);
     };
@@ -361,7 +349,7 @@ pub fn pocket(region: &Region, p: &PocketParams) -> Result<Toolpath, GenError> {
     // path too (`arc_proof`): an arc that would cross another feed is
     // given up and the walks are posted again.
     let mut path = match runs {
-        Some(runs) if strategy == PocketStrategy::Adaptive => post_crossing_free(b, &passes, runs, &mut proof, post),
+        Some(runs) if strategy == PocketStrategy::Adaptive || hold_crossings => post_crossing_free(b, &passes, runs, &mut proof, post),
         runs => {
             post(&mut b, runs.as_deref());
             b.finish()

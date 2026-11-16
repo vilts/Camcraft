@@ -18,19 +18,23 @@
 //!   rest. The snapshot count is bounded (`MAX_CHECKPOINTS`), so memory
 //!   is a constant multiple of one field, never proportional to moves.
 //!   (Dirty-brick deltas instead of whole snapshots are M7.3's cost law.)
-//! - **Only completed moves cut.** The move under the playhead has not
-//!   finished, so it has not removed its material yet; a seek to the
-//!   end cuts everything.
+//! - **Completed moves cut the kept stock; the move in flight cuts a
+//!   copy (#1516).** The stock after `k` moves is exactly the prefix
+//!   cut above, and it alone is snapshotted and cut on. The move under
+//!   the playhead is shown as far as the tool has travelled, on a copy
+//!   of that stock (`stock_play_head`), so a frame costs one copy
+//!   plus one partial sweep, never a re-cut; a seek to the end cuts
+//!   everything.
 //! - **The timeline and the plan agree by name, or nothing plays.**
 //!   The transport's script and the posting plan are walked by
 //!   different callers; an operation the plan does not hold is a
 //!   refusal, never a silent skip that would show material the
 //!   machine removes as standing.
 
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::geometry::Triangle;
-use crate::sim::Script;
 use crate::stock_sim::{Planned, SimOp, Stock};
 use crate::stock_view::{build_stock, build_target, display_inputs, FieldView, DEFAULT_TEXELS};
 
@@ -87,6 +91,9 @@ pub struct PlaySeed {
     cell: f64,
     /// The model's world facets when the playback is judged.
     part: Option<Vec<Triangle>>,
+    /// The verdict tolerance the colours are gated at, or why the
+    /// program is not judged (#1056, `model_fidelity::program_tol`).
+    tol: Result<f64, String>,
 }
 
 impl PlaySeed {
@@ -95,7 +102,8 @@ impl PlaySeed {
     pub fn gather(world: &flecs_ecs::prelude::World, judged: bool, texels: f64) -> Result<Self, String> {
         let (stock_facets, planned, cell) = display_inputs(world, texels)?;
         let part = if judged { Some(crate::stock_sim::part_facets(world)?) } else { None };
-        Ok(PlaySeed { stock_facets, planned, cell, part })
+        let tol = crate::model_fidelity::program_tol(world);
+        Ok(PlaySeed { stock_facets, planned, cell, part, tol })
     }
 
     /// The move table the transport maps onto (cheap; no field built).
@@ -141,6 +149,16 @@ pub struct FieldPlay {
     target: Option<Arc<Stock>>,
     target_note: Option<String>,
     cell: f64,
+    tol: f64,
+    /// The travelled fraction of move `at` the picture shows (#1516).
+    frac: f64,
+    /// `cur` plus the travelled part of move `at`, when there is one.
+    partial: Option<Stock>,
+    /// The bricks `partial` changed beyond `cur`.
+    partial_bricks: HashSet<[i32; 3]>,
+    /// The partial bricks of the last picture taken: the next take
+    /// re-sends them, whatever stands there now.
+    ghost: HashSet<[i32; 3]>,
 }
 
 impl FieldPlay {
@@ -161,7 +179,7 @@ impl FieldPlay {
     /// Build the fields from a gathered seed - no world needed, so a
     /// worker thread can pay for it.
     pub fn from_seed(seed: PlaySeed) -> Result<Self, String> {
-        let PlaySeed { stock_facets, planned, cell, part } = seed;
+        let PlaySeed { stock_facets, planned, cell, part, tol } = seed;
         let index = PlayIndex::of(&planned);
         let stock = build_stock(&stock_facets, cell)?;
         let mut ops = Vec::with_capacity(planned.len());
@@ -171,7 +189,10 @@ impl FieldPlay {
             ops.push(PlayOp { name: p.name, moves: p.moves, radius: p.radius, ball: p.ball, cone: p.cone, corner: p.corner, start: total, rotary: p.rotary, lathe: p.lathe });
             total = total.saturating_add(n);
         }
-        let (target, target_note) = if let Some(part) = &part {
+        let (target, target_note) = if let (Some(_), Err(why)) = (&part, &tol) {
+            // #1056: no colours off a mesh the gate refuses to judge.
+            (None, Some(why.clone()))
+        } else if let Some(part) = &part {
             build_target(part, cell)
         } else {
             (None, Some("playback shows material, not a verdict - arm Deviate to judge".to_string()))
@@ -190,6 +211,11 @@ impl FieldPlay {
             target: target.map(Arc::new),
             target_note,
             cell,
+            tol: tol.unwrap_or(crate::stock_sim::DEV_TOL),
+            frac: 0.0,
+            partial: None,
+            partial_bricks: HashSet::new(),
+            ghost: HashSet::new(),
         })
     }
 
@@ -275,6 +301,8 @@ impl FieldPlay {
         if k == self.at {
             return Ok(false);
         }
+        // The move in flight changes: its partial picture goes.
+        self.drop_partial();
         if k < self.at {
             let (at, snap) = self
                 .checkpoints
@@ -310,10 +338,11 @@ impl FieldPlay {
     #[must_use]
     pub fn view(&self) -> FieldView {
         FieldView {
-            stock: self.cur.clone(),
+            stock: self.partial.as_ref().unwrap_or(&self.cur).clone(),
             target: self.target.clone(),
             target_note: self.target_note.clone(),
             cell: self.cell,
+            tol: self.tol,
             packed: None,
         }
     }
@@ -322,13 +351,19 @@ impl FieldPlay {
     /// forward run; `None` when the delta is not provable that way (a
     /// checkpoint restore, the first take, jump mode, a column stock)
     /// and the caller must re-send the whole cut layer.
-    pub fn take_dirty(&mut self) -> Option<std::collections::HashSet<[i32; 3]>> {
+    /// A partial picture adds its own bricks and the last one's.
+    pub fn take_dirty(&mut self) -> Option<HashSet<[i32; 3]>> {
         let d = self.cur.take_dirty_bricks();
+        let ghost = std::mem::replace(&mut self.ghost, self.partial_bricks.clone());
         if self.batched {
             return None;
         }
         let restored = std::mem::replace(&mut self.restored, false);
-        d.filter(|_| !restored)
+        d.filter(|_| !restored).map(|mut set| {
+            set.extend(ghost);
+            set.extend(self.partial_bricks.iter().copied());
+            set
+        })
     }
 
     /// Subtract global moves `[from, to)` from the shown stock.
@@ -357,32 +392,6 @@ impl FieldPlay {
     }
 }
 
-/// Where the transport's playhead stands, in the timeline's terms.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Progress {
-    /// The op under the playhead.
-    pub op: String,
-    /// Its segments completed (a connector rapid counts here).
-    pub segs_done: usize,
-    /// Its segments in all.
-    pub span: usize,
-}
-
-/// The playhead at `t` as a [`Progress`]: `None` for an empty
-/// timeline. Before the first segment completes nothing is done; at or
-/// past the end every segment of the last op is. Only completed
-/// segments count - the one under the playhead has not cut yet.
-#[must_use]
-pub fn progress(sc: &Script, t: f64) -> Option<Progress> {
-    let last = sc.segs.len().checked_sub(1)?;
-    let t = if t.is_finite() { t } else { 0.0 };
-    // The segment the playhead is inside: the first whose end is past t.
-    let i = sc.cum.partition_point(|&c| c <= t).min(last);
-    let seg = sc.segs.get(i)?;
-    let op = sc.ops.get(seg.op)?.clone();
-    let first = sc.segs.iter().position(|s| s.op == seg.op)?;
-    let end = sc.segs.iter().rposition(|s| s.op == seg.op)?;
-    let finished = if t >= sc.total { i + 1 } else { i };
-    let span = end + 1 - first;
-    Some(Progress { op, segs_done: finished.saturating_sub(first).min(span), span })
-}
+#[path = "stock_play_head.rs"]
+mod head;
+pub use head::{progress, settle_frac, Progress};

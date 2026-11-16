@@ -1,0 +1,26 @@
+{
+  "general": { "model": "Sienci AltMill 4x4", "vendor": "Camcraft", "kind": "mill" },
+  "kinematics": { "default": {
+    "units": { "length": "mm", "angle": "degrees" },
+    "parts": [
+      { "id": "base", "name": "table", "type": "table", "parts": [
+        { "id": "col", "name": "Z", "type": "linear", "travel": { "min": -170.0, "max": 170.0 }, "safe_retract": 0.0, "parts": [
+          { "id": "ram", "name": "Y", "type": "linear", "travel": { "min": -1248.0, "max": 1248.0 }, "parts": [
+            { "id": "sld", "name": "X", "type": "linear", "travel": { "min": -1260.0, "max": 1260.0 } }
+          ] }
+        ] },
+        { "id": "head", "name": "head", "type": "head",
+          "spindle": { "min_speed": 1200.0, "max_speed": 24000.0 },
+          "tool_station": {
+            "coolants": [
+              { "name": "Flood", "mCode": "M8" },
+              { "name": "Mist", "mCode": "M7" }
+            ] } }
+      ] }
+    ] } },
+  "controller": { "synced_configuration": { "parts": {
+    "X": { "coordinate": 0, "max_normal_speed": 15000.0, "max_rapid_speed": 15000.0 },
+    "Y": { "coordinate": 1, "max_normal_speed": 15000.0, "max_rapid_speed": 15000.0 },
+    "Z": { "coordinate": 2, "max_normal_speed": 6000.0, "max_rapid_speed": 6000.0 }
+  } } }
+}

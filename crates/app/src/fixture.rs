@@ -148,12 +148,29 @@ pub fn boxes_for(world: &World, declared: Option<&str>) -> Vec<FixtureBox> {
 pub fn named_boxes_for(world: &World, declared: Option<&str>) -> Vec<(String, FixtureBox)> {
     let mut out: Vec<(String, FixtureBox)> = tagged(world, declared)
         .into_iter()
-        .filter_map(|(name, e)| {
-            model::entity_world_aabb(world, &e).map(|b| (name, FixtureBox { min: b.min, max: b.max }))
-        })
+        .filter_map(|(name, e)| steel_box(world, &e).map(|b| (name, b)))
         .collect();
     out.extend(table_box(world, declared).map(|b| (MACHINE_TABLE.to_string(), b)));
     out
+}
+
+/// One tagged model's collision box: its world AABB - grown on every
+/// side by its chord error when it was imported coarser than the STEP
+/// importer promises (#864). The mesh's vertices lie on the true steel,
+/// so a curved face can stand that far outside the box of its facets.
+fn steel_box(world: &World, e: &Entity) -> Option<FixtureBox> {
+    let b = model::entity_world_aabb(world, e)?;
+    // Full fidelity: the box itself, bit for bit (no `+ 0.0`).
+    // #1056: unknown fidelity has no honest growth; the gate refuses the
+    // program by name (`model_fidelity::gate_problems`), so the plain box
+    // stands in rather than one that collides with everything.
+    let Some(g) = crate::model_fidelity::chord_of(world, e).filter(|g| !crate::model_fidelity::is_unknown(*g)) else {
+        return Some(FixtureBox { min: b.min, max: b.max });
+    };
+    Some(FixtureBox {
+        min: Point3::new(b.min.x - g, b.min.y - g, b.min.z - g),
+        max: Point3::new(b.max.x + g, b.max.y + g, b.max.z + g),
+    })
 }
 
 /// [`boxes_for`] split by whether the steel turns with the part (M13.8
@@ -164,8 +181,7 @@ pub fn named_boxes_for(world: &World, declared: Option<&str>) -> Vec<(String, Fi
 pub fn workholding_for(world: &World, declared: Option<&str>) -> (Vec<FixtureBox>, Vec<FixtureBox>) {
     let (mut turning, mut fixed) = (Vec::new(), Vec::new());
     for (_, e) in tagged(world, declared) {
-        let Some(b) = model::entity_world_aabb(world, &e) else { continue };
-        let b = FixtureBox { min: b.min, max: b.max };
+        let Some(b) = steel_box(world, &e) else { continue };
         if def_of(world, &e).is_some_and(|d| d.fixed) {
             fixed.push(b);
         } else {
@@ -176,6 +192,14 @@ pub fn workholding_for(world: &World, declared: Option<&str>) -> (Vec<FixtureBox
     (turning, fixed)
 }
 
+/// The tagged models of the `declared` setup context no collision box
+/// can be read for (no finite geometry), by name (#1037): steel every
+/// box law passes over, so a law that must not pass it silently names it.
+#[must_use]
+pub fn unreadable_for(world: &World, declared: Option<&str>) -> Vec<String> {
+    tagged(world, declared).into_iter().filter(|(_, e)| steel_box(world, e).is_none()).map(|(n, _)| n).collect()
+}
+
 /// Every tagged model's world mesh, paired with the very box
 /// [`boxes_for`] reports for it (#339): the mesh law's input. The BVH is
 /// built only when a box law first flags that fixture
@@ -184,6 +208,9 @@ pub fn workholding_for(world: &World, declared: Option<&str>) -> (Vec<FixtureBox
 pub fn meshes_for(world: &World, declared: Option<&str>) -> Vec<MeshedFixture> {
     tagged(world, declared)
         .into_iter()
+        // #864: a fixture imported coarser than promised is judged by its
+        // (grown) box alone - its mesh is never trusted to acquit a hit.
+        .filter(|(_, e)| crate::model_fidelity::chord_of(world, e).is_none())
         .filter_map(|(name, e)| {
             let b = model::entity_world_aabb(world, &e)?;
             let tris = model::world_facets(world, &e)?;

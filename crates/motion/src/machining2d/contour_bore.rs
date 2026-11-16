@@ -96,38 +96,45 @@ pub(super) fn bore_entry(b: &mut PathBuilder, eng: &Engage, s: &BoreStep, lead: 
             // M11.3 B: zig-zag at the angle along the lead-in and the
             // ring - every point on a path the room law proved.
             let zf = if a.ramp_to_depth { (p.top_z + a.plunge_height).min(prev_z) } else { from };
-            match plan_zig_capped(&path, zf - z, a.ramp_angle, a.ramp_max_len) {
-                Some((pre, n)) => {
-                    if leg.x != e2.x || leg.y != e2.y {
-                        b.push(MoveKind::Rapid, Point3::new(e2.x, e2.y, tz), None);
-                    }
-                    b.push(MoveKind::Rapid, Point3::new(e2.x, e2.y, zf), None);
-                    push_zig(b, &pre, n, zf, z, fd);
-                    None
-                }
-                None => sub(b, "the lead-in and ring are too short for the entry ramp's angle and length"),
+            if zig_onto(b, &path, leg, tz, zf, z, a.ramp_angle, a.ramp_max_len, fd) {
+                None
+            } else {
+                sub(b, "the lead-in and ring are too short for the entry ramp's angle and length")
             }
         }
         Entry3D::Ramp => {
             // One chord test covers the whole interpolated descent (M8.1's
             // superset law at its simplest - a planar contour's single
             // center); the leg limit takes the chord's last stretch.
-            if chord_clears(center, leg, e2) {
-                let st = a.ramp_start(leg, e2);
-                let st = if chord_clears(center, st, e2) { st } else { leg };
-                let zf = if a.ramp_to_depth { (p.top_z + a.plunge_height).min(prev_z) } else { from };
+            // #1664: the chord stands only where it is no steeper than the
+            // entry ramp angle (3 deg by default). On a closed
+            // ring the leg IS the ring's start, so the chord has no run:
+            // the ramp zig-zags along the lead-in and the ring at the
+            // angle instead, and where they are too short the dive is
+            // named and flown at the plunge feed - never a straight-down
+            // feed at the cutting feed.
+            let zf = if a.ramp_to_depth { (p.top_z + a.plunge_height).min(prev_z) } else { from };
+            let angle = if !s.first && p.links.transition == Some(Entry3D::Ramp) {
+                level_angle(p.links.ramp_angle)
+            } else {
+                crate::links::DEFAULT_RAMP_ANGLE
+            };
+            if !chord_clears(center, leg, e2) {
+                return sub(b, "the ramp's chord is blocked");
+            }
+            let st = a.ramp_start(leg, e2);
+            let st = if chord_clears(center, st, e2) { st } else { leg };
+            if within_angle(st, e2, zf - z, angle) {
                 if st.x != leg.x || st.y != leg.y {
                     b.push(MoveKind::Rapid, Point3::new(st.x, st.y, cur.z), None);
                 }
                 b.push(MoveKind::Rapid, Point3::new(st.x, st.y, zf), None);
-                if st.x == e2.x && st.y == e2.y {
-                    // A ramp with no run is a plunge: the one plunge law.
-                    super::contour_link::guard(b, p, e2, z, mat_top, "the ramp with no run");
-                }
                 b.push(MoveKind::Feed, Point3::new(e2.x, e2.y, z), Some(fd));
                 None
+            } else if zig_onto(b, &path, leg, tz, zf, z, angle, a.ramp_max_len, fd) {
+                None
             } else {
-                sub(b, "the ramp's chord is blocked")
+                sub(b, "the lead-in and ring are too short to ramp at the angle")
             }
         }
         Entry3D::Arc => {
@@ -198,4 +205,34 @@ pub(super) fn bore_entry(b: &mut PathBuilder, eng: &Engage, s: &BoreStep, lead: 
             sub(b, why)
         }
     }
+}
+
+/// The level ramp's angle (degrees): the links' own where it is a real
+/// descent angle, else the default (a file that never set it).
+fn level_angle(deg: f64) -> f64 {
+    if deg.is_finite() && deg > 0.0 && deg < 90.0 { deg } else { crate::links::DEFAULT_RAMP_ANGLE }
+}
+
+/// Does the chord `st -> e` drop `dz` no steeper than `deg` degrees? A
+/// chord with no run never does (it is a plunge, #1664).
+fn within_angle(st: Point2, e: Point2, dz: f64, deg: f64) -> bool {
+    let run = (e.x - st.x).hypot(e.y - st.y);
+    run > 0.0 && run.is_finite() && dz <= deg.to_radians().tan() * run
+}
+
+/// Zig-zag from `zf` down to `z` along `path` (the lead-in and the ring
+/// from its start) at `deg` degrees, each leg within `max_len`: the tool
+/// moves to the start at `tz`, rapids to `zf` and ramps. `false` (nothing
+/// pushed) when the path is too short for the angle.
+#[allow(clippy::too_many_arguments)]
+fn zig_onto(b: &mut PathBuilder, path: &[Point2], leg: Point2, tz: f64, zf: f64, z: f64, deg: f64, max_len: f64, fd: f64) -> bool {
+    let (Some(&e), Some((pre, n))) = (path.first(), plan_zig_capped(path, zf - z, deg, max_len)) else {
+        return false;
+    };
+    if leg.x != e.x || leg.y != e.y {
+        b.push(MoveKind::Rapid, Point3::new(e.x, e.y, tz), None);
+    }
+    b.push(MoveKind::Rapid, Point3::new(e.x, e.y, zf), None);
+    push_zig(b, &pre, n, zf, z, fd);
+    true
 }

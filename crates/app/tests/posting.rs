@@ -9,7 +9,7 @@
 //! model-box (operations.rs) and the drill test's matched-hole peck
 //! (M1.6), so any warning here is a posting bug, not a generator one.
 //!
-//! Gate map (M4.4): covers app::commands, app::drilling, app::geo2d, app::geometry, app::machine, app::machining2d, app::model, app::operation, app::posting, app::schema, app::sim, app::stock, app::stock_sim, app::tools, app::world.
+//! Gate map (M4.4): covers app::commands, motion::drilling, geometry::geo2d, app::geometry, app::machine, post::machine, motion::machining2d, app::model, app::operation, app::posting, app::schema, sim::sim, geometry::geometry::stock, app::stock_sim, sim::stock_sim, tools::tools, app::world.
 
 use flecs_ecs::prelude::World;
 
@@ -198,11 +198,11 @@ fn two_ops_post_to_one_program_cycles_stay_in_their_section() {
     );
     assert!(parts[2].contains("T01 M6"), "DR-0400 is library rank 1");
     assert!(
-        parts[2].contains("G98"),
-        "the cycle retract mode posted once"
+        parts[2].contains("G99"),
+        "the cycle returns to R (#994)"
     );
     assert!(
-        parts[2].contains("G73 X20 Y20"),
+        parts[2].contains("G73 X20. Y20."),
         "the peck block, at its hole: {}",
         parts[2]
     );
@@ -340,9 +340,10 @@ fn a_gouging_program_is_refused_by_the_verification_gate() {
     // Stage D's own law: the program-level sim is no longer just an
     // informed verdict - it is the gate. The fixture is Deviate's
     // stage-B sentence made into a world: a face 0.5 mm below the top
-    // of a model that fills the stock. Generation is SILENT (the face
-    // verifies against the stock, not the model - that net is this
-    // gate's job), so the refusal below can only come from the sim.
+    // of a model that fills the stock. Since #1607 the stock-source face
+    // answers for the part on the op too (its moves are gouges); the
+    // aligned stock's refusal below still leads with the sim's own
+    // clause, so this pins the sim as the gate.
     let world = new_world();
     let mut history = History::default();
     box_stock(&world, &mut history, 60.0, 60.0, 20.0);
@@ -368,8 +369,9 @@ fn a_gouging_program_is_refused_by_the_verification_gate() {
         model::toolpath_of(&world, &e)
             .expect("cache")
             .warnings
-            .is_empty(),
-        "the fixture must generate silent - the sim is the only net here"
+            .iter()
+            .any(|w| matches!(w, camcraft_app::verify::Warning::Gouge { .. })),
+        "#1607: the stock-source face into the part is the op's own gouge too"
     );
 
     let path = tmp_nc("gouge");

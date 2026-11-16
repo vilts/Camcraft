@@ -66,6 +66,29 @@ pub struct ToolBodyDto {
     /// the drawn holder as it stands.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub machine_default: bool,
+    /// #361 / #1040, additive: modular pieces (and their tool-frame
+    /// coordinate systems). Omitted for single-piece bodies without
+    /// coordinate systems so existing files stay byte-identical.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pieces: Vec<BodyPieceDto>,
+}
+
+/// One named coordinate system on file (#361 / #1040), tool frame.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct BodyCsysDto {
+    pub name: String,
+    pub origin: [f64; 3],
+    pub z: [f64; 3],
+    pub x: [f64; 3],
+}
+
+/// One modular piece on file (#361 / #1040), facets already in tool frame.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct BodyPieceDto {
+    pub source: String,
+    pub facets: Vec<[[f64; 3]; 3]>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub csys: Vec<BodyCsysDto>,
 }
 
 /// The turning-frame placement on file (#369).
@@ -88,6 +111,23 @@ impl ToolBodyDto {
     pub fn from_body(b: &ToolBody) -> Self {
         let facets = facets_to_dto(&b.facets);
         let spun = b.spun.as_ref().map(|s| s.points().iter().map(|p| [p.z, p.r, p.arc]).collect());
+        let write_pieces = b.pieces.len() > 1 || b.pieces.iter().any(|p| !p.csys.is_empty());
+        let pieces = if write_pieces {
+            b.pieces
+                .iter()
+                .map(|p| BodyPieceDto {
+                    source: p.source.clone(),
+                    facets: facets_to_dto(&p.facets),
+                    csys: p
+                        .csys
+                        .iter()
+                        .map(|c| BodyCsysDto { name: c.name.clone(), origin: c.origin, z: c.z, x: c.x })
+                        .collect(),
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         match &b.frame {
             BodyFrame::Spindle { axis, offset, .. } => Self {
                 source: b.source.clone(),
@@ -98,6 +138,7 @@ impl ToolBodyDto {
                 facets,
                 spun,
                 machine_default: b.machine_default,
+                pieces,
             },
             BodyFrame::Lathe { place, zone, .. } => Self {
                 source: b.source.clone(),
@@ -108,6 +149,7 @@ impl ToolBodyDto {
                 facets,
                 spun: None,
                 machine_default: false,
+                pieces,
             },
         }
     }
@@ -117,6 +159,41 @@ impl ToolBodyDto {
     pub fn to_body(&self, tool: &str) -> Result<ToolBody, String> {
         let mut body = self.to_drawn_body(tool)?;
         body.machine_default = self.machine_default;
+        if !self.pieces.is_empty() {
+            let mut pieces = Vec::with_capacity(self.pieces.len());
+            let mut total_facets = 0usize;
+            for p in &self.pieces {
+                let pf = dto_to_facets(p.facets.clone());
+                total_facets += pf.len();
+                let mut csys = Vec::with_capacity(p.csys.len());
+                for c in &p.csys {
+                    csys.push(
+                        crate::tool_body_assembly::BodyCsys::new(c.name.clone(), c.origin, c.z, c.x)
+                            .map_err(|e| format!("tool '{tool}': {e}"))?,
+                    );
+                }
+                pieces.push(crate::tool_body_assembly::BodyPiece {
+                    source: p.source.clone(),
+                    facets: std::sync::Arc::from(pf),
+                    csys,
+                });
+            }
+            if total_facets != body.facets.len() {
+                return Err(format!(
+                    "tool '{tool}': modular piece facets ({total_facets}) do not match combined body facets ({})",
+                    body.facets.len()
+                ));
+            }
+            // Pieces rebuild the judged body after attachment/removal. Require
+            // the same ordered geometry that was validated above, not merely
+            // the same number of facets, so a saved piece cannot shrink it.
+            if !pieces.iter().flat_map(|p| p.facets.iter()).eq(body.facets.iter()) {
+                return Err(format!(
+                    "tool '{tool}': modular piece coordinates do not match combined body facets"
+                ));
+            }
+            body.pieces = pieces;
+        }
         Ok(body)
     }
 
