@@ -1,6 +1,6 @@
 ---
 name: review-prs
-description: Find open pull requests on NeoTech/Camcraft that need a review (third-party PRs from forks, or any PR whose current head has not been reviewed yet) and dispatch the PR-reviewer agent on each, one at a time. Posts review COMMENTS only - never approves or merges. Use when asked to "review the PRs", "check for new pull requests", "review PR #N", or from the periodic loop (`/loop 10m /review-prs`).
+description: Find open pull requests on NeoTech/Camcraft that need a review (third-party PRs from forks, or any PR whose current head has not been reviewed yet) and dispatch the PR-reviewer agent on each, one at a time (it builds on the self-hosted runner through pr-test.yml when one is online, else locally). Posts review COMMENTS only - never approves or merges. Use when asked to "review the PRs", "check for new pull requests", "review PR #N", or from the periodic loop (`/loop 10m /review-prs`).
 ---
 
 # Review open pull requests
@@ -91,6 +91,22 @@ takes the next. Never launch two `PR-reviewer` agents at once.
 3. On its completion notification, make sure the lock is gone (delete it if
    the agent failed to) and that `../cc-pr<N>-review` is removed. Do not poll
    while it runs.
+
+**Build on the runner when one is online** (#1420; maintainer, 2026-11-13:
+"then that is the decision, workflow_dispatch"). The agent, not this skill,
+decides where the PR is built, because the decision needs the diff it reads
+(PR-reviewer step 2b): with a self-hosted `camcraft-pr-test` runner online, no cut on it,
+a PR written by a collaborator with push access ("Collaborators only"; the
+workflow refuses any other author, which builds locally) and a PR that is
+not "read, not built", it starts `pr-test.yml`
+(`gh workflow run pr-test.yml -f pr=<N> -f sha=<head>`, `workflow_dispatch`
+only), waits for the run and reads its per-binary result, and makes no
+worktree or `target/`; otherwise it builds locally as before. A run that is
+cancelled, times out or never starts is no verdict: the agent builds
+locally or says "not built", never "pass". The review comment names where
+it was built and links the run. This skill never starts the workflow
+itself, and nothing here adds a trigger to it. The lock above holds either
+way: one review at a time, whether its build runs here or on the runner.
 
 ## 2b. Labels - one colour per state
 
@@ -215,11 +231,15 @@ merge ready").
 A PR that changes a process file (`AGENTS.md`, `.claude/agents/`,
 `.claude/skills/`, `xtask/`, `.cargo/config.toml`, `scripts/gate.ps1`,
 `scripts/gate.sh`, `scripts/release.ps1`, `scripts/collect-decisions.ps1`,
-`scripts/collect-decisions.sh`) must increment
-the integer in `.claude/PROCESS_VERSION` (AGENTS.md "Process changes bump
-`PROCESS_VERSION`"). The reviewer checks this; a missing bump is a
-requested change (`needs-rework`). When such a PR merges, whoever merges
-it comments on the pinned issue #681 (Process changes):
+`scripts/collect-decisions.sh`) says `Process change: yes` in its body and
+does not edit `.claude/PROCESS_VERSION` (AGENTS.md "Process changes bump
+`PROCESS_VERSION`", #1153). The reviewer checks this; a missing line or an
+edit of that file is a requested change (`needs-rework`). Exempt: the bump
+PR itself (`chore(process): PROCESS_VERSION <n>`: MECHANICAL, read by the
+merging session, no agent review, merges at once) and #1488, which introduced
+the rule. The merging
+session bumps the number once per merge batch (`cargo xtask process-bump`)
+and comments on the pinned issue #681 (Process changes):
 `PROCESS_VERSION <n>` · PR #M · what changed · what a fork must do (usually
 "pull the process files", the command in the issue body). That comment is
 how fork maintainers subscribed to #681 hear about it.

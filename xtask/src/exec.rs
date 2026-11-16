@@ -151,11 +151,37 @@ impl Run {
         for n in &plan.notes {
             println!("{n}");
         }
-        for s in &plan.steps {
-            if self.check(&format!("before {}", s.name)) {
-                break;
+        if self.label == "release" {
+            for wave in crate::lanes::waves(&plan.steps) {
+                if self.check("before release wave") {
+                    break;
+                }
+                let results = std::thread::scope(|scope| {
+                    let handles: Vec<_> = wave.iter().map(|&i| {
+                        let (root, logs, dry) = (&self.root, &self.log_dir, self.dry);
+                        let step = &plan.steps[i];
+                        scope.spawn(move || Self::execute(root, logs, dry, i + 1, step))
+                    }).collect();
+                    // Join every lane even when one returns an error or panics.
+                    let joined: Vec<_> = handles.into_iter().map(|h| {
+                        h.join().map_err(|_| "gate lane thread failed".to_string()).and_then(|r| r)
+                    }).collect();
+                    joined.into_iter().collect::<Result<Vec<_>, String>>()
+                })?;
+                let build_failed = wave.iter().any(|&i| plan.steps[i].args.iter().any(|a| a == "--no-run"))
+                    && results.iter().any(|d| !d.ok);
+                self.done.extend(results);
+                if build_failed {
+                    break;
+                }
             }
-            self.step(s)?;
+        } else {
+            for s in &plan.steps {
+                if self.check(&format!("before {}", s.name)) {
+                    break;
+                }
+                self.step(s)?;
+            }
         }
         if self.void.is_none() {
             self.check("at the end");
@@ -185,15 +211,19 @@ impl Run {
     }
 
     fn step(&mut self, s: &Step) -> Result<(), String> {
-        let n = self.done.len() + 1;
-        let log = self.log_dir.join(log_name(n, &s.name));
-        let dir = if s.in_ui { self.root.join("crates").join("ui") } else { self.root.clone() };
+        let done = Self::execute(&self.root, &self.log_dir, self.dry, self.done.len() + 1, s)?;
+        self.done.push(done);
+        Ok(())
+    }
+
+    fn execute(root: &Path, log_dir: &Path, dry: bool, n: usize, s: &Step) -> Result<Done, String> {
+        let log = log_dir.join(log_name(n, &s.name));
+        let dir = if s.in_ui { root.join("crates").join("ui") } else { root.to_path_buf() };
         let leaf = dir.file_name().map(|x| x.to_string_lossy().into_owned()).unwrap_or_default();
         println!("[{n:02}] {}", s.name);
         println!("     (cwd {leaf}) cargo {}", s.args.join(" "));
-        if self.dry {
-            self.done.push(Done { name: s.name.clone(), ok: true, secs: 0, note: "dry run".into() });
-            return Ok(());
+        if dry {
+            return Ok(Done { name: s.name.clone(), ok: true, secs: 0, note: "dry run".into() });
         }
         let cache = gate_cache_env();
         if !cache.is_empty() {
@@ -219,8 +249,7 @@ impl Run {
         let note = read_log(&std::fs::read_to_string(&log).unwrap_or_default(), code)?;
         let ok = code == 0;
         println!("     {} in {secs}s {note}", if ok { "ok" } else { "FAIL" });
-        self.done.push(Done { name: s.name.clone(), ok, secs, note });
-        Ok(())
+        Ok(Done { name: s.name.clone(), ok, secs, note })
     }
 
     /// Prints the summary table; the process exit code (0 all passed, 1 any failed).
@@ -231,6 +260,10 @@ impl Run {
         }
         let bad = self.done.iter().filter(|d| !d.ok).count();
         let mins = self.clock.elapsed().as_secs_f64() / 60.0;
+        if self.label == "release" {
+            let serial: u64 = self.done.iter().map(|d| d.secs).sum();
+            println!("  summed lane wall time {serial}s (serial estimate; not a serial benchmark)");
+        }
         println!("  wall {mins:.1} min, {} step(s), {bad} failed", self.done.len());
         if self.void.is_some() {
             println!("== gate VOID ({}) - the checkout moved during the run; no verdict, re-run on a checkout nobody pulls into", self.label);
@@ -240,10 +273,15 @@ impl Run {
     }
 }
 
-/// The step's note from its log: a compile error, the suites that failed, or a bare exit code.
+/// The step's note from its log: a compile error, the suites that failed (with the failed tests by name,
+/// #1714), or a bare exit code. A test that libtest reports as "has been running for over N seconds" is
+/// added as `slow: <name>` so a long heavy test shows up by name.
 pub fn read_log(text: &str, code: i32) -> Result<String, String> {
     let running = re(r"^\s+Running (\S+)")?;
+    let failed_test = re(r"^test (\S+) \.\.\. FAILED")?;
+    let slow_test = re(r"^test (\S+) has been running for over (\d+) seconds")?;
     let (mut cur, mut fails, mut compile) = (String::new(), Vec::new(), false);
+    let (mut tests, mut slow) = (Vec::new(), Vec::new());
     for l in text.lines() {
         if let Some(c) = running.captures(l) {
             cur = c[1].to_string();
@@ -251,15 +289,30 @@ pub fn read_log(text: &str, code: i32) -> Result<String, String> {
             fails.push(cur.clone());
         } else if l.starts_with("error: could not compile") {
             compile = true;
+        } else if let Some(c) = failed_test.captures(l) {
+            tests.push(c[1].to_string());
+        } else if let Some(c) = slow_test.captures(l) {
+            slow.push(format!("{} (>{}s)", &c[1], &c[2]));
         }
     }
-    Ok(if compile {
+    let mut note = if compile {
         "compile error".into()
     } else if !fails.is_empty() {
-        format!("failed: {}", fails.join(", "))
+        let mut n = format!("failed: {}", fails.join(", "));
+        if !tests.is_empty() {
+            n.push_str(&format!(" [tests: {}]", tests.join(", ")));
+        }
+        n
     } else if code != 0 {
         format!("exit {code}")
     } else {
         String::new()
-    })
+    };
+    if !slow.is_empty() {
+        if !note.is_empty() {
+            note.push(' ');
+        }
+        note.push_str(&format!("slow: {}", slow.join(", ")));
+    }
+    Ok(note)
 }

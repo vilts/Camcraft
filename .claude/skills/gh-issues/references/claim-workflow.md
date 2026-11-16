@@ -74,3 +74,5 @@ any saved work lives, leave it open.
 
 A user who still sees a fixed bug in a build that carries the fix: reopen the
 same issue with what they saw; the claim starts again.
+
+Write claim, finding and release comments in ASD-STE100 Simplified Technical English (AGENTS.md). The `claimed:` line format stays as shown.

@@ -87,17 +87,35 @@ pub fn bump_lock(text: &str, old: &str, new: &str) -> (String, usize) {
 /// `git diff Cargo.lock` after the bump may change version lines only: the number changed, or the
 /// refusal.
 pub fn lock_diff_versions_only(diff: &str) -> Result<usize, String> {
-    let changed = diff
-        .lines()
-        .filter(|l| {
-            let mut c = l.chars();
-            matches!(c.next(), Some('-' | '+')) && !matches!(c.next(), None | Some('-' | '+'))
-        })
-        .count();
-    let versions = diff.lines().filter(|l| l.starts_with("-version") || l.starts_with("+version")).count();
-    if changed == versions {
-        Ok(versions)
-    } else {
-        Err("Cargo.lock changed beyond version lines".into())
+    let (mut removed, mut added, mut versions) = (Vec::new(), Vec::new(), 0);
+    fn check(removed: &mut Vec<&str>, added: &mut Vec<&str>, versions: &mut usize) -> Result<(), String> {
+        if removed.len() != added.len() {
+            return Err("Cargo.lock changed beyond version lines".into());
+        }
+        for (old, new) in removed.drain(..).zip(added.drain(..)) {
+            if old == new {
+                continue;
+            }
+            if !old.starts_with("version = ") || !new.starts_with("version = ") {
+                return Err("Cargo.lock changed beyond version lines".into());
+            }
+            *versions += 2;
+        }
+        Ok(())
     }
+    // Compare each hunk independently: line-ending churn may remove and re-add every line.
+    for line in diff.lines() {
+        if line.starts_with("--- ") || line.starts_with("+++ ") {
+            continue;
+        }
+        if let Some(old) = line.strip_prefix('-') {
+            removed.push(old);
+        } else if let Some(new) = line.strip_prefix('+') {
+            added.push(new);
+        } else {
+            check(&mut removed, &mut added, &mut versions)?;
+        }
+    }
+    check(&mut removed, &mut added, &mut versions)?;
+    Ok(versions)
 }

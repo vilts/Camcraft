@@ -14,9 +14,9 @@ pub const SLOW_BINARIES: &[&str] = &[
     "motion:flow",              // ~42 s
     "app:center_cut_multiaxis", // ~40 s
 ];
-/// Crate dirs in dependency order. kernel builds a C chain (truck dev-dep) for its own tests: release
-/// tier and quick-when-touched only.
-pub const BATCH_CRATES: &[&str] = &["geometry", "cl", "tools", "post", "sim", "motion", "app"];
+/// Crate dirs in dependency order. kernel builds a C chain (truck dev-dep) and its debug suites take
+/// about 3 min: batch runs them since #1702, so the post-merge gate finds a kernel failure before a cut.
+pub const BATCH_CRATES: &[&str] = &["geometry", "kernel", "cl", "tools", "post", "sim", "motion", "app"];
 pub const ALL_CRATES: &[&str] = &[
     "geometry", "kernel", "cl", "tools", "post", "sim", "motion", "app", "ui",
 ];
@@ -152,7 +152,7 @@ pub fn clippy() -> Step {
 pub fn batch(root: &Path) -> Plan {
     let mut plan = Plan::default();
     plan.notes.push(format!(
-        "batch: debug suites minus SLOW_BINARIES ({}), ui, clippy",
+        "batch: debug suites (kernel included) minus SLOW_BINARIES ({}), ui, clippy",
         SLOW_BINARIES.join(", ")
     ));
     plan.steps.extend(run_suites(root, BATCH_CRATES, true));
@@ -161,23 +161,99 @@ pub fn batch(root: &Path) -> Plan {
     plan
 }
 
+/// Crate dirs whose `#[ignore]`d tests run in release (the heavy lanes).
+pub const HEAVY_CRATES: &[&str] = &["kernel", "motion", "app"];
+
+/// True when the integration binary `b` can hold an `#[ignore]`d test: its source text names `ignore`, or it
+/// pulls in other files (`mod x;`, `include!`, `#[path]`) the entry file does not show. A binary with no
+/// ignored test has nothing for a heavy step to run, so it gets none (526 steps otherwise, one cargo
+/// start each); the test `heavy_steps_skip_only_binaries_without_ignored_tests` pins that no binary is
+/// skipped by mistake. Unreadable source counts as heavy: the gate never drops a binary by accident.
+fn may_run_ignored(root: &Path, d: &str, b: &str) -> bool {
+    let entry = crate::suites::entry(root, d, b);
+    let Ok(text) = std::fs::read_to_string(&entry) else { return true };
+    if text.contains("ignore") || text.contains("include!") || text.contains("#[path") {
+        return true;
+    }
+    text.lines().any(|l| {
+        let t = l.trim_start();
+        let t = t.strip_prefix("pub ").unwrap_or(t);
+        t.starts_with("mod ") && t.trim_end().ends_with(';')
+    })
+}
+
+/// The heavy lanes as one step for each test target (#1714): one release build of the heavy crates
+/// (`--no-run`), then for each crate its `--lib`, `--bins`, every integration binary by name and its
+/// `--doc` tests, each running only its `--ignored` tests. Together the targets are exactly what
+/// `cargo test --release -p <crate> -- --ignored` runs. Kernel joins the heavy coverage in #1783;
+/// a red step names one binary, and `--only "app heavy: <binary>"` re-runs it alone.
+pub fn heavy_steps(root: &Path) -> Vec<Step> {
+    let mut out = Vec::new();
+    let mut build: Vec<String> = vec!["test".into(), "--release".into(), "-j".into(), J.into()];
+    for d in HEAVY_CRATES {
+        build.push("-p".into());
+        build.push(pkg(d));
+    }
+    build.push("--no-run".into());
+    out.push(Step::new("heavy build (release --no-run)", &[], "").with(&build));
+    for &d in HEAVY_CRATES {
+        let p = pkg(d);
+        let mut targets: Vec<(String, Vec<String>)> = vec![
+            ("lib".into(), vec!["--lib".into()]),
+            ("bins".into(), vec!["--bins".into()]),
+        ];
+        for b in scan::binaries(root, d) {
+            if may_run_ignored(root, d, &b) {
+                targets.push((b.clone(), vec!["--test".into(), b]));
+            }
+        }
+        targets.push(("doc".into(), vec!["--doc".into()]));
+        for (label, sel) in targets {
+            let mut args = vec!["test", "--release", "-j", J, "-p", &p, "--no-fail-fast"];
+            args.extend(strs(&sel));
+            args.extend(["--", T, "--ignored"]);
+            out.push(Step::new(format!("{d} heavy: {label}"), &args, ""));
+        }
+    }
+    out
+}
+
 pub fn release(root: &Path) -> Plan {
+    release_with(root, true)
+}
+
+/// The release plan; `snapshots: false` (`gate release --no-snapshots`, #1413) leaves out the two ui
+/// pixel-snapshot lanes, whose goldens are made on Windows: the cut workflow's Linux runner runs every
+/// other lane, and the snapshot lanes stay a local step at the cut.
+pub fn release_with(root: &Path, snapshots: bool) -> Plan {
     let mut plan = Plan::default();
     plan.notes.push(
-        "release: every debug suite, ui, clippy, then the --ignored heavy lanes in release and the ui snapshot lane"
+        "release: prebuild both profiles, then up to four debug/release lanes; app, kernel, ui and clippy run alone"
             .into(),
     );
+    if !snapshots {
+        plan.notes.push(
+            "--no-snapshots: the ui pixel-snapshot lanes are skipped (Windows-made goldens); run them locally at the cut".into(),
+        );
+    }
     let non_ui: Vec<&str> = ALL_CRATES.iter().copied().filter(|d| *d != "ui").collect();
+    let mut build = vec!["test", "-j", J];
+    let packages: Vec<String> = ALL_CRATES.iter().map(|d| pkg(d)).collect();
+    for p in &packages {
+        build.extend(["-p", p]);
+    }
+    build.push("--no-run");
+    plan.steps.push(Step::new("debug build (--no-run)", &build, ""));
+    let mut heavy = heavy_steps(root).into_iter();
+    if let Some(build) = heavy.next() {
+        plan.steps.push(build);
+    }
     plan.steps.extend(run_suites(root, &non_ui, false));
     plan.steps.extend(run_suites(root, &["ui"], false));
     plan.steps.push(clippy());
-    for d in ["motion", "app"] {
-        let p = pkg(d);
-        plan.steps.push(Step::new(
-            format!("{d} heavy lane (release --ignored)"),
-            &["test", "--release", "-j", J, "-p", &p, "--no-fail-fast", "--", T, "--ignored"],
-            "",
-        ));
+    plan.steps.extend(heavy);
+    if !snapshots {
+        return plan;
     }
     // The ui pixel snapshot goldens (#255): #[ignore]d out of quick/batch, run here only, debug like the
     // goldens were made, CWD crates/ui so they resolve tests/snapshots/. Regenerated at the cut with

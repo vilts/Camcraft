@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub use crate::merge_plan_out::{render, to_json};
 
 /// A conflict confined to these paths (or to PNG snapshots) is settled by rule, without judgement.
+/// `PROCESS_VERSION` stays for branches opened before #1153 that still edit it.
 const MECHANICAL: &[&str] = &[".claude/PROCESS_VERSION", "CHANGELOG.md", "RECOMMENDED.md", "Cargo.lock"];
 /// Basenames that make a PR "hot": a PR touching one is merged after the cool ones within a wave.
 const HOT: &[&str] = &["lib.rs", "mod.rs", "state.rs", "Cargo.lock", "Cargo.toml", "AGENTS.md", "schema.rs"];

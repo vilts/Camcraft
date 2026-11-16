@@ -11,6 +11,8 @@ pub enum Lex {
     Str,
     /// Inside `r#"..."#` with this many `#`.
     Raw(usize),
+    /// Inside a nested block comment.
+    Block(usize),
 }
 
 fn is_ident(c: char) -> bool {
@@ -29,9 +31,25 @@ pub fn count(line: &str, st: &mut Lex) -> (i64, i64) {
                 _ => {}
             },
             Lex::Raw(h) => {
-                if c[i] == '"' && c.get(i + 1..i + 1 + h).is_some_and(|t| t.iter().all(|&x| x == '#')) {
+                if c[i] == '"'
+                    && c.get(i + 1..i + 1 + h)
+                        .is_some_and(|t| t.iter().all(|&x| x == '#'))
+                {
                     *st = Lex::Code;
                     i += h;
+                }
+            }
+            Lex::Block(depth) => {
+                if c[i] == '/' && c.get(i + 1) == Some(&'*') {
+                    *st = Lex::Block(depth + 1);
+                    i += 1;
+                } else if c[i] == '*' && c.get(i + 1) == Some(&'/') {
+                    *st = if depth == 1 {
+                        Lex::Code
+                    } else {
+                        Lex::Block(depth - 1)
+                    };
+                    i += 1;
                 }
             }
             Lex::Code => match c[i] {
@@ -39,6 +57,10 @@ pub fn count(line: &str, st: &mut Lex) -> (i64, i64) {
                 '}' => close += 1,
                 '"' => *st = Lex::Str,
                 '/' if c.get(i + 1) == Some(&'/') => break,
+                '/' if c.get(i + 1) == Some(&'*') => {
+                    *st = Lex::Block(1);
+                    i += 1;
+                }
                 'r' if i == 0 || !is_ident(c[i - 1]) || c[i - 1] == 'b' => {
                     let h = c[i + 1..].iter().take_while(|&&x| x == '#').count();
                     if c.get(i + 1 + h) == Some(&'"') {

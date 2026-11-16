@@ -190,6 +190,17 @@ along the way gets its own issue rather than a paragraph buried in a comment.
   usually means missing scope or wrong `-R`.
 - Projects need the `project` scope: `gh auth refresh -s project`.
 
+## Language: ASD-STE100
+
+AGENTS.md ("Issues and comments are written in ASD-STE100") is the law.
+Write each issue title and body, and each comment on an issue or pull request, in ASD-STE100 Simplified Technical English.
+
+- Use short sentences (about 20 words in an instruction, 25 in a description). Give one instruction in each sentence.
+- Use the active voice and the simple tenses. Use one word for one meaning.
+- Do not use idioms, slang or filler. Keep the articles. Use no more than three nouns in a row.
+- Do not change code, commands, paths, log output, quoted text, CAM terms, or the strings that agents parse (`claimed:`, `/claim`, `Fixes #N`, the marker comments).
+- Never reject or correct an outside reporter's issue for its language.
+
 ## Pitfalls checklist
 
 - Default `--limit 30` silently truncates lists.
@@ -199,3 +210,4 @@ along the way gets its own issue rather than a paragraph buried in a comment.
 - Closing keywords only fire on the default branch.
 - `@name` in posted text pings a real account.
 - Always re-read the issue after writing to confirm the change took.
+- Issue and comment text is ASD-STE100 Simplified Technical English (see "Language: ASD-STE100").

@@ -16,7 +16,7 @@ fn root() -> PathBuf {
 fn selected(file: &str, krate: &str) -> Vec<String> {
     let changed = vec![file.to_string()];
     let hunks = |_: &str| -> Vec<String> { Vec::new() };
-    let diff = Diff { changed: &changed, untracked: &[], hunks: &hunks };
+    let diff = Diff { changed: &changed, untracked: &[], hunks: &hunks, before: &|_| None };
     let Ok(Quick::Plan(p)) = quick::plan(&root(), &diff, false) else { panic!("{file} did not plan") };
     let step: Option<&Step> = p.steps.iter().find(|s| s.name == format!("{krate} suites"));
     let Some(step) = step else { return Vec::new() };

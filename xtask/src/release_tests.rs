@@ -115,6 +115,18 @@ fn lock_diff_guard_takes_version_lines_only() {
 }
 
 #[test]
+fn lock_diff_guard_ignores_only_line_ending_changes() {
+    let diff = "--- a/Cargo.lock\n+++ b/Cargo.lock\n@@ -1,3 +1,3 @@\n-[[package]]\n-name = \"xtask\"\n-version = \"0.20.0\"\n+[[package]]\r\n+name = \"xtask\"\r\n+version = \"0.21.0\"\r\n";
+    assert_eq!(lock_diff_versions_only(diff), Ok(2));
+    let endings_only = diff.replace("0.21.0", "0.20.0");
+    assert_eq!(lock_diff_versions_only(&endings_only), Ok(0));
+    let changed_name = diff.replace("+name = \"xtask\"", "+name = \"other\"");
+    assert!(lock_diff_versions_only(&changed_name).is_err());
+    let changed_checksum = format!("{diff}-checksum = \"a\"\n+checksum = \"b\"\r\n");
+    assert!(lock_diff_versions_only(&changed_checksum).is_err());
+}
+
+#[test]
 fn notes_need_this_versions_section_above_the_history() {
     assert_eq!(check_notes("\u{feff}# CamCraft 0.17.0\n\nnew\n---\nold\n", "0.17.0"), Ok(2));
     assert!(check_notes("# CamCraft 0.17.0\nnew\n", "0.17.0").expect_err("no ---").contains("no '---'"));

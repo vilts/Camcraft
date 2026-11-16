@@ -98,8 +98,8 @@ then merge A's fixed branch into B before main.
      instead if the UI changed.
    - **`CHANGELOG.md` / `RECOMMENDED.md`:** a PR shouldn't touch these
      (the cut writes them). Take main's and drop the PR's edit.
-   - **`.claude/PROCESS_VERSION`:** take the higher number, then add 1 if
-     this PR changes process files and main already used that number.
+   - **`.claude/PROCESS_VERSION`:** take main's; a PR no longer edits it
+     (#1153), so drop any edit of the PR's own.
    - **The same logic changed differently on both sides** (two rewrites of
      one function body, two different fixes of one check, a refactor that
      moved code main edited in place): **stop.** Don't guess. `git merge
@@ -162,7 +162,8 @@ reports `CONFLICTING` without the label - add the label to those):
      with no agent and no delta review.
    - **MECHANICAL** (hand edits only in rule-settled files: `.claude/
      PROCESS_VERSION`, `CHANGELOG.md`, `RECOMMENDED.md`, `Cargo.lock`, PNGs
-     taken from main): the merging session reads `git show --remerge-diff
+     taken from main; `PROCESS_VERSION` stays listed for branches opened before
+     #1153 that still edit it): the merging session reads `git show --remerge-diff
      <merge>` itself, and restores `merge-ready` when it is right.
    - **DELTA** (a conflict was resolved by hand): a **delta review** - a
      reviewer checks only the remerge-diff of those merges (both sides kept,
@@ -182,5 +183,6 @@ reports `CONFLICTING` without the label - add the label to those):
   or the maintainer.
 - Contributors running it from a fork use their own `gh` login; the
   maintainer runs it from the canonical repo.
-- Changing this skill is a process change: bump `.claude/PROCESS_VERSION`
-  and announce it on the pinned issue #681.
+- Changing this skill is a process change: the PR body says `Process
+  change: yes`; the merging session bumps `.claude/PROCESS_VERSION` and
+  announces it on the pinned issue #681.

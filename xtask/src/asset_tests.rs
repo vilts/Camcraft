@@ -13,7 +13,7 @@ fn root() -> PathBuf {
 fn plan_for(root: &Path, files: &[&str]) -> crate::plan::Plan {
     let changed: Vec<String> = files.iter().map(|s| s.to_string()).collect();
     let hunks = |_: &str| -> Vec<String> { Vec::new() };
-    let diff = Diff { changed: &changed, untracked: &[], hunks: &hunks };
+    let diff = Diff { changed: &changed, untracked: &[], hunks: &hunks, before: &|_| None };
     match quick::plan(root, &diff, false) {
         Ok(Quick::Plan(p)) => p,
         other => panic!("{files:?} did not plan: {other:?}"),

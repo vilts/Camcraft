@@ -12,6 +12,7 @@ use crate::assets;
 use crate::path_mods;
 use crate::plan::{ALL_CRATES, J, Plan, SHARED, Step, T, pkg, ps_cmp, ps_sorted};
 use crate::scan::{self, re};
+use crate::suites;
 
 /// What quick does with a diff.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -28,6 +29,8 @@ pub struct Diff<'a> {
     pub untracked: &'a [String],
     /// The `@@ ` hunk headers of one file's zero-context diff against the merge base.
     pub hunks: &'a dyn Fn(&str) -> Vec<String>,
+    /// Source at the merge base; an unavailable preimage requires conservative suite selection.
+    pub before: &'a dyn Fn(&str) -> Option<String>,
 }
 
 #[derive(Default)]
@@ -43,26 +46,44 @@ struct Picks {
 pub fn plan(root: &Path, diff: &Diff, heavy: bool) -> Result<Quick, String> {
     let manifest = re(r"(?i)^(Cargo\.(toml|lock)$|\.cargo/|rust-toolchain)")?;
     let shared_crate = re(&format!("(?i)^crates/({})/", SHARED.join("|")))?;
-    if let Some(f) = diff.changed.iter().find(|f| manifest.is_match(f) || shared_crate.is_match(f)) {
+    if let Some(f) = diff
+        .changed
+        .iter()
+        .find(|f| manifest.is_match(f) || shared_crate.is_match(f))
+    {
         return Ok(Quick::Batch(f.clone()));
     }
     let mut p = Picks::default();
     let mut plan = Plan::default();
     let in_crate = re(r"(?i)^crates/([^/]+)/(.+)$")?;
-    let suite_file = re(r"(?i)^tests/([^/]+)\.rs$")?;
+    let suite_file = re(r"(?i)^tests/([^/]+?)(?:\.rs$|/)")?;
     let src_file = re(r"(?i)^src/([^/]+?)(\.rs)?(/([^/]+?)(\.rs)?(/.*)?)?$")?;
-    let hunk_re = re(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@")?;
+    let hunk_re = re(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")?;
     let xtask = diff.changed.iter().any(|f| f.starts_with("xtask/"));
     for f in diff.changed {
-        let Some(c) = in_crate.captures(f) else { continue };
+        let Some(c) = in_crate.captures(f) else {
+            continue;
+        };
         let (d, rest) = (c[1].to_string(), c[2].to_string());
         if !ALL_CRATES.contains(&d.as_str()) {
             continue;
         }
         let abs = root.join(f);
-        if let Some(t) = suite_file.captures(&rest) {
+        if rest.starts_with("tests/")
+            && rest.ends_with(".rs")
+            && rest.matches('/').count() == 1
+            && !abs.is_file()
+        {
+            continue; // deleted flat suite: Cargo no longer has this target
+        }
+        if let Some(t) = suite_file
+            .captures(&rest)
+            .filter(|t| suites::entry(root, &d, &t[1]).is_file())
+        {
             let key = format!("{d}:{}", &t[1]);
             if !abs.is_file() {
+                p.whole.insert(key.clone());
+                p.why.insert(key, "suite module deleted".into());
                 continue;
             }
             if diff.untracked.iter().any(|u| u.eq_ignore_ascii_case(f)) {
@@ -70,16 +91,34 @@ pub fn plan(root: &Path, diff: &Diff, heavy: bool) -> Result<Quick, String> {
                 p.why.insert(key, "new suite".into());
                 continue;
             }
-            let all = scan::test_fns(&scan::read(&abs))?;
-            let mut outside = false;
+            let sources = suites::sources(&suites::entry(root, &d, &t[1]))?;
+            let source = sources.iter().find(|s| s.path == abs);
+            let all = match source {
+                Some(s) if s.precise => suites::test_fns(s)?,
+                _ => Vec::new(),
+            };
+            let before = (diff.before)(f)
+                .map(|text| scan::test_fns(&text))
+                .transpose()?;
+            let mut outside = source.is_none_or(|s| !s.precise) || before.is_none();
             for hk in (diff.hunks)(f) {
-                let Some(h) = hunk_re.captures(&hk) else { continue };
-                let s: usize = h[1].parse().unwrap_or(0);
-                let c: usize = h.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(1);
-                let e = s.max((s + c).saturating_sub(1));
+                let Some(h) = hunk_re.captures(&hk) else {
+                    continue;
+                };
+                let old_start: usize = h[1].parse().unwrap_or(0);
+                let old_count: usize = h.get(2).and_then(|m| m.as_str().parse().ok()).unwrap_or(1);
+                let s: usize = h[3].parse().unwrap_or(0);
+                let c: usize = h.get(4).and_then(|m| m.as_str().parse().ok()).unwrap_or(1);
+                let e = s.max(s.saturating_add(c).saturating_sub(1));
                 let lo = s.max(1);
                 let hit: Vec<_> = all.iter().filter(|t| t.start <= e && t.end >= lo).collect();
-                if hit.is_empty() {
+                if c == 0
+                    || (lo..=e).any(|line| !all.iter().any(|t| t.start <= line && t.end >= line))
+                    || before.as_ref().is_some_and(|tests| {
+                        (old_start..old_start.saturating_add(old_count))
+                            .any(|line| !tests.iter().any(|t| t.start <= line && t.end >= line))
+                    })
+                {
                     outside = true;
                 }
                 for t in hit {
@@ -89,7 +128,8 @@ pub fn plan(root: &Path, diff: &Diff, heavy: bool) -> Result<Quick, String> {
             }
             if outside {
                 p.whole.insert(key.clone());
-                p.why.insert(key, "suite changed outside its test fns".into());
+                p.why
+                    .insert(key, "suite changed outside its test fns".into());
             }
         } else if rest.to_ascii_lowercase().starts_with("tests/")
             || rest.eq_ignore_ascii_case("Cargo.toml")
@@ -121,7 +161,9 @@ pub fn plan(root: &Path, diff: &Diff, heavy: bool) -> Result<Quick, String> {
         }
     }
     p.mods.sort_by(|a, b| {
-        ps_cmp(&a.0, &b.0).then_with(|| ps_cmp(&a.1, &b.1)).then_with(|| ps_cmp(&a.2, &b.2))
+        ps_cmp(&a.0, &b.0)
+            .then_with(|| ps_cmp(&a.1, &b.1))
+            .then_with(|| ps_cmp(&a.2, &b.2))
     });
     p.mods.dedup();
     map_modules(root, &mut p, &mut plan.notes)?;
@@ -141,8 +183,11 @@ fn map_modules(root: &Path, p: &mut Picks, notes: &mut Vec<String>) -> Result<()
     let mut maps: Vec<(String, String, String)> = Vec::new();
     for d in ALL_CRATES {
         for b in scan::binaries(root, d) {
-            let file = root.join("crates").join(d).join("tests").join(format!("{b}.rs"));
-            let gm = scan::gate_map(&scan::read(&file))?;
+            let mut gm = String::new();
+            for source in suites::sources(&suites::entry(root, d, &b))? {
+                gm.push_str(&scan::gate_map(&scan::read(&source.path))?);
+                gm.push(' ');
+            }
             if !gm.is_empty() {
                 maps.push(((*d).to_string(), b, gm));
             }
@@ -152,10 +197,16 @@ fn map_modules(root: &Path, p: &mut Picks, notes: &mut Vec<String>) -> Result<()
         let (mm, ms) = (escape(&m), escape(&sub));
         let own = re(&format!(r"(?i)::{mm}\b|\{{[^}}]*\b{mm}\b"))?;
         let other = re(&format!(r"(?i)\b(camcraft_)?{md}::{mm}\b"))?;
-        let by_sub_re = re(&format!(r"(?i)(::|\{{[^}}]*\b){mm}(::{ms}\b|\s*\([^)]*\b{ms}\b)"))?;
+        let by_sub_re = re(&format!(
+            r"(?i)(::|\{{[^}}]*\b){mm}(::{ms}\b|\s*\([^)]*\b{ms}\b)"
+        ))?;
         let (mut by_sub, mut by_mod) = (Vec::new(), Vec::new());
         for (d, b, gm) in &maps {
-            let hit = if *d == md { own.is_match(gm) } else { other.is_match(gm) };
+            let hit = if *d == md {
+                own.is_match(gm)
+            } else {
+                other.is_match(gm)
+            };
             if !hit {
                 continue;
             }
@@ -166,8 +217,16 @@ fn map_modules(root: &Path, p: &mut Picks, notes: &mut Vec<String>) -> Result<()
         }
         let use_sub = !by_sub.is_empty();
         let pick = if use_sub { by_sub } else { by_mod };
-        let lbl = if use_sub { format!("{md}::{m}::{sub}") } else { format!("{md}::{m}") };
-        let shown_sub = if sub.is_empty() { String::new() } else { format!("::{sub}") };
+        let lbl = if use_sub {
+            format!("{md}::{m}::{sub}")
+        } else {
+            format!("{md}::{m}")
+        };
+        let shown_sub = if sub.is_empty() {
+            String::new()
+        } else {
+            format!("::{sub}")
+        };
         notes.push(format!(
             "  src {md}::{m}{shown_sub} -> {} suite(s) by gate map ({})",
             pick.len(),
@@ -175,7 +234,9 @@ fn map_modules(root: &Path, p: &mut Picks, notes: &mut Vec<String>) -> Result<()
         ));
         for k in pick {
             p.whole.insert(k.clone());
-            p.why.entry(k).or_insert_with(|| format!("gate map names {lbl}"));
+            p.why
+                .entry(k)
+                .or_insert_with(|| format!("gate map names {lbl}"));
         }
     }
     Ok(())
@@ -195,7 +256,9 @@ fn map_assets(root: &Path, changed: &[String], p: &mut Picks) -> Result<Vec<Stri
         }
         for (k, why) in hits {
             p.whole.insert(k.clone());
-            p.why.entry(k).or_insert_with(|| format!("{} {why}", a.path));
+            p.why
+                .entry(k)
+                .or_insert_with(|| format!("{} {why}", a.path));
         }
     }
     Ok(unmapped)
@@ -221,8 +284,10 @@ fn describe(p: &Picks, heavy: bool, xtask: bool, unmapped: &[String], notes: &mu
     } else {
         "  [ignored: heavy lane, skipped - pass --heavy or use `gate test <name>`]"
     };
-    let mut both: Vec<(String, String, bool)> =
-        by_fn(&p.fns).into_iter().map(|(k, f)| (k, f, false)).collect();
+    let mut both: Vec<(String, String, bool)> = by_fn(&p.fns)
+        .into_iter()
+        .map(|(k, f)| (k, f, false))
+        .collect();
     both.extend(by_fn(&p.ign).into_iter().map(|(k, f)| (k, f, true)));
     both.sort_by(|a, b| ps_cmp(&a.0, &b.0).then_with(|| ps_cmp(&a.1, &b.1)));
     for (k, f, ig) in both {
@@ -234,9 +299,17 @@ fn describe(p: &Picks, heavy: bool, xtask: bool, unmapped: &[String], notes: &mu
         notes.push("  xtask (unit tests) - xtask/ changed".into());
     }
     for a in unmapped {
-        notes.push(format!("  {a}: NO SUITE covers this asset - nothing posts through it in crates/*/tests"));
+        notes.push(format!(
+            "  {a}: NO SUITE covers this asset - nothing posts through it in crates/*/tests"
+        ));
     }
-    if unmapped.is_empty() && p.libs.is_empty() && p.whole.is_empty() && p.fns.is_empty() && p.ign.is_empty() && !xtask {
+    if unmapped.is_empty()
+        && p.libs.is_empty()
+        && p.whole.is_empty()
+        && p.fns.is_empty()
+        && p.ign.is_empty()
+        && !xtask
+    {
         notes.push("  nothing in crates/ changed: no tests to run".into());
     }
 }
@@ -261,12 +334,19 @@ fn steps(mut p: Picks, heavy: bool, xtask: bool) -> Vec<Step> {
             sel.extend(["--test".to_string(), bin(k)]);
         }
         if !sel.is_empty() {
-            let base = Step::new(format!("{d} suites"), &["test", "-j", J, "-p", &pk, "--no-fail-fast"], d);
+            let base = Step::new(
+                format!("{d} suites"),
+                &["test", "-j", J, "-p", &pk, "--no-fail-fast"],
+                d,
+            );
             out.push(base.with(&sel).with(&["--".into(), T.into()]));
         }
         // A suite whose only changed fns are skipped heavy ones still has to compile.
         let mut bo: Vec<String> = Vec::new();
-        for k in ps_sorted(build_only.iter().cloned()).iter().filter(|k| mine(k)) {
+        for k in ps_sorted(build_only.iter().cloned())
+            .iter()
+            .filter(|k| mine(k))
+        {
             if !p.whole.contains(k) && !p.fns.iter().any(|(fk, _)| fk == k) {
                 bo.extend(["--test".to_string(), bin(k)]);
             }
@@ -306,7 +386,11 @@ fn steps(mut p: Picks, heavy: bool, xtask: bool) -> Vec<Step> {
         }
     }
     if xtask {
-        out.push(Step::new("xtask unit tests", &["test", "-j", J, "-p", "xtask", "--", T], ""));
+        out.push(Step::new(
+            "xtask unit tests",
+            &["test", "-j", J, "-p", "xtask", "--", T],
+            "",
+        ));
     }
     out
 }

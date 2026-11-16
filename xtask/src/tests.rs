@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::plan::{self, SLOW_BINARIES, Step};
 use crate::quick::{self, Diff, Quick};
-use crate::{decisions, exec, parse_gate, scan, single};
+use crate::{decisions, exec, parse_gate, scan, single, tier_plan};
 
 struct Fixture(PathBuf);
 
@@ -59,7 +59,8 @@ fn quick_plan(root: &Path, changed: &[&str], untracked: &[&str], hunks: &[(&str,
     let provider = move |f: &str| -> Vec<String> {
         hunks.iter().filter(|(hf, _)| hf == f).map(|(_, h)| h.clone()).collect()
     };
-    let diff = Diff { changed: &changed, untracked: &untracked, hunks: &provider };
+    let before = |file: &str| std::fs::read_to_string(root.join(file)).ok();
+    let diff = Diff { changed: &changed, untracked: &untracked, hunks: &provider, before: &before };
     quick::plan(root, &diff, heavy).expect("quick plan")
 }
 
@@ -173,10 +174,41 @@ fn batch_skips_slow_binaries_and_release_runs_everything() {
     assert_eq!(b[b.len() - 2], "[ui] ui suites (cwd crates/ui) | test -j 6 -p camcraft-ui --no-fail-fast -- --test-threads=6");
     assert!(b[b.len() - 1].starts_with("clippy -D warnings | clippy -j 6 -p camcraft-geometry -p camcraft-cl"));
     let r: Vec<String> = plan::release(&fx.0).steps.iter().map(line).collect();
-    assert_eq!(r.len(), 8 + 1 + 1 + 2 + 1 + 1);
+    // Two prebuilds, 8 suites, ui, clippy, lib+bins+doc of kernel and motion, and of app with its ops binary (the only fixture binary holding an ignore), 2 snapshot lanes.
+    assert_eq!(r.len(), 2 + 8 + 1 + 1 + (3 + 3 + 4) + 2);
     assert!(r.iter().any(|s| s.starts_with("kernel suites")));
-    assert_eq!(r[12], "[ui] ui snapshot lane (debug --ignored, cwd crates/ui) | test -j 6 -p camcraft-ui --lib --no-fail-fast -- --test-threads=6 --ignored snapshot");
-    assert_eq!(r[13], "[ui] ui gpu_render snapshot lane (debug --ignored) | test -j 6 -p camcraft-ui --test gpu_render --no-fail-fast -- --test-threads=6 --ignored snapshot");
+    assert_eq!(r[22], "[ui] ui snapshot lane (debug --ignored, cwd crates/ui) | test -j 6 -p camcraft-ui --lib --no-fail-fast -- --test-threads=6 --ignored snapshot");
+    assert_eq!(r[23], "[ui] ui gpu_render snapshot lane (debug --ignored) | test -j 6 -p camcraft-ui --test gpu_render --no-fail-fast -- --test-threads=6 --ignored snapshot");
+}
+
+#[test]
+fn release_without_snapshots_drops_only_the_pixel_lanes() {
+    // #1413: cut.yml's Linux runner runs `gate release --no-snapshots`; every other lane stays.
+    let fx = fixture();
+    let full: Vec<String> = plan::release(&fx.0).steps.iter().map(line).collect();
+    let p = plan::release_with(&fx.0, false);
+    let r: Vec<String> = p.steps.iter().map(line).collect();
+    assert_eq!(r, full[..full.len() - 2].to_vec());
+    assert!(r.iter().all(|s| !s.contains("snapshot")), "{r:#?}");
+    assert!(r.iter().any(|s| s.starts_with("app heavy: lib")));
+    assert!(p.notes.iter().any(|n| n.contains("--no-snapshots")));
+    let a = |s: &str| s.split_whitespace().map(String::from).collect::<Vec<_>>();
+    assert!(parse_gate(&a("release --no-snapshots --dry-run")).expect("release").no_snapshots);
+    assert!(!parse_gate(&a("release")).expect("release").no_snapshots);
+    assert!(parse_gate(&a("batch --no-snapshots")).is_err());
+}
+
+#[test]
+fn gate_no_snapshots_reaches_the_release_plan() {
+    // #1413 review: `gate()` builds its non-quick plan through `tier_plan`; the flag must reach it.
+    let fx = fixture();
+    let a = |s: &str| s.split_whitespace().map(String::from).collect::<Vec<_>>();
+    let lines = |p: plan::Plan| p.steps.iter().map(line).collect::<Vec<_>>();
+    let off = lines(tier_plan(&fx.0, &parse_gate(&a("release --no-snapshots")).expect("args")));
+    let on = lines(tier_plan(&fx.0, &parse_gate(&a("release")).expect("args")));
+    assert!(off.iter().all(|s| !s.contains("snapshot")), "{off:#?}");
+    assert!(on.iter().any(|s| s.contains("snapshot")), "{on:#?}");
+    assert_eq!(on, lines(plan::release(&fx.0)));
 }
 
 #[test]

@@ -6,1037 +6,696 @@ A clean-room implementation of HSMWorks: a CAM system that turns 3D models into
 NC programs (G-code) for CNC milling machines. Rust, Flecs ECS, egui.
 
 "HSMWorks" is a trademark of Autodesk. This project is independent and
-unaffiliated — it reimplements user-visible behavior (operation types,
+unaffiliated. It reimplements user-visible behaviour (operation types,
 parameters, workflow) from public documentation and general machining
-knowledge, nothing else.
+knowledge, and from nothing else.
+
+## How to read this file
+
+This file holds the rules. A procedure that only one task uses is in a skill.
+Load the skill (Skill tool) before you do the task. If a skill and this file
+disagree, this file is correct.
+
+| Task | Skill (`.claude/skills/`) |
+|---|---|
+| Read, file, label, comment on or close an issue | `gh-issues` |
+| Check, mirror, release a claim; work a `needs-research` issue | `issue-claims` |
+| Work one issue from claim to draft PR | `work-issue` |
+| Set or check an `effort:*` label | `classify-effort` |
+| Review open pull requests | `review-prs` |
+| Merge a batch of `merge-ready` PRs | `merge-ready` |
+| Refresh a conflicting PR, or re-check `conflicts` PRs | `resolve-conflicts` |
+| Run a gate, select tests, use the compile cache | `gate` |
+| Cut a release | `release-cut` |
+| Work in a fork of NeoTech/Camcraft | `fork-sync` |
+| Install or change a self-hosted runner or a workflow | `runners` |
+| Drive CamCraft through MCP | `camcraft-mcp` |
+
+A rule name in **bold** is a stable name. Skills, agents and code comments
+cite it. Do not rename one without a search for its citations.
+
+The maintainer's dated words behind each rule, and the superseded rules, are
+in the git history of this file (`git log -p -- AGENTS.md`; the last long
+form is at commit `b0a95adc9`).
 
 ## Autonomous Work Law
 
-The user trusts the recommendations made in their absence and reviews them
-afterwards - the work must not bother them.
+The maintainer trusts the recommendations that agents make while he is away.
+He reviews them later. The work must not interrupt him.
 
-- **Autonomous always.** Work the open GitHub issues (Issue Law, below) without asking for decisions. When
-  a choice appears, take the recommended option and keep moving; occasional
-  one-line status feedback is fine, a blocking question is not.
+- **Autonomous always.** Work the open GitHub issues (Issue Law) and do not
+  ask for decisions. When there is a choice, take the recommended option and
+  continue. A one-line status is permitted. A blocking question is not.
 - **Every recommendation is recorded.** Each decision taken unattended gets
-  an entry - what was chosen, why, what was considered and dropped - as the
-  discussion ledger for after the roadmap is cleared. On an issue branch it
-  goes in that PR's own file, `docs/decisions/<issue>-<slug>.md`, never in
-  `RECOMMENDED.md` itself: every branch appending to one shared file made
-  each merge re-conflict every other open PR (user, 2026-11-08: "this is
-  getting annoying"). The cut gathers the files into `RECOMMENDED.md`
-  (`cargo xtask decisions`, release step 2); `docs/decisions/README.md`
-  has the format.
-- **Never stop, never recap mid-roadmap.** There is no "wrap up and check
-  in" state: the next issue is claimed when the current gate is green.
-  Session summaries are for compaction, not for the user.
-- **Counter-measure against stalling.** If the work risks stopping before
-  the roadmap is done (idle after a gate, waiting on nothing, end-of-turn
-  with open items), spawn a continuation nudge subagent to remind the
-  session to claim the next issue. A stall is a bug.
-- **Conflicted PRs are re-merged by their author; the maintainer
-  re-checks** (user, 2026-11-10: "a skill that is intended to recheck
-  current PR's with contributors name to deal with conflicts, usually
-  conflicts is a remerge from main or similar easy fix. Same skill should
-  also be used from a maintainers perspective to check if conflicts has
-  been resolved."). Merging moves `main`, so reviewed PRs keep turning
-  `conflicts` (orange). The skill `/resolve-conflicts` (`.claude/skills/
-  resolve-conflicts/`) handles both sides:
-  - **Contributor mode** (`/resolve-conflicts [login]`): for the PR the merge
-    batch is about to merge, the one PR the author names, or one the author
-    is pushing a review fix to anyway (not every conflicting PR at once,
-    see "Refresh only at merge time"), merge main into the branch (never
-    rebase or force-push), keep both sides where both added lines, take main's
-    snapshot PNGs and changelog files, run the targeted gate, push, and
-    comment "ready for a re-check". If both sides changed the same logic,
-    or a safety rule could be dropped, stop and report the hunk instead
-    of guessing.
-  - **Maintainer mode** (`/resolve-conflicts check`): re-read every
-    `conflicts` PR. Still conflicting -> leave it, and ask the author once
-    only when it is in the batch about to merge (see "Refresh only at merge
-    time"). Clean again -> drop `conflicts`, then restore `merge-ready`
-    (head unchanged, or only a clean merge of main was added - see "A clean
-    merge of main keeps its review"), send it to a delta review (a conflict
-    was resolved by hand), or to a full `/review-prs` review (new code).
-  Agents in a fork run contributor mode on their own PRs at the start of
-  each session, after the process-file sync; the maintainer runs `check`
-  after a batch of merges (e.g. after `/merge-ready`). (Superseded since
-  2026-11-12: contributor mode is no longer a start-of-session duty; a
-  conflicting PR is refreshed at merge time, see "Refresh only at merge
-  time" below. The maintainer's `check` after a merge batch stands.)
-- **Refresh only at merge time** (user, 2026-11-12, decided in the question
-  dialog as "Refresh only at merge time", issue #1221: "We need to maybe
-  modify the merge-ready skill to be better at analyzing merge-order and
-  batch how the PR's are going in to generate as little delta pr's as
-  possible. we spend a shit ton of tokens on uncessary deltas." and "Stop
-  the other sessions work as well for now until we can figure out how it
-  stops causing conflicts"). A conflicting PR carries `conflicts` and is
-  otherwise left alone: by its author's agents, by maintenance, by
-  reviewers. It takes `git merge origin/main` only when it is the next PR
-  in a merge batch, or when its author pushes a review fix anyway and
-  chooses to. The merging session collects the ready PRs and runs
-  `cargo xtask merge-plan <PR>...` (or `--label merge-ready`). The planner
-  simulates the merges with `git merge-tree` (nothing is checked out,
-  built or pushed) and orders them: wave 1 merges as one batch with no
-  refresh and no delta review; wave 2 is refreshed one PR at a time, each
-  merged before the next is refreshed, against the main of that moment.
-  The `/resolve-conflicts` contributor mode is the tool for that refresh.
-- **A clean merge of main keeps its review** (issue #1221, 2026-11-12).
-  If every commit since the reviewed head is a merge of `main` whose
-  `git show --remerge-diff` is empty, the tree is exactly what merging the
-  reviewed head would give: the review stands and the label is restored
-  without an agent, and no delta review runs. `cargo xtask merge-plan
-  --delta <PR> --reviewed <sha>` reports it (SAME). Hand edits confined to
-  rule-settled files (`.claude/PROCESS_VERSION`, `CHANGELOG.md`,
-  `RECOMMENDED.md`, `Cargo.lock`, snapshot PNGs taken from main) are read by
-  the merging session itself (MECHANICAL). Only a conflict resolved by hand
-  gets a delta review of its remerge-diff (DELTA), and new commits get a
-  review of those commits (NEW CODE).
-- **Only collaborators' reviews count** (issue #1320, 2026-11-12, decided in
-  the question dialog: "Any collaborator review counts"; the maintainer in
-  chat: "everyone counts. everyone needs to get merged, mkinney and i are
-  coolaboration across the world on the same code base"). A
-  `<!-- pr-reviewer: ... -->` or `<!-- review-cost: ... -->` marker counts
-  only in a review or comment made by a collaborator of the repository the
-  PR targets (`NeoTech/Camcraft`, also in a fork): an account with write
-  access, `gh api repos/NeoTech/Camcraft/collaborators --jq '.[] |
-  select(.permissions.push) | .login'`. `merge-ready` counts only when a
-  collaborator set it. This holds for a collaborator's own PRs as well as
-  others'; the independence that still applies is the one above, that the
-  review is done by an agent that did not write the change. A marker or label
-  from an account that is not a collaborator does not count: a
-  contributor's pre-check is a plain comment without the marker.
-  A review that requests changes on a head stays open until it is addressed:
-  by a new head that a collaborator's review then clears, or by the reviewer
-  who asked withdrawing the request in a comment. A `merge-ready` label or a
-  "ready" review from another collaborator on the same head does not
-  override it. A PR whose current head carries both a collaborator review
-  requesting changes and a `merge-ready` label (or `merge-ready` beside
-  `needs-rework`) is a disagreement: `/merge-ready` reports it and does not
-  offer it; no agent removes either label; the two collaborators settle it
-  on the PR.
-  `/review-prs`, `/resolve-conflicts check`, `/merge-ready` and the
-  PR-reviewer agent all filter on the collaborator list. (Superseded since
-  2026-11-12, later the same day: issue #1207's "only the owner's reviews
-  count", "No, only ours count", which counted the owner's account alone.)
-- **Side work rides subagents.** All testing, documentation, and knowledge
-  graphing (the graphify updates) are done by subagents dispatched as
-  subtasks, never inline: their completion notification is what triggers
-  the progression to the next issue. This keeps the main agent
-  running continuously, as "Never stop" above mandates - the main session
-  plans, codes, and decides; the subagents verify, record, and graph.
+  an entry: what was chosen, why, and what was dropped. On an issue branch
+  the entry goes in that PR's own file, `docs/decisions/<issue>-<slug>.md`.
+  Never write it into `RECOMMENDED.md`: the cut gathers the files there
+  (`cargo xtask decisions`). `docs/decisions/README.md` has the format.
+- **Never stop, never recap mid-roadmap.** When the gate of an issue is
+  green, claim the next issue. A session summary is for compaction, not for
+  the maintainer.
+- **Counter-measure against stalling.** If the work can stop before the
+  issue list is empty, start a subagent that reminds the session to claim
+  the next issue. A stall is a bug.
+- **Side work rides subagents.** Subagents do all testing, documentation and
+  knowledge-graph updates. The main session plans, writes code and decides.
+  A subagent's completion notice starts the next step. Never give one
+  subagent both a code change and its verification.
 
 ## Issue Law - work is tracked as GitHub issues
 
-Since 2026-11-07 (user: "move off the roadmap and track work as ISSUES") the
-work list is the repo's open GitHub issues, read and written with `gh`.
-`ROADMAP.md` is retired (2026-11-08) the way `DONE.md` was before it: both
-are gone from the tree and live on in git history - `ROADMAP.md` in every
-tag up to v0.14.0 (`git show v0.14.0:ROADMAP.md`), `DONE.md` up to v0.8.1
-(`git show v0.8.1:DONE.md`). Read them for history and design context only;
-every item they still owed is an open issue, and no work is added anywhere
-but the issues. Decisions go to a per-PR file in
-`docs/decisions/` (gathered into `RECOMMENDED.md` at the cut); shipped changes
-go to `CHANGELOG.md`.
+The work list is the open GitHub issues of the repository, read and written
+with `gh`. `ROADMAP.md` and `DONE.md` are retired; read them only for history
+(`git show v0.14.0:ROADMAP.md`, `git show v0.8.1:DONE.md`). Decisions go to
+`docs/decisions/`. Shipped changes go to `CHANGELOG.md` at the cut.
 
-- **Use the gh-issues skill.** Any work that reads, files, comments on,
-  labels, claims, closes or reopens an issue loads the `gh-issues` skill
-  first (Skill tool), and subagents briefed on issue work are told to do
-  the same. The skill carries the `gh` mechanics (list limits, search
-  syntax, heredoc bodies, closing keywords); this law stays the rule
-  where the two differ.
-- **Pick.** `gh issue list --state open --search "-label:claimed -label:blocked -label:in-review -label:needs-research -label:\"P?\""`
-  (then drop any whose comments hold a live contributor claim - "A claim
-  comment is a claim", below) and take the lowest priority number first (`P1` before `P2` ... before
-  `P9`, "Priorities" below), then the oldest. User-reported bugs outrank
-  owed work of the same number. An issue with no priority is untriaged,
-  not lowest: it is triaged ("Priorities") before any pick.
-- **Priorities: `P1`..`P9`, lower is picked first** (user, 2026-11-12: "We
-  might need a P1-P9 prioritization system now.. we're having issues with
-  scope creep throughout the issue list"; scale chosen as "replace P0/P1/P2
-  with nine levels; agents keep filing and rating their own issues", and
-  read as "P4 is our normal; P1 to P3 is fix now"). `P?` (next point) is
-  outside the scale.
+- **Use the gh-issues skill.** Load it before any work that reads or changes
+  an issue. Tell a subagent that does issue work to load it too.
+- **Pick.** List the open issues without `claimed`, `blocked`, `in-review`,
+  `needs-research` and `P?`:
+  `gh issue list --state open --search "-label:claimed -label:blocked -label:in-review -label:needs-research -label:\"P?\""`.
+  Remove each issue that has a live claim comment (**A claim comment is a
+  claim**). Take the lowest priority number first, then the oldest. At the
+  same number, a bug that a user reported comes before owed work.
+- **Priorities: `P1`..`P9`, lower is picked first.**
 
-  | Label | Means | Was |
-  |---|---|---|
-  | `P1` | Unsafe or wrong output: a gouge or collision that passes, wrong posted G-code, a crash, data loss | `P0` |
-  | `P2` | Main is broken, or a regression in the last release with no workaround: main does not build, a gate on main is red, the app cannot open a project it saved | red-gate `P1` |
-  | `P3` | Wrong behaviour a user hits, with a workaround: a legal program refused, a misleading message, a dialog that cannot do what it says | `P1` bugs |
-  | `P4` | Work the maintainer asked for, for the next cut | `P1` enhancements he opened |
-  | `P5` | The agent surface and the tooling keep up with what shipped: an MCP tool or skill row for a shipped command, a gate or process fix that blocks contributors | `P1` MCP / process |
-  | `P6` | Accepted enhancements, not scheduled | other `P1` enhancements |
-  | `P7` | Owed polish and small fixes: wording, layout, a missing test, a refusal that could say more | `P2` bugs and polish |
-  | `P8` | Larger ideas that need design or research before code | `P2` enhancements, `effort:max` |
-  | `P9` | Someday: not picked while anything else is free | - |
+  | Label | Means |
+  |---|---|
+  | `P1` | Unsafe or wrong output: a gouge or collision that passes, wrong posted G-code, a crash, data loss |
+  | `P2` | Main is broken, or the last release has a regression with no workaround: main does not build, a gate on main is red, the app cannot open a project that it saved |
+  | `P3` | Wrong behaviour that a user finds, with a workaround: a legal program refused, a misleading message, a dialog that cannot do what it says |
+  | `P4` | Work that the maintainer asked for, for the next cut |
+  | `P5` | The agent surface and the tooling follow what shipped: an MCP tool or skill row for a shipped command, a gate or process fix that blocks contributors |
+  | `P6` | Accepted enhancements, not scheduled |
+  | `P7` | Owed polish and small fixes: wording, layout, a missing test, a refusal that could say more |
+  | `P8` | Larger ideas that need design or research before code |
+  | `P9` | Someday: not picked while other work is free |
 
-  - `P1`-`P3` are fix-now work and are for defects only: "wanted" is never
-    a reason for them. Only `P1` and `P2` hold a release cut back
-    (maintainer's choice, question dialog, 2026-11-12: "only P1 and P2
-    block a release cut"). A minor/major cut does not start while any `P1` or `P2` issue is open; a `P3` or lower never holds one. A `P3` is worked ahead of planned
+  - `P1`-`P3` are for defects only. "Wanted" is never a reason for them.
+  - Only `P1` and `P2` hold a release cut. A `P3` is worked before planned
     work, but a cut does not wait for it.
-  - `P4` is set only where the maintainer asked for the work in his own
-    words; the issue quotes them.
-  - A follow-up found while working or reviewing is `P7` unless it is a
-    defect (then `P1`-`P3` by the table).
-  - An agent filing an issue sets exactly one of `P1`..`P9` by this table,
-    never `P?`.
-  - **No priority means untriaged.** A human-filed issue without a
-    priority is not the lowest: the first agent that reads it for a pick
-    sets its priority by this table (with its effort label) before
-    sorting, so a user-reported gouge bug is never picked last. An issue
-    found with two numbers is reported to the maintainer and read by the
-    lower number meanwhile.
-- **`P?` is paused, not prioritised** (user, 2026-11-09: "a P? label that
-  holds an issue paused until maintainer tells it to be changed"). An issue
-  labelled `P?` is held by the maintainer: Pick never takes it, no lane
-  slot works it, no agent claims, researches, files sub-issues for or
-  re-prioritises it, and the bug/enhancement lanes skip it the same way.
-  It carries `P?` *instead of* a `P1`..`P9` label, never beside one -
-  an agent that finds both reports it rather than choosing. Only the
-  maintainer swaps `P?` for a real priority (or closes the issue); until
-  then agents may only read it, link it, and comment facts that belong on
-  it (e.g. a duplicate or a related fix), without changing its labels.
-  An agent filing a new issue never uses `P?` - it picks one of `P1`..`P9`.
-- **Two lanes, two issues each** (user, 2026-11-07: "open up the issue
-  limit to 2 bugs 2 enhancements.. as we are now just working on the latest
-  issues and not the old ones"). At most four issues are worked at once: two
-  in the **bug lane** and two in the **enhancement lane**. An issue labelled
-  `enhancement` (and not `bug`) is in the enhancement lane; every other
-  issue, unlabelled ones included, is in the bug lane. A slot is held from
-  the claim until its PR is opened (the swap to `in-review`); fixing a
-  review finding afterwards rides the same issue and takes no new slot, so a
-  `feat` waiting for its cut never holds a lane. The bug lane picks by the order above. The enhancement lane has its
-  own order, which overrides Pick's: user-filed issues (no `source:agent`)
-  first, then the lower number, then the oldest, so old owed work is not
-  starved by fresh bugs. When a slot frees, refill that lane at once. Each
-  slot is its own worktree and branch (check free disk first: each
-  worktree's `target/` is 10-20 GB). Merging follows "Done on a branch"
-  by commit type, whichever lane the issue came from.
-- **Start from the latest main, on a branch of its own** (user, 2026-11-07:
-  "make sure we are on the latest main by pulling data from github then
-  create a new branch to work off of"). Before the first edit:
-  `git fetch origin && git switch main && git pull --ff-only origin main`,
-  then `git switch -c issue/N-<slug>` (a worktree agent:
-  `git fetch origin && git worktree add --no-track -b issue/N-<slug>
-  .claude/worktrees/issue-N origin/main` - `--no-track`, so a bare pull/push
-  never targets main). Worktrees live inside the repo under the gitignored
-  `.claude/worktrees/`, never beside it (user, 2026-11-08: "but why are they
-  outside the working folder u started up in?"), and are removed once their
-  PR is pushed. One issue, one branch; every commit for it lands there, never
-  on `main`.
-- **A worktree agent never touches the main checkout's HEAD or tree.** It
-  runs `git fetch origin` and `git worktree add ... origin/main` and nothing
-  else there: no `switch`, `pull`, `merge`, `reset`, `checkout` or `stash` in
-  `C:\...\Claude-001` (any checkout the maintainer works in). The main checkout
-  may be running a gate (`cargo xtask gate` reads HEAD and the working tree
-  before and after, and prints VOID if a pull moved them mid-run, #1201), so a
-  worker's pull there voids that run for everyone. The first form above is for
-  the main session only, when it is the one owning `main`.
-- **A fork syncs from upstream at each cut tag, not continuously** (user,
-  2026-11-09: "If we are on a forked repository (check for upstream), we
-  pull from upstream, with every detected cut tag ex. jump from 0.14 to
-  0.15, 0.15 to 0.16. The upstream pulls makes sure fork is working of the
-  latest stable main - and not the main that is in constant change.").
-  Before claiming work, check for an upstream: `git remote get-url
-  upstream` (a fork of NeoTech/Camcraft has one; the canonical repo does
-  not - there, "Start from the latest main" above applies unchanged). In a
-  fork:
-  - `git fetch upstream --tags` and find the newest cut tag,
-    `git tag -l 'v*.*.0' --sort=-v:refname | head -1`.
-  - If the fork's `main` does not contain it yet (`git merge-base
-    --is-ancestor <tag> main` fails), sync: `git switch main && git merge
-    --ff-only <tag>` (or `git merge <tag>` if the fork's main carries its own
-    commits), then `git push origin main`. Sync only to a cut tag, never to
-    `upstream/main`: tags are the tested, released state; upstream's main
-    moves several times an hour.
-  - Branch issue work from the fork's synced `main` as above. A PR into
-    upstream still targets upstream's `main`; if it conflicts there, merge
-    the conflicting upstream change into the branch (`git merge
-    upstream/main`) on that branch only, never into the fork's `main`. The
-    fork's `main` takes upstream's code only at the next cut tag; process
-    files are the one exception (next point).
-  - Note the tag the fork is on in the PR body ("fork synced at vX.Y.0").
-  - **Process files sync on every session, not only at tags** (user,
-    2026-11-10: "we need a way to inform all forks that there is changes
-    to skills and agents"). The process - `AGENTS.md`, `.claude/agents/`,
-    `.claude/skills/`, `xtask/` (the gate and decision tooling, #748),
-    `.cargo/config.toml` (its `cargo xtask` alias), and the wrappers that
-    forward to it - `scripts/gate.ps1`, `scripts/gate.sh`,
-    `scripts/release.ps1`, `scripts/collect-decisions.ps1`,
-    `scripts/collect-decisions.sh`, and `crates/ui/AGENTS.md` (the UI
-    steering document, #1121) - changes between releases, and a fork's
-    agents must follow the current rules.
-    At the start of every session in a fork, before claiming work,
-    compare `git show upstream/main:.claude/PROCESS_VERSION` with the
-    local `.claude/PROCESS_VERSION`. If upstream's is higher, pull just
-    those files: `git checkout upstream/main -- AGENTS.md .claude/agents
-    .claude/skills .claude/PROCESS_VERSION xtask .cargo/config.toml
-    scripts/gate.ps1 scripts/gate.sh scripts/release.ps1
-    scripts/collect-decisions.ps1 scripts/collect-decisions.sh crates/ui/AGENTS.md`, commit as `chore(process): sync
-    process files to upstream PROCESS_VERSION <n>` on a `process-sync`
-    branch, and merge
-    it into the fork's `main` (or open a PR there if the fork protects
-    main), then re-read AGENTS.md before going on. A fork whose cut tag
-    predates `xtask/` (the first cut after #748) also adds `"xtask"` to the
-    `members` of its root `Cargo.toml` in that same commit (and lets
-    `Cargo.lock` take the new package) - the wrappers call `cargo xtask`,
-    which needs the member; it adds no product code. This is the one
-    exception to "sync only to a cut tag": process files don't change
-    product code, so the fork's code stays on the tag while its rules stay
-    current. What changed and why is in the pinned issue #681 ("Process
-    changes"); a fork maintainer subscribes there.
-- **Process changes bump `PROCESS_VERSION` and are announced** (same
-  request). Any PR that changes a process file (the list above) also
-  increments the single integer in `.claude/PROCESS_VERSION`, and when it
-  merges, the merging session adds a comment to the pinned issue #681:
-  `PROCESS_VERSION <n>` · PR #M · what changed · what a fork must do. The
-  reviewer treats a missing bump as a requested change. Two process PRs
-  open at once both bump to the same number; whichever merges second
-  takes the next number when it merges main. At a cut, the release notes
-  get a short "Process changes" section listing the versions since the
-  previous tag.
-- **Overlapping issues stack.** Open PRs wait unmerged (a `feat` until its
-  cut, a fix until it is reviewed), so an
-  issue touching code an open PR changes branches off that PR's branch
-  (not main) and its PR says "stacked on #M". Before the parent merges (any
-  time while it is unmerged), retarget the child FIRST (`gh pr edit <child>
-  --base main`); then merge the parent; then the child takes `git merge
-  origin/main`, is re-gated and merges. Never the other way round: `gh pr
-  merge --delete-branch` on the parent deletes the child's base branch and
-  GitHub closes the child PR; recovering it means restoring the deleted
-  branch, reopening and retargeting (0.12.1 lost #82 that way and replaced it
-  with #86). An overlap that can't stack waits for the parent PR to merge.
-- **Claim before any code.** One command, so every agent sees it at once:
-  `gh issue edit N --add-label claimed --add-assignee @me` plus a comment
-  `gh issue comment N --body "claimed: <session or agent name> · <UTC time> ·
-  worktree/branch <name> · plan: <one line>"`. Never work an issue that
-  carries `claimed`, with two exceptions. One: its last claim comment is
-  one of the owner account's own agents' and older than 4 hours with no
-  newer comment from the claimant - then it is stale: comment "reclaimed
-  from <old claimant> (stale)" and take it. Two: the claim behind the
-  label is a contributor's and it is withdrawn, released or stale by the
-  rule "A claim comment is a claim", below - then release it as that rule
-  says, and the issue is free. Never on a `P?` issue: no agent relabels or
-  works one.
-- **Agent-opened issues say so** (user, 2026-11-07: "All Issues opened by
-  an Agent should have the tag source:agent"). Every issue an agent opens
-  carries the `source:agent` label alongside its `P*`, `effort:*` and `area:*` labels -
-  including a bug the user reported in chat and an agent filed for them.
-  An issue a human opens on GitHub never gets it. Agents and the user share
-  one GitHub account, so the label, not the author, tells them apart.
-- **Every issue is weighted by effort** (user, 2026-11-10: "we need a way
-  of 'weighting' an issue ... to manage token spend on different levels of
-  complexity of tickets"). Beside its `P*`, every issue carries exactly one
-  effort label: how hard the *work* is, not which model does it. `P*`
-  still decides which issue is worked next; `effort:*` decides who works
-  it.
+  - Set `P4` only where the maintainer asked for the work in his own words.
+    The issue quotes those words.
+  - A follow-up found during work or review is `P7`, unless it is a defect.
+    A defect is `P1`-`P3` by the table.
+  - An agent that files an issue sets exactly one of `P1`..`P9`.
+  - An issue without a priority is not triaged. It is not the lowest. The
+    first agent that reads it for a pick sets its priority and its effort
+    label before the sort.
+  - If an issue has two priority labels, report it to the maintainer. Read
+    it by the lower number until he decides.
+- **`P?` is paused, not prioritised.** The maintainer holds a `P?` issue. No
+  agent picks it, claims it, researches it, files sub-issues for it, or
+  changes its labels. Agents can read it, link it, and comment facts on it.
+  `P?` is used instead of a `P1`..`P9` label, never with one: report an issue
+  that has the two. An agent never sets `P?` on a new issue.
+- **Two lanes, two issues each.** At most four issues are in work: two in the
+  bug lane and two in the enhancement lane. An issue with `enhancement` and
+  without `bug` is in the enhancement lane. All other issues are in the bug
+  lane. An issue holds its slot from the claim until its PR is open. A review
+  fix later uses the same issue and no new slot. The bug lane uses the Pick
+  order. The enhancement lane order is: issues filed by a user (no
+  `source:agent`) first, then the lower number, then the oldest. Fill a free
+  slot immediately. Each slot has its own worktree and branch. Check the free
+  disk space first: one `target/` is 10-20 GB.
+- **Start from the latest main, on a branch of its own.** One issue, one
+  branch, `issue/N-<slug>`. No commit for an issue goes to `main`.
+  - Main session: `git fetch origin && git switch main && git pull --ff-only
+    origin main`, then `git switch -c issue/N-<slug>`.
+  - Worktree agent: `git fetch origin && git worktree add --no-track -b
+    issue/N-<slug> .claude/worktrees/issue-N origin/main`.
+  - Worktrees are in the gitignored `.claude/worktrees/`, never outside the
+    repository. Remove a worktree when its PR is pushed.
+- **A worktree agent never touches the main checkout's HEAD or tree.** In the
+  main checkout it runs `git fetch origin` and `git worktree add` only. It
+  does not run `switch`, `pull`, `merge`, `reset`, `checkout` or `stash`
+  there. A gate can be in progress in that checkout, and a pull makes its
+  result void (#1201).
+- **A fork syncs from upstream at each cut tag, not continuously.** Its
+  process files are the exception: they sync at the start of each session.
+  The `fork-sync` skill has the procedure. A repository with an `upstream`
+  remote is a fork.
+- **Process files** are: `AGENTS.md`, `.claude/agents/`, `.claude/skills/`,
+  `.claude/PROCESS_VERSION`, `xtask/`, `.cargo/config.toml`,
+  `scripts/gate.ps1`, `scripts/gate.sh`, `scripts/release.ps1`,
+  `scripts/collect-decisions.ps1`, `scripts/collect-decisions.sh` and
+  `crates/ui/AGENTS.md`.
+- **Process changes bump `PROCESS_VERSION` and are announced.**
+  - A PR that changes a process file does not change
+    `.claude/PROCESS_VERSION`. Its body has the line `Process change: yes`.
+  - The reviewer requests a change if that line is missing, or if the PR
+    edits `PROCESS_VERSION`.
+  - The merging session is the one writer. After a merge batch with one or
+    more process PRs, it runs `cargo xtask process-bump` once, in a worktree
+    off the new `main`. It opens the one-line PR `chore(process):
+    PROCESS_VERSION <n>` and merges it. That PR is MECHANICAL: the merging
+    session reads it, and it needs no agent review.
+  - Then the session comments on the pinned issue #681: `PROCESS_VERSION
+    <n>` · PR #M (each process PR of the batch) · what changed · what a fork
+    must do.
+  - At a cut, the release notes list the versions since the previous tag in
+    a "Process changes" section.
+- **Overlapping issues stack.** An issue that changes code of an open PR
+  branches off that PR's branch, and its PR says "stacked on #M". Before the
+  parent merges, retarget the child first (`gh pr edit <child> --base main`).
+  Then merge the parent. Then the child takes `git merge origin/main`, is
+  gated again and merges. Never merge the parent first: `--delete-branch`
+  deletes the child's base branch and GitHub closes the child PR. An overlap
+  that cannot stack waits for the parent to merge.
+- **Claim before any code.** Run `gh issue edit N --add-label claimed
+  --add-assignee @me`, then comment `claimed: <session or agent name> · <UTC
+  time> · worktree/branch <name> · plan: <one line>`. Do not work an issue
+  that has `claimed`. There are two exceptions. One: the last claim comment
+  is from an agent of the owner account, is more than 4 hours old, and the
+  claimant made no later comment. Then comment "reclaimed from <old claimant>
+  (stale)" and take the issue. Two: a contributor's claim that is withdrawn,
+  released or stale (`issue-claims` skill). Never claim a `P?` issue.
+- **A claim comment is a claim.** Only collaborators can set labels. Other
+  persons claim an issue with a comment that starts with `claimed:` or
+  `/claim`. Read the comments before you claim (`gh issue view N
+  --comments`). A live claim comment by a person who is not the owner account
+  means that the issue is taken, with or without the label.
+  - **A claim must be live.** A contributor's claim is live while one of
+    these is true: the claimant has an open PR for the issue; the claimant's
+    branch for it has a commit in the last 48 hours; the claimant commented
+    on the issue in the last 48 hours. If none is true, the claim is stale
+    and cannot hold the issue.
+  - A claim that is withdrawn, released or stale has ended. An ended claim
+    is never live again. Only a new claim line is a claim.
+  - The `issue-claims` skill has the mirror, release and maintenance steps
+    and the fixed comment texts.
+- **Agent-opened issues say so.** Each issue that an agent opens has the
+  `source:agent` label with its `P*`, `effort:*` and `area:*` labels. This
+  includes a bug that the maintainer reported in chat. An issue that a human
+  opens on GitHub never gets the label.
+- **Every issue is weighted by effort.** Each issue has exactly one effort
+  label. `P*` decides which issue is next. `effort:*` decides which agent
+  works it.
 
   | Label | The work | Examples |
   |---|---|---|
-  | `effort:low` | mechanical, one file, no new logic | docs, labels, a test fixture or field fix (#711), a string or layout tweak |
-  | `effort:medium` | one module or crate, a known pattern | a UI page change, an MCP tool over an existing command, a new machine file |
+  | `effort:low` | mechanical, one file, no new logic | docs, labels, a test fixture or field fix, a string or layout change |
+  | `effort:medium` | one module or crate, a known pattern | a UI page change, an MCP tool for an existing command, a new machine file |
   | `effort:high` | several crates, new behaviour with its tests | a new undoable command with its MCP tool, simulation or post logic, a refusal law |
-  | `effort:max` | new algorithms, formats or open design | geometry or toolpath algorithms, collision laws, a file format (DXF, #743), research-shaped work |
+  | `effort:max` | new algorithms, formats or open design | geometry or toolpath algorithms, collision laws, a file format, research work |
 
-  - **Set at filing.** Whoever files an issue sets its effort label with
-    its `P*` and `area:*`, from the table. A human-filed issue without
-    one gets it at triage (the first agent that reads it for a pick).
-    The `classify-effort` skill (`.claude/skills/classify-effort/`) is how
-    the label is chosen: `/classify-effort <N>` for one issue,
-    `/classify-effort` for every open issue without one,
-    `/classify-effort audit` to list labels that look wrong (read-only).
-    It only sets a missing label; it never lowers or replaces one.
-  - **Safety floor.** Anything that can change posted G-code, a collision
-    or gouge check, stock simulation or geometry is at least
-    `effort:high`, however small the diff; every `P1` is at least
-    `effort:high`. The Prime Directive is never handed to the cheapest
-    tier.
-  - **Who works it.** The main session picks by Pick and the lanes as
-    before, then dispatches the issue to the worker agent of its effort -
-    `.claude/agents/issue-worker-<effort>.md`, each running the shared
-    `/work-issue` skill (claim, worktree, fix, pinning test, quick gate,
-    draft PR). The worker never merges; the main session keeps the
-    review and merge decisions. The model behind each effort is set only
-    in those agent files (`model:`), so a fork on other models changes
-    four lines, not this law. If an agent's model is unavailable (a 404),
-    run it without the `model:` line (the session's model) and note it in
-    the claim comment.
-  - **Review tier.** The review of a worker's PR runs at least on the
-    `effort:medium` model, and at the `effort:high` model for anything
-    under the safety floor. A cheap review of cheap work is how a bug
-    gets through.
-  - **Escalation, never silent.** A worker that fails its quick gate
-    twice, or finds the work is bigger than its label, stops: it comments
-    what it learned and where any held work lives, raises the label one
-    step (`low` -> `medium` -> `high` -> `max`), and releases the claim; the
-    next pick goes to the higher tier. At most one escalation per run.
-    Only the maintainer lowers an effort label.
-  - **Measured.** The PR's `review-cost` comment names the effort and
-    whether it escalated, so the table can be recalibrated from data
-    (escalation rate and cost per tier), not by feel.
-- **A claim comment is a claim** (user, 2026-11-08: "a comment should
-  suffice ... if we come across a claimed issue thru comment we should
-  just label it as such - and vice versa if they remove their comment,
-  remove their claim label for em as part of maintenance.. Otherwise the
-  comment stands as claimed." - that last sentence is superseded since
-  2026-11-11: a claim stands only while it is live, below). Only
-  collaborators can set labels, so
-  anyone else claims an issue by commenting on it with a line starting
-  `claimed:` (or `/claim`). The comment is the claim; the label only
-  mirrors it.
-  - **Check before claiming.** Before `Claim before any code`, read the
-    issue's comments (`gh issue view N --comments`). A claim comment by
-    anyone other than the owner account (agents post as the owner) means
-    the issue is taken: do not work it, even if it has no `claimed` label -
-    unless the claim is withdrawn, released or stale (below).
-  - **Mirror it.** An issue with a live claim comment (next point) but no
-    label gets `claimed` and the claimant as assignee (if GitHub refuses
-    the assignee, the label alone), plus one reply: "Claim recorded for
-    @<login> - label and assignee set (only collaborators can set labels;
-    your comment is the claim)." Only a LIVE earlier claim by someone else
-    holds an issue against a new claimant; a stale or ended one does not.
-    When a new claimant comes over a stale earlier claim, release the
-    stale one first (its release comment ends it, next point), then mirror
-    the new claim: the label and the assignee always follow the newest
-    live claim.
-  - **A claim must be live - an old one cannot stall an issue** (user,
-    2026-11-11, on eight issues a contributor's agents had claimed days
-    earlier and left: "unclaim those 8 old ones and let someone pick em up
-    and fix em they can't stall"). A contributor's claim is live while at
-    least one of these holds: an open PR by the claimant for the issue; a
-    commit on the claimant's branch for it in the last 48 hours; or a
-    comment by the claimant on the issue in the last 48 hours (the claim
-    itself, progress, findings - any comment of theirs counts; the rule is
-    kept simple on purpose). Research claims have no branch, so the
-    comment is what keeps them live. With none of the three, the claim is
-    **stale**: do not mirror it; if it carries `claimed`, remove the label
-    and the assignment and comment "claim by @<login> released (stale: no
-    open PR, branch commit or comment from the claimant for 48 h) - issue
-    is free again; claim it again with a new comment if you are working on
-    it". That comment ENDS the claim (next point): a later comment by the
-    claimant does not revive it, only a new claim line does. Ended beats
-    live: a comment that withdraws or releases a claim is not activity
-    that keeps it live, and an ended claim is never live again. The 4 h rule
-    above stays the rule for the owner account's own agents. A `P?` issue
-    is never relabelled by an agent, stale claim or not: report it to the
-    maintainer instead.
-  - **Withdrawn or released.** A claim also ends when its comment is
-    deleted; when the claimant's later comment withdraws it (`unclaim`,
-    `/unclaim`, "claim withdrawn", "releasing this claim", "the issue is
-    free" - read the claimant's LAST comment, not only the claim line);
-    when the maintainer releases it (a comment saying the claim is
-    released by the maintainer); or when an agent has released it as stale
-    (the comment above). Then: remove `claimed` and their assignment, and
-    comment "claim by @<login> withdrawn - issue is free again" (not needed
-    where a release comment already says so). Only a NEW `claimed:` /
-    `/claim` comment posted after that is a claim again; an ended claim is
-    never mirrored back from its old comment.
-  - **Maintenance.** Every `/review-prs` run (step 4) and every issue pick
-    does this sweep for the issues it touches: label the live
-    comment-only claims, and drop the label where the claim behind it is
-    withdrawn, released or stale. A `claimed` label backed by one of the
-    owner account's own agent claims follows the 4 h rule above instead.
-- **`needs-research` is research, not code** (user, 2026-11-08: "the new
-  label needs-research ... covers larger open questioned issues that needs
-  to be broken down into issues and closed, before work can be picked up").
-  An issue labelled `needs-research` is a large idea with open questions
-  (e.g. #290 Wire/Sinker EDM, #291 documentation site). Pick never takes it
-  for code. Researching it is claimed like any issue ("Claim before any
-  code", with `plan: research`), but takes no branch, no PR and no lane
-  slot. Working it means: answer the open questions in issue comments
-  (research, recorded decisions), then file the concrete sub-issues it
-  lists - each with one `P*`, one `effort:*`, `area:*`, `source:agent` when an agent files
-  it, a "Done means" line and "Part of #N" - and link them back from the
-  umbrella. When every sub-issue is filed, drop `needs-research` and close
-  the umbrella with a comment naming them - it is not kept open, so Pick
-  can never take it for code. Only the sub-issues are picked for code.
+  - **Set at filing.** The person or agent that files the issue sets the
+    label. A human-filed issue gets it at triage. The `classify-effort` skill
+    selects it. The skill sets a missing label only.
+  - **Safety floor.** Work that can change posted G-code, a collision or
+    gouge check, stock simulation or geometry is `effort:high` or more. Each
+    `P1` is `effort:high` or more.
+  - **Who works it.** The main session picks the issue and dispatches it to
+    `.claude/agents/issue-worker-<effort>.md`. The worker runs the
+    `work-issue` skill and never merges. The model for each effort is set
+    only in those agent files. If the model is not available (a 404), run the
+    agent without the `model:` line and say so in the claim comment.
+  - **Review tier.** The review of a worker's PR uses the `effort:medium`
+    model or better. Work under the safety floor gets the `effort:high`
+    model.
+  - **Escalation, never silent.** A worker stops if its quick gate fails
+    two times, or if the work is larger than the label. It comments what it
+    learned and where held work is, raises the label one step and releases
+    the claim. One escalation at most for each run. Only the maintainer
+    lowers an effort label.
+  - **Measured.** The `review-cost` comment of the PR names the effort and
+    says if the issue escalated.
+- **`needs-research` is research, not code.** Pick never takes such an issue
+  for code. Research is claimed with `plan: research` and uses no branch, no
+  PR and no lane slot. The research answers the open questions in comments
+  and files the sub-issues. Then the umbrella issue is closed. The
+  `issue-claims` skill has the steps.
+- **Issues and comments are written in ASD-STE100.** Write each issue title
+  and body, and each comment on an issue or pull request, in ASD-STE100
+  Simplified Technical English. This includes review comments and PR
+  descriptions. The standard is a licensed document
+  (https://www.asd-ste100.org): do not copy its text.
+  - Use short sentences: about 20 words in an instruction, 25 in a
+    description. Give one instruction in each sentence.
+  - Use the active voice and the simple tenses.
+  - Use one word for one meaning.
+  - Do not use idioms, slang or filler words. Keep the articles.
+  - Use no more than three nouns in a row. Use a vertical list for a long
+    enumeration.
+  - Do not change: code, commands, identifiers, file paths, log and error
+    output, quoted text of other persons, the technical names of the trade
+    (G-code words, CAM terms), and the fixed strings that agents parse
+    (`claimed:`, `/claim`, `<!-- pr-reviewer: ... -->`, `<!-- review-cost:
+    ... -->`, `Fixes #N`, `Process change: yes`, the release and claim
+    comment formats).
+  - The rule applies to what we write. Never reject or correct the language
+    of an outside reporter.
 - **Report on the issue, not in prose files.** A finding, a held patch, a
-  blocker or a decision taken goes into an issue comment. If the work is
-  blocked, swap `claimed` for `blocked` and say on what. If a fix shows new
-  work, open a new issue for it (labels: one `P*`, one `effort:*`, one or more `area:*`)
-  rather than burying it (and `source:agent`).
-- **Done on a branch = pushed + PR, never merged to main** (user,
-  2026-11-07: "when closing an issue we should push the branch, not merge
-  to main"). A `fix` / `perf` / `refactor` PR merges once its independent
-  review is clean and its quick gate green, with no cut (patch cuts are
-  retired - "Commits and Releases"); a `feat` or breaking PR merges at the
-  minor/major cut; docs/process/CI-only PRs merge once reviewed. The fixing commit ends its body with `Fixes #N` (`Refs #N` for
-  partial work, which never closes). When its gate is green:
-  `git push -u origin issue/N-<slug>`, then
-  `gh pr create --draft --base main --head issue/N-<slug> --title
-  "<conventional subject>" --body-file <file>` - the body says what changed, the readings,
-  the pinning test(s), a `Changelog:` line (the one-line row text, or
-  `none` for docs/test-only) and ends `Fixes #N`. Then, in the same step:
-  swap `claimed` for `in-review`, and comment `fix on issue/N-<slug> · PR #M
-  · pinned by <test name(s)> · merges when reviewed` (a `feat`: `merges at
-  the next cut`). The issue closes
-  when the PR merges to `main` (GitHub closes it from the keyword). A
-  review finding is fixed on the same branch and pushed (plain push, never
-  force); whoever fixes it re-adds `claimed` with a claim comment while
-  working and swaps back to `in-review` when pushed. A PR closed unmerged
-  (dropped, or held by the user with a PR comment) swaps `in-review` for
-  `blocked` (held, say on what) or for nothing (dropped, say why), with an
-  issue comment - an issue never sits in `in-review` without an open PR.
-- **Every PR opens as a draft** (user, 2026-11-08: "All PR's should be done
-  as drafts to start with. And not flagged ready to review until either
-  user saids its ok or the tests are done. Once its been flagged ready to
-  review no more pushes should be performed"). A PR is created with
-  `--draft` and stays a draft while work, gating and review fixes land on
-  it. It is flagged ready (`gh pr ready <M>`) when the user says so, or
-  when a **quick pass** confirms its gates hold (user, 2026-11-08: "the
-  quickpass was to make em ready for review.. so flag em"): it merges
-  cleanly with `main`, its author's quick gate is green on its final head
-  with the pinning tests named, its body is complete (what changed, how
-  tested, what was not exercised, `Changelog:`, `Fixes`/`Refs`), and it
-  keeps this file's laws. The quick pass reads the PR, it does not
-  rebuild; the full independent review comes after, on the ready PR
-  (`/review-prs`, "Outside PRs are reviewed" below). Once ready, its branch takes **no more pushes**: a late
-  finding, a needed `git merge origin/main` or any other change first turns
-  it back into a draft (`gh pr ready <M> --undo`), says why in a PR
-  comment, is pushed and re-gated, and only then is flagged ready again.
-  Superseded since 2026-11-12 for the merge-time refresh only (the
-  maintainer's decision in the question dialog, "Refresh only at merge
-  time", issue #1221): a refresh that is only a merge of main with no hand
-  edits (`cargo xtask merge-plan --delta` says SAME) is not new work on the
-  PR, so the review stands and the refresh is pushed without the draft
-  round-trip. A merge-time refresh with hand edits (MECHANICAL after the
-  merging session's own read, or DELTA) is new work: a ready PR goes back to
-  draft first, is pushed, and is reviewed as usual. Either way the merging
-  session flags the PR ready again right before merging it (`gh pr ready
-  <M>`), with one PR comment naming the class (SAME, MECHANICAL or DELTA) and
-  the review it stands on, and nothing is pushed after that flag. A PR under
-  an orange `conflicts` verdict is a draft (review-prs), so that flag is what
-  makes it mergeable again.
-  Merging (by the main session for fix/docs PRs, at the cut for `feat`)
-  takes only a ready PR, never a draft.
-- **Never close by hand without a commit**, except: a duplicate (link the
-  original), already done (name the commit that did it), or a decided
+  blocker or a decision goes into an issue comment. If the work is blocked,
+  replace `claimed` with `blocked` and say what blocks it. If a fix shows new
+  work, open a new issue for it.
+- **Never close by hand without a commit.** The exceptions are: a duplicate
+  (link the original), work already done (name the commit), and a decided
   won't-do (label `wontfix`, give the reason). Each needs that comment.
 - **User-reported bugs reopen, never re-file.** If the user still sees the
-  bug in a build that carries the fix, reopen the same issue with what they
-  saw; the claim starts again.
-- **When a PR merges**, drop `in-review` from its issue (GitHub closes it
-  from `Fixes #N`). **At a release cut**, comment `shipped in vX.Y.Z` on
-  every issue closed since the previous tag - the cut's own merged PRs plus
-  the fix PRs merged since - and drop any `in-review` left over.
-- **Giving up without a fix:** remove `claimed`, comment what was learned,
-  leave it open. A pushed branch with held work is named in that comment;
-  an empty one is deleted (`git push origin --delete issue/N-<slug>`).
-- **Changelog.** Every PR that changes behaviour carries its row text in
-  its body (`Changelog:` line); the row is written into `CHANGELOG.md` on
-  the release branch at the cut, for every PR merged since the previous tag
-  (fix PRs merge between cuts), not on the issue branch (each branch
-  writing the table's top row would make every open PR conflict):
-  `| <short merge commit> | <YYYY-MM-DD> | <change, one line> (#N, PR #M) |
-  X.Y.Z |`. Docs-only and release-mechanics PRs need no row. Rows marked
-  `Unreleased` (from before the branch flow) take the version at the next
-  cut.
+  bug in a build that has the fix, reopen the same issue with what the user
+  saw. The claim starts again.
+- **Giving up without a fix.** Remove `claimed`, comment what you learned,
+  and leave the issue open. Name a pushed branch with held work in that
+  comment. Delete an empty branch.
+- **Changelog.** Each PR that changes behaviour has its row text in its body
+  (`Changelog:` line). The row is written into `CHANGELOG.md` on the release
+  branch at the cut, not on the issue branch. Docs-only and
+  release-mechanics PRs need no row.
+
+## Pull Request Law
+
+- **Done on a branch = pushed + PR, never merged to main.** The fixing
+  commit ends its body with `Fixes #N` (`Refs #N` for partial work, which
+  does not close). When the gate is green:
+  1. `git push -u origin issue/N-<slug>`.
+  2. `gh pr create --draft --base main --head issue/N-<slug> --title
+     "<conventional subject>" --body-file <file>`. The body says what
+     changed, the readings, the pinning tests, what was not exercised, a
+     `Changelog:` line (the row text, or `none`), and ends with `Fixes #N`.
+  3. Replace `claimed` with `in-review` on the issue. Comment `fix on
+     issue/N-<slug> · PR #M · pinned by <test name(s)> · merges when
+     reviewed` (a `feat`: `merges at the next cut`).
+
+  A review finding is fixed on the same branch with a plain push. The fixer
+  adds `claimed` and a claim comment during the work, then sets `in-review`
+  again. An issue never has `in-review` without an open PR: a PR closed
+  unmerged changes `in-review` to `blocked` (held) or to nothing (dropped),
+  with an issue comment.
+- **When PRs merge.** Merges are merge commits (`gh pr merge M --merge
+  --delete-branch`; a fork PR without `--delete-branch`). Never squash or
+  rebase. Never merge a draft.
+  - A `fix` / `perf` / `refactor` PR merges when its independent review is
+    clean and its quick gate is green.
+  - A docs-, process- or CI-only PR merges when it is reviewed.
+  - A `feat` or breaking PR merges at the minor/major cut.
+  - Nothing merges while a cut is between its step 1 and its tag.
+  - The review is always by an agent that did not write the change.
+- **When a PR merges**, remove `in-review` from its issue. GitHub closes the
+  issue from `Fixes #N`.
+- **Every PR opens as a draft.** It stays a draft while work, gates and
+  review fixes go onto it.
+  - Flag it ready (`gh pr ready <M>`) when the maintainer says so, or when a
+    quick pass is good. The quick pass reads the PR and does not build. It
+    confirms: the PR merges cleanly with `main`; the author's quick gate is
+    green on the final head, with the pinning tests named; the body is
+    complete; the PR obeys this file.
+  - The full independent review comes after that, on the ready PR.
+  - A ready PR takes no more pushes. For any change, first make it a draft
+    again (`gh pr ready <M> --undo`), say why in a PR comment, push, gate
+    again, then flag it ready again.
+  - Merge-time refresh, class SAME (only a merge of main, no hand edits):
+    this is not new work. The review stays valid and the refresh is pushed
+    without the change to draft.
+  - Merge-time refresh with hand edits (MECHANICAL or DELTA): this is new
+    work. The PR goes to draft first, is pushed, and is reviewed as usual.
+  - The merging session flags the PR ready immediately before the merge, with
+    one PR comment that names the class and the review that it relies on.
+    Nothing is pushed after that flag.
+  - A PR with an orange `conflicts` verdict is a draft.
+- **Conflicted PRs are re-merged by their author; the maintainer
+  re-checks.** The `resolve-conflicts` skill does the two parts.
+  - Contributor mode: merge main into the branch (never rebase, never
+    force-push). Keep the two sides where each added lines. Take main's
+    snapshot PNGs and changelog files. Run the targeted gate, push, and
+    comment "ready for a re-check".
+  - If the two sides changed the same logic, or a safety rule could be
+    lost, stop and report the hunk. Do not guess.
+  - Maintainer mode (`/resolve-conflicts check`), after a merge batch:
+    re-read each `conflicts` PR and send each clean one to the review that it
+    needs.
+- **Refresh only at merge time.** A conflicting PR has the `conflicts` label
+  and is not touched by its author's agents, by maintenance or by reviewers.
+  It takes `git merge origin/main` only when it is the next PR in a merge
+  batch, or when its author pushes a review fix and chooses to. The merging
+  session runs `cargo xtask merge-plan <PR>...` (or `--label merge-ready`).
+  The planner simulates the merges with `git merge-tree` and gives the order.
+  Wave 1 merges as one batch, with no refresh and no delta review. Wave 2 is
+  refreshed one PR at a time against the main of that moment, and each PR
+  merges before the next refresh.
+- **A clean merge of main keeps its review.** `cargo xtask merge-plan
+  --delta <PR> --reviewed <sha>` classifies the commits after the reviewed
+  head.
+
+  | Class | Means | Result |
+  |---|---|---|
+  | SAME | only merges of `main` with an empty `git show --remerge-diff` | the review is valid; restore the label; no agent |
+  | MECHANICAL | hand edits only in `.claude/PROCESS_VERSION`, `CHANGELOG.md`, `RECOMMENDED.md`, `Cargo.lock`, snapshot PNGs taken from main | the merging session reads the diff |
+  | DELTA | a conflict resolved by hand | a delta review of the remerge-diff |
+  | NEW CODE | new commits | a review of those commits |
+- **Only collaborators' reviews count.** A collaborator is an account with
+  write access to `NeoTech/Camcraft`: `gh api
+  repos/NeoTech/Camcraft/collaborators --jq '.[] | select(.permissions.push)
+  | .login'`.
+  - A `<!-- pr-reviewer: ... -->` or `<!-- review-cost: ... -->` marker
+    counts only in a review or comment by a collaborator.
+  - `merge-ready` counts only when a collaborator set it.
+  - This applies to a collaborator's own PRs too. The review must be by an
+    agent that did not write the change.
+  - A contributor's pre-check is a plain comment without the marker.
+  - A review that requests changes on a head stays open. It ends when a new
+    head gets a clean collaborator review, or when the reviewer who asked
+    withdraws the request in a comment. A `merge-ready` label or a "ready"
+    review from a different collaborator on the same head does not override
+    it.
+  - A PR whose current head has a collaborator's change request and also
+    `merge-ready` (or `merge-ready` with `needs-rework`) is a disagreement.
+    `/merge-ready` reports it and does not offer it. No agent removes a
+    label. The two collaborators decide on the PR.
+- **Outside PRs are reviewed with `/review-prs`.** The `PR-reviewer` agent
+  reviews one PR for each run. It trial-merges the PR with main, builds it,
+  runs the touched suites and clippy, and checks this file. It posts a plain
+  review comment whose first line is `<!-- pr-reviewer: <head sha> -->`, and
+  it sets the review label. It never approves, requests changes, merges or
+  pushes.
+  - The maintainer approves and merges by hand the PR of an account that is
+    not a collaborator.
+  - A collaborator's PR is handled as our own: reviewed here, then merged by
+    a collaborator's session through `/merge-ready`. Cuts and tags stay with
+    the maintainer.
+  - Our own issue PRs are reviewed here too when they are ready.
+  - Never two PR reviews at once: one PR for each `/review-prs` run. The
+    lock `.claude/pr-review.lock` guards this (`review-prs` skill).
+- **Review labels**, one colour for each state:
+
+  | Label | Colour | Means |
+  |---|---|---|
+  | `merge-ready` | green | clean review and mergeable |
+  | `needs-rework` | red | blockers |
+  | `conflicts` | orange | does not merge with `main` |
+  | `needs-maintainer` | yellow | no blockers, but read and not built: a new dependency, or a `build.rs` / scripts / `.github` change, waits for the owner's decision |
+
+  On red or orange the reviewer makes one of our own PRs a draft again. A
+  fork PR stays as its contributor set it, and the comment says what to fix.
+- **`main` is protected on GitHub.** Each change gets to `main` through a
+  PR. A direct push is refused. There is no force-push and no deletion. Open
+  review conversations must be resolved before a merge. The repository
+  permits merge commits only. Tags are not protected.
+- **Never force-push**: not `main`, not a branch with an open PR.
 
 ## Clean-Room Protocol
 
-- No reading, decompiling, disassembling, or tracing HSMWorks binaries or
-  source. No code derived from their code.
-- No copying their text: UI strings, docs, help content, parameter names where
-  original, comments, or bundled post processors.
-- No assets of any kind from their installer or install tree — icons, images,
-  tool/NC libraries are all made from scratch.
+- Do not read, decompile, disassemble or trace HSMWorks binaries or source.
+  Write no code derived from their code.
+- Do not copy their text: UI strings, docs, help content, original parameter
+  names, comments, or bundled post processors.
+- Use no asset from their installer or install tree. Icons, images and
+  tool/NC libraries are made from scratch.
 - Reference material is limited to: Autodesk's published user documentation
-  (behavior only, not implementation), public G-code standards (RS-274, ISO
+  (behaviour only, not implementation), public G-code standards (RS-274, ISO
   6983), machine-tool handbooks, and our own design notes.
-- New geometry or toolpath algorithms must be written from published technical
-  literature, not from inspection of HSMWorks output forensics.
-- Every module carries a one-line provenance comment: what it implements and
-  from which public source it was specced.
+- Write new geometry or toolpath algorithms from published technical
+  literature, not from an inspection of HSMWorks output.
+- Each module has a one-line provenance comment: what it implements, and
+  from which public source.
 
 ## Prime Directive: Never Crash, Never Gouge
 
-A CAM program drives a spindle in front of a human. The output is either
-correct, or visibly refused with a diagnostic. Silent wrong answers — a crash
-or a toolpath that gouges, collides, or cuts where it shouldn't — are the
-worst failure mode, without exception.
+A CAM program drives a spindle in front of a human. The output is correct,
+or it is visibly refused with a diagnostic. A silent wrong answer (a crash,
+or a toolpath that gouges, collides or cuts in the wrong place) is the worst
+failure. There are no exceptions.
 
-- Handle errors or propagate them - do not use unwrap() or expect().
-- Degenerate input (zero-area triangles, self-intersecting shells, nonsense
-  tolerances, corrupt STL/STEP models) → clean error, not a crash or hang.
-- Anything a collision check or simulation flags as unsafe must block the
-  post, never pass through silently.
-- No panics in systems or on any user-triggered path. `unwrap()`, `expect()`,
-  and `panic!()` are forbidden outside tests and `#[cold]` unreachable arms.
-  Prefer `Option`/`Result` and graceful fallbacks. A crash is a bug, always.
-  No exceptions.
-- Use safe numeric types for geometry: saturating, checked, or clamped ops -
-  no unchecked floats in bounds/index math.
-- Validate early: reject malformed setups and parameters at command
-  creation, not deep inside a generator where the failure is opaque.
-- Prefer recoverable states: if an operation can only be partly computed,
-  mark it "incomplete" rather than emit a subtly wrong toolpath.
-- Log diagnostics, never silence.
-- If a leak is found, fix it now, not later. Treat leaks as critical bugs:
-  they crash the app eventually, and "we'll clean it up later" always makes
-  it worse.
+- Handle errors or propagate them. `unwrap()`, `expect()` and `panic!()`
+  are forbidden outside tests and `#[cold]` unreachable arms. No panic in a
+  system or on a path that a user can start.
+- Degenerate input (zero-area triangles, self-intersecting shells, bad
+  tolerances, corrupt STL/STEP models) gives a clean error. It does not
+  crash or hang.
+- A result that a collision check or simulation finds unsafe must block the
+  post. It never passes silently.
+- Use safe numeric types for geometry: saturating, checked or clamped
+  operations. No unchecked floats in bounds or index math.
+- Validate early. Reject a malformed setup or parameter when the command is
+  created, not in a generator.
+- Prefer recoverable states. If an operation can only be computed in part,
+  mark it "incomplete". Do not emit a toolpath that is subtly wrong.
+- Log diagnostics. Never hide them.
+- Fix a leak when you find it. A leak is a critical bug.
 
 ## Everything Is a Command
 
-UI state changes are not ad-hoc field pokes - they are commands with entity
-references. Undo (Ctrl+Z) and redo (Ctrl+Y) iterate the command history and
-invert: the history is the single source of truth for what undo/redo can do.
-Any UI-driven change goes through it, including parameter edits in the
-operation property panel.
+A UI state change is a command with entity references, not a direct write to
+a field. Undo (Ctrl+Z) and redo (Ctrl+Y) go through the command history and
+invert it. The history is the single source of truth for undo and redo. Each
+change from the UI goes through it, parameter edits in the operation
+property panel included.
 
-- `CreateOperation` / `DeleteOperation` → operation entities
-- `ChangeTool` / `EditOperationParams` → operations and setups that had a
-  tool, stock, or depth changed (write the new value on command creation,
-  not via systems; undo must restore the previous value)
-- `SelectEntity` → selection (which operations/models are highlighted)
-- `ActivateSetup` → the active setup
+- `CreateOperation` / `DeleteOperation`: operation entities.
+- `ChangeTool` / `EditOperationParams`: operations and setups whose tool,
+  stock or depth changed. Write the new value when the command is created,
+  not in a system. Undo must restore the previous value.
+- `SelectEntity`: the selection.
+- `ActivateSetup`: the active setup.
 - Ephemeral UI state (hover, drag previews, simulation playback position) is
-  immediate-mode only - not undoable
+  immediate-mode only and cannot be undone.
 
-Systems and UI never write these fields ad hoc; they only respond to commands.
-If a UI change has no command for it, that's a bug - add one.
+Systems and UI never write these fields directly. If a UI change has no
+command, that is a bug: add the command.
 
-**Commands ship with an MCP tool** (#128, #356). The MCP server lets an AI agent
-drive CamCraft headlessly. A PR that adds a user-facing command also adds its
-MCP tool (and script verb where it fits) in `crates/app/src/mcp/`, or files a
-`source:agent` follow-up issue `MCP: <command>` and names it in the PR body. Every
-MCP issue (an `MCP:` title, or work on `crates/app/src/mcp/` or the camcraft-mcp
-skill) carries `area:mcp`. Owed agent-surface work (a tool, script verb or
-skill row for a shipped command) is `P5` (user, 2026-11-10: "find all MCP
-tickets and make P1" - the top level then, `P5` since the scale became
-P1-P9 on 2026-11-12); a defect in MCP code is rated by severity like any
-defect, `P1`-`P3`. A paused one stays `P?`. This keeps the agent surface up with the GUI. MCP
-tools call the same undoable commands the GUI uses, so undo/redo history and
-invariants hold headlessly.
+**Commands ship with an MCP tool** (#128, #356). A PR that adds a
+user-facing command also adds its MCP tool (and script verb where
+applicable) in `crates/app/src/mcp/`. Alternatively it files a `source:agent`
+follow-up issue `MCP: <command>` and names it in the PR body. MCP tools call
+the same undoable commands as the GUI. Each MCP issue has `area:mcp`. Owed
+agent-surface work is `P5`. A defect in MCP code is `P1`-`P3` by severity.
 
-Components are auto-registered: declare them in `crates/app/src/schema.rs`
-and the startup hook (`flecs_bits::register_schema`) handles the rest, in every
-binary. Current policy: components are Rust-owned types (`Vec`/`Box` fields),
-freed by the delete hooks flecs_ecs registers for them. The invariant that
-matters is unchanged: deleting an entity must free ALL associated resources
-(e.g. the cached toolpath and rest-material meshes of a deleted operation).
-Per-type arenas for C-style `raw_data` storage are a deferred performance
-optimization (M5.3-era), not a current requirement; if a type ever adopts
-`raw_data`, it must use a per-type arena - never a global allocator - and
-must carry a delete hook that frees everything it owns.
+Components are registered automatically: declare them in
+`crates/app/src/schema.rs`, and the startup hook
+(`flecs_bits::register_schema`) does the rest in each binary. Components are
+Rust-owned types (`Vec`/`Box` fields), freed by the delete hooks that
+flecs_ecs registers. The invariant: when an entity is deleted, all its
+resources are freed (for example the cached toolpath and rest-material meshes
+of a deleted operation). If a type adopts C-style `raw_data` storage, it must
+use a per-type arena, never a global allocator, and it must have a delete
+hook that frees all that it owns.
 
 ## Assets
 
-UI work also follows `crates/ui/AGENTS.md` (the UI steering document; it restates the laws here, nothing more).
+UI work also obeys `crates/ui/AGENTS.md` (the UI steering document).
 
-`assets/ui/` holds PNGs for toolbar and tree icons; `assets/ui/fonts/` holds
-the fonts. The UI must render them — loading the files alone isn't enough;
-wired-in usage in each panel's draw code is required.
+`assets/ui/` holds PNGs for toolbar and tree icons. `assets/ui/fonts/` holds
+the fonts. The UI must render them: each panel's draw code must use them.
 
-Icon sources: free, attribution-safe sets only - MIT/ISC/Apache-2.0/BSL
-licensed libraries may be bundled without crediting end users; primary pick is
-[Tabler Icons](https://tabler-icons.io) (MIT). Never icons8's free tier
-(requires attribution), never paid-without-need. 32x32 PNGs are fine; render
-at 16px. Keep the copyright/license texts of any bundled set in
-`assets/ui/LICENSES.md` (this is also the home for third-party notices like
-clipper2-rust's BSL text) - retention is a license condition, not a credit.
-Operation-specific glyphs are drawn original when no generic set fits. All
-icons referenced from `crates/ui/src/egui_app/icons.rs`. Icons and post-processor
-templates (see below) must be original or licensed without attribution —
-never adapted from HSMWorks material.
+- Icon sources: free sets that need no attribution to end users (MIT, ISC,
+  Apache-2.0, BSL). The primary set is
+  [Tabler Icons](https://tabler-icons.io) (MIT). Never the free tier of
+  icons8. Do not pay for a set without need.
+- 32x32 PNGs, drawn at 16 px.
+- Keep the copyright and license texts of each bundled set in
+  `assets/ui/LICENSES.md`. Third-party notices (for example the BSL text of
+  clipper2-rust) go there too. Retention is a license condition.
+- Draw an original glyph for an operation when no generic set has one.
+- All icons are referenced from `crates/ui/src/egui_app/icons.rs`.
+- Icons and post-processor templates are original, or licensed without
+  attribution. Never adapt them from HSMWorks material.
 
 ## Dependencies
 
-Layering is strict: ui → app → flecs. UI panels, widgets, and dialogs must
-not use sys_* or world-level direct calls; put those in app. Only app-layer systems and commands use raw Flecs calls.
+- Layers are strict: ui → app → flecs. UI panels, widgets and dialogs do not
+  use `sys_*` or world-level calls. Only app-layer systems and commands use
+  raw Flecs calls.
+- Schema components (`#[derive(Component)]` structs and their CPOD decls)
+  are in `crates/app/src/schema.rs`. Other app modules declare no
+  components.
+- Geometry parts are components (`app::model::Part`). Traverse them with
+  `model::child_parts` / `model::child_parts_of`, in UI and in systems.
+  Components do not reference each other. `Part` stores `child: Entity` (not
+  the parent). Systems query directly. `decompose` stores facets directly
+  into `Part`.
+- Check only the touched crates, with `-p` for each: `camcraft-ui`,
+  `camcraft-app`, `camcraft-motion`, `camcraft-sim`, `camcraft-post`,
+  `camcraft-tools`, `camcraft-cl`, `camcraft-geometry`. Do not build the
+  full workspace: that rebuilds flecs.
 
-Schema components live in the schema module (`crates/app/src/schema.rs`):
-the `#[derive(Component)]` structs and their CPOD decls. Other app modules
-must not declare components.
-Geometry parts are components (`app::model::Part`); use `model::child_parts` /
-`model::child_parts_of` to traverse - in UI and systems. Components don't
-reference each other. `Part` stores `child: Entity` (not parent); systems
-query directly (no helper accessors). `decompose` stores facets directly into
-`Part`.
+## Code shape
 
-Check only touched files: `-p` per touched crate - `camcraft-ui`,
-`camcraft-app`, `camcraft-motion`, `camcraft-sim`, `camcraft-post`,
-`camcraft-tools`, `camcraft-cl`, `camcraft-geometry` (not the whole
-workspace, which rebuilds flecs). The M4.1 split landed: geometry/cl/tools/
-post/sim/motion are their own crates; app's `operation` and `project` modules
-are split along section seams.
-
-## Code shape (Phase 4 onward)
-
-Phase 4 refactors the codebase for reuse; work in the shape it is heading to:
-
-- **400-line files.** No source file grows past ~400 LOC; split along the
-  domain seam instead of stacking another section onto a large file.
-  **Exempt: post-processor scripts** (`assets/posts/*.cps`; user, 2026-11-08:
-  "CPS files cannot follow the 400 line rules as its a script to be
-  executed by a post processor, and it needs what it needs"). A post script
-  is one file the post engine loads and runs for one machine dialect, so it
-  stays whole at whatever length its dialect needs; review it for
-  correctness, not length.
+- **400-line files.** No source file grows past about 400 lines. Split it
+  along the domain seam. Exempt: post-processor scripts
+  (`assets/posts/*.cps`). One post script is one file for one machine
+  dialect; review it for correctness, not for length.
 - **One concern per subcrate.** Motion types, operations, tool management,
-  heights/offsets, movement and simulation become isolated subcrates (M4.1).
-  Until the split lands, keep those boundaries honest inside `app`: new code
-  goes in the module that will become its crate's seed, and cross-domain
-  calls go through the seams that will become crate APIs - not through
-  private helpers of another domain.
-- **`app` holds the document, nothing else** (maintainer, 2026-11-11: "high
-  cohesion, low coupling, because every gate is costly"). New code goes in
-  `crates/app/src` only if it reads or writes the ECS world, the project
-  file, a command, MCP or the CLI. Code that works only on domain values
-  (cl, geometry, tools, post, sim, motion types) goes in the crate that owns
-  them, and `app` re-exports it. A reviewer checks this from the new file's
-  `use` lines: if none names one of those five things, the file is in the
-  wrong crate.
-- **No new dependency between our crates without a decision.** A
-  `camcraft-*` entry added to `[dependencies]` or `[dev-dependencies]` in any
+  heights/offsets, movement and simulation are isolated subcrates. A call
+  between domains goes through the crate API, not through a private helper of
+  the other domain.
+- **`app` holds the document, nothing else.** New code goes in
+  `crates/app/src` only if it reads or writes one of these five: the ECS
+  world, the project file, a command, MCP, the CLI. Code that works only on
+  domain values (cl, geometry, tools, post, sim, motion types) goes in the
+  crate that owns them, and `app` re-exports it. The reviewer checks the
+  `use` lines of a new file: if none names one of the five, the file is in
+  the wrong crate.
+- **No new dependency between our crates without a decision.** A new
+  `camcraft-*` entry in `[dependencies]` or `[dev-dependencies]` of a
   `crates/*/Cargo.toml` needs a `docs/decisions/` entry in the same PR. The
   entry lists the imported items, says why the caller cannot pass the value
-  in instead (a parameter, a closure, a recorded file), and names what now
-  rebuilds when the dependency changes. An edge that would carry fewer than
-  five items is not added: the caller passes the value in. (The wording of
-  the five-item clause is the maintainer's to confirm.)
+  in (a parameter, a closure, a recorded file), and names what rebuilds when
+  the dependency changes. Do not add an edge for fewer than five items: the
+  caller passes the value in. (The maintainer has still to confirm the
+  wording of the five-item clause.)
 - **Stays buildable everywhere.** No platform-specific assumptions in core
-  code (M4.2 ships Windows/Linux/macOS builds from the same source).
-- **Neutral naming.** M4.3 renamed the product label hsmworks to camcraft
-  everywhere, crates included; nothing - string, comment, or identifier -
-  carries the old brand. Legitimate trademark mentions ("no HSMWorks
-  material consulted", "a clean-room implementation of HSMWorks") name
-  Autodesk's product and stay: they're true statements, not branding.
+  code. Windows, Linux and macOS build from the same source.
+- **Neutral naming.** The product name is camcraft. No string, comment or
+  identifier has the old name hsmworks. True statements about Autodesk's
+  product ("a clean-room implementation of HSMWorks", "no HSMWorks material
+  consulted") stay.
 
 ## Testing
 
-`crates/app/tests/` (tests of what `crates/app/src` defines: commands, the
-project file, the schema, operations, MCP and the CLI) and `crates/ui/tests/`
-(UI/event tests which spawn the real app via `test_harness.rs`; helpers in
-`ui::test_harness`, app-level fixtures in `crates/app/tests/common/mod.rs`).
-Each future subcrate carries its own tests inside its crate (M4.1).
+Tests of what `crates/app/src` defines (commands, the project file, the
+schema, operations, MCP, the CLI) are in `crates/app/tests/`. UI and event
+tests are in `crates/ui/tests/`; they start the real app through
+`test_harness.rs` (helpers in `ui::test_harness`, app fixtures in
+`crates/app/tests/common/mod.rs`). Each other crate has its own tests.
 
-- **A test lives with the code it tests.** A new test file goes in the lowest
-  crate that provides everything it imports, and its Gate map names that
+- **A test lives with the code it tests.** A new test file goes in the
+  lowest crate that provides all that it imports. Its Gate map names that
   crate (`camcraft_post::post::engine`, not `app::post`). A file in
-  `crates/app/tests/` must import something `crates/app/src` defines; a test
-  that uses only another crate's re-exports (`app::post`, `app::verify`,
-  `app::machining2d`) belongs in that crate's `tests/`. A test that needs
-  another crate's output reads a recorded file (`.cl`, `.cnc`) rather than
-  importing that crate's generator.
+  `crates/app/tests/` must import something that `crates/app/src` defines. A
+  test that needs the output of a different crate reads a recorded file
+  (`.cl`, `.cnc`); it does not import that crate's generator.
+- **Three gate tiers - never hours per change.** One command on all
+  systems: `cargo xtask gate <tier>`. `scripts/gate.ps1` and
+  `scripts/gate.sh` are wrappers for it. The `gate` skill has the flags, the
+  test selection, the compile cache and the heavy lanes.
 
-**Three gate tiers - never hours per change** (user, 2026-11-07: "break up
-those test suites so we don't have to run hours on hours of tests"). One
-command runs them on Windows, macOS and Linux alike (#748): `cargo xtask
-gate <tier>`, from the workspace's `xtask/` crate. `scripts/gate.ps1`
-(`-Tier quick`, `-Test <name>`, ...) and `scripts/gate.sh` (`quick`,
-`test <name>`, ...) still work: they are thin wrappers that forward to it.
-
-1. **quick** (per patch, by the agent or gate-runner, target ≤ 5 min): only
-   the test binaries the diff touches, picked from the gate maps and the
-   touched crates (`cargo xtask gate quick [--base main]`); debug; no heavy
-   lanes.
-2. **batch** (main session, before committing a batch, target ≤ 20 min):
-   every debug suite except those tagged slow, the ui suites from
-   `crates/ui`, clippy (`cargo xtask gate batch`). No release-mode heavy
-   lanes.
-3. **release** (only at a cut, run locally): everything - all debug
-   suites, the `--ignored` heavy lanes in release (`cargo xtask gate
-   release`).
-
-Any tier takes `--dry-run` to print its plan without running it; logs go
-to `gate-logs/<tier>-<timestamp>/`.
-
-**Shared compile cache (optional, #900).** Every worktree has its own
-`target/`, so a fresh one recompiles every third-party crate. With
-[sccache](https://github.com/mozilla/sccache) (`cargo install sccache
---locked`, user account only) those compilations are cache hits across
-worktrees. `cargo xtask gate` sets `RUSTC_WRAPPER=sccache` and
-`SCCACHE_CACHE_SIZE=20G` for its cargo calls when `sccache` is on PATH (an
-existing `RUSTC_WRAPPER`, or `CAMCRAFT_NO_SCCACHE=1`, wins); a machine without
-it builds as before, and release packaging never uses it. For plain `cargo`
-set `RUSTC_WRAPPER=sccache` only when `sccache` is on PATH (cargo fails if the wrapper is missing), and never export `CARGO_TARGET_DIR`; `cargo xtask release` clears any wrapper for the packaging build. The cache lives in the sccache
-default dir (Windows `%LOCALAPPDATA%\Mozilla\sccache\cache`, Linux
-`~/.cache/sccache`; `SCCACHE_DIR` moves it). Hits need each worktree's default
-`target/`: sccache hashes `CARGO_*` env vars, so a `CARGO_TARGET_DIR` env var
-makes every worktree miss. Dev builds carry line tables only (no variable
-debug info; `--config profile.dev.debug=true` restores it for a debugger).
-
-**GitHub Actions minutes are budgeted** (3000/month; Windows bills 2x,
-macOS 10x). Nothing runs on push or PR: every gate tier runs locally
-through `cargo xtask gate`. GitHub runs only `release.yml` on a pushed tag
-(the build that publishes the artifact). `ci.yml` and `nightly.yml` are
-manual (`workflow_dispatch`) for the rare case a clean-machine run is
-wanted. Never add a `push`, `pull_request` or `schedule` trigger without
-the user's say-so.
-
-**Test the change, not everything.** A fix is proved by the test(s) that pin
-it, run one by one: `cargo xtask gate test <name> [--crate c] [--binary b]
-[--exact]` (or plain `cargo test -p <crate> --test <binary> -- <name>
---exact`). A whole suite runs only when the
-change touches what that suite covers; the full set runs only at a release
-cut (user, 2026-11-07: "tests should also be possible to run one by one …
-so we are testing changes rather than everything every time").
-
-Batch skips the debug binaries in `SLOW_BINARIES` (`xtask/src/plan.rs`,
-pinned by its unit tests) (motion finish3d, pivot5d, flow; app
-center_cut_multiaxis - each ~40-50 s); release runs them. camcraft-kernel
-runs in release, and in quick only when kernel itself is touched. Quick
-prints what it chose before running: the changed `#[test]` fns of a changed
-suite (`--exact`), and the gate-mapped suites of a changed src module; a
-change to shared test code (tests/common, goldens, snapshots) runs that
-crate's suites; geometry/cl/Cargo changes fall back to batch; a change
-under `xtask/` runs xtask's own unit tests.
-
-A test that takes more than ~60 s in debug moves to the heavy lane (with
-its lane named in the ignore reason) or gets a slimmer fixture; the batch
-tier stays fast by law, not by hope.
-
-Gate yourself narrowly, not by re-running everything: build once with
-`cargo test -p camcraft-app -p camcraft-ui --no-run`, then run the individual
-test binaries the diff touches (`target\debug\deps\<name>-<hash>.exe`, in
-parallel - they take no cargo lock). Each suite's header carries the module
-map (`Gate map (M4.4): covers app::x, app::y...`) - pick binaries from it,
-not from the whole tree. The debug ladder's budget is under ~5 min wall;
-everything slower is in the heavy lane below, not in yours. Under "Side
-work rides subagents" this ladder is run BY a gate subagent: it reports
-pass/fail per binary with failure output, and its report is what lets the
-main session commit. Never hand the subagent both the code change and its
-verification - the main session owns the code and the commit decision.
-
-Laws and verdicts run in different lanes (M4.4): tests that MEASURE geometry
-clean (envelope scans, full-precision projections) or generate over the big
-fixtures are `#[ignore]`d - `cargo test --release -p camcraft-app --
---ignored` executes them in minutes and belongs at milestone close-out and
-pre-push, never per-edit. The ignore reason names its lane. Coverage must
-not ride the split away: `#[test]` count before and after must match, and
-the ignored set keeps its golden asserts. UI snapshot binaries resolve their
-goldens from `crates/ui` - run them with that CWD.
-
-**Pixel snapshots are release-lane** (#255). The UI's PNG goldens
-(`crates/ui/tests/snapshots/*.png`) are `#[ignore]`d out of quick and
-batch and run only in the release tier's ui snapshot lane (debug,
-`--ignored snapshot`, CWD `crates/ui`). A PR never changes a snapshot
-PNG - not to "refresh" a conflict, not to accept a new render - and a
-`UPDATE_SNAPSHOTS=1` refresh on merge is no longer a habit: the goldens
-are regenerated once at the minor/major cut, in one commit on the release
-branch, after a human look at the `.diff.png`. What a snapshot guards is
-asserted in the default suite by its structural twin
-(`crates/ui/src/egui_app/tests/structural.rs`): AccessKit labels, roles,
-enabled/disabled state and window presence, plus the painted strips' text
-and coarse placement - text-only, so it holds on every OS and merges like
-code. A UI change updates those assertions, not the PNGs.
-
-`VisualRunner` is auto-enabled: windows show, run fast, and stay open if closed
-early; hidden runs cap at 30s; auto-close after 10s when no test is pending; on
-crash or timeout, the window is left open.
-
-Add headless tests for toolpath generation (golden CLFile/G-code outputs
-committed under `tests/golden/`), stock simulation, and post processing; fuzz
-tests for the geometry importers and the toolpath generators (degenerate input
-must error, never crash or hang).
+  | Tier | When | Target | Runs |
+  |---|---|---|---|
+  | quick | each patch, by the agent or gate-runner | ≤ 5 min | only the test binaries that the diff touches; debug; no heavy lanes |
+  | batch | before a batch is committed; each push to `main` | ≤ 20 min | each debug suite that is not slow, the kernel suites, the ui suites, clippy |
+  | release | only at a cut | - | all debug suites and the `--ignored` heavy lanes in release |
+- **Test the change, not everything.** The tests that pin a fix prove it.
+  Run them one by one: `cargo xtask gate test <name> [--crate c] [--binary b]
+  [--exact]`. Run a full suite only when the change touches what that suite
+  covers. Run the full set only at a release cut.
+- **Shared compile cache** (optional, sccache, #900): never export
+  `CARGO_TARGET_DIR`, because it makes each worktree miss the cache. The
+  `gate` skill has the setup.
+- A gate subagent runs the gate and reports pass or fail for each binary
+  with the failure output. The main session owns the code and the decision
+  to commit.
+- A test that takes more than about 60 s in debug moves to the heavy lane
+  (its ignore reason names the lane), or gets a smaller fixture.
+- Tests that measure geometry (envelope scans, full-precision projections)
+  or generate over the large fixtures are `#[ignore]`d and run in release at
+  a cut, never for each edit. A split must not lose coverage: the `#[test]`
+  count before and after is the same, and the ignored set keeps its golden
+  asserts.
+- **Pixel snapshots are release-lane** (#255). The PNG goldens
+  (`crates/ui/tests/snapshots/*.png`) are `#[ignore]`d and run only in the
+  release tier. A PR never changes a snapshot PNG. The goldens are made new
+  one time at the cut, in one commit on the release branch, after a human
+  looks at the `.diff.png`. The structural twin
+  (`crates/ui/src/egui_app/tests/structural.rs`) asserts in the default
+  suite what a snapshot guards: AccessKit labels, roles, enabled state,
+  window presence, and the text and coarse position of the painted strips.
+  A UI change updates those assertions, not the PNGs.
+- Add headless tests for toolpath generation (golden CLFile and G-code
+  outputs in `tests/golden/`), stock simulation and post processing. Add fuzz
+  tests for the geometry importers and the toolpath generators: degenerate
+  input must give an error, never a crash or a hang.
+- **2D toolpath shape-mask tests** (`crates/motion/tests/common/shape_mask.rs`):
+  compare a generated `Toolpath`'s swept disc footprint against the expected
+  `Region` (overcut, leftover, progressive rim engagement, symmetry, stock
+  extension) and write an RGB diff PNG on failure (do not commit the PNG).
+- **GitHub Actions minutes are budgeted** (3000 each month; Windows counts
+  2x, macOS 10x).
+  - Nothing runs on a PR trigger.
+  - A `push` trigger is permitted only on `main`, and only for a workflow
+    whose jobs run on a self-hosted runner (`post-merge.yml`).
+  - Never add a `push`, `pull_request` or `schedule` trigger without the
+    maintainer's approval.
+  - Never add a trigger that a fork PR can start to a workflow whose jobs
+    run on a self-hosted runner. A fork PR must not run code on the
+    maintainer's machine.
+  - Never approve the workflow run of a fork PR that adds or changes a file
+    in `.github/workflows/`.
+- **The cut runner**, **The post-merge gate** and **The PR test runner**
+  are self-hosted. The `runners` skill has their installation, labels and
+  safety rules.
+  - `cut.yml` runs the release tier of a cut on `[self-hosted, linux]`.
+  - `post-merge.yml` runs the batch tier on each push to `main`, on the
+    runner label `camcraft-post-merge`.
+  - `pr-test.yml` (`workflow_dispatch` only) builds and tests a PR for a
+    review, on the runner label `camcraft-pr-test`. Only the PR-reviewer
+    agent starts it, after it read the diff, and only for a collaborator's
+    PR. If no run completes, the review builds locally or says "not built".
+    It never says "pass".
 
 ## Knowledge Graph
 
-`graphify-out/` holds a graphify knowledge graph of this repo: code extracted
-structurally (AST), docs and images semantically. Generated output - never
-hand-edit it, never commit it.
+`graphify-out/` holds a graphify knowledge graph of this repository. It is
+generated output: never edit it by hand, never commit it.
 
-Query it before falling back to grep for structural questions:
+For a structural question, query it before you grep:
 
-- `graphify query "<question>"` - how does X work, what calls Y, trace a flow
-- `graphify path "A" "B"` - shortest connection between two concepts
-- `graphify explain "X"` - plain-language summary of a node and its neighbors
-- `graphify affected "X" --relation calls` - who breaks when X changes
-  (the graph is strongest here: it knows the test-to-command wiring)
+- `graphify query "<question>"`: how X works, what calls Y, a flow.
+- `graphify path "A" "B"`: the shortest connection between two concepts.
+- `graphify explain "X"`: a summary of a node and its neighbours.
+- `graphify affected "X" --relation calls`: what breaks when X changes.
 
-Keep it current as we work:
+Keep it current:
 
-- Code-only changes → `graphify update` (re-extracts changed files via AST,
-  free and no LLM; run it as part of wrapping up a task)
-- AGENTS.md / icon changes → `/graphify . --update` instead, so
-  the semantic side is re-extracted too
-- After renames or refactors that move many files → full `/graphify .` rebuild;
-  the shrink guard refuses a smaller graph unless `--force` is passed
-- Expected warning: `tests/golden/*.cl` read as Common Lisp and contribute
-  nothing to the graph (our CLFile dumps, not source) - ignore it
+- Code-only change: `graphify update` (AST only, no LLM) at the end of a
+  task.
+- `AGENTS.md` or icon change: `/graphify . --update`.
+- Renames or refactors that move many files: a full `/graphify .` rebuild.
+  The shrink guard refuses a smaller graph without `--force`.
+- Ignore the warning that reads `tests/golden/*.cl` as Common Lisp.
 
-Trust calibration: every edge carries EXTRACTED (1.0, read from source),
-INFERRED (0.55-0.95, model-reasoned), or AMBIGUOUS (0.1-0.3) - verify an
-INFERRED edge against the code before acting on it, never act on AMBIGUOUS.
+Each edge is EXTRACTED (read from source), INFERRED (0.55-0.95) or AMBIGUOUS
+(0.1-0.3). Check an INFERRED edge against the code before you act on it.
+Never act on an AMBIGUOUS edge.
 
 ## Commits and Releases
 
-[Reference](https://github.com/qoomon/conventional-commits)
-
-Format: `<type>(<optional scope>): <subject>` - e.g. `fix:` or
-`feat:`.
-
-Types in use: `feat` (new capability), `fix` (wrong behaviour corrected),
-`perf`, `refactor`, `test`, `docs`, `build`, `ci`, `chore`. A breaking change
-says so: `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer (an incompatible
+Format ([Conventional Commits](https://github.com/qoomon/conventional-commits)):
+`<type>(<optional scope>): <subject>`. Types: `feat`, `fix`, `perf`,
+`refactor`, `test`, `docs`, `build`, `ci`, `chore`. A breaking change says
+so: `feat!:` / `fix!:` or a `BREAKING CHANGE:` footer (an incompatible
 project-file or post-output change, a removed parameter or command). The
-fixing commit's body ends with `Fixes #N` (Issue Law).
+body of the fixing commit ends with `Fixes #N`.
 
-**Versioning is semantic: MAJOR.MINOR.PATCH, derived from the commits.**
-A cut takes the highest bump among the commits since the last tag:
+**Versioning is semantic: MAJOR.MINOR.PATCH, derived from the commits.** A
+cut takes the highest bump of the commits since the last tag.
 
-| Commits since the last tag | Bump | Example |
-|---|---|---|
-| a breaking change (`!` or `BREAKING CHANGE:`) | MAJOR | 1.4.2 → 2.0.0 |
-| any `feat` | MINOR | 0.8.2 → 0.9.0 |
-| only `fix` / `perf` / `refactor` (behaviour-neutral or corrective) | no cut - ships in the next minor | - |
-| only `docs` / `test` / `ci` / `build` / `chore` | no release | - |
+| Commits since the last tag | Bump |
+|---|---|
+| a breaking change | MAJOR (while the major is 0: MINOR, and the release notes say "breaking" first) |
+| a `feat` | MINOR |
+| only `fix` / `perf` / `refactor` | no cut: ships in the next minor |
+| only `docs` / `test` / `ci` / `build` / `chore` | no release |
 
-While the major is 0 (until the clean-room audit releases 1.0.0), a breaking
-change bumps MINOR instead and its release notes say "breaking" first.
+**When to cut: only MAJOR and MINOR.** There are no patch cuts. A fix
+merges to `main` when it is reviewed and gated, and ships in the next minor
+or major release. Cut when the `feat` PRs are gated and waiting, not on a
+calendar. `release.yml` builds and publishes on `vX.Y.0` tags only.
 
-**When to cut: only MAJOR and MINOR.** Patch cuts are retired (user,
-2026-11-07: "No patch cuts at all is the way to go, do not spend time or
-tokens on those. Make sure they are tested but do that as a subtask that we
-are not waiting for"). A fix merges to `main` once reviewed and gated and
-ships in the next minor or major release; no PATCH version, tag or zip is
-made. Landing a feature (or a breaking change) ends in a minor (or major)
-cut - cut as soon as the `feat` PRs are gated and waiting, not on a
-calendar. `release.yml` builds and publishes on `vX.Y.0` tags only (~30-40
-billed Actions minutes each); PRs run no Actions (no `pull_request`
-trigger), so the PR flow costs no minutes.
+**Fixes are tested in the background.** `post-merge.yml` runs the batch
+tier on each push to `main`. A red run opens or updates the issue `main is
+red (post-merge gate)`: `P2`, or `P1` when a wrong-output suite fails. The
+next green run closes it. A red result does not revert the merge; the issue
+is worked in the normal order. The main session does not start a gate for a
+merge that the workflow covers. If the runner is down, the `gate` skill has
+the local fallback: one batch gate for each merge batch, by a gate-runner
+subagent, and the session does not wait for it.
 
-**Fixes are tested in the background.** After a fix merges (or, one gate
-per batch since 2026-11-12, after a merge batch of "Refresh only at merge
-time" as a whole, not after each merge), the main
-session dispatches a gate-runner subagent to run the batch tier on
-`origin/main` in the MAIN checkout, reusing its `target/` - never a fresh
-worktree, whose own ~25 GB `target/` once filled the disk - and does not
-wait for it: it claims the next issue at once. The main checkout is shared,
-so the gate runs there only when it is on a clean `main`
-(`git pull --ff-only` first) with no `release/*` branch checked out, no cut
-in progress and no other gate running; otherwise it waits, and the main
-session starts no cut until a running gate has finished. The main session
-therefore does its own issue work in a worktree while a gate runs. Before
-dispatching, check the free disk space; `cargo clean` the main `target/`
-only when no gate or cut is running and it is past ~60 GB. A red result is a new issue (`P1` if it is wrong output or a
-gouge, else `P2`, `source:agent`) naming the failing tests and the merge
-that broke them. A red result does not revert the merge by itself; the
-issue is worked in the normal order, and a minor/major cut does not start
-while any `P1` or `P2` issue is open (a `P3` or lower never holds one). The full release tier runs only at a
-minor/major cut. A fix-only stretch produces no build; to hand-test one, run
-`cargo xtask release --version <next> --no-tag --skip-gate` (or the wrapper
-`scripts/release.ps1 -Version <next> -NoTag -SkipGate`) locally on a scratch
-branch off main (it refuses `--no-tag` on main) and discard the branch and
-its bump (no tag, no push).
+**A cut goes PR review -> merge to main -> tag.** The `release-cut` skill
+has the procedure. Its rules:
 
-**A cut goes PR review → merge to main → tag** (user, 2026-11-07: "when
-cutting a tag, we are doing that by PR review, merging to main, then we cut
-a tag"):
+- A cut does not start while a `P1` or `P2` issue is open. The check is made
+  one time, at the start. A `P1` or `P2` filed later does not restart the
+  cut: it goes under "Known issues" and its fix ships in the next minor. Only
+  the maintainer stops a cut. An agent that finds a late `P1` tells the
+  maintainer in one line and continues.
+- From step 1 to the tag, nothing else merges to `main`.
+- The release tier runs on the cut runner (`cut.yml`). The tagged tree is
+  exactly the gated tree.
+- Cuts and tags stay with the maintainer.
 
-1. **Review and merge the issue PRs.** Each open `in-review` `feat` or
-   breaking PR gets a
-   review by a subagent that did not write it (`/code-review` on the PR, or
-   a reviewer briefed with the diff, not the author's conclusion); findings
-   are fixed on that branch and pushed. A PR that no longer merges cleanly
-   is refreshed at merge time, in the order `cargo xtask merge-plan` gives
-   ("Refresh only at merge time"): `git merge origin/main` on its branch (an
-   older branch that still appends to `RECOMMENDED.md` keeps both sides), is
-   re-gated (quick), and pushed. Then
-   `gh pr merge M --merge --delete-branch` - merge commits, never squash or
-   rebase, so branch commits keep the hashes the issue comments name. A
-   worktree still holding the branch is removed first (the local delete
-   fails otherwise). From step 1 to the tag, nothing else merges to main. Stacked PRs: retarget each child to `main`
-   before merging its parent (Issue Law, "Overlapping issues stack"), then
-   merge parent-first.
-2. **Release branch.** Sync main (`git pull --ff-only`), then
-   `git switch -c release/vX.Y.Z`. The version is the highest bump among
-   the commits since the last tag (table above). Run
-   `cargo xtask decisions --version X.Y.Z` (appends every
-   `docs/decisions/*.md` to `RECOMMENDED.md` under a `vX.Y.Z` heading and
-   removes them; it goes in the same docs commit). Write `RELEASE_NOTES.md`
-   and the `CHANGELOG.md` rows for every PR merged since that tag (one per
-   behaviour PR, from its `Changelog:` line, plus any `Unreleased` rows).
-   The release notes also get a short "Process changes" section listing
-   each `PROCESS_VERSION` since the previous tag (taken from the pinned
-   issue #681). Commit all of it as `docs: X.Y.Z release notes;
-   changelog`; then `cargo xtask release --version X.Y.Z --no-tag
-   --installer` (Windows; `scripts/release.ps1 -Version X.Y.Z -NoTag
-   -Installer` is the same command through its wrapper; on macOS and Linux
-   it hands packaging to `scripts/package-*.sh` and refuses `--installer`)
-   - it runs the release gate tier on that tree (pass `--skip-gate` only if
-   this exact tree already passed it), commits the version bump, builds
-   the zip and installer, and makes no tag (it refuses `--no-tag` on main).
-3. **Release PR.** `git push -u origin release/vX.Y.Z`,
-   `gh pr create --base main --title "chore(release): X.Y.Z"`, reviewed like
-   any PR. Record the branch tip first (`tip=$(git rev-parse
-   release/vX.Y.Z)` - `--delete-branch` removes the name), then
-   `gh pr merge --merge --delete-branch`.
-4. **Tag the release merge commit.** Sync main; `m=$(git rev-parse main)`
-   is the release PR's merge commit (nothing else merged since step 1).
-   `git diff $tip $m` must be empty - the zip's tree is the tagged tree. Then
-   `git tag -a vX.Y.Z -m "CamCraft X.Y.Z" $m` and `git push origin vX.Y.Z`.
-   If the diff is not empty, do not tag: something reached main mid-cut;
-   start the cut again from step 2 on a fresh release branch. Comment
-   `shipped in vX.Y.Z` on every issue the cut closed.
-5. **Check the documentation site** (#688). The same tag run regenerates
-   the Zola site in `site/` from the tagged tree and deploys it to GitHub
-   Pages (`release.yml` jobs `site` and `pages`; `pages` waits for
-   `publish`, so the site's download links never point at a missing
-   release). The browser build (`wasm`, #1103) is served under `/app/`;
-   a failed wasm build leaves `/app/` as the "not part of this copy" page
-   and a warning, not a failed cut. Nothing is committed for it and no
-   trigger is added. The cut is done once the run's `pages` job is green
-   and `https://neotech.github.io/Camcraft/` shows "CamCraft X.Y.Z"; a
-   red `pages` job is re-run (Actions "Re-run failed jobs"), never fixed
-   by moving the tag. Preview locally with `zola build` in `site/`
-   (`site/README.md`).
-
-**`main` is protected on GitHub** (user, 2026-11-07: "so we don't get
-unauthorized pushes into main instead they follow the rules"): every change
-reaches it through a PR (0 approvals required - the agent and the user push
-as the same account, which cannot approve its own PR; the review is the
-subagent's, for our own PRs; outside PRs wait for the user, below), admins included; no force-push, no deletion; open review
-conversations must be resolved before a merge; the repo allows merge
-commits only (squash and rebase merging are off). A direct `git push origin
-main` is refused by GitHub - the legacy direct cut is gone. Tags are not
-covered and are pushed as before (step 4).
-
-**Outside PRs are reviewed with `/review-prs`** (user, 2026-11-07: "Add the
-use of the /review-prs into agents.md"). A pull request from a fork gets a
-review by the `PR-reviewer` agent (`.claude/agents/PR-reviewer.md`),
-dispatched by the project skill `/review-prs` (`.claude/skills/review-prs/`) -
-run on demand (`/review-prs`, or `/review-prs <N>` for one PR) and on a loop
-(`/loop 10m /review-prs`, every 10 minutes). The agent trial-merges the PR with current main in
-its own worktree, builds, runs the suites it touches and clippy, checks this
-file's laws, and posts a plain review **comment** whose first line is
-`<!-- pr-reviewer: <head sha> -->` (counted only when its author is a collaborator, see "Only collaborators' reviews count"; the marker that stops a second review of
-the same push), and sets the review label (below). It never approves, requests changes, merges or pushes:
-the user approves and merges an outside PR by hand ("make sure u leave a
-comment and allow us to approve it manually") - that stays for the PRs of
-accounts that are not collaborators; a collaborator's PR is handled like our
-own: reviewed here, then merged by any collaborator's session through
-`/merge-ready` (maintainer, 2026-11-12, "Both collaborators" may merge; cuts
-and tags stay with the maintainer). A merge batch is run with `/merge-ready`
-(`.claude/skills/merge-ready/`), which plans the order with `cargo xtask
-merge-plan`. **Never two PR reviews at
-once** ("make sure we are not running concurrent PR reviews"): one PR per
-`/review-prs` run, guarded by the lock `.claude/pr-review.lock` (`<N> <sha>
-<UTC>`) - a run that finds a lock younger than 90 min stops; an older one is
-stale and is cleared with its leftover `../cc-pr<N>-review` worktree. Our own
-issue PRs are reviewed here too once flagged ready (user, 2026-11-08: "All
-PR*s made by owner should be reviewd and tagged"); a fix PR merges once
-that review is clean, a `feat` or breaking PR at the cut (step 1 above).
-**Review labels**, one colour per state: green `merge-ready` (clean review
-and mergeable), red `needs-rework` (blockers), orange `conflicts` (no
-longer merges with `main`), yellow `needs-maintainer` (no blockers, but
-read, not built: a new dependency or a `build.rs` / scripts / `.github`
-change waits for the owner's decision). On red or orange the reviewer turns one of our
-own PRs back into a draft; a fork PR is left as its contributor set it,
-and the review comment says what to fix.
-
-`fix` / `perf` / `refactor` PRs and docs-, process- and CI-only PRs (no release) merge once
-reviewed by a subagent that did not write them (and, for `fix` / `perf` /
-`refactor`, once their quick gate is green), without waiting for a cut;
-the main session merges them (`gh pr merge --merge --delete-branch`,
-retargeting any stacked child to `main` first),
-never while a cut is between step 1 and its tag.
-
-**Every cut tag is published.** A release cut is not done until its tag is
-on GitHub: the tag is made on `main` after the release PR merges (step 4)
-and pushed at once - `git push origin vX.Y.0` - which fires `release.yml`
-and attaches the built artifact to a GitHub release. A tag that exists only
-locally is an unfinished cut. Never move or re-push an existing tag; a fix
-after a cut merges to `main` and ships in the next minor. Never force-push -
-not `main`, not a branch with an open PR.
+**Every cut tag is published.** A cut is not complete until its tag is on
+GitHub and `release.yml` has attached the artifact to a GitHub release. A
+tag that is only local is an incomplete cut. Never move or push again an
+existing tag. A fix after a cut merges to `main` and ships in the next
+minor. At the cut, comment `shipped in vX.Y.Z` on each issue closed since
+the previous tag.

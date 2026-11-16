@@ -57,7 +57,7 @@ plans compare those.
 ## 1. Collect
 
 ```bash
-export COLLABS=$(gh api repos/NeoTech/Camcraft/collaborators --jq '.[] | select(.permissions.push) | .login' | tr '\n' ' ')
+export COLLABS=$(gh api --paginate repos/NeoTech/Camcraft/collaborators --jq '.[] | select(.permissions.push) | .login' | tr '\n' ' ')
 gh pr list --repo NeoTech/Camcraft --state open --label merge-ready --limit 100 \
   --json number,title,author,isDraft,headRefName,headRefOid,baseRefName,headRepositoryOwner,mergeable,files,body,labels,reviews,comments
 ```
@@ -66,16 +66,49 @@ For each PR re-read `mergeable` (`gh pr view N --json mergeable`; GitHub
 answers `UNKNOWN` for a few seconds after main moves, so retry up to ~6 times
 with a short wait).
 
+For each PR, replace `N` below with its number and read all pages before
+deciding whether to offer it. An empty review list does not prove that no
+review exists: our reviewer agents normally post issue comments.
+
+```bash
+gh api --paginate repos/NeoTech/Camcraft/pulls/N/reviews
+gh api --paginate repos/NeoTech/Camcraft/issues/N/comments
+gh api --paginate repos/NeoTech/Camcraft/issues/N/events
+```
+
 **Only collaborators' reviews count** (AGENTS.md "Only collaborators'
-reviews count"). A review marker (`<!-- pr-reviewer: <sha> -->`) counts only
-in a comment or review by an account in `$COLLABS`, and a `merge-ready` label
-counts only if a collaborator set it (`gh api repos/NeoTech/Camcraft/issues/N/events`,
-last `labeled` event for `merge-ready`). A contributor's agents can post the
-same marker and, with label rights, the same label on their own PR; that is
-the author's claim, not a review. Such a PR is reported ("#N: merge-ready was
-set by a non-collaborator, no review from us for this head") and left out.
-A collaborator's own PR counts like any other, provided an agent that did not
-write it did the review.
+reviews count"). Check the review or comment author against `$COLLABS`.
+Read the latest `labeled` event for `merge-ready` and check its actor too.
+A label from a non-collaborator does not count. Report it and leave the PR out.
+If an API read fails or the label actor is unknown, leave the PR out and
+report the missing evidence. Do not infer approval from the label alone.
+
+Require a clean, independent review with a `<!-- pr-reviewer: <sha> -->`
+marker that names the reviewed head. Record its URL, author and head SHA.
+A `<!-- review-cost: ... -->` marker alone proves neither a clean verdict
+nor independence. Compare each marker's author with the PR author.
+If only the author's markers and label exist, report
+`#N: no counted review - not offered` and leave the PR out. This author-only
+rule also applies when the PR author is a collaborator. A label set by
+another collaborator cannot replace a missing review.
+
+Agents can share a GitHub account. A review posted through the PR author's
+account counts only with evidence that a different agent did the review and
+did not write the change. Record the agent identity and a linked review
+dispatch/result that establishes this separation. A marker or an author's
+unsupported claim of independence is insufficient. If that evidence is
+absent, use the same refusal above. A review from a different collaborator
+still must satisfy the independent-agent rule.
+
+Worked examples (#1828; assume the other merge checks pass):
+
+| Evidence for the current head | Result |
+|---|---|
+| Collaborator author; author-only markers and author-set label; no independent review evidence | no counted review - not offered |
+| Another collaborator set the label; no counted review | no counted review - not offered |
+| Collaborator author; same-account clean review with a named different agent and linked independent review dispatch/result | Keep the PR; record the review URL and head SHA |
+| Clean independent collaborator review in an issue comment; no formal pull review; collaborator-set label | Keep the PR; record the review URL and head SHA |
+
 A PR whose current head carries a collaborator review that requests changes
 and also a `merge-ready` label (or `merge-ready` beside `needs-rework`) is a
 disagreement (AGENTS.md "Only collaborators' reviews count"): report it,
@@ -86,8 +119,8 @@ Drop a PR from the list, with a one-line note to the user, when:
 - it carries **`needs-rework` or `needs-maintainer`** alongside `merge-ready`
   (contradictory labels): report it rather than ask about it;
 - its **head moved since the collaborator's review** and the move is more than
-  a clean merge of main. Find the reviewed head (the newest collaborator-authored
-  marker) and classify the move:
+  a clean merge of main. Use the head from the counted independent review
+  recorded above, not a newer author-only marker, and classify the move:
 
   ```bash
   cargo xtask merge-plan --delta N --reviewed <reviewed sha>
@@ -114,9 +147,12 @@ takes seconds and builds nothing:
 
 ```bash
 cargo xtask merge-plan <N> <N> ...      # the PRs left after step 1
-cargo xtask merge-plan --label merge-ready   # or every open PR with the label
 cargo xtask merge-plan --json <N> <N> ...    # the same plan for other tools
 ```
+
+Pass only the explicit PR numbers retained in step 1. Do not use `--label`
+here: it reloads the label list and includes excluded PRs again. The planner
+simulates merge order; it does not validate review independence.
 
 It fetches each head, merges them in memory with `git merge-tree` (nothing is
 checked out, built or pushed), and prints the base sha, then:
@@ -148,9 +184,9 @@ Read the plan before asking:
 - A stacked child whose base is not `main` is retargeted
   (`gh pr edit B --base main`) before its parent merges with
   `--delete-branch`; otherwise GitHub closes it.
-- Process PRs each bump `.claude/PROCESS_VERSION` and so conflict with each
-  other on that one line. That is `mechanical`: the later one takes the next
-  number in its refresh.
+- Process PRs no longer touch `.claude/PROCESS_VERSION` (#1153), so they do
+  not conflict with each other on it. A PR that still edits that file is
+  sent back: the merging session is its one writer (see "After all merges").
 
 Show the plan in two lines before asking ("Wave 1 (no refresh needed): #A, #B,
 #C. Wave 2 (one refresh each, in this order): #D - conflicts with #B in x.rs;
@@ -225,9 +261,12 @@ Do not re-review, re-gate or refresh anything between wave-1 merges.
 - For each merged PR, read the issues it closed (`closingIssuesReferences`)
   and remove `in-review` and `claimed` from those issues.
 - **Process files:** if a merged PR changed process files (`AGENTS.md`,
-  `.claude/agents/`, `.claude/skills/`, `scripts/gate.*`, `xtask/`), post the
-  `PROCESS_VERSION <n>` · PR #M · what changed · what a fork must do comment
-  on the pinned issue #681, as AGENTS.md says.
+  `.claude/agents/`, `.claude/skills/`, `scripts/gate.*`, `xtask/`), once
+  for the whole batch: run `cargo xtask process-bump` in a worktree off the
+  new `main`, open and merge the one-line PR `chore(process): PROCESS_VERSION
+  <n>`, then post the `PROCESS_VERSION <n>` · PR #M (each process PR of the
+  batch) · what changed · what a fork must do comment on the pinned issue
+  #681, as AGENTS.md says. Never bump the file inside a PR (#1153).
 - **Don't refresh the rest.** Open PRs this batch turned `CONFLICTING` and
   that are not about to merge are left alone (label `conflicts` if they were
   `merge-ready`). They are refreshed when their turn to merge comes.
