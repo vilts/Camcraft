@@ -30,6 +30,20 @@ fn heavy_lanes_are_one_build_then_one_step_per_target() {
 }
 
 #[test]
+fn lathe_field_sim_multi_pass_is_in_the_heavy_lane() {
+    let source = scan::read(&root().join("crates/app/tests/lathe_field_sim.rs"));
+    let before = source.split_once("fn multi_pass_contour_simulates_with_meridian_parity()").expect("test source").0;
+    let attributes = before.rsplit("#[test]").next().expect("test attributes");
+    assert!(attributes.contains("#[ignore = \""), "multi-pass parity must be ignored in debug");
+    assert!(attributes.contains("heavy lane"), "ignore reason must name the heavy lane");
+    let steps = heavy();
+    let step = steps.iter().find(|s| s.name == "app heavy: lathe_field_sim").expect("release heavy step");
+    assert!(step.args.contains(&"--release".to_string()));
+    assert!(step.args.contains(&"--ignored".to_string()));
+    assert!(step.args.windows(2).any(|w| w == ["--test", "lathe_field_sim"]));
+}
+
+#[test]
 fn heavy_steps_skip_only_binaries_without_ignored_tests() {
     // The old step was `cargo test --release -p <crate> --no-fail-fast -- --test-threads=6 --ignored`: it ran the
     // lib, the bins, every tests/ binary and the doc tests. The lib, bins and doc steps are always planned; a
