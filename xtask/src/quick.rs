@@ -326,34 +326,40 @@ fn steps(mut p: Picks, heavy: bool, xtask: bool) -> Vec<Step> {
         let pk = pkg(d);
         let mine = |k: &String| k.split(':').next() == Some(d);
         let bin = |k: &String| k.split(':').nth(1).unwrap_or("").to_string();
-        let mut sel: Vec<String> = Vec::new();
+        // One build, then one step for each target (#1941): lib, whole suites, suites with changed fns.
+        // A suite whose only changed fns are skipped heavy ones is built here and not run.
+        let mut targets: Vec<(String, Vec<String>)> = Vec::new();
         if p.libs.contains(d) {
-            sel.push("--lib".into());
+            targets.push(("lib".into(), vec!["--lib".into()]));
         }
         for k in whole.iter().filter(|k| mine(k)) {
-            sel.extend(["--test".to_string(), bin(k)]);
+            targets.push((bin(k), vec!["--test".to_string(), bin(k)]));
         }
-        if !sel.is_empty() {
+        let mut build: Vec<String> = targets.iter().flat_map(|t| t.1.clone()).collect();
+        let mut seen: BTreeSet<String> = whole.iter().filter(|k| mine(k)).map(&bin).collect();
+        let heavy_only = ps_sorted(build_only.iter().cloned());
+        let fn_keys = p.fns.iter().map(|(k, _)| k.clone());
+        let mut units = targets.len(); // targets in the build list
+        for k in heavy_only.into_iter().chain(ps_sorted(fn_keys)).filter(|k| mine(k)) {
+            if seen.insert(bin(&k)) {
+                build.extend(["--test".to_string(), bin(&k)]);
+                units += 1;
+            }
+        }
+        // Skip the build only when one run step covers the one target of the build list (review of #1952).
+        let fn_steps: BTreeSet<&String> =
+            p.fns.iter().map(|(k, _)| k).filter(|k| mine(k) && !p.whole.contains(*k)).collect();
+        if !build.is_empty() && !(units == 1 && targets.len() + fn_steps.len() == 1) {
+            let name = format!("{d} build (--no-run)");
+            out.push(Step::new(name, &["test", "-j", J, "-p", &pk, "--no-run"], d).with(&build));
+        }
+        for (label, sel) in targets {
             let base = Step::new(
-                format!("{d} suites"),
+                format!("{d} suites: {label}"),
                 &["test", "-j", J, "-p", &pk, "--no-fail-fast"],
                 d,
             );
             out.push(base.with(&sel).with(&["--".into(), T.into()]));
-        }
-        // A suite whose only changed fns are skipped heavy ones still has to compile.
-        let mut bo: Vec<String> = Vec::new();
-        for k in ps_sorted(build_only.iter().cloned())
-            .iter()
-            .filter(|k| mine(k))
-        {
-            if !p.whole.contains(k) && !p.fns.iter().any(|(fk, _)| fk == k) {
-                bo.extend(["--test".to_string(), bin(k)]);
-            }
-        }
-        if !bo.is_empty() {
-            let name = format!("{d} build-only (changed fns are heavy lane)");
-            out.push(Step::new(name, &["test", "-j", J, "-p", &pk, "--no-run"], d).with(&bo));
         }
         for (set, is_ign) in [(&p.fns, false), (&p.ign, true)] {
             let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
@@ -386,11 +392,7 @@ fn steps(mut p: Picks, heavy: bool, xtask: bool) -> Vec<Step> {
         }
     }
     if xtask {
-        out.push(Step::new(
-            "xtask unit tests",
-            &["test", "-j", J, "-p", "xtask", "--", T],
-            "",
-        ));
+        out.push(Step::new("xtask unit tests", &["test", "-j", J, "-p", "xtask", "--", T], ""));
     }
     out
 }

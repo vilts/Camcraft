@@ -18,11 +18,13 @@ fn selected(file: &str, krate: &str) -> Vec<String> {
     let hunks = |_: &str| -> Vec<String> { Vec::new() };
     let diff = Diff { changed: &changed, untracked: &[], hunks: &hunks, before: &|_| None };
     let Ok(Quick::Plan(p)) = quick::plan(&root(), &diff, false) else { panic!("{file} did not plan") };
-    let step: Option<&Step> = p.steps.iter().find(|s| s.name == format!("{krate} suites"));
-    let Some(step) = step else { return Vec::new() };
-    let a = &step.args;
-    eprintln!("selection {file} -> {krate}: {} suite(s)", a.iter().filter(|x| *x == "--test").count());
-    a.iter().enumerate().filter(|(_, x)| *x == "--test").filter_map(|(i, _)| a.get(i + 1).cloned()).collect()
+    let steps: Vec<&Step> = p.steps.iter().filter(|s| s.name.starts_with(&format!("{krate} suites: "))).collect();
+    let got: Vec<String> = steps
+        .iter()
+        .flat_map(|s| s.args.iter().enumerate().filter(|(_, x)| *x == "--test").filter_map(|(i, _)| s.args.get(i + 1).cloned()))
+        .collect();
+    eprintln!("selection {file} -> {krate}: {} suite(s)", got.len());
+    got
 }
 
 fn count(file: &str, krate: &str) -> usize {

@@ -100,7 +100,7 @@ fn changed_test_fn_runs_exact_and_heavy_fn_only_builds() {
     // Line 9 is inside op_area; line 16 inside the ignored op_heavy.
     let heavy_only = [(f, "@@ -16,0 +16,1 @@")];
     let got: Vec<String> = steps(quick_plan(&fx.0, &[f], &[], &heavy_only, false)).iter().map(line).collect();
-    assert_eq!(got, ["app build-only (changed fns are heavy lane) | test -j 6 -p camcraft-app --no-run --test ops"]);
+    assert_eq!(got, ["app build (--no-run) | test -j 6 -p camcraft-app --no-run --test ops"]);
     // With a plain fn changed too, the fn step compiles the suite: no separate build-only step.
     let hunks = [(f, "@@ -9 +9 @@"), (f, "@@ -16,0 +16,1 @@")];
     let got: Vec<String> = steps(quick_plan(&fx.0, &[f], &[], &hunks, false)).iter().map(line).collect();
@@ -111,11 +111,28 @@ fn changed_test_fn_runs_exact_and_heavy_fn_only_builds() {
 }
 
 #[test]
+fn heavy_fn_in_a_second_binary_keeps_the_build_step() {
+    // Review of #1952: a plain fn changed in cmds and a heavy fn changed in ops. The one fn step
+    // compiles cmds only, so the build step must still compile ops.
+    let fx = fixture();
+    let (a, b) = ("crates/app/tests/cmds.rs", "crates/app/tests/ops.rs");
+    let hunks = [(a, "@@ -4 +4 @@"), (b, "@@ -16,0 +16,1 @@")];
+    let got: Vec<String> = steps(quick_plan(&fx.0, &[a, b], &[], &hunks, false)).iter().map(line).collect();
+    assert_eq!(
+        got,
+        [
+            "app build (--no-run) | test -j 6 -p camcraft-app --no-run --test ops --test cmds",
+            "app cmds (1 fn) | test -j 6 -p camcraft-app --test cmds -- --test-threads=6 --exact cmd_undo",
+        ]
+    );
+}
+
+#[test]
 fn suite_edit_outside_fns_and_new_suite_run_whole() {
     let fx = fixture();
     let f = "crates/app/tests/ops.rs";
     let got = steps(quick_plan(&fx.0, &[f], &[], &[(f, "@@ -5 +5 @@")], false));
-    assert_eq!(line(&got[0]), "app suites | test -j 6 -p camcraft-app --no-fail-fast --test ops -- --test-threads=6");
+    assert_eq!(line(&got[0]), "app suites: ops | test -j 6 -p camcraft-app --no-fail-fast --test ops -- --test-threads=6");
     let got = steps(quick_plan(&fx.0, &[f], &[f], &[], false));
     assert_eq!(got.len(), 1);
 }
@@ -125,33 +142,35 @@ fn src_module_maps_to_gate_mapped_suites() {
     let fx = fixture();
     // operation/area.rs: the submodule is named in ops.rs's map, so only ops runs, plus the lib.
     let got = steps(quick_plan(&fx.0, &["crates/app/src/operation/area.rs"], &[], &[], false));
-    assert_eq!(
-        line(&got[0]),
-        "app suites | test -j 6 -p camcraft-app --no-fail-fast --lib --test ops -- --test-threads=6"
-    );
+    let got: Vec<String> = got.iter().map(line).collect();
+    assert_eq!(got[0], "app build (--no-run) | test -j 6 -p camcraft-app --no-run --lib --test ops");
+    assert_eq!(got[1], "app suites: lib | test -j 6 -p camcraft-app --no-fail-fast --lib -- --test-threads=6");
+    assert_eq!(got[2], "app suites: ops | test -j 6 -p camcraft-app --no-fail-fast --test ops -- --test-threads=6");
+    assert_eq!(got.len(), 3, "{got:?}");
     // commands.rs: both app suites name app::commands.
     let got = steps(quick_plan(&fx.0, &["crates/app/src/commands.rs"], &[], &[], false));
-    assert_eq!(
-        line(&got[0]),
-        "app suites | test -j 6 -p camcraft-app --no-fail-fast --lib --test cmds --test ops -- --test-threads=6"
-    );
+    let got: Vec<String> = got.iter().map(line).collect();
+    assert_eq!(got[0], "app build (--no-run) | test -j 6 -p camcraft-app --no-run --lib --test cmds --test ops");
+    assert_eq!(got[1..].iter().map(|s| s.split(" | ").next().unwrap_or("")).collect::<Vec<_>>(), ["app suites: lib", "app suites: cmds", "app suites: ops"]);
     // motion::finish3d is named by motion's own suite and, cross-crate, by app's cmds - slow or not,
     // quick runs what the map names.
     let got: Vec<String> =
         steps(quick_plan(&fx.0, &["crates/motion/src/finish3d.rs"], &[], &[], false)).iter().map(line).collect();
-    assert_eq!(got.len(), 2);
-    assert!(got[0].starts_with("motion suites") && got[0].contains("--lib --test finish3d"), "{got:?}");
-    assert!(got[1].starts_with("app suites") && got[1].contains("--test cmds"), "{got:?}");
+    // motion: one build, lib and finish3d; app: its single cmds suite runs without a separate build.
+    assert_eq!(got.len(), 4, "{got:?}");
+    assert!(got[0].starts_with("motion build") && got[0].contains("--lib --test finish3d"), "{got:?}");
+    assert!(got[1].starts_with("motion suites: lib") && got[2].starts_with("motion suites: finish3d"), "{got:?}");
+    assert!(got[3].starts_with("app suites: cmds") && got[3].contains("--test cmds"), "{got:?}");
 }
 
 #[test]
 fn shared_test_input_runs_every_suite_of_the_crate() {
     let fx = fixture();
     let got = steps(quick_plan(&fx.0, &["crates/motion/tests/common/mod.rs"], &[], &[], false));
-    assert_eq!(
-        line(&got[0]),
-        "motion suites | test -j 6 -p camcraft-motion --no-fail-fast --lib --test finish3d --test waterline -- --test-threads=6"
-    );
+    let got: Vec<String> = got.iter().map(line).collect();
+    assert_eq!(got[0], "motion build (--no-run) | test -j 6 -p camcraft-motion --no-run --lib --test finish3d --test waterline");
+    assert_eq!(got.len(), 4, "{got:?}");
+    assert_eq!(got[3], "motion suites: waterline | test -j 6 -p camcraft-motion --no-fail-fast --test waterline -- --test-threads=6");
 }
 
 #[test]
@@ -169,16 +188,22 @@ fn nothing_in_crates_plans_nothing_and_xtask_runs_its_own_tests() {
 fn batch_skips_slow_binaries_and_release_runs_everything() {
     let fx = fixture();
     let b: Vec<String> = plan::batch(&fx.0).steps.iter().map(line).collect();
-    assert!(b.contains(&"app suites (slow, release tier: center_cut_multiaxis) | test -j 6 -p camcraft-app --no-fail-fast --lib --test cmds --test ops -- --test-threads=6".to_string()), "{b:#?}");
-    assert!(b.contains(&"motion suites (slow, release tier: finish3d) | test -j 6 -p camcraft-motion --no-fail-fast --lib --test waterline -- --test-threads=6".to_string()));
-    assert_eq!(b[b.len() - 2], "[ui] ui suites (cwd crates/ui) | test -j 6 -p camcraft-ui --no-fail-fast -- --test-threads=6");
+    // One build, then one step for each test target (#1941); a SLOW_BINARIES binary has none in batch.
+    assert!(b[0].starts_with("debug build (--no-run) | test -j 6 -p camcraft-geometry"), "{b:#?}");
+    assert!(b.contains(&"app suites: cmds | test -j 6 -p camcraft-app --no-fail-fast --test cmds -- --test-threads=6".to_string()), "{b:#?}");
+    assert!(b.contains(&"app suites: lib | test -j 6 -p camcraft-app --no-fail-fast --lib -- --test-threads=6".to_string()));
+    assert!(b.contains(&"motion suites: waterline | test -j 6 -p camcraft-motion --no-fail-fast --test waterline -- --test-threads=6".to_string()));
+    assert!(!b.iter().any(|s| s.starts_with("motion suites: finish3d") || s.starts_with("app suites: center_cut_multiaxis")), "{b:#?}");
+    assert!(b.contains(&"[ui] ui suites: lib | test -j 6 -p camcraft-ui --no-fail-fast --lib -- --test-threads=6".to_string()), "{b:#?}");
     assert!(b[b.len() - 1].starts_with("clippy -D warnings | clippy -j 6 -p camcraft-geometry -p camcraft-cl"));
     let r: Vec<String> = plan::release(&fx.0).steps.iter().map(line).collect();
-    // Two prebuilds, 8 suites, ui, clippy, lib+bins+doc of kernel and motion, and of app with its ops binary (the only fixture binary holding an ignore), 2 snapshot lanes.
-    assert_eq!(r.len(), 2 + 8 + 1 + 1 + (3 + 3 + 4) + 2);
+    // Two prebuilds, then one step for each target (#1941): lib, bins and doc of 9 crates plus the 5 fixture
+    // binaries (3 app, 2 motion); clippy; heavy lib+bins+doc of kernel and motion, and of app with its ops
+    // binary (the only fixture binary holding an ignore); 2 snapshot lanes.
+    assert_eq!(r.len(), 2 + (9 * 3 + 5) + 1 + (3 + 3 + 4) + 2);
     assert!(r.iter().any(|s| s.starts_with("kernel suites")));
-    assert_eq!(r[22], "[ui] ui snapshot lane (debug --ignored, cwd crates/ui) | test -j 6 -p camcraft-ui --lib --no-fail-fast -- --test-threads=6 --ignored snapshot");
-    assert_eq!(r[23], "[ui] ui gpu_render snapshot lane (debug --ignored) | test -j 6 -p camcraft-ui --test gpu_render --no-fail-fast -- --test-threads=6 --ignored snapshot");
+    assert_eq!(r[r.len() - 2], "[ui] ui snapshot lane (debug --ignored, cwd crates/ui) | test -j 6 -p camcraft-ui --lib --no-fail-fast -- --test-threads=6 --ignored snapshot");
+    assert_eq!(r[r.len() - 1], "[ui] ui gpu_render snapshot lane (debug --ignored) | test -j 6 -p camcraft-ui --test gpu_render --no-fail-fast -- --test-threads=6 --ignored snapshot");
 }
 
 #[test]

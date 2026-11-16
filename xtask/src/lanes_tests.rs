@@ -110,6 +110,12 @@ fn main() {
     assert!(root.join("markers/survivor").exists(), "a failed suite must not discard other lane results");
     assert_eq!(run(vec![Step::new("bad build", &["test", "--no-run", "--invalid-build-flag"], ""), step("must not run", &["after-build-failure"])]), 1);
     assert!(!root.join("markers/after-build-failure").exists(), "a failed prebuild must stop suites");
+    // Batch runs its steps one by one: a failed whole-gate build stops the later steps too (review of #1952).
+    let mut seq = crate::exec::Run::new(&root, "batch", false).expect("runner");
+    let bad = Step::new(crate::plan::DEBUG_BUILD, &["test", "--no-run", "--invalid-build-flag"], "");
+    seq.plan(&crate::plan::Plan { notes: Vec::new(), steps: vec![bad, step("must not run", &["after-batch-build"])] }).expect("execute fixture");
+    assert_eq!(seq.summary(), 1);
+    assert!(!root.join("markers/after-batch-build").exists(), "a failed batch build must stop the later steps");
     assert_eq!(run(vec![step("checkout movement", &["move"])]), 1, "successful children still yield VOID after checkout movement");
     fs::remove_dir_all(root).expect("remove fixture");
 }

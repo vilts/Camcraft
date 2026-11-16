@@ -57,6 +57,8 @@ mod select;
 #[cfg(test)]
 mod select_tests;
 mod single;
+#[cfg(test)]
+mod step_tests;
 mod suites;
 #[cfg(test)]
 mod tests;
@@ -69,7 +71,7 @@ use std::process::ExitCode;
 const USAGE: &str = "\
 usage:
   cargo xtask gate quick [--base main] [--heavy]   tests the diff touches (test fns where it can)
-  cargo xtask gate batch                           every debug suite minus SLOW_BINARIES, ui, clippy
+  cargo xtask gate batch                           one build, then one step for each debug test binary minus SLOW_BINARIES, ui, clippy (#1941)
   cargo xtask gate release [--no-snapshots]        everything, plus the --ignored heavy lanes (one step per binary) and the ui snapshot lane
                                                    (--no-snapshots: not the Windows-made pixel goldens - cut.yml on Linux, #1413)
   cargo xtask gate test <filter> [--crate c] [--binary b] [--exact]   exactly the matching test(s)

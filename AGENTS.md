@@ -561,9 +561,9 @@ tests are in `crates/ui/tests/`; they start the real app through
 
   | Tier | When | Target | Runs |
   |---|---|---|---|
-  | quick | each patch, by the agent or gate-runner | ≤ 5 min | only the test binaries that the diff touches; debug; no heavy lanes |
-  | batch | before a batch is committed; each push to `main` | ≤ 20 min | each debug suite that is not slow, the kernel suites, the ui suites, clippy |
-  | release | only at a cut | - | all debug suites and the `--ignored` heavy lanes in release |
+  | quick | each patch, by the agent or gate-runner | ≤ 5 min | only the test binaries that the diff touches, one step for each binary; debug; no heavy lanes |
+  | batch | before a batch is committed; each push to `main` | ≤ 20 min | one build, then one step for each debug test binary that is not slow (kernel and ui included), clippy |
+  | release | only at a cut | - | one step for each debug test binary and the `--ignored` heavy lanes in release |
 - **Test the change, not everything.** The tests that pin a fix prove it.
   Run them one by one: `cargo xtask gate test <name> [--crate c] [--binary b]
   [--exact]`. Run a full suite only when the change touches what that suite

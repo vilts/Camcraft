@@ -28,7 +28,7 @@ fn batch_runs_kernel_and_release_and_slow_list_are_unchanged() {
     let b = plan::batch(&root);
     assert!(b.steps.iter().any(|s| s.name.starts_with("kernel suites")));
     let r = plan::release(&root);
-    assert!(r.steps.iter().any(|s| s.name == "kernel suites"));
+    assert!(r.steps.iter().any(|s| s.name.starts_with("kernel suites: ")));
     assert!(plan::SLOW_BINARIES.iter().all(|k| !k.starts_with("kernel:")));
 }
 

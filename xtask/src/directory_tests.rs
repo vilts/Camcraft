@@ -100,7 +100,7 @@ fn directory_suites_are_listed_without_support_directories() {
     f.write("crates/app/tests/common/mod.rs", "pub fn helper() {}\n");
     assert_eq!(scan::binaries(&f.0, "app"), ["flat", "group"]);
     let batch = crate::plan::run_suites(&f.0, &["app"], true);
-    assert!(batch[0].args.windows(2).any(|w| w == ["--test", "group"]));
+    assert!(batch.iter().any(|s| s.name == "app suites: group" && s.args.windows(2).any(|w| w == ["--test", "group"])));
 }
 
 #[test]
@@ -167,7 +167,10 @@ fn helper_new_and_deleted_module_changes_run_only_the_owning_suite() {
     assert_eq!(
         args(&p),
         [
-            "test -j 6 -p camcraft-app --no-fail-fast --lib --test flat --test group -- --test-threads=6"
+            "test -j 6 -p camcraft-app --no-run --lib --test flat --test group",
+            "test -j 6 -p camcraft-app --no-fail-fast --lib -- --test-threads=6",
+            "test -j 6 -p camcraft-app --no-fail-fast --test flat -- --test-threads=6",
+            "test -j 6 -p camcraft-app --no-fail-fast --test group -- --test-threads=6",
         ]
     );
 }
@@ -208,7 +211,11 @@ fn directory_module_gate_maps_select_the_owner() {
         let p = quick(&f, &format!("crates/app/src/{module}.rs"), "", false, false);
         assert_eq!(
             args(&p),
-            ["test -j 6 -p camcraft-app --no-fail-fast --lib --test group -- --test-threads=6"]
+            [
+                "test -j 6 -p camcraft-app --no-run --lib --test group",
+                "test -j 6 -p camcraft-app --no-fail-fast --lib -- --test-threads=6",
+                "test -j 6 -p camcraft-app --no-fail-fast --test group -- --test-threads=6",
+            ]
         );
     }
 }
