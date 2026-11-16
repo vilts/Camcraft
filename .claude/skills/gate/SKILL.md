@@ -49,6 +49,24 @@ Quick prints its selection before it runs:
 - A change in `xtask/` runs the unit tests of xtask.
 - `camcraft-kernel` runs in quick only when kernel is touched.
 
+## Job budget (#2057)
+
+- One budget sets the jobs of the whole gate: 6 by default.
+  `CAMCRAFT_GATE_JOBS=<n>` (1 or more) changes it.
+- A step that runs alone gets `-j <budget>` and `--test-threads=<budget>`.
+- The lanes of a release wave share the budget. N lanes get
+  `-j <budget / N>` each, minimum 1.
+- A wave has at most `budget / 2` lanes. A budget of 6 gives 3 lanes of 2
+  jobs.
+- The gate prints the budget, the lane limit and the jobs of each lane at
+  the start, and `-- wave K: N lane(s) x -j M` before each wave. The
+  `--dry-run` output shows the same lines.
+- **The sum of `-j` of all builds on one machine stays at or below its core
+  count.** This includes gates, reviews, worker builds and plain `cargo`
+  calls. When other builds run, lower the budget of each one (for example
+  two gates at `CAMCRAFT_GATE_JOBS=3` on 6 cores). A plain `cargo` call
+  takes its own `-j`.
+
 ## Slow binaries and heavy lanes
 
 - Batch does not run the debug binaries in `SLOW_BINARIES`

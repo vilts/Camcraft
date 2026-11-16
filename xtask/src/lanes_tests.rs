@@ -21,7 +21,7 @@ fn release_waves_mix_profiles_with_a_four_lane_bound_and_no_omissions() {
         steps.push(Step::new(format!("debug {i}"), &["test", "-p", "camcraft-motion"], ""));
         steps.push(Step::new(format!("release {i}"), &["test", "--release", "-p", "camcraft-motion"], ""));
     }
-    let waves = lanes::waves(&steps);
+    let waves = lanes::waves(&steps, 4);
     assert_eq!(waves[0].len(), 4, "independent suites must run concurrently");
     assert!(waves.iter().all(|wave| !wave.is_empty() && wave.len() <= 4));
     assert!(waves.iter().any(|wave| {
@@ -45,7 +45,7 @@ fn release_builds_and_watchdog_or_window_suites_run_alone() {
         Step::new("release build", &["test", "--release", "--no-run"], ""),
         Step::new("ui cwd", &["test"], "ui"),
     ];
-    let waves = lanes::waves(&steps);
+    let waves = lanes::waves(&steps, 4);
     assert_eq!(&waves[..2], &[vec![1], vec![6]], "both builds precede every run");
     for &i in &[1, 2, 3, 4, 5, 6, 7] {
         assert!(waves.contains(&vec![i]), "{} must run alone", steps[i].name);
@@ -62,8 +62,8 @@ fn selected_release_without_builds_still_keeps_watchdogs_alone() {
         Step::new("selected app", &["test", "--release", "-p", "camcraft-app"], ""),
         Step::new("selected ui", &["test"], "ui"),
     ];
-    assert_eq!(lanes::waves(&steps), vec![vec![0], vec![1], vec![2]]);
-    assert!(lanes::waves(&[]).is_empty());
+    assert_eq!(lanes::waves(&steps, 4), vec![vec![0], vec![1], vec![2]]);
+    assert!(lanes::waves(&[], 4).is_empty());
 }
 
 #[test]
@@ -100,6 +100,7 @@ fn main() {
     }
     let run = |steps| {
         let mut runner = crate::exec::Run::new(&root, "release", false).expect("runner");
+        runner.budget = crate::budget::DEFAULT; // two lanes must overlap whatever CAMCRAFT_GATE_JOBS says
         runner.plan(&crate::plan::Plan { notes: Vec::new(), steps }).expect("execute fixture");
         runner.summary()
     };

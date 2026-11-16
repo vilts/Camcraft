@@ -8,6 +8,9 @@
 mod asset_tests;
 mod assets;
 mod braces;
+mod budget;
+#[cfg(test)]
+mod budget_tests;
 mod checkout;
 #[cfg(test)]
 mod checkout_tests;
