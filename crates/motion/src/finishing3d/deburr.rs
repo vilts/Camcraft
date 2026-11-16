@@ -285,7 +285,7 @@ pub fn deburr(facets: &[Triangle], p: &DeburrParams) -> Result<Toolpath, GenErro
     // window admitted, never read back off the moves.
     path.breaks = runs
         .iter()
-        .map(|run| EdgeBreak { edge: run.clone(), depth: drop, slope })
+        .map(|run| EdgeBreak { edge: run.clone(), depth: drop, slope, volume: None })
         .filter(EdgeBreak::is_sane)
         .collect();
     Ok(path)

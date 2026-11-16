@@ -12,6 +12,13 @@
 //!
 //! ## The laws here
 //!
+//! - **Retained cuts take the continuous path (#1805).** A box stock
+//!   simulated through `simulate` retains its swept tools. Its side-on
+//!   carry reads those solids through the exact signed permutation;
+//!   `carry_history` preserves cavities and never removes an unproved
+//!   interval. The column rules below remain the conservative fallback
+//!   for raw grids and stocks without that retained geometry.
+//!
 //! - **Only the sixteen side-on quarter turns.** A rotation that is a
 //!   signed permutation of the axes and puts the old X or Y on the new
 //!   tool axis. A lattice turn (Z kept on +-Z) is `LatticeTurn`'s; every
@@ -55,8 +62,8 @@ pub const FIELD_SIDE_CARRY_REFUSAL: &str =
 /// the old X or Y on the new tool axis: `p' = q * p + t`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SideTurn {
-    q: [[i8; 3]; 3],
-    t: [f64; 3],
+    pub(super) q: [[i8; 3]; 3],
+    pub(super) t: [f64; 3],
 }
 
 impl SideTurn {
@@ -194,11 +201,14 @@ fn slabs(f: f64, t: f64, a: f64, c: f64, n: usize) -> (usize, usize) {
 impl Body {
     /// The same body seen through a side-on quarter turn (the module
     /// law): never smaller than the body the columns hold, at most one
-    /// cell larger on a turned face. The floor is not judged after it.
+    /// cell larger on a turned face without retained cuts. Retained cuts
+    /// use their continuous geometry. The floor is not judged after it.
     ///
     /// # Errors
-    /// A body too tall for the turned lattice, by name.
+    /// A body too tall for the turned lattice, or an exact read that
+    /// exceeds its budget or cannot prove finite bounds, by name.
     pub fn carry_side(&self, turn: &SideTurn) -> Result<Body, String> {
+        if let Some(body) = self.exact_side(turn) { return body; }
         let d = &self.dex;
         let c = d.cell;
         let (src, sgn) = turn.axes();

@@ -226,6 +226,7 @@ fn verdicts() -> Vec<(&'static str, Vec<Warning>)> {
         center_cutting: true,
         orientation: None,
         pitch_min: 0.0,
+        thread_hand: Default::default(),
         catalog: camcraft_tools::catalog_fields::ToolCatalog::default(),
         cutting: Vec::new(),
         outline: Vec::new(),

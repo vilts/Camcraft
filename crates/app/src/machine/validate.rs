@@ -136,7 +136,7 @@ fn general(v: &Value, out: &mut Vec<Refusal>) {
     match g.and_then(|g| g.get("kind")) {
         None | Some(Value::Null) => {}
         Some(Value::String(w)) if w.is_empty() || Kind::from_word(w).is_some() => {}
-        Some(other) => out.push(Refusal::new("general.kind", format!("{other} is not mill, lathe, mill-turn or plasma"))),
+        Some(other) => out.push(Refusal::new("general.kind", format!("{other} is not mill, lathe, mill-turn, plasma, waterjet, wire_edm or sinker_edm"))),
     }
 }
 
@@ -373,7 +373,7 @@ fn required_by_kind(v: &Value, text: &str, axes: &[(String, &Value, bool)], out:
         // the axis the control raises and probes with.
         Kind::Mill | Kind::MillTurn | Kind::Plasma => &["X", "Y", "Z"],
         // #530: a wire cuts in X/Y (U/V add taper); a sinker burns in Z.
-        Kind::WireEdm => &["X", "Y"],
+        Kind::WireEdm | Kind::Waterjet => &["X", "Y"],
         Kind::SinkerEdm => &["Z"],
     };
     for l in need {
@@ -382,6 +382,9 @@ fn required_by_kind(v: &Value, text: &str, axes: &[(String, &Value, bool)], out:
         }
     }
     // #669: the plasma rules, the same list the reader refuses on.
+    if k == Kind::Waterjet {
+        out.extend(super::waterjet_refusals(v).into_iter().map(|(key, rule)| Refusal::new(key, rule)));
+    }
     if k == Kind::Plasma {
         out.extend(super::plasma_refusals(v).into_iter().map(|(key, rule)| Refusal::new(key, rule)));
     }

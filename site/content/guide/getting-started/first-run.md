@@ -26,25 +26,27 @@ Shortcuts on this page are written with Ctrl. On macOS, press Cmd in their place
 (Cmd+N, Cmd+Shift+O and so on): CamCraft binds them to the command key there.
 
 - **The ribbon** across the top holds the commands, in groups:
-  - **File:** New (Ctrl+N), Model (open a mesh model, Ctrl+O), Open (a
-    project, Ctrl+Shift+O), Save (Ctrl+S), Save As (Ctrl+Shift+S) and Post
+  - **File:** {{ <icon name="file-plus" /> }} **New** (Ctrl+N), {{ <icon name="folder-open" /> }} **Model** (open a mesh model, Ctrl+O), {{ <icon name="file-import" /> }} **Open** (a
+    project, Ctrl+Shift+O), {{ <icon name="device-floppy" /> }} **Save** (Ctrl+S), {{ <icon name="device-floppy" /> }} **Save As** (Ctrl+Shift+S) and {{ <icon name="act-post" /> }} **Post**
     (Ctrl+P).
-  - **Setup:** Setups, Stock, Origin (the work offset), Tools and the
+  - **Setup:** {{ <icon name="tree-setup" /> }} **Setups**, {{ <icon name="tree-stock" /> }} **Stock**, {{ <icon name="tree-wcs" /> }} **Origin** (the work offset), {{ <icon name="tools" /> }} **Tools** and the
     machine button, which switches the workspace between Milling, Turning
     and Mill-turning.
   - **Operation groups** for the machine you are on: Milling 2D, Milling
     3D, Drilling and Multi-axis on a mill; Turning on a lathe. Each group
     opens a list of its operations. Right-click (Control-click or a two-finger
     click on a Mac) an operation to pin it to the ribbon (up to four pins).
-  - **Modify:** Undo (Ctrl+Z), Redo (Ctrl+Y), Run (generate the selected
-    operation) and Delete.
-  - **Inspect:** Frame (F), Paths (show every toolpath), Simulate and
-    Deviate.
-  - **View:** Panels (show or hide the browser, properties and machines
-    panes, or reset the layout) and Theme.
-- **The browser** lists the document: models, setups with their stock,
-  machine, post, fixtures and tools, and the operations.
-- **The properties pane** shows the page of whatever you selected.
+  - **Modify:** {{ <icon name="arrow-back-up" /> }} **Undo** (Ctrl+Z), {{ <icon name="arrow-forward-up" /> }} **Redo** (Ctrl+Y), {{ <icon name="act-generate" /> }} **Run** (generate the selected
+    operation) and {{ <icon name="trash" /> }} **Delete**.
+  - **Inspect:** {{ <icon name="act-frame-all" /> }} **Frame** (F), {{ <icon name="act-show-paths" /> }} **Paths** (show every toolpath), {{ <icon name="act-simulate" /> }} **Simulate** and
+    {{ <icon name="tree-stock" /> }} **Deviate**.
+  - **View:** Panels (show or hide the browser, properties, machines and
+    AI Chat panes, or reset the layout) and Theme.
+- **The browser** lists the document: {{ <icon name="tree-part" /> }} models, {{ <icon name="tree-setup" /> }} setups with their {{ <icon name="tree-stock" /> }} stock,
+  {{ <icon name="tree-machine" /> }} machine, {{ <icon name="act-post" /> }} post, {{ <icon name="tree-fixture" /> }} fixtures and {{ <icon name="tools" /> }} tools, and the {{ <icon name="tree-op-group" /> }} operations.
+- **The properties pane** shows the page of whatever you selected. For a
+  tool, it shows that tool's settings; browsing the tool library happens in
+  the separate **Tool library** pane (see [Tools](@/guide/set-up/tools.md)).
 - **The viewport** shows the model, stock, toolpaths and simulation.
 
 Hover any ribbon button to read what it does. A greyed-out operation says
@@ -54,31 +56,62 @@ why in its tooltip, for example "No tool yet - add one (Setup > Tools)" or
 Every keyboard shortcut and mouse gesture, for Windows, Linux and macOS, is
 on the [Keyboard and mouse](@/guide/getting-started/keyboard-and-mouse.md) page.
 
+### Open an example project
+
+A release package ships example projects in an `examples` folder beside
+the program. Choose {{ <icon name="file-import" /> }} **Open** in the File
+group, then **Open example**, and pick a project. The list shows the
+`.camproj` files in that folder in name order. If the folder holds none,
+the entry reads **No example projects**. The entry is absent when the
+folder is missing and in the browser build. Opening an example asks first
+if you have unsaved changes, as any project open does.
+
+### What you see after opening a document
+
+Opening a document frames the camera on the opened part and stock, so
+orbiting turns about the part and not about the old view's target. Press F
+to frame again at any time. On a lathe, the viewport lays the spindle axis
+from left to right with the cross-slide up (a mill-turn keeps the milling
+view). This changes only the view,
+not the work offset or the posted program.
+
+### Themes and screen readers
+
+The ribbon, its group captions, the operation tabs and the browser tree
+take their sizes and colours from the theme, so text and glyphs read
+clearly in both Horizon Day and Teal Night. Browser rows, their eye
+toggles and context-menu rows carry accessibility labels, so a screen
+reader or an automated test can name them.
+
 ## A first toolpath
 
-1. **Import a model.** Click **Model** and pick an STL, OBJ or STEP file. If
+1. **Import a model.** Click {{ <icon name="folder-open" /> }} **Model** and pick an STL, OBJ or STEP file. If
    an imported mesh has holes, the model's page has **Repair mesh**, which
    welds vertices and fills holes and reports what it changed.
    Closed STL and OBJ shells with inward winding are turned outward on
    import, so their solid checks use the outside of the part.
-2. **Set the stock.** Click **Stock**. The stock is a box, a cylinder, or a
+   A STEP closed shell that meshes with missing walls can load as
+   **Incomplete** for viewing and setup. Its page names the hole; every
+   operation on it is refused at the post. Re-export a sound model or
+   import an STL; raising the facet budget does not repair missing walls.
+2. **Set the stock.** Click {{ <icon name="tree-stock" /> }} **Stock**. The stock is a box, a cylinder, or a
    copy of a model.
-3. **Place the work offset.** Click **Origin** to set the work coordinate
+3. **Place the work offset.** Click {{ <icon name="tree-wcs" /> }} **Origin** to set the work coordinate
    system (WCS) the program is written in.
-4. **Add a tool.** Click **Tools**, then **New tool…**. Fill in the
+4. **Add a tool.** Click {{ <icon name="tools" /> }} **Tools**, then **New tool…**. Fill in the
    cutter's type and size, then choose **Add tool**. See
    [Tools and tool libraries](@/guide/set-up/tools.md) for holders, tool numbers,
    and import and export of `.camtools` libraries.
 5. **Add an operation.** Pick one from an operation group, for example
-   **Face** under Milling 2D. Its page opens with tabs: Geometry, Heights,
-   Passes, Lead in / Lead out, Feeds (and Machine for a few kinds). A kind
+   {{ <icon name="op-face" /> }} **Face** under Milling 2D. Its page opens with tabs: {{ <icon name="sec-geometry" /> }} Geometry, {{ <icon name="sec-heights" /> }} Heights,
+   {{ <icon name="sec-passes" /> }} Passes, {{ <icon name="sec-leads" /> }} Lead in / Lead out, {{ <icon name="sec-feeds" /> }} Feeds (and {{ <icon name="sec-machine" /> }} Machine for a few kinds). A kind
    only shows the tabs it has settings for.
-6. **Generate.** Click **Generate** at the bottom of the page. **Apply**
+6. **Generate.** Click {{ <icon name="act-generate" /> }} **Generate** at the bottom of the page. **Apply**
    commits edited settings without generating; **Clear toolpath** removes
    the path but keeps the operation.
-7. **Check it.** Use **Simulate** to play the program against the stock,
-   and **Deviate** to compare the machined stock with the model.
-8. **Save** the project (`.camproj`) and [post](@/guide/check-and-post/posting.md) it.
+7. **Check it.** Use {{ <icon name="act-simulate" /> }} **Simulate** to play the program against the stock,
+   and {{ <icon name="tree-stock" /> }} **Deviate** to compare the machined stock with the model.
+8. {{ <icon name="device-floppy" /> }} **Save** the project (`.camproj`) and {{ <icon name="act-post" /> }} [post](@/guide/check-and-post/posting.md) it.
 
 More tasks: [Common workflows](@/guide/getting-started/workflows.md).
 

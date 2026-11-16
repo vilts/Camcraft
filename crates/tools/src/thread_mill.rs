@@ -142,6 +142,7 @@ pub fn thread_mill(d: f64, pitch: f64, pitch_min: f64, cutting_len: f64) -> Tool
         tip_angle: FORM_ANGLE,
         pitch,
         pitch_min: if single { pitch_min } else { 0.0 },
+        thread_hand: Default::default(),
         nose_radius: 0.0,
         width: 0.0,
         flute_len: cutting_len,

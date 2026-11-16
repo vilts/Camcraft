@@ -7,7 +7,8 @@
 //! Provenance: our own test design; fixtures are the repo's own.
 //!
 //! Gate map (M12.1): covers camcraft_kernel::machining_mesh,
-//! camcraft_kernel::mesh_deviation.
+//! camcraft_kernel::mesh_bound, camcraft_kernel::mesh_bound_blossom,
+//! camcraft_kernel::mesh_bound_spline, camcraft_kernel::mesh_deviation.
 
 use std::path::PathBuf;
 
@@ -23,6 +24,89 @@ use solidcore_tess::{
 
 /// The app's chord cap (#689), mm.
 const TOL: f64 = 0.005;
+
+#[test]
+fn solidcraft_sample_meshes_within_the_app_chord() {
+    let bytes = include_bytes!("../../../testdata/models/solidcraft_for_beginners.sc");
+    let imported = camcraft_kernel::solidcraft::import_solidcraft(
+        &mut SolidcoreKernel::default(),
+        bytes,
+        &CancelToken::new(),
+    )
+    .expect("the Solidcraft sample must import as a checked solid");
+    let mesh = machining_mesh(&imported.solid, TOL, &CancelToken::new())
+        .expect("the Solidcraft sample must mesh at the app chord");
+    println!("Solidcraft sample: {:?}", mesh.report);
+    assert_eq!(mesh.report.tolerance_mm, TOL);
+    assert_eq!(mesh.report.open_sides, 0);
+    assert!(mesh.report.deviation.largest() <= TOL);
+    assert!(mesh.report.deviation.samples > 0);
+    assert!(mesh.report.volume > 0.0);
+    assert_eq!(mesh.report.faces, imported.solid.record.faces.len());
+    assert!(
+        mesh.report
+            .notes
+            .iter()
+            .any(|note| note.contains("replanned"))
+    );
+    for face in 0..imported.solid.record.faces.len() {
+        assert!(
+            mesh.tri_face.contains(&(face as u32)),
+            "missing face {face}"
+        );
+    }
+}
+
+#[test]
+fn solidcraft_sample_still_refuses_an_out_of_tolerance_mesh() {
+    let bytes = include_bytes!("../../../testdata/models/solidcraft_for_beginners.sc");
+    let imported = camcraft_kernel::solidcraft::import_solidcraft(
+        &mut SolidcoreKernel::default(),
+        bytes,
+        &CancelToken::new(),
+    )
+    .expect("the Solidcraft sample must import as a checked solid");
+    let rec = &imported.solid.record;
+    // At 0.1 mm, solidcore-tess plans a coarse mesh whose continuous projected
+    // deviation exceeds 0.1 mm (and far exceeds TOL).
+    let (coarse_plan, _) = solidcore_tess::plan(rec, &MeshTolerance::chord(0.1), 150.0)
+        .expect("coarse plan must build");
+    let coarse_01 = mesh_deviation::measure_within(&coarse_plan, rec, 0.1, &CancelToken::new())
+        .expect("coarse plan must measure");
+    assert!(coarse_01.largest() > 0.1, "{coarse_01:?}");
+    let coarse_tol = mesh_deviation::measure_within(&coarse_plan, rec, TOL, &CancelToken::new())
+        .expect("coarse plan must measure against TOL");
+    assert!(coarse_tol.largest() > TOL, "{coarse_tol:?}");
+    // Under projection (#1029), replanning at 0.05 mm brings it within 0.1 mm
+    // even though face 36 parametric over-reads > 0.13 mm.
+    let ok = machining_mesh(&imported.solid, 0.1, &CancelToken::new())
+        .expect("0.1 mm request passes via projection after 0.05 mm replan");
+    assert!(ok.report.deviation.parametric > 0.1 && ok.report.deviation.largest() <= 0.1);
+    // An un-reducible > 0.1 mm spline bump on box.step still refuses with Deviation.
+    let mut bad = solid("box.step");
+    let solidcore_record::brep::Surface::Plane { origin, u_axis: du, v_axis: dv } = bad.record.faces[0].surface else {
+        panic!("box.step face 0 is not a plane")
+    };
+    let n = [du[1] * dv[2] - du[2] * dv[1], du[2] * dv[0] - du[0] * dv[2], du[0] * dv[1] - du[1] * dv[0]];
+    let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+    let knots = vec![0.0, 0.0, 0.0, 0.0, 0.125, 0.25, 0.25, 1.0, 1.0, 1.0, 1.0];
+    let g: Vec<f64> = (0..7).map(|i| (knots[i + 1] + knots[i + 2] + knots[i + 3]) / 3.0).collect();
+    let points = (0..7)
+        .map(|i| (0..7).map(|j| {
+            let h = if i == 2 && j == 2 { 1.5 / len } else { 0.0 };
+            [0, 1, 2].map(|c| origin[c] + du[c] * g[i] + dv[c] * g[j] + n[c] * h)
+        }).collect())
+        .collect();
+    bad.record.faces[0].surface = solidcore_record::brep::Surface::Spline { u_knots: knots.clone(), v_knots: knots, points };
+    bad.record.faces[0].nurbs = None;
+    bad.record.faces[0].domain = [[0.0, 1.0], [0.0, 1.0]];
+    match machining_mesh(&bad, 0.1, &CancelToken::new()) {
+        Err(MeshRefusal::Deviation { measured, tol, face }) => {
+            assert!(measured > tol && tol == 0.1 && face == Some(0));
+        }
+        other => panic!("an un-reducible > 0.1 mm deviation must remain refused: {other:?}"),
+    }
+}
 
 fn solid(file: &str) -> StepSolid {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))

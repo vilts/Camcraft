@@ -355,18 +355,17 @@ impl TiltedFrame {
                 super::ProbeTouch { index, target: self.to_world(t.target), ..*t }
             })
             .collect();
-        // Edge breaks (#303) ride an upright frame's translation; a
-        // tilted cone's bevel is not the vertical law they state, and a
-        // posed program is refused by the sim's verdict anyway.
-        let breaks = if self.is_upright() {
-            local
-                .breaks
-                .iter()
-                .map(|b| super::EdgeBreak { edge: b.edge.iter().map(|p| self.to_world(*p)).collect(), ..b.clone() })
-                .collect()
-        } else {
-            Vec::new()
-        };
+        // Framed caps rotate as volumes; legacy vertical cones still
+        // declare nothing in a tilted frame.
+        let breaks = local.breaks.iter()
+            .filter(|b| self.is_upright() || b.volume.is_some())
+            .map(|b| {
+                let mut b = super::EdgeBreak { edge: b.edge.iter().map(|p| self.to_world(*p)).collect(), ..b.clone() };
+                if let Some(v) = &mut b.volume {
+                    v.rotate(self);
+                }
+                b
+            }).collect();
         Toolpath { moves, cycles: local.cycles.clone(), notes, comps, threads: Vec::new(), probes, breaks, plasma: local.plasma.clone() }
     }
 

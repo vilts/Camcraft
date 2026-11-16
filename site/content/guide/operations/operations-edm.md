@@ -14,8 +14,10 @@ Blue shows the operation travel; dashed orange shows approach and retract; gray 
 ## Wire EDM: the machine, the wire and the post
 
 **A wire EDM machine.** Wire Contour needs a setup whose machine file
-declares the kind `wire_edm`. No wire EDM machine file ships, so you
-write one for your machine (the keys are in
+declares the kind `wire_edm`. The library includes **Sodick ALC400G**;
+its travel and taper limit are stated, but conditions, wire diameter,
+guide heights and EDM codes must come from your machine's documentation.
+For another machine, supply a file with its own data (the keys are in
 [Machine types](@/guide/check-and-post/machines.md)). The **Wire EDM** ribbon group
 shows only when such a machine is mounted. On any other machine the
 operation is refused ("a Wire Contour operation is wire EDM work; the
@@ -31,7 +33,7 @@ condition; leave the tool empty (it names '...')").
 
 **Conditions.** The machine file lists its conditions under
 `edm.conditions`, each with an `id` and, for a wire cut, a `gap` (per
-side) and a `wire_diameter`, taken from your machine's manual. None ship.
+side) and a `wire_diameter`, taken from your machine's manual. No conditions ship.
 CamCraft reads only those two numbers; power and flushing stay with the
 control, which picks them by the condition's id.
 
@@ -43,9 +45,17 @@ must come from the real control's manual. The program checks the wire's
 kerf, profile, threading point, release plan and stated machine limits.
 Simulate does not remove stock for wire work: the wire checks judge it.
 
+The Sodick post supports vertical 2-axis cuts only. It refuses taper,
+4-axis profiles, unsupported angle-word moves and control-side G41/G42
+H-register offsets by operation name. CamCraft verifies its generated
+wire-centre path, not an offset chosen separately at the control.
+Same-path skim offsets are unsupported. Tank, flushing and wire-drive words
+are not programmed; set them at the control. Sodick output remains unverified on
+a real control.
+
 ## Wire Contour
 
-![Top view of wire travel from a start hole around a die profile.](../../../operation-paths.svg#WireContour)
+{{ <icon name="op-wire-contour" /> }} ![Top view of wire travel from a start hole around a die profile.](../../../operation-paths.svg#WireContour)
 
 **For:** cutting one profile through the workpiece with a vertical or tapered
 wire. A **die** keeps the opening (the wire runs inside the profile and
@@ -104,6 +114,8 @@ offset. An incomplete release plan is refused.
 
 **Taper.** Positive **Taper angle** widens the profile downward from the
 top plane; negative narrows it. The machine must state a maximum taper.
+Setting a nonzero taper is refused at Apply if `edm.max_taper_deg` is
+missing, the angle exceeds it, or a U/V machine has no guide planes.
 U/V machines use their guide geometry. Angle-word controls instead need
 an explicit positive-angle direction and corner rule in `edm.taper_angle`,
 plus the taper codes. CamCraft models `mitre` and `cone` corner rules.
@@ -119,6 +131,25 @@ endpoint still while the other walks a span. Crossed pair order, identical
 rulings and an ambiguous whole turn at one endpoint are refused. Separate
 open runs are not stitched into a profile; select a face or one closed
 edge chain.
+
+Where the two profiles turn against each other, a straight wire cannot
+lie in the surface between them: it stands off by up to the twist
+tolerance. **Stand off** says where. **Only where the surface twists**
+(the default) cuts every straight stretch to size and stands the wire
+off at the twist alone. **The same all round** stands every stretch off
+as far as the worst one needs. A twist that needs more than the
+tolerance is refused where it stands.
+
+**Verify tolerance.** The check before posting reads the model's facets.
+A lofted model's facets stand past its true surface by up to the chord
+tolerance the model was faceted at, so a correct 4-axis cut can read as
+a gouge of a few microns. State that tolerance as the cut's **Verify
+tolerance**: the check then lets the kerf into the facets by that much
+and no more, and the report says the deepest reading it let pass. 0 (the
+default) checks the facets as they are. A gouge is always refused with
+the deepest reading at any height, so you can see whether the model's
+tolerance explains it. The value must be below the kerf offset and at
+most 0.25 mm.
 
 **Inside corners.** No inside corner can be cut tighter than the kerf
 offset. A corner, slot or neck the wire cannot reach is refused by name,
@@ -177,8 +208,15 @@ is sinker EDM work; the setup's machine is a ... - mount a sinker EDM
 first"), and a sinker EDM takes no milling, turning, plasma or wire work.
 
 **The electrode is a library tool.** Unlike the wire, the electrode is a
-tool of the kind **Sinker electrode** in the tool library. It is a
-rectangular, sharp-cornered block; on the tool page:
+tool of the kind **Sinker electrode** in the tool library. Its face can
+be a rectangular, sharp-cornered block or a closed outline extruded along
+Z. The MCP command `electrode_from_faces` derives an electrode from cavity
+faces, including rounded pockets, L shapes and rotated rectangles. Use
+`list_features` to identify the level floor and every planar vertical
+wall. Supply those picks, an `undersize` or a machine `condition` id (not
+both), the holder `stub` and `pickup` offset. An optional `orbit` radius
+also reduces the electrode outline. The burn check applies the condition's
+spark gap to the derived face. On the tool page:
 
 | Tool field | Means |
 |---|---|
@@ -186,6 +224,11 @@ rectangular, sharp-cornered block; on the tool page:
 | Electrode Y size | the burning face's size along Y |
 | Flute length | the electrode's length below the holder: the deepest it can burn without burying its holder |
 | Shank length | the pickup offset, from the electrode's top face up to the pickup the control measures it from |
+
+For a body electrode, X and Y are the outline's extents. The project and
+tool library retain that outline; changing a size without a matching
+outline is refused. The tool preview remains rectangular, so it does not
+show the body's actual section.
 
 An electrode turns no spindle, so its rpm is 0 and it has no corner
 radius. The tool is refused when it says otherwise:
@@ -229,14 +272,15 @@ does not list, an orbit and a Sinker Side Burn are refused by name. Not
 exercised on a real EDM control.
 
 **Verification.** The program verdict cuts the stock with the
-electrode's face, grown by the spark gap, at every move. The stock view
+electrode's face, grown by the spark gap, at every move. A body electrode
+uses its actual outline; a rectangular electrode uses its box. The stock view
 does not draw a sinker electrode yet and says so: "the stock view has no
 sinker electrode atom yet - the program verdict (the column engine's box
 atom) judges the burn".
 
 ## Sinker Burn
 
-![Side view of an electrode plunging into a cavity and retracting.](../../../operation-paths.svg#SinkerBurn)
+{{ <icon name="op-sinker-burn" /> }} ![Side view of an electrode plunging into a cavity and retracting.](../../../operation-paths.svg#SinkerBurn)
 
 **For:** burning a cavity the shape of the electrode's face, straight
 down Z. The electrode rapids to the approach plane above the burn point,
@@ -301,7 +345,7 @@ electrode-length checks.
 
 ## Sinker Side Burn
 
-![Side view of an electrode plunging, moving toward one wall and returning.](../../../operation-paths.svg#SinkerSideBurn)
+{{ <icon name="op-sinker-side-burn" /> }} ![Side view of an electrode plunging, moving toward one wall and returning.](../../../operation-paths.svg#SinkerSideBurn)
 
 **For:** moving one wall of a burned cavity outward by a small amount,
 after the plunge. The electrode plunges as a Sinker Burn does, then feeds

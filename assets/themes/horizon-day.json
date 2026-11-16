@@ -11,10 +11,16 @@
     "accent_hover": "#DE6A41",
     "selection_bg": "#F0CDCC",
     "selection_stroke": "#DE6A41",
-    "field_active": "#EBDCD3"
+    "field_active": "#EBDCD3",
+    "ribbon_ink": "#1F242A"
   },
   "geometry": {
     "radius_widget": 3,
-    "glyph_px": 22.0
+    "glyph_px": 22.0,
+    "ribbon_tab_h": 24.0,
+    "ribbon_cell_top_gap": 4.0,
+    "ribbon_caption_gap": 12.0,
+    "ribbon_caption_row_h": 18.0,
+    "ribbon_bottom_gap": 4.0
   }
 }

@@ -273,6 +273,7 @@ impl Machine {
                 .as_deref()
                 .is_none_or(|w| Kind::from_word(w).is_some())
             && self.coolants.iter().all(|c| !c.name.is_empty())
+            && self.waterjet_sane()
             && self.plasma_sane()
             && self.edm_sane()
             && self.axes.iter().all(|a| {
@@ -305,6 +306,8 @@ impl Machine {
         // would read as an unstated range rather than an absent spindle.
         let head = if kind(Some(self)) == Kind::Plasma {
             "torch, no spindle".to_owned()
+        } else if kind(Some(self)) == Kind::Waterjet {
+            "waterjet nozzle, no spindle".to_owned()
         } else {
             format!(
                 "spindle {}-{} rpm",

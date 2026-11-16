@@ -1,0 +1,136 @@
+//! The two built-in token tables, `Tokens::DARK` and `Tokens::LIGHT`
+//! (moved unchanged out of `theme.rs` for the 400-line law, #2021).
+//! Provenance: our own numbers; the dark column carries the imgui shell's
+//! values, the light column is the same shell inverted.
+
+use egui::Color32;
+
+use super::Tokens;
+
+impl Tokens {
+    /// The imgui shell's numbers, as tokens - unchanged values, now the
+    /// dark COLUMN of a table that will carry a second one (M6.1 C).
+    pub const DARK: Tokens = Tokens {
+        ink: Color32::from_rgb(0x23, 0x26, 0x2B),
+        ink_alt: Color32::from_rgb(0x2C, 0x30, 0x37),
+        well: Color32::from_rgb(0x1B, 0x1E, 0x22),
+        text: Color32::from_rgb(0xD6, 0xDA, 0xE0),
+        text_dim: Color32::from_rgb(0x9A, 0xA1, 0xAB),
+        text_faint: Color32::from_rgb(0x6E, 0x75, 0x7E),
+        border: Color32::from_rgb(0x3D, 0x43, 0x4C),
+        accent: Color32::from_rgb(0x35, 0x6D, 0xA8),
+        accent_hover: Color32::from_rgb(0x4A, 0x86, 0xC2),
+        field_bg: Color32::from_rgb(0x1E, 0x21, 0x26),
+        field_hover: Color32::from_rgb(0x2A, 0x2E, 0x35),
+        field_active: Color32::from_rgb(0x1A, 0x2B, 0x3A),
+        selection_bg: Color32::from_rgb(0x26, 0x4A, 0x6E),
+        selection_stroke: Color32::from_rgb(0x4A, 0x86, 0xC2),
+        viewport: Color32::from_rgb(0x17, 0x1A, 0x1F),
+        ribbon_ink: Color32::WHITE,
+        radius_widget: 2,
+        radius_window: 6,
+        radius_menu: 6,
+        item_spacing_x: 8.0,
+        item_spacing_y: 3.0,
+        button_padding_x: 4.0,
+        button_padding_y: 1.0,
+        control_height: 18.0,
+        row_height: 20.0,
+        cell_h: 30.0,
+        cell_w: 76.0,
+        glyph_px: 16.0,
+        font_label: 11.0,
+        font_caption: 10.0,
+        font_row: 13.5,
+        font_row_suffix: 11.5,
+        ribbon_tab_h: 24.0,
+        ribbon_cell_top_gap: 4.0,
+        ribbon_caption_gap: 8.0,
+        ribbon_caption_row_h: 18.0,
+        ribbon_bottom_gap: 4.0,
+        font_label_min: 10.0,
+        op_tab_h: 22.0,
+        op_tab_pad_x: 6.0,
+        op_tab_gap: 1.0,
+        op_tab_bottom_gap: 4.0,
+        op_tab_icon_px: 12.0,
+        op_tab_icon_gap: 3.0,
+        op_tab_radius: 4,
+        font_op_tab: 12.0,
+        tree_glyph_px: 16.0,
+        tree_inset_x: 12.0,
+        tree_indent: 16.0,
+        tree_eye_reserve: 24.0,
+        tree_pad_x: 6.0,
+        tree_pad_y: 2.0,
+        tree_suffix_gap: 6.0,
+        tree_header_boost: 0.5,
+        highlight_stroke_px: 2.0,
+    };
+
+    /// The same shell, inverted: paper grounds, dark ink, the steel
+    /// accent stepped down for contrast against light (a hover still
+    /// lifts, a well still sinks - the RELATIVE laws of the dark column
+    /// are what carry over; the numbers are ours, chosen so body text
+    /// clears 4.5:1 against every ground it sits on - the check itself
+    /// rides `contrast::readable` and the light golden, M6.1 D). Geometry is
+    /// identical in both columns - sizes are the shell's body, not its
+    /// weather; a theme file is what restyles them, per document.
+    pub const LIGHT: Tokens = Tokens {
+        ink: Color32::from_rgb(0xEC, 0xEE, 0xF2),
+        ink_alt: Color32::from_rgb(0xF6, 0xF7, 0xF9),
+        well: Color32::from_rgb(0xDF, 0xE2, 0xE8),
+        text: Color32::from_rgb(0x1F, 0x24, 0x2A),
+        text_dim: Color32::from_rgb(0x53, 0x5B, 0x66),
+        text_faint: Color32::from_rgb(0x84, 0x8C, 0x97),
+        border: Color32::from_rgb(0xC4, 0xCA, 0xD3),
+        accent: Color32::from_rgb(0x2F, 0x66, 0x9E),
+        accent_hover: Color32::from_rgb(0x47, 0x7D, 0xB8),
+        field_bg: Color32::from_rgb(0xFF, 0xFF, 0xFF),
+        field_hover: Color32::from_rgb(0xDD, 0xE1, 0xE7),
+        field_active: Color32::from_rgb(0xE2, 0xEB, 0xF5),
+        selection_bg: Color32::from_rgb(0xC6, 0xDC, 0xF0),
+        selection_stroke: Color32::from_rgb(0x47, 0x7D, 0xB8),
+        viewport: Color32::from_rgb(0xDD, 0xE1, 0xE7),
+        ribbon_ink: Color32::from_rgb(0x1F, 0x24, 0x2A),
+        radius_widget: 2,
+        radius_window: 6,
+        radius_menu: 6,
+        item_spacing_x: 8.0,
+        item_spacing_y: 3.0,
+        button_padding_x: 4.0,
+        button_padding_y: 1.0,
+        control_height: 18.0,
+        row_height: 20.0,
+        cell_h: 30.0,
+        cell_w: 76.0,
+        glyph_px: 16.0,
+        font_label: 11.0,
+        font_caption: 10.0,
+        font_row: 13.5,
+        font_row_suffix: 11.5,
+        ribbon_tab_h: 24.0,
+        ribbon_cell_top_gap: 4.0,
+        ribbon_caption_gap: 8.0,
+        ribbon_caption_row_h: 18.0,
+        ribbon_bottom_gap: 4.0,
+        font_label_min: 10.0,
+        op_tab_h: 22.0,
+        op_tab_pad_x: 6.0,
+        op_tab_gap: 1.0,
+        op_tab_bottom_gap: 4.0,
+        op_tab_icon_px: 12.0,
+        op_tab_icon_gap: 3.0,
+        op_tab_radius: 4,
+        font_op_tab: 12.0,
+        tree_glyph_px: 16.0,
+        tree_inset_x: 12.0,
+        tree_indent: 16.0,
+        tree_eye_reserve: 24.0,
+        tree_pad_x: 6.0,
+        tree_pad_y: 2.0,
+        tree_suffix_gap: 6.0,
+        tree_header_boost: 0.5,
+        highlight_stroke_px: 2.0,
+    };
+}

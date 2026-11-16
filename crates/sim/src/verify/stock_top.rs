@@ -109,7 +109,7 @@ pub fn acquit_by_stock_top(
 /// The stack's bands as `(radius, height of its bottom over the tip)`,
 /// each radius grown by the excess `e` (see the module doc); `None` when
 /// any number is not a finite non-negative value.
-fn bands(t: &ToolGeom, e: f64) -> Option<[(f64, f64); 3]> {
+pub(super) fn bands(t: &ToolGeom, e: f64) -> Option<[(f64, f64); 3]> {
     let shank_at = t.flute_len;
     let holder_at = t.flute_len + t.shank_len;
     // `f64::max` drops a NaN: every raw number is checked before it.
@@ -135,7 +135,7 @@ fn clear_of(solids: &[&[Triangle]], trace: (Point2, Point2), tip: f64, bands: &[
 
 /// The highest vertex of any facet whose plan comes within `r` of the
 /// plan segment `trace` (a disc about a point, a capsule along a move).
-fn top_within(solids: &[&[Triangle]], (a, b): (Point2, Point2), r: f64) -> Option<f64> {
+pub(super) fn top_within(solids: &[&[Triangle]], (a, b): (Point2, Point2), r: f64) -> Option<f64> {
     let r2 = r * r;
     let mut top: Option<f64> = None;
     for t in solids.iter().flat_map(|s| s.iter()) {

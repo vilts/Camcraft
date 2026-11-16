@@ -736,6 +736,16 @@ fn an_entry_edit_marks_the_contour_stale_and_the_wall_regen_moves_nothing() {
     assert_eq!(status(&world, "Contour1"), OpStatus::Ok, "and exact");
 }
 
+/// The slot fixture's notes: its Top (Z 0) and its clearance plane (Z 5)
+/// both stand inside the 20 mm block, so the two independent height
+/// warnings (#104, #2121) ride the path - and nothing else.
+fn height_notes_only(notes: &[String]) -> bool {
+    use camcraft_app::operation::{CLEARANCE_STOCK_WARNING, TOP_STOCK_WARNING};
+    notes.len() == 2
+        && notes.iter().filter(|n| n.starts_with(TOP_STOCK_WARNING)).count() == 1
+        && notes.iter().filter(|n| n.starts_with(CLEARANCE_STOCK_WARNING)).count() == 1
+}
+
 #[test]
 fn an_entry_edit_marks_the_slot_stale_and_the_orbit_proves_itself() {
     // The M8.2 C digest law on the slot's own stamp: flipping the entry
@@ -763,7 +773,7 @@ fn an_entry_edit_marks_the_slot_stale_and_the_orbit_proves_itself() {
     );
     assert_eq!(status(&world, "Slot1"), OpStatus::Ok);
     let before = cache(&world, "Slot1").expect("cached").path;
-    assert!(before.notes.len() == 1 && before.notes.iter().all(|n| n.starts_with(camcraft_app::operation::TOP_STOCK_WARNING)), "no entry fallback, only the independent Top/stock warning: {:?}", before.notes);
+    assert!(height_notes_only(&before.notes), "no entry fallback, only the independent height warnings: {:?}", before.notes);
     assert_eq!(
         before.moves.iter().filter(|m| m.arc.is_some()).count(),
         0,
@@ -800,7 +810,7 @@ fn an_entry_edit_marks_the_slot_stale_and_the_orbit_proves_itself() {
         after.moves.iter().any(|m| m.arc.is_some()),
         "a channel this wide certifies the orbit - it must land"
     );
-    assert!(after.notes.len() == 1 && after.notes.iter().all(|n| n.starts_with(camcraft_app::operation::TOP_STOCK_WARNING)), "a certified orbit adds no entry note; only the Top/stock warning remains: {:?}", after.notes);
+    assert!(height_notes_only(&after.notes), "a certified orbit adds no entry note; only the height warnings remain: {:?}", after.notes);
     assert_ne!(
         before.moves, after.moves,
         "the entry edit changed the path, not just the stamp"
@@ -6641,6 +6651,7 @@ fn stub_tool() -> Tool {
         flutes: None,
         orientation: None,
         pitch_min: 0.0,
+        thread_hand: Default::default(),
         catalog: camcraft_tools::catalog_fields::ToolCatalog::default(),
         cutting: Vec::new(),
         outline: Vec::new(),

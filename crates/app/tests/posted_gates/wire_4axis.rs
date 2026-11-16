@@ -3,9 +3,13 @@
 //! makes it - a 16 mm square at Z0 lofted to a 9.6 mm radius circle at
 //! Z12, each ring 64 points, cut as a punch from (-30, 0) paired by arc
 //! length on the synthetic fixture's C110 (wire 0.25, gap 0.04) and 15
-//! degree maximum - proved byte-identical, then judged with `taper:
-//! true` (its rulings read as the wire's lean) against the loft's own
-//! mesh sliced at 25 heights, more finely than the post's 9.
+//! degree maximum - proved the golden's program to 3 um a word, then
+//! judged with `taper: true` (its rulings read as the wire's lean)
+//! against the loft's own mesh sliced at 25 heights, more finely than
+//! the post's 9. Not byte for byte since #1170: the per-ruling widening
+//! settles on one of several wires that hold the kerf law, and which
+//! one follows the profile rings' own vertices - the app reads them off
+//! the model's faces, this harness states them directly.
 //!
 //! Provenance: our own harness over our own goldens; no vendor material.
 
@@ -74,16 +78,28 @@ fn ring(pts: &[P2]) -> Loop {
     Loop::new(pts.iter().map(|&(x, y)| Point2::new(x, y)).collect()).expect("a profile ring")
 }
 
+/// Two CL texts are one program: the same lines and words, each number
+/// within 3 counts (3 um) of the other's.
+fn same_program(a: &str, b: &str) -> bool {
+    let num = |w: &str| w.trim_start_matches(['A', 'B', 'C']).parse::<i64>().ok();
+    let word = |(x, y): (&str, &str)| match (num(x), num(y)) {
+        (Some(p), Some(q)) => x.chars().next().filter(char::is_ascii_alphabetic) == y.chars().next().filter(char::is_ascii_alphabetic) && (p - q).abs() <= 3,
+        _ => x == y,
+    };
+    let line = |(x, y): (&str, &str)| x.split(' ').count() == y.split(' ').count() && x.split(' ').zip(y.split(' ')).all(word);
+    a.lines().count() == b.lines().count() && a.lines().zip(b.lines()).all(line)
+}
+
 /// The wire laws' verdict on the 4-axis punch golden.
 pub fn wire_4axis_verdict() -> WireVerdict {
     let start = Point2::new(-30.0, 0.0);
     let p = WireParams { wire_diameter: 0.25, gap: 0.04, condition: "C110".into(), side: WireSide::Punch, start: Some(start), plane_z: 0.0, tabs: None, stock: None, clearance: 1.0 };
     let (lower, upper) = (square(8.0), circle(9.6));
     let (lo, up) = ([ring(&lower)], [ring(&upper)]);
-    let r = WireRuled { top_z: H, pairing: WirePairing::ArcLength, tolerance: 0.05, max_deg: Some(15.0), machine: "Generic ISO Wire EDM fixture".into() };
+    let r = WireRuled { top_z: H, pairing: WirePairing::ArcLength, tolerance: 0.05, widening: Default::default(), max_deg: Some(15.0), machine: "Generic ISO Wire EDM fixture".into() };
     let t = wire_contour_ruled(WireProfile { loops: &up, chains: &[] }, WireProfile { loops: &lo, chains: &[] }, &p, &r)
         .expect("the 4-axis punch generates");
-    assert_eq!(gen_to_cltext(&t), golden("wire_4axis_punch.cl"), "wire_4axis_punch.cl: the regenerated program is the golden");
+    assert!(same_program(&gen_to_cltext(&t), &golden("wire_4axis_punch.cl")), "wire_4axis_punch.cl: the regenerated program is the golden");
     let facets = band(&lower, &upper);
     let stock = region(&[rect(-40.0, -40.0, 40.0, 40.0)]);
     let sections = (0..HEIGHTS)
@@ -93,7 +109,7 @@ pub fn wire_4axis_verdict() -> WireVerdict {
             WireSection { z, part, stock: Some(stock.clone()) }
         })
         .collect();
-    judge(&WireJob { path: &t, kerf_offset: 0.25 * 0.5 + 0.04, skim_offsets: Vec::new(), side: CutSide::Punch, start: Some(start), sections, taper: true, burnout: false, cutoff_from: None, capture: true })
+    judge(&WireJob { path: &t, kerf_offset: 0.25 * 0.5 + 0.04, skim_offsets: Vec::new(), side: CutSide::Punch, start: Some(start), sections, taper: true, burnout: false, cutoff_from: None, capture: true, verify_tol: 0.0 })
 }
 
 /// The 4-axis punch golden's findings at the wire laws.

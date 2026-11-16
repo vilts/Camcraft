@@ -655,6 +655,7 @@ fn docs_images_snapshot_match_the_rendered_steps() {
         // The goldens were rendered with the house perspective; #434's
         // field must stay spelled out here so the pictures keep their framing.
         projection: ProjectionMode::Perspective,
+        frame: camcraft_ui::view_frame::ViewFrame::Mill,
     };
 
     let update = std::env::var_os("UPDATE_DOCS_IMAGES").is_some_and(|v| !v.is_empty());

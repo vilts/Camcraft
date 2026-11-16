@@ -33,7 +33,7 @@ fn ride(tip_z: f64) -> Vec<Move> {
 
 /// The break a 1 mm, 45-degree chamfer of that loop declares.
 fn declared(edge: &[(f64, f64)]) -> EdgeBreak {
-    EdgeBreak { edge: edge.iter().map(|&(x, y)| p(x, y, 10.0)).collect(), depth: 1.0, slope: 1.0 }
+    EdgeBreak { edge: edge.iter().map(|&(x, y)| p(x, y, 10.0)).collect(), depth: 1.0, slope: 1.0, volume: None }
 }
 
 fn cut(tip_z: f64) -> Dexel {
@@ -107,7 +107,7 @@ fn a_sloped_edge_bevel_is_the_cone_swept_along_it() {
     // An edge climbing 1 in 2 under a 90-degree cone: directly over the
     // edge the bevel stands exactly `depth` under it; beside it, the
     // swept cone's lowest point - checked against a brute-force sweep.
-    let b = EdgeBreak { edge: vec![p(0.0, 0.0, 0.0), p(10.0, 0.0, 5.0)], depth: 1.0, slope: 1.0 };
+    let b = EdgeBreak { edge: vec![p(0.0, 0.0, 0.0), p(10.0, 0.0, 5.0)], depth: 1.0, slope: 1.0, volume: None };
     let (f, z) = b.floor_at(5.0, 0.0).expect("on the edge");
     assert!((f - 1.5).abs() < 1e-12 && (z - 2.5).abs() < 1e-12, "{f} {z}");
     for (x, y) in [(5.0, 0.6), (2.0, 0.9), (9.5, 0.3), (0.0, 0.5)] {

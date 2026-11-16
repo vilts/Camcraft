@@ -11,10 +11,10 @@
 use super::ring::pt_ring;
 use super::*;
 
-const K: f64 = 0.165;
-const H: f64 = 12.0;
+pub(super) const K: f64 = 0.165;
+pub(super) const H: f64 = 12.0;
 
-fn params() -> WireParams {
+pub(super) fn params() -> WireParams {
     WireParams {
         wire_diameter: 0.25,
         gap: 0.04,
@@ -28,20 +28,20 @@ fn params() -> WireParams {
     }
 }
 
-fn ruled(pairing: WirePairing) -> WireRuled {
-    WireRuled { top_z: H, pairing, tolerance: 0.05, max_deg: Some(30.0), machine: "M".into() }
+pub(super) fn ruled(pairing: WirePairing) -> WireRuled {
+    WireRuled { top_z: H, pairing, tolerance: 0.05, widening: WireWidening::PerRuling, max_deg: Some(30.0), machine: "M".into() }
 }
 
-fn rect(hx: f64, hy: f64) -> Loop {
+pub(super) fn rect(hx: f64, hy: f64) -> Loop {
     Loop::new(vec![Point2::new(-hx, -hy), Point2::new(hx, -hy), Point2::new(hx, hy), Point2::new(-hx, hy)]).unwrap()
 }
 
-fn round(r: f64, n: u32) -> Loop {
+pub(super) fn round(r: f64, n: u32) -> Loop {
     Loop::new((0..n).map(|i| (f64::from(i) * std::f64::consts::TAU / f64::from(n)).sin_cos()).map(|(s, c)| Point2::new(r * c, r * s)).collect())
         .unwrap()
 }
 
-fn cut(upper: &Loop, lower: &Loop, r: &WireRuled) -> Result<Toolpath, GenError> {
+pub(super) fn cut(upper: &Loop, lower: &Loop, r: &WireRuled) -> Result<Toolpath, GenError> {
     wire_contour_ruled(
         WireProfile { loops: std::slice::from_ref(upper), chains: &[] },
         WireProfile { loops: std::slice::from_ref(lower), chains: &[] },
@@ -50,13 +50,13 @@ fn cut(upper: &Loop, lower: &Loop, r: &WireRuled) -> Result<Toolpath, GenError> 
     )
 }
 
-fn refusal(upper: &Loop, lower: &Loop, r: &WireRuled) -> String {
+pub(super) fn refusal(upper: &Loop, lower: &Loop, r: &WireRuled) -> String {
     cut(upper, lower, r).expect_err("refused").to_string()
 }
 
 /// Each cutting move's ruling: its lower point and the upper point its
 /// pose reaches on the top plane (the leads left out).
-fn rulings(path: &Toolpath) -> Vec<(Point2, Point2)> {
+pub(super) fn rulings(path: &Toolpath) -> Vec<(Point2, Point2)> {
     path.moves[..path.moves.len() - 1]
         .iter()
         .map(|m| {
@@ -68,14 +68,14 @@ fn rulings(path: &Toolpath) -> Vec<(Point2, Point2)> {
 
 type P2 = (f64, f64);
 
-fn sync(pairs: &[(P2, P2)]) -> WirePairing {
+pub(super) fn sync(pairs: &[(P2, P2)]) -> WirePairing {
     WirePairing::SyncPoints(
         pairs.iter().map(|(u, l)| WireSync { upper: Some(Point2::new(u.0, u.1)), lower: Some(Point2::new(l.0, l.1)) }).collect(),
     )
 }
 
 /// Corner to corner, upper `hu` to lower `hl` half-sizes.
-fn corners(hu: (f64, f64), hl: (f64, f64)) -> WirePairing {
+pub(super) fn corners(hu: (f64, f64), hl: (f64, f64)) -> WirePairing {
     sync(&[(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].map(|(x, y)| ((x * hu.0, y * hu.1), (x * hl.0, y * hl.1))))
 }
 

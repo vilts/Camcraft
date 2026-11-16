@@ -616,6 +616,10 @@ function onCycle() {
   owedDwell();
   var p = properties;
   seeZ(p.R);
+  if (p.CycleType === "BORE") {
+    msg(coolantWho() + "bore (G86) requires a spindle stop before rapid retract - expanded boring is not supported by this post; refused, not posted");
+    return;
+  }
   if (p.CycleType === "TAP") {
     if (!tapRefused) {
       tapRefused = true;

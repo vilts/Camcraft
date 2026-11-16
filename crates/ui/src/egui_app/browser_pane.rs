@@ -20,7 +20,7 @@ use crate::viewport::ProjectionMode;
 use super::browser_tree::{Leaf, browser_rows};
 use super::icons::IconSet;
 use super::painted;
-use super::theme::Tokens;
+use super::theme::{Tokens, clamp};
 
 /// The browser pane.
 pub fn browser(ui: &mut Ui, state: &mut State, pal: &Tokens, icons: Option<&IconSet>) {
@@ -30,7 +30,10 @@ pub fn browser(ui: &mut Ui, state: &mut State, pal: &Tokens, icons: Option<&Icon
     // of checkboxes.
     egui::Frame::NONE
         .fill(pal.strip_fill())
-        .inner_margin(egui::Margin::symmetric(6, 2))
+        .inner_margin(egui::Margin::symmetric(
+            clamp::range(pal.tree_pad_x, clamp::SPACING).round() as i8,
+            clamp::range(pal.tree_pad_y, clamp::SPACING).round() as i8,
+        ))
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 let _ = egui::containers::menu::MenuButton::new("View")
@@ -56,9 +59,13 @@ pub fn browser(ui: &mut Ui, state: &mut State, pal: &Tokens, icons: Option<&Icon
     ui.separator();
     ui.add_space(2.0);
     let (rows, leaves) = browser_rows(state);
+    // The top button row can widen `ScrollArea`'s virtual width past the
+    // visible pane; clamp to the clip edge so eye toggles stay unclipped and
+    // hit-testable at their AccessKit centers.
+    let vis_w = (ui.clip_rect().right() - ui.cursor().min.x).max(0.0);
     let rect = Rect::from_min_size(
         ui.cursor().min,
-        Vec2::new(ui.available_width(), rows.len() as f32 * pal.row_height),
+        Vec2::new(ui.available_width().min(vis_w), rows.len() as f32 * pal.row_height),
     );
     let hit = painted::tree(ui, rect, &rows, pal, icons);
     drag_ops(ui, state, pal, rect, &leaves, hit.drag_started);
@@ -113,6 +120,11 @@ pub(super) fn focus(state: &mut State, name: &str) {
 /// The View door's contents: the same switches the inline block used to
 /// show, now one click behind the header.
 fn view_menu(ui: &mut Ui, state: &mut State) {
+    if ui.button("Tool library…").clicked() {
+        actions::target(state, UiTarget::Tool(String::new()));
+        ui.close();
+    }
+    ui.separator();
     ui.checkbox(&mut state.show_world_axes, "Show world origin axes");
     // #645: the #727 gizmo names get the switch the review asked for.
     // Same local-copy law as "Show all toolpaths": the flip goes
@@ -250,7 +262,11 @@ fn drag_ops(ui: &mut Ui, state: &mut State, pal: &Tokens, rect: Rect, leaves: &[
     });
     if let Some((ix, target, after)) = drop {
         let y = rect.top() + (ix + usize::from(after)) as f32 * pal.row_height;
-        ui.painter().hline(rect.x_range(), y, egui::Stroke::new(2.0, pal.accent));
+        ui.painter().hline(
+            rect.x_range(),
+            y,
+            egui::Stroke::new(clamp::range(pal.highlight_stroke_px, clamp::STROKE), pal.accent),
+        );
         if released {
             state.pending.push_back(CommandKind::ReorderOperation { name: source, target, after });
         }

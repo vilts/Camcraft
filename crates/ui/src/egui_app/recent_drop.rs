@@ -3,12 +3,14 @@
 //! the button opens its list - the files newest first by name (full
 //! path on hover; a gone file greyed with "(missing)" and refused by
 //! name), "Clear recent", and "Browse…" for today's file dialog. With
-//! no recents (or the feature off) the button opens the dialog straight
-//! away, exactly as before. A pick queues `OpenRecent` / `ClearRecent`
+//! no recents the button opens the dialog, unless installed examples
+//! provide an "Open example" submenu. A pick queues `OpenRecent` / `ClearRecent`
 //! / the dialog command, so the unsaved-changes prompt and the import
 //! worker are Open's and Model's own; the door itself is view state.
 //! Provenance: our own code, the hand-drawn dropdown law of the Theme
 //! and View doors (theme_drop.rs, layout/mod.rs); no HSMWorks material.
+
+use std::path::{Path, PathBuf};
 
 use camcraft_app::recent::{RecentEntry, RecentKind};
 use egui::{Rect, Sense, Ui, Vec2};
@@ -33,6 +35,8 @@ pub(super) enum RecentRow {
     Clear,
     /// Today's file dialog.
     Browse,
+    /// Installed projects beside the executable.
+    Examples,
 }
 
 impl RecentRow {
@@ -43,6 +47,7 @@ impl RecentRow {
             RecentRow::Entry(e) => e.name.clone(),
             RecentRow::Clear => CLEAR.to_owned(),
             RecentRow::Browse => BROWSE.to_owned(),
+            RecentRow::Examples => "Open example".to_owned(),
         }
     }
 
@@ -76,10 +81,10 @@ fn browse(state: &mut State, kind: RecentKind) {
     }
 }
 
-/// The Open / Model button: toggle its list when it has entries, else
+/// The Open / Model button: toggle its list for recents or examples, else
 /// the dialog as before. Opening a list closes every other door.
 pub(super) fn press(state: &mut State, kind: RecentKind) {
-    if state.recent.list(kind).is_empty() {
+    if state.recent.list(kind).is_empty() && !has_examples(state, kind) {
         state.ribbon_recent_open = None;
         browse(state, kind);
         return;
@@ -108,6 +113,9 @@ pub(super) fn rows_of(
     let mut rows: Vec<RecentRow> = state.recent_entries(kind).into_iter().map(RecentRow::Entry).collect();
     rows.push(RecentRow::Clear);
     rows.push(RecentRow::Browse);
+    if has_examples(state, kind) {
+        rows.push(RecentRow::Examples);
+    }
     let left = button.left().min(strip.right() - RECENT_W).max(strip.left());
     rows.into_iter()
         .enumerate()
@@ -124,7 +132,7 @@ pub(super) fn draw(ui: &mut Ui, state: &mut State, pal: &Tokens, id: egui::Id, c
     let Some(kind) = state.ribbon_recent_open else { return };
     let button = cells.iter().find(|c| c.cmd == cmd_of(kind)).map(|c| c.rect);
     match button {
-        Some(button) if !state.recent.list(kind).is_empty() => {
+        Some(button) if !state.recent.list(kind).is_empty() || has_examples(state, kind) => {
             let rows = rows_of(state, kind, button, strip, pal);
             show(ui, state, kind, pal, id, button, &rows);
         }
@@ -149,15 +157,38 @@ fn show(
     };
     let panel = Rect::from_min_size(top, Vec2::new(RECENT_W, rows.len() as f32 * pal.row_height));
     let mut chose: Option<RecentRow> = None;
+    let mut example_pick = None;
+    let mut example_open = false;
     egui::Area::new(id)
         .fixed_pos(panel.min)
         .order(egui::Order::Foreground)
         .movable(false)
         .show(ui.ctx(), |ui| {
-            let p = ui.painter();
+            let p = ui.painter().clone();
             p.rect_filled(panel, pal.radius_menu, pal.ink);
             p.rect_stroke(panel, pal.radius_menu, egui::Stroke::new(1.0, pal.border), egui::StrokeKind::Outside);
             for (k, (row, r)) in rows.iter().enumerate() {
+                if matches!(row, RecentRow::Examples) {
+                    let result = ui.scope_builder(egui::UiBuilder::new().max_rect(*r), |ui| {
+                        ui.menu_button("Open example", |ui| {
+                            let paths = example_directory(state)
+                                .map(|dir| example_projects(&dir))
+                                .unwrap_or_default();
+                            if paths.is_empty() {
+                                ui.add_enabled(false, egui::Button::new("No example projects"));
+                            }
+                            for path in paths {
+                                let label = path.file_name().unwrap_or_default().to_string_lossy();
+                                if ui.button(label).clicked() {
+                                    example_pick = Some(path);
+                                    ui.close();
+                                }
+                            }
+                        })
+                    });
+                    example_open = result.inner.inner.is_some();
+                    continue;
+                }
                 let resp = ui.interact(*r, id.with(("recent-row", k)), Sense::click());
                 let (label, live) = (row.label(), row.live());
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, live, &label));
@@ -183,6 +214,11 @@ fn show(
                 }
             }
         });
+    if let Some(path) = example_pick {
+        state.ribbon_recent_open = None;
+        state.pending.push_back(CommandKind::OpenRecent(RecentKind::Project, path));
+        return;
+    }
     match chose {
         Some(row) => {
             state.ribbon_recent_open = None;
@@ -192,6 +228,7 @@ fn show(
                 RecentRow::Entry(e) => state.pending.push_back(CommandKind::OpenRecent(kind, e.path)),
                 RecentRow::Clear => state.pending.push_back(CommandKind::ClearRecent(kind)),
                 RecentRow::Browse => browse(state, kind),
+                RecentRow::Examples => {},
             }
         }
         None => {
@@ -201,9 +238,57 @@ fn show(
                         !button.expand(DROP_GAP).contains(p) && !rows.iter().any(|(_, r)| r.contains(p))
                     })
             });
-            if outside {
+            if outside && !example_open {
                 state.ribbon_recent_open = None;
             }
         }
     }
 }
+
+fn has_examples(state: &State, kind: RecentKind) -> bool {
+    kind == RecentKind::Project && example_directory(state).is_some()
+}
+
+/// Installed packages keep examples beside the executable, independent of CWD.
+fn example_directory(state: &State) -> Option<PathBuf> {
+    if state.browser_build {
+        return None;
+    }
+    let executable = match std::env::current_exe() {
+        Ok(path) => path,
+        Err(err) => {
+            diag_warn!("Open example: cannot locate the executable: {err}");
+            return None;
+        }
+    };
+    let directory = executable.parent()?.join("examples");
+    // Keep packaged-directory fixtures local to their test thread.
+    #[cfg(test)]
+    let directory = example_tests::directory_override().unwrap_or(directory);
+    directory.is_dir().then_some(directory)
+}
+
+/// List direct project files only; keep package order stable across platforms.
+fn example_projects(directory: &Path) -> Vec<PathBuf> {
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(err) => {
+            diag_warn!("Open example: cannot read {}: {err}", directory.display());
+            return Vec::new();
+        }
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        match entry.and_then(|entry| Ok((entry.path(), entry.file_type()?))) {
+            Ok((path, kind)) if kind.is_file() && path.extension().is_some_and(|ext| ext == "camproj") => paths.push(path),
+            Ok(_) => {},
+            Err(err) => diag_warn!("Open example: cannot read an entry in {}: {err}", directory.display()),
+        }
+    }
+    paths.sort();
+    paths
+}
+
+#[cfg(test)]
+#[path = "../../tests/open_examples/mod.rs"]
+mod example_tests;

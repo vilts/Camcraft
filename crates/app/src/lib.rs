@@ -137,6 +137,7 @@ pub use camcraft_tools::thread_mill;
 pub use camcraft_tools::orientation;
 pub use camcraft_tools::catalog_fields;
 pub use camcraft_tools::cutting_rows as tool_cutting_rows;
+pub use camcraft_tools::waterjet as waterjet_tools;
 // #93: the drawn spun profile of a milling holder.
 pub use camcraft_tools::spun;
 // #93 slice 2: the drawn cutter law, and the tool's stored drawn cutter.

@@ -15,7 +15,7 @@
 //! in the same process waited behind it.
 //!
 //! Gate map (M4.4): covers app::geometry::import::step,
-//! app::geometry::import::step_guard.
+//! app::geometry::import::step_guard, app::geometry::import::step_meter.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -143,4 +143,21 @@ fn a_finer_pass_that_runs_out_on_a_face_that_may_jump_is_refused() {
     });
     let err = r.expect_err("a smeared jump is never kept").to_string();
     assert!(err.contains("face #53 (B-spline surface") && err.contains("did not converge"), "{err}");
+}
+
+/// #1599: a hostile shell of many runaway faces (the fixture's jumping face
+/// #53 listed 40 more times) is refused by name after a few trips, not
+/// after every face: the pass-wide budget stops it, and the refusal says so.
+#[test]
+fn a_shell_of_many_runaway_faces_is_refused_after_a_few_trips() {
+    let text = std::fs::read_to_string(testdata("bspline_discontinuous.step")).expect("fixture");
+    let shell = "CLOSED_SHELL('', (#18, #25, #32, #39, #46, #53));";
+    assert!(text.contains(shell), "the fixture's shell line");
+    let hostile = text.replace(shell, &format!("CLOSED_SHELL('', (#18, #25, #32, #39, #46, #53{}));", ", #53".repeat(40)));
+    let r = within(HANG_BARRIER, move || {
+        step::with_face_eval_cap(100_000, || import::parse_model(hostile.as_bytes(), import::Format::Step))
+    });
+    let err = r.expect_err("refused").to_string();
+    assert!(err.contains("face #53 (B-spline surface") && err.contains("did not converge"), "{err}");
+    assert!(err.contains("stopped after 3 faces or edges"), "{err}");
 }

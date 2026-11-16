@@ -34,7 +34,12 @@ pub fn current_stamp(
     // (M4.3: the salt says camcraft - a one-time Stale read for
     // documents saved under the old salt, the same churn the version
     // bumps produce, working as designed.)
-    h.write(b"camcraft-op-stamp-v2");
+    // v3 (#2152): the rapid law began to judge a traverse AT the
+    // clearance plane (#2121). The post gate trusts the verdicts a cache
+    // carries, so a cache judged under the old law must not read fresh:
+    // it reads Stale once and the post refuses it until a regenerate.
+    // Bump this salt again whenever a verify law a cache records changes.
+    h.write(b"camcraft-op-stamp-v3");
     let w = |h: &mut std::hash::DefaultHasher, v: f64| h.write(&v.to_bits().to_le_bytes());
     // #532: a kind that mounts no library tool (the wire EDM's)
     // digests what stands in the tool's place - the machine

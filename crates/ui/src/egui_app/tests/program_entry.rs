@@ -66,40 +66,29 @@ fn an_entry_is_a_row_of_the_list_and_undoes() {
 fn the_operation_menu_adds_an_entry_and_its_own_menu_edits_it() {
     let mut harness = shell_harness();
     harness.run_steps(2);
-    let (_, leaves) = panes::browser_rows(&harness.state().state);
-    let row = leaves.iter().position(|leaf| matches!(leaf, Leaf::Op(name) if name == "Contour1"))
-        .expect("operation row");
-    let row_height = theme::current().row_height;
-    let at_row = |r: usize| egui::pos2(90.0, super::BROWSER_TREE_TOP + (r as f32 + 0.5) * row_height);
-    let open = |harness: &mut Harness<'static, ShellUi>, r: usize| {
-        set_pos(harness, at_row(r));
-        button_at(harness, egui::PointerButton::Secondary, at_row(r), true);
-        button_at(harness, egui::PointerButton::Secondary, at_row(r), false);
-    };
-    let pick = |harness: &mut Harness<'static, ShellUi>, r: usize, k: f32| {
-        let at = egui::pos2(90.0, super::BROWSER_TREE_TOP + (r as f32 + 1.0) * row_height + panes::DROP_GAP + k * row_height);
-        set_pos(harness, at);
-        button_at(harness, egui::PointerButton::Primary, at, true);
-        button_at(harness, egui::PointerButton::Primary, at, false);
-        harness.run_steps(2);
-    };
-    // Operation, Rename, Copy, Paste, Clear, Delete, Suppress, After,
-    // then the add rows (#155).
-    open(&mut harness, row);
-    pick(&mut harness, row, 8.5);
+    harness.get_by_label("Browser: Contour1").click_secondary();
+    harness.run();
+    harness.get_by_label("Add pause (M0) after").click();
+    harness.run_steps(2);
     let state = &harness.state().state;
     assert_eq!(entry(state, "Pause1").map(|e| e.action), Some(AfterOperation::ProgramStop), "{}", state.status);
     let (_, leaves) = panes::browser_rows(state);
+    let row = leaves.iter().position(|leaf| matches!(leaf, Leaf::Op(name) if name == "Contour1"))
+        .expect("operation row");
     let entry_row = leaves.iter().position(|l| *l == Leaf::Entry("Pause1".into())).expect("the entry row");
     assert_eq!(entry_row, row + 1, "right under the op");
 
-    open(&mut harness, entry_row);
+    harness.get_by_label("Browser: Pause1").click_secondary();
+    harness.run();
     assert_eq!(harness.state().state.tree_menu, Some(TreeMenuTarget::Entry("Pause1".into())));
-    // Entry, Does, Suppress, Delete.
-    pick(&mut harness, entry_row, 2.5);
+    assert!(harness.query_by_label("Entry").is_some());
+    harness.get_by_label("Suppress entry").click();
+    harness.run_steps(2);
     assert!(entry(&harness.state().state, "Pause1").is_some_and(|e| e.suppressed));
-    open(&mut harness, entry_row);
-    pick(&mut harness, entry_row, 3.5);
+    harness.get_by_label("Browser: Pause1").click_secondary();
+    harness.run();
+    harness.get_by_label("Delete entry (undoable)").click();
+    harness.run_steps(2);
     assert!(entry(&harness.state().state, "Pause1").is_none(), "deleted");
     run(&mut harness.state_mut().state, CommandKind::Undo);
     assert!(entry(&harness.state().state, "Pause1").is_some(), "Ctrl+Z restores it");

@@ -29,7 +29,12 @@ use egui::Color32;
 use serde_json::Value;
 
 use super::contrast;
-use super::theme::{Tokens, clamp};
+use super::theme::Tokens;
+
+mod names;
+pub use names::{COLOR_NAMES, GEOM_NAMES};
+mod overlay;
+use overlay::apply_overlay;
 
 /// The one format string this build reads; anything else refuses whole.
 pub const FORMAT: &str = "camcraft-theme/1";
@@ -43,61 +48,6 @@ pub const MAX_KEY_LEN: usize = 48;
 pub const MAX_NAME_LEN: usize = 64;
 pub const MAX_CREATOR_LEN: usize = 64;
 pub const MAX_DESCRIPTION_LEN: usize = 200;
-
-/// The token names the format speaks, spelled exactly once; the
-/// parser's membership check and the overlay's field wiring both read
-/// these constants, so the file's vocabulary and the code's fields
-/// cannot drift (the all-names-equal-DARK test closes the other way).
-mod names {
-    pub const INK: &str = "ink";
-    pub const INK_ALT: &str = "ink_alt";
-    pub const WELL: &str = "well";
-    pub const TEXT: &str = "text";
-    pub const TEXT_DIM: &str = "text_dim";
-    pub const TEXT_FAINT: &str = "text_faint";
-    pub const BORDER: &str = "border";
-    pub const ACCENT: &str = "accent";
-    pub const ACCENT_HOVER: &str = "accent_hover";
-    pub const FIELD_BG: &str = "field_bg";
-    pub const FIELD_HOVER: &str = "field_hover";
-    pub const FIELD_ACTIVE: &str = "field_active";
-    pub const SELECTION_BG: &str = "selection_bg";
-    pub const SELECTION_STROKE: &str = "selection_stroke";
-    pub const VIEWPORT: &str = "viewport";
-    pub const RADIUS_WIDGET: &str = "radius_widget";
-    pub const RADIUS_WINDOW: &str = "radius_window";
-    pub const RADIUS_MENU: &str = "radius_menu";
-    pub const ITEM_SPACING_X: &str = "item_spacing_x";
-    pub const ITEM_SPACING_Y: &str = "item_spacing_y";
-    pub const BUTTON_PADDING_X: &str = "button_padding_x";
-    pub const BUTTON_PADDING_Y: &str = "button_padding_y";
-    pub const CONTROL_HEIGHT: &str = "control_height";
-    pub const ROW_HEIGHT: &str = "row_height";
-    pub const CELL_H: &str = "cell_h";
-    pub const CELL_W: &str = "cell_w";
-    pub const GLYPH_PX: &str = "glyph_px";
-    pub const FONT_LABEL: &str = "font_label";
-    pub const FONT_CAPTION: &str = "font_caption";
-    pub const FONT_ROW: &str = "font_row";
-    pub const FONT_ROW_SUFFIX: &str = "font_row_suffix";
-}
-
-/// The colour vocabulary, in table order (refusals quote it).
-pub const COLOR_NAMES: &[&str] = &[
-    names::INK, names::INK_ALT, names::WELL, names::TEXT, names::TEXT_DIM,
-    names::TEXT_FAINT, names::BORDER, names::ACCENT, names::ACCENT_HOVER,
-    names::FIELD_BG, names::FIELD_HOVER, names::FIELD_ACTIVE,
-    names::SELECTION_BG, names::SELECTION_STROKE, names::VIEWPORT,
-];
-/// The geometry vocabulary (every override is clamped through the
-/// same windows the built-in const guard checks).
-pub const GEOM_NAMES: &[&str] = &[
-    names::RADIUS_WIDGET, names::RADIUS_WINDOW, names::RADIUS_MENU,
-    names::ITEM_SPACING_X, names::ITEM_SPACING_Y, names::BUTTON_PADDING_X,
-    names::BUTTON_PADDING_Y, names::CONTROL_HEIGHT, names::ROW_HEIGHT,
-    names::CELL_H, names::CELL_W, names::GLYPH_PX, names::FONT_LABEL,
-    names::FONT_CAPTION, names::FONT_ROW, names::FONT_ROW_SUFFIX,
-];
 
 /// One theme, read and applied: what it is called, the token table it
 /// describes, and the honest notes gathered on the way (reported
@@ -344,69 +294,6 @@ fn read_map<T>(
 
 fn other_vocab(field: &str) -> &'static [&'static str] {
     if field == "colors" { GEOM_NAMES } else { COLOR_NAMES }
-}
-
-/// Overlay the parsed maps on the base table. The destructuring is the
-/// M6.1 A exhaustiveness law, restated for files: a token added to
-/// `Tokens` must be named here (pattern AND lookup) or the build
-/// fails - the format can never be able to set less than the whole
-/// table. Geometry lands clamped, so every reader (draw sites
-/// included) sees shell-legal numbers.
-fn apply_overlay(
-    base: Tokens,
-    colors: &HashMap<String, Color32>,
-    geom: &HashMap<String, f64>,
-) -> Tokens {
-    let Tokens {
-        ink, ink_alt, well, text, text_dim, text_faint, border, accent,
-        accent_hover, field_bg, field_hover, field_active, selection_bg,
-        selection_stroke, viewport, radius_widget, radius_window, radius_menu,
-        item_spacing_x, item_spacing_y, button_padding_x, button_padding_y,
-        control_height, row_height, cell_h, cell_w, glyph_px, font_label,
-        font_caption, font_row, font_row_suffix,
-    } = base;
-    let c = |name: &str, keep: Color32| colors.get(name).copied().unwrap_or(keep);
-    let f = |name: &str, keep: f32, win: (f32, f32)| {
-        geom.get(name).map(|v| clamp::range(*v as f32, win)).unwrap_or(keep)
-    };
-    let rad = |name: &str, keep: u8, cap: f32| {
-        geom.get(name)
-            .map(|v| clamp::range(*v as f32, (0.0, cap)).round() as u8)
-            .unwrap_or(keep)
-    };
-    Tokens {
-        ink: c(names::INK, ink),
-        ink_alt: c(names::INK_ALT, ink_alt),
-        well: c(names::WELL, well),
-        text: c(names::TEXT, text),
-        text_dim: c(names::TEXT_DIM, text_dim),
-        text_faint: c(names::TEXT_FAINT, text_faint),
-        border: c(names::BORDER, border),
-        accent: c(names::ACCENT, accent),
-        accent_hover: c(names::ACCENT_HOVER, accent_hover),
-        field_bg: c(names::FIELD_BG, field_bg),
-        field_hover: c(names::FIELD_HOVER, field_hover),
-        field_active: c(names::FIELD_ACTIVE, field_active),
-        selection_bg: c(names::SELECTION_BG, selection_bg),
-        selection_stroke: c(names::SELECTION_STROKE, selection_stroke),
-        viewport: c(names::VIEWPORT, viewport),
-        radius_widget: rad(names::RADIUS_WIDGET, radius_widget, clamp::RADIUS as f32),
-        radius_window: rad(names::RADIUS_WINDOW, radius_window, 24.0),
-        radius_menu: rad(names::RADIUS_MENU, radius_menu, 24.0),
-        item_spacing_x: f(names::ITEM_SPACING_X, item_spacing_x, clamp::SPACING),
-        item_spacing_y: f(names::ITEM_SPACING_Y, item_spacing_y, clamp::SPACING),
-        button_padding_x: f(names::BUTTON_PADDING_X, button_padding_x, clamp::SPACING),
-        button_padding_y: f(names::BUTTON_PADDING_Y, button_padding_y, clamp::SPACING),
-        control_height: f(names::CONTROL_HEIGHT, control_height, clamp::CONTROL_H),
-        row_height: f(names::ROW_HEIGHT, row_height, clamp::CONTROL_H),
-        cell_h: f(names::CELL_H, cell_h, clamp::CELL),
-        cell_w: f(names::CELL_W, cell_w, clamp::CELL),
-        glyph_px: f(names::GLYPH_PX, glyph_px, clamp::GLYPH),
-        font_label: f(names::FONT_LABEL, font_label, clamp::FONT),
-        font_caption: f(names::FONT_CAPTION, font_caption, clamp::FONT),
-        font_row: f(names::FONT_ROW, font_row, clamp::FONT),
-        font_row_suffix: f(names::FONT_ROW_SUFFIX, font_row_suffix, clamp::FONT),
-    }
 }
 
 fn req_str(

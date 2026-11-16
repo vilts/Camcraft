@@ -38,9 +38,14 @@ pub fn credit_breaks(dev: &mut Deviation, dex: &Dexel, facets: &[Triangle], brea
         let c = dex.center(ix, iy);
         breaks
             .iter()
-            .filter_map(|b| b.floor_at(c.x, c.y))
-            .filter(|&(_, edge_z)| p <= edge_z + tol)
-            .map(|(f, _)| f)
+            .filter_map(|b| {
+                if b.volume.is_some() {
+                    b.floor_below(c.x, c.y, p)
+                } else {
+                    // Preserve the legacy cone's surface tolerance.
+                    b.floor_at(c.x, c.y).filter(|&(_, edge_z)| p <= edge_z + tol).map(|(f, _)| f)
+                }
+            })
             .fold(f64::INFINITY, f64::min)
     })
 }

@@ -245,17 +245,49 @@ fn unverified_kinds_are_refused_while_verified_picks_generate_aligned() {
     let seed = (KindInfo::ALL[OpType::Offset2D.ordinal()].seed)(&Carried::of(&contour_params()));
     let op = CreateOperation::new(&world, "Offset2D", TOOL, SrcRef::Entity("part".into()), seed);
     h.execute(&world, op.expect("create offset pocket"));
-    let face = model::find_by_name(&world, "part")
-        .and_then(|e| model::features_of(&world, &e))
-        .and_then(|f| f.faces.iter().find(|fa| fa.normal[2].abs() > 0.9).map(|fa| fa.id))
-        .expect("a horizontal face");
+    // The modelled BOTTOM face (Z 0, the plain 40 x 40 square):
+    // flipped over Y it is the setup's top, and Outside of its ring is
+    // air at every level - the legal pick of an aligned face contour.
+    // A horizontal face by its modelled plane height (the normal is
+    // winding-free, so the plane is `offset` along it).
+    let face_by = |z: f64| {
+        model::find_by_name(&world, "part")
+            .and_then(|e| model::features_of(&world, &e))
+            .and_then(|f| {
+                f.faces
+                    .iter()
+                    .find(|fa| fa.normal[2].abs() > 0.9 && (fa.offset * fa.normal[2] - z).abs() < 1e-6)
+                    .map(|fa| fa.id)
+            })
+    };
+    let face = face_by(0.0).expect("the bottom face");
+    let mut outside = contour_params();
+    if let OpParams::Contour { side, .. } = &mut outside {
+        *side = Side::Outside;
+    }
     let pick = SrcRef::Selection(vec![GeoSel { entity: "part".into(), feature: FeatureSel::Face(face) }]);
-    let picked = CreateOperation::new(&world, "Picked", TOOL, pick, contour_params());
+    let picked = CreateOperation::new(&world, "Picked", TOOL, pick, outside.clone());
     h.execute(&world, picked.expect("create a face-picked contour"));
+    // The control: the modelled TOP annulus (Z 20, holed 20 x 20).
+    // Flipped over Y it lies at the setup's Z 0 and the blind hole opens
+    // down (Z 0..10), so Z 10..20 is solid 40 x 40: Outside of its hole
+    // ring the cutter centre runs 8 mm in from the hole's old wall, in
+    // the material at every level - #1927 refuses it, in the SETUP frame
+    // (as modelled the same ring trims the hole wall down to Z 12).
+    let annulus = face_by(20.0).expect("the top annulus");
+    let pick = SrcRef::Selection(vec![GeoSel { entity: "part".into(), feature: FeatureSel::Face(annulus) }]);
+    let control = CreateOperation::new(&world, "InMaterial", TOOL, pick, outside);
+    h.execute(&world, control.expect("create the control contour"));
+    generate(&world, &mut h, "InMaterial").expect("as modelled the hole ring trims its wall");
     align(&world, &mut h, AlignPreset::FlipY);
     let err = generate(&world, &mut h, "Offset2D").expect_err("offset pocket is not verified aligned");
     assert!(err.contains("part alignment") && err.contains("not supported yet"), "{err}");
     generate(&world, &mut h, "Picked").expect("verified-kind picks generate aligned");
+    let e = model::find_by_name(&world, "Picked").expect("picked op");
+    let path = model::toolpath_of(&world, &e).expect("picked path");
+    assert!(path.path.moves.iter().any(|m| m.to.z < 19.9), "the aligned pick cuts below its top: {:?}", path.path.notes);
+    let err = generate(&world, &mut h, "InMaterial").expect_err("flipped, the hole ring stands in material");
+    assert!(err.contains("the cutter Outside this ring stands in the part material"), "{err}");
     generate(&world, &mut h, "Contour1").expect("the verified kind generates");
 }
 

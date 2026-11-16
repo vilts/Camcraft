@@ -15,6 +15,11 @@
 //! and every failure is an MCP tool error (`isError: true`) naming the
 //! reason - never a panic, never a silent success.
 
+pub mod provider;
+mod provider_calls;
+mod fallback;
+mod schema_validation;
+
 mod align_tools;
 mod area;
 mod body_tools;

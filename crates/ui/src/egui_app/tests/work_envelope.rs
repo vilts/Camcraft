@@ -77,3 +77,51 @@ fn a_machine_without_travel_draws_nothing_and_says_why() {
     let tip = crate::work_envelope::tooltip(st);
     assert!(tip.contains("no X travel"), "{tip}");
 }
+
+#[test]
+fn mill_envelope_stands_on_table_for_all_travel_files() {
+    let mut h = shell_harness();
+    h.state_mut().state.show_work_envelope = true;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/machines");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(dir).expect("machine library") {
+        let path = entry.expect("machine entry").path();
+        if path.extension().and_then(|s| s.to_str()) != Some("mch") { continue; }
+        let text = std::fs::read_to_string(&path).expect("machine file");
+        let m = machine::parse_mch(&text).expect("valid machine");
+        machine::set(&h.state().state.world, path.to_str().expect("path"), Some(&m));
+        let Ok(machine::envelope::EnvelopeShape::Box { min, max }) = machine::work_envelope(&h.state().state.world) else { continue };
+        let lines = crate::work_envelope::envelope_lines(&h.state().state);
+        assert_eq!(lines.len(), 24, "{}", path.display());
+        let bottom = lines.iter().map(|v| v[2]).fold(f32::INFINITY, f32::min);
+        let top = lines.iter().map(|v| v[2]).fold(f32::NEG_INFINITY, f32::max);
+        assert_eq!(bottom, 0.0, "{}: bottom on table", path.display());
+        assert_eq!(top, (max[2] - min[2]) as f32, "{}: full Z travel", path.display());
+        for k in 0..2 {
+            assert_eq!(lines.iter().map(|v| v[k]).fold(f32::INFINITY, f32::min), min[k] as f32);
+            assert_eq!(lines.iter().map(|v| v[k]).fold(f32::NEG_INFINITY, f32::max), max[k] as f32);
+        }
+        checked += 1;
+    }
+    assert!(checked > 0, "exercise library machines with complete travel");
+}
+
+#[test]
+fn mill_envelope_stays_on_table_with_shifted_origin_and_inverted_z() {
+    let mut st = State::new();
+    st.pending.push_back(CommandKind::SetWcs { pos: [10.0, 20.0, 70.0], roll_deg: 0.0, pitch_deg: 0.0, yaw_deg: 0.0 });
+    st.drain_actions();
+    st.show_work_envelope = true;
+    for direction in [machine::AxisDirection::Standard, machine::AxisDirection::Inverted] {
+        let mut m = mill(true);
+        m.axes[2].direction = direction;
+        machine::set(&st.world, "test.mch", Some(&m));
+        let before = machine::work_envelope(&st.world);
+        let lines = crate::work_envelope::envelope_lines(&st);
+        assert_eq!(lines.iter().map(|v| v[2]).fold(f32::INFINITY, f32::min), 0.0);
+        assert_eq!(lines.iter().map(|v| v[2]).fold(f32::NEG_INFINITY, f32::max), 30.0);
+        assert_eq!(machine::work_envelope(&st.world), before, "program travel stays unchanged");
+        assert!(lines.iter().any(|v| v[0] == -90.0 && v[1] == -30.0));
+        assert!(crate::work_envelope::tooltip(&st).contains("table"));
+    }
+}

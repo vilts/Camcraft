@@ -273,6 +273,7 @@ function cutOk(p) {
 }
 
 function onRapid() {
+  var lean = leaning;
   leaning = false;
   if (threaded) {
     refuse("rapid" + opName, who() + "a rapid with the wire threaded through the work - refused");
@@ -280,7 +281,19 @@ function onRapid() {
   }
   // Before the first cut the wire is not threaded: the G00 to the first
   // cut's start (written by startCut) stands for every positioning move.
-  if (!inSection || condition === "") refuse("free" + opName, who() + "a move outside a wire section - refused");
+  if (!inSection || condition === "") {
+    refuse("free" + opName, who() + "a move outside a wire section - refused");
+    return;
+  }
+  // #1497: a positioning move that states an upper guide offset (WireU /
+  // WireV) leans the wire before it is threaded. The G00 this post writes
+  // stands the wire upright, so the lean would be dropped and the cut
+  // threaded at a different pose than the verified one: refuse the
+  // section by name, never thread or cut it.
+  if (lean) {
+    refuse("uvrapid" + opName, who() + "a leaning positioning move (upper guide offset) - the Sodick wire post writes a vertical 2-axis cut only (no G74 / G75 or U V words)");
+    sectionOk = false;
+  }
 }
 
 function onLinear() {

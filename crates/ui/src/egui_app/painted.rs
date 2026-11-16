@@ -38,14 +38,10 @@ use egui::{
 };
 
 use super::icons::{Icon, IconSet};
-use super::theme::Tokens;
+use super::theme::{Tokens, clamp};
 
 /// The full-texel uv of an uploaded image.
 const UV_FULL: Rect = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(1.0, 1.0));
-
-/// A calm steel-blue ink for the ribbon's command glyphs - picked for
-/// the light workbench ground, ours in colour and line weight.
-const RIBBON_ICON_INK: Color32 = Color32::from_rgb(0x1F, 0x4E, 0x79);
 
 /// One painted ribbon cell: fixed-size, the bundled glyph centered over a
 /// short caption, tinted background by state, dimmed ink when disabled
@@ -64,7 +60,6 @@ pub fn cell(
     enabled: bool,
     toggled: bool,
     icon: Option<&TextureHandle>,
-    icon_tint: Option<egui::Color32>,
 ) -> Response {
     let resp = ui.interact(rect, id, Sense::click_and_drag());
     let bg = if !enabled {
@@ -93,23 +88,21 @@ pub fn cell(
             Pos2::new(rect.left() + (rect.width() - pal.glyph_px) * 0.5, rect.top()),
             Vec2::splat(pal.glyph_px),
         );
-        let ink = match bg {
-            // Hover/active/selected cells wear the family hue poorly -
-            // fall back to the on-fill ink there. Plain command glyphs
-            // carry our steel-blue tint, picked against the light strip.
-            Some(bg) => super::contrast::on_fill(bg),
-            None => icon_tint.unwrap_or(RIBBON_ICON_INK),
-        };
+        // A filled cell wears the on-fill ink; a plain glyph wears the
+        // theme's own ribbon ink (a token, #2021).
+        let ink = bg.map_or(pal.ribbon_ink, super::contrast::on_fill);
         let tint = if enabled { ink } else { Color32::from_rgba_unmultiplied(ink.r(), ink.g(), ink.b(), 115) };
         painter.image(tex.id(), r, UV_FULL, tint);
     }
     let ink = if enabled { pal.text } else { pal.text_faint };
-    // The label shrinks to fit its cell (down to MIN_LABEL_PX) so a short
+    // The label shrinks to fit its cell (down to the theme's font_label_min) so a short
     // word reads whole at the narrow 1280 px cell (#948); only a label
     // that still does not fit at the floor truncates with an ellipsis, so
     // it can never collide with the neighbour's.
     let max_w = (rect.width() - 2.0).max(0.0);
-    let galley = fit_label(ui, label, pal.font_label, max_w, ink);
+    let start_px = clamp::range(pal.font_label, clamp::FONT);
+    let min_px = clamp::range(pal.font_label_min, clamp::FONT).min(start_px);
+    let galley = fit_label(ui, label, start_px, min_px, max_w, ink);
     painter.galley(
         Pos2::new(rect.center().x - galley.size().x * 0.5, rect.top() + pal.glyph_px + 2.0),
         galley,
@@ -118,22 +111,21 @@ pub fn cell(
     resp
 }
 
-/// The smallest ribbon label size (px); below it a label elides instead.
-pub const MIN_LABEL_PX: f32 = 10.0;
-
 /// Lay `label` out on one line at the largest whole size from `start_px`
-/// down to MIN_LABEL_PX whose width fits `max_w`; at the floor it truncates
+/// down to `min_px` whose width fits `max_w`; at the floor it truncates
 /// with an ellipsis (never overflows).
 fn fit_label(
     ui: &Ui,
     label: &str,
     start_px: f32,
+    min_px: f32,
     max_w: f32,
     ink: Color32,
 ) -> std::sync::Arc<egui::Galley> {
-    let mut px = start_px.max(MIN_LABEL_PX);
+    let floor_px = min_px.min(start_px);
+    let mut px = start_px.max(floor_px);
     loop {
-        let floor = px <= MIN_LABEL_PX;
+        let floor = px <= floor_px;
         let mut job = LayoutJob {
             wrap: if floor {
                 TextWrapping::truncate_at_width(max_w)
@@ -147,12 +139,12 @@ fn fit_label(
         if floor || galley.size().x <= max_w {
             return galley;
         }
-        px = (px - 1.0).max(MIN_LABEL_PX);
+        px = (px - 1.0).max(floor_px);
     }
 }
 
-/// A group caption under its cells, centred on `mid_x` in the strip's
-/// bottom band, faint ink. Painted only when it fits inside `width` (the
+/// A group caption in its own row, its top at `row_top`, centred on
+/// `mid_x`, faint ink. Painted only when it fits inside `width` (the
 /// group's own span): a caption wider than its group would run under the
 /// neighbour's, so single-door groups - whose cell already names the
 /// section - skip it (#948). Returns whether it was painted.
@@ -163,7 +155,7 @@ pub fn caption(
     title: &str,
     strip: Rect,
     pal: &Tokens,
-    cell_bottom: f32,
+    row_top: f32,
 ) -> bool {
     let ink = pal.text_dim;
     let mut job = LayoutJob {
@@ -173,13 +165,13 @@ pub fn caption(
     job.append(
         &title.to_uppercase(),
         0.0,
-        TextFormat::simple(FontId::proportional(MIN_LABEL_PX), ink),
+        TextFormat::simple(FontId::proportional(clamp::range(pal.font_caption, clamp::FONT)), ink),
     );
     let galley = ui.painter().layout_job(job);
     if galley.size().x > width {
         return false;
     }
-    let y = (cell_bottom + 3.0).min(strip.bottom() - galley.size().y);
+    let y = row_top.min(strip.bottom() - galley.size().y);
     ui.painter()
         .galley(Pos2::new(mid_x - galley.size().x * 0.5, y), galley, ink);
     true
@@ -234,16 +226,6 @@ pub enum Kind {
     Setup(bool),
 }
 
-/// Tree icon edge (browser.rs: 32 px sources render at 16). The row's
-/// height is NOT here: it is `Tokens::row_height` (M6.1 A), and the
-/// tree's column model and row-click hit-tests all read that one number,
-/// so a theme that grows the rows grows the tree with them.
-const TREE_INK: f32 = 16.0;
-
-/// The eye column's reserved width at the row's right edge: the 18 px hit
-/// band plus margin (browser.rs's `eye_x = avail - INK - 6.0`).
-const EYE_RESERVE: f32 = 24.0;
-
 /// Rows whose viewport visibility the user can toggle get the eye.
 pub(crate) fn has_eye(kind: Kind) -> bool {
     matches!(kind, Kind::Model | Kind::Fixture | Kind::Stock | Kind::Wcs | Kind::Op | Kind::Setup(_))
@@ -297,6 +279,17 @@ pub fn tree(
     let mut hit = TreeHit { row: None, eye: None, menu: None, drag_started: None, radio: None };
     let mut eye_resps: Vec<(usize, Response)> = Vec::new();
     let row_h = pal.row_height;
+    let glyph_px = clamp::range(pal.tree_glyph_px, clamp::GLYPH);
+    let inset_x = clamp::range(pal.tree_inset_x, clamp::SPACING);
+    let indent = clamp::range(pal.tree_indent, clamp::SPACING);
+    let eye_reserve = clamp::range(pal.tree_eye_reserve, clamp::EYE_RESERVE);
+    let pad_x = clamp::range(pal.tree_pad_x, clamp::SPACING);
+    let label_dx = (glyph_px * 0.5 + 4.0).max(8.0);
+    let eye_w = (eye_reserve - pad_x).clamp(8.0, eye_reserve);
+    let font_row = clamp::range(pal.font_row, clamp::FONT);
+    let font_suffix = clamp::range(pal.font_row_suffix, clamp::FONT);
+    let header_boost = clamp::range(pal.tree_header_boost, clamp::HEADER_BOOST);
+    let suffix_gap = clamp::range(pal.tree_suffix_gap, clamp::SPACING);
     for (ix, row) in rows.iter().enumerate() {
         let top = rect.top() + ix as f32 * row_h;
         if top >= rect.bottom() {
@@ -307,12 +300,15 @@ pub fn tree(
         // creation order; the eye pixel is created later so the eye
         // claims the click, not the row.
         let row_resp = ui.interact(rr, ui.id().with(("tree-row", ix)), Sense::click_and_drag());
+        row_resp.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Browser: {}", row.label))
+        });
         let eye_rect = if has_eye(row.kind) {
             let er = Rect::from_center_size(
-                Pos2::new(rr.right() - 12.0, rr.center().y),
-                Vec2::new(18.0, 16.0),
+                Pos2::new(rr.right() - eye_reserve * 0.5, rr.center().y),
+                Vec2::new(eye_w, glyph_px),
             );
-            let r = ui.interact(er, ui.id().with(("tree-eye", ix)), Sense::click());
+            let r = ui.interact(er.intersect(rr), ui.id().with(("tree-eye", ix)), Sense::click());
             if r.clicked() {
                 hit.eye = Some(ix);
             }
@@ -341,10 +337,10 @@ pub fn tree(
         } else if row_resp.hovered() {
             painter.add(Shape::rect_filled(rr.shrink2(Vec2::new(1.0, 1.0)), pal.radius_widget, pal.field_hover));
         }
-        let gx = rr.left() + 12.0 + row.depth as f32 * 16.0;
+        let gx = rr.left() + inset_x + row.depth as f32 * indent;
         if matches!(row.kind, Kind::Setup(_)) {
-            let rr = Rect::from_center_size(Pos2::new(gx, rr.center().y), Vec2::splat(TREE_INK));
-            if ui.interact(rr, ui.id().with(("tree-radio", ix)), Sense::click()).clicked() {
+            let radio_rect = Rect::from_center_size(Pos2::new(gx, rr.center().y), Vec2::splat(glyph_px));
+            if ui.interact(radio_rect.intersect(rr), ui.id().with(("tree-radio", ix)), Sense::click()).clicked() {
                 hit.radio = Some(ix);
             }
         }
@@ -355,7 +351,16 @@ pub fn tree(
         // that vanishes on a light panel.
         let (icon_ink, eye_ink) = row_inks(pal, row.hidden, row.selected);
         let ground = if row.selected { pal.selection_bg } else if row_resp.hovered() { pal.field_hover } else { ui.visuals().panel_fill };
-        let painted = super::tree_badges::row_glyph(painter, icons, row.icon, row.badge, Pos2::new(gx, rr.center().y), icon_ink, ground);
+        let painted = super::tree_badges::row_glyph(
+            painter,
+            icons,
+            row.icon,
+            row.badge,
+            Pos2::new(gx, rr.center().y),
+            glyph_px,
+            icon_ink,
+            ground,
+        );
         let mut shapes = Vec::new();
         if !painted {
             super::tree_glyphs::glyph(&mut shapes, Pos2::new(gx, rr.center().y), row.kind, pal);
@@ -393,8 +398,8 @@ pub fn tree(
             Kind::Section | Kind::Parent(_) if !row.hidden && !row.selected => pal.text,
             _ => ink,
         };
-        let reserve = if has_eye(row.kind) { EYE_RESERVE } else { 6.0 };
-        let max_w = (rr.right() - reserve - (gx + 12.0)).max(0.0);
+        let reserve = if has_eye(row.kind) { eye_reserve } else { pad_x };
+        let max_w = (rr.right() - reserve - (gx + label_dx)).max(0.0);
         let mut job = LayoutJob {
             wrap: TextWrapping::truncate_at_width(max_w),
             ..LayoutJob::default()
@@ -403,20 +408,20 @@ pub fn tree(
             &row.label,
             0.0,
             TextFormat::simple(
-                FontId::proportional(pal.font_row + if is_header { 0.5 } else { 0.0 }),
+                FontId::proportional(font_row + if is_header { header_boost } else { 0.0 }),
                 label_ink,
             ),
         );
         if !row.suffix.is_empty() {
             job.append(
                 &row.suffix,
-                6.0,
-                TextFormat::simple(FontId::proportional(pal.font_row_suffix), suffix_ink),
+                suffix_gap,
+                TextFormat::simple(FontId::proportional(font_suffix), suffix_ink),
             );
         }
         let galley = painter.layout_job(job);
         painter.galley(
-            Pos2::new(gx + 12.0, rr.center().y - galley.size().y * 0.5),
+            Pos2::new(gx + label_dx, rr.center().y - galley.size().y * 0.5),
             galley,
             ink,
         );
@@ -434,6 +439,7 @@ pub fn tree(
     // after the loop so the response lives past its borrow of `ui`.
     for (ix, r) in eye_resps {
         let tip = if rows[ix].hidden { "Show" } else { "Hide" };
+        r.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("{tip} {}", rows[ix].label)));
         r.on_hover_text(format!("{tip} in the viewport (view state; geometry still cuts)"));
     }
     hit

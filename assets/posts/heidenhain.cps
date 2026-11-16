@@ -618,10 +618,13 @@ function onCycle() {
   owedDwell();
   inCycle = false;
   var p = properties, type = p.CycleType;
-  // Boring keeps the established explicit-chain contract; its spindle
-  // orientation/disengagement semantics are not part of #51.
+  if (type === "BORE") {
+    msg(coolantWho() + "bore (G86) requires a spindle stop before rapid retract - expanded boring is not supported by this post; refused, not posted");
+    return;
+  }
+  // Back boring keeps its established explicit-chain contract.
   // #1445: REAM (feed in, feed out, no dwell) rides the same chain.
-  if (type === "BORE" || type === "BACKBORE" || type === "REAM") {
+  if (type === "BACKBORE" || type === "REAM") {
     if (has(p.P) && p.P > 0) pendingDwell = { z: Number(p.Z), s: Number(p.P) };
     cycleSig = "";
     return;

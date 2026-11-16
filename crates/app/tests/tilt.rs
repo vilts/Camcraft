@@ -375,7 +375,9 @@ fn tilt_on_a_picked_selection_refuses_by_name() {
         feed: 800.0,
         plunge_feed: 200.0,
         climb: true,
-        side: Side::Inside,
+        // Outside: the top face's ring bounds material (#1927 refuses
+        // Inside there - it stood in the part below Z 5).
+        side: Side::Outside,
         lead: Lead::None,
         tolerance: 0.01,
         tab_count: 0,

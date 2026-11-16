@@ -101,39 +101,84 @@ fn on_station(axis: [f64; 3], c_deg: f64) -> bool {
 
 /// Stamp `path` (part frame, posed radially) with the spindle C of
 /// every move, split so the machine's motion tracks each verified
-/// chord within `tol`. Refused by name: an arc (its circle is not a
-/// C-linear motion), a move with no pose or one leaning off the radial
-/// station, a path that never leaves the spindle line, a move that
-/// cannot be split to `tol`.
+/// chord within `tol`. Planar/helical arcs are subdivided to chords and
+/// split with `arc: None` so their poses stay C-linear within `tol`.
+/// Refused by name: non-finite endpoints or arc centers, a move with
+/// no pose or one leaning off the radial station, a path that never
+/// leaves the spindle line, a move that cannot be split to `tol`.
 pub fn stamp_c(path: &Toolpath, center: [f64; 2], tol: f64) -> Result<Toolpath, String> {
     if !(tol.is_finite() && tol > 0.0) || !center.iter().all(|v| v.is_finite()) {
         return Err("C-axis stamp: no usable tolerance or spindle line".into());
     }
-    let first = path
-        .moves
+    let mut segs_per_move = Vec::with_capacity(path.moves.len());
+    for (i, m) in path.moves.iter().enumerate() {
+        if !m.from.is_finite() || !m.to.is_finite() {
+            return Err(format!("C-axis move {i} has non-finite coordinates"));
+        }
+        if let Some(arc) = m.arc {
+            if !arc.center.x.is_finite() || !arc.center.y.is_finite() {
+                return Err(format!("C-axis move {i} has a non-finite arc center"));
+            }
+            let segs = m.segments3(tol * 0.5);
+            // segments3 caps the chord count. Check the original arc's
+            // sagitta before splitting its chords: splitting cannot recover
+            // curvature already lost at that cap. Normal (helical) motion is
+            // linear in the sweep and adds no chord error.
+            let (au, av, _) = arc.plane.uvw(m.from);
+            let (bu, bv, _) = arc.plane.uvw(m.to);
+            let (cu, cv) = arc.plane.center_uv(arc.center);
+            let ra = (au - cu).hypot(av - cv);
+            let rb = (bu - cu).hypot(bv - cv);
+            let start = (av - cv).atan2(au - cu);
+            let end = (bv - cv).atan2(bu - cu);
+            let mut sweep =
+                if arc.ccw { end - start } else { start - end }.rem_euclid(std::f64::consts::TAU);
+            if sweep == 0.0 {
+                sweep = std::f64::consts::TAU;
+            }
+            let half_step_sin = (sweep / (4.0 * segs.len() as f64)).sin();
+            let error = ra.max(rb) * (2.0 * half_step_sin * half_step_sin) + (ra - rb).abs();
+            if !error.is_finite() || error > tol * 0.5 {
+                return Err(format!(
+                    "C-axis move {i} arc subdivision limit cannot meet the chord error budget of {} mm",
+                    tol * 0.5
+                ));
+            }
+            segs_per_move.push((true, segs));
+        } else {
+            segs_per_move.push((false, vec![(m.from, m.to)]));
+        }
+    }
+    let first = segs_per_move
         .iter()
-        .flat_map(|m| [m.from, m.to])
+        .flat_map(|(_, segs)| segs.iter().flat_map(|&(a, b)| [a, b]))
         .find_map(|p| azimuth(p, center))
         .ok_or("C-axis path never leaves the spindle line - nothing for C to turn")?;
     let mut prev = -first;
     let mut out = Vec::with_capacity(path.moves.len());
-    for (i, m) in path.moves.iter().enumerate() {
-        if m.arc.is_some() {
-            return Err(format!("C-axis move {i} is an arc - only straight moves ride a C turn"));
-        }
+    for (i, (m, (is_arc, segs))) in path.moves.iter().zip(segs_per_move).enumerate() {
         let Some(axis) = m.axis else {
             return Err(format!("C-axis move {i} states no tool pose - a live tool stands radial"));
         };
-        let ca = azimuth(m.from, center).map_or(prev, |p| unwrap_near(-p, prev));
-        let cb = azimuth(m.to, center).map_or(ca, |p| unwrap_near(-p, ca));
-        if !on_station(axis, cb) {
+        let mut stamped_segs = Vec::with_capacity(segs.len());
+        let mut cur = prev;
+        for (sa, sb) in segs {
+            let ca = azimuth(sa, center).map_or(cur, |p| unwrap_near(-p, cur));
+            let cb = azimuth(sb, center).map_or(ca, |p| unwrap_near(-p, ca));
+            stamped_segs.push((sa, sb, ca, cb));
+            cur = cb;
+        }
+        if !on_station(axis, cur) {
             return Err(format!(
                 "C-axis move {i} leans the tool off the radial live-tool station - a fixed live tool cannot hold that pose"
             ));
         }
-        split(m, (m.from, m.to), (ca, cb), cb, center, tol, 0, &mut out)
-            .map_err(|()| format!("C-axis move {i} passes too near the spindle line to follow its chord within {tol} mm"))?;
-        prev = cb;
+        let seg_tol = if is_arc { tol * 0.5 } else { tol };
+        for (sa, sb, ca, cb) in stamped_segs {
+            split(m, (sa, sb), (ca, cb), cur, center, seg_tol, 0, &mut out)
+                .map_err(|()| format!("C-axis move {i} passes too near the spindle line to follow its chord within {tol} mm"))?;
+        }
+        prev = cur;
     }
     let mut t = path.clone();
     t.moves = out;
@@ -170,7 +215,7 @@ fn split(
 ) -> Result<(), ()> {
     if deviation(a, b, ca, cb, center) <= tol {
         let axis = m.axis.map(|ax| pose_at(ax, c_end, cb));
-        out.push(Move { from: a, to: b, rotary: Some(cb), axis, ..*m });
+        out.push(Move { from: a, to: b, arc: None, rotary: Some(cb), axis, ..*m });
         return Ok(());
     }
     if depth >= MAX_DEPTH {
@@ -250,5 +295,75 @@ mod tests {
         let bare = Move::new(MoveKind::Feed, a, b, Some(300.0));
         let e = stamp_c(&Toolpath::new(vec![bare]), [0.0, 0.0], 0.01).err();
         assert!(e.is_some_and(|e| e.contains("no tool pose")));
+        let bad_arc = Move::new(MoveKind::Feed, a, Point3::new(0.0, 10.0, 0.0), Some(300.0))
+            .with_arc(crate::geo2d::Point2::new(f64::NAN, 0.0), true)
+            .with_axis([0.0, 1.0, 0.0]);
+        let e = stamp_c(&Toolpath::new(vec![bad_arc]), [0.0, 0.0], 0.01).err();
+        assert!(e.is_some_and(|e| e.contains("arc")));
+    }
+
+    #[test]
+    fn an_arc_at_the_chord_limit_refuses_before_rotary_splitting() {
+        let tol = 0.001;
+        let m = Move::new(
+            MoveKind::Feed,
+            Point3::new(1000.0, 0.0, 0.0),
+            Point3::new(0.0, -1000.0, 0.0),
+            Some(300.0),
+        )
+        .with_arc(crate::geo2d::Point2::new(0.0, 0.0), true)
+        .with_axis([0.0, -1.0, 0.0]);
+        assert_eq!(m.segments3(tol * 0.5).len(), crate::cl::MAX_ARC_CHORDS);
+        let error = stamp_c(&Toolpath::new(vec![m]), [0.0, 0.0], tol)
+            .expect_err("capped chords exceed the original arc's error budget");
+        assert!(
+            error.contains("move 0") && error.contains("arc subdivision limit"),
+            "{error}"
+        );
+        assert!(error.contains("0.0005 mm"), "{error}");
+    }
+
+    #[test]
+    fn an_arc_in_xy_and_a_full_helix_ride_a_c_turn_within_tol() {
+        use crate::geo2d::Point2;
+        let center = Point2::new(0.0, 0.0);
+        let q0 = Point3::new(10.0, 0.0, 0.0);
+        let q1 = Point3::new(0.0, 10.0, 0.0);
+        let q_opp = Point3::new(0.0, -10.0, -2.0);
+        let q2 = Point3::new(0.0, 10.0, -4.0);
+        let quarter = Move::new(MoveKind::Feed, q0, q1, Some(300.0))
+            .with_arc(center, true)
+            .with_axis([0.0, 1.0, 0.0]);
+        let helix_a = Move::new(MoveKind::Feed, q1, q_opp, Some(300.0))
+            .with_arc(center, true)
+            .with_axis([0.0, -1.0, 0.0]);
+        let helix_b = Move::new(MoveKind::Feed, q_opp, q2, Some(300.0))
+            .with_arc(center, true)
+            .with_axis([0.0, 1.0, 0.0]);
+        let t = stamp_c(&Toolpath::new(vec![quarter, helix_a, helix_b]), [0.0, 0.0], 0.01)
+            .expect("radial arcs ride a C turn");
+        assert!(t.moves.len() > 16, "arcs subdivide cleanly: {}", t.moves.len());
+        assert!(t.moves.iter().all(|m| m.arc.is_none()), "posted moves are straight C-turn chords");
+        for (i, m) in t.moves.iter().enumerate() {
+            let (c, a) = (m.rotary.expect("rotary C"), m.axis.expect("pose"));
+            assert!(on_station(a, c), "move {i} C {c}: {a:?}");
+            // Every endpoint stays on radius 10 within 1e-6 mm, and chord
+            // sagitta stays within tol.
+            let r = m.to.x.hypot(m.to.y);
+            assert!((r - 10.0).abs() < 1e-5, "move {i} radius {r}");
+            let mid_r = (0.5 * (m.from.x + m.to.x)).hypot(0.5 * (m.from.y + m.to.y));
+            assert!((10.0 - mid_r).abs() <= 0.01, "move {i} chord sagitta exceeded tol: mid_r {mid_r}");
+        }
+        assert!(t.is_chained(), "arc subdivision stays chained");
+        let last_c = t.moves.last().and_then(|m| m.rotary).expect("end C");
+        assert!((last_c + 450.0).abs() < 1e-6, "quarter + full turn = -450 deg, got {last_c}");
+        // Off-center XY arc (center (8, 2), r 3) also stamps and stays within tol.
+        let p0 = Point3::new(11.0, 2.0, 0.0);
+        let p1 = Point3::new(5.0, 2.0, 0.0);
+        let off = Move::new(MoveKind::Feed, p0, p1, Some(250.0))
+            .with_arc(Point2::new(8.0, 2.0), true)
+            .with_axis(radial(p1));
+        let off_t = stamp_c(&Toolpath::new(vec![off]), [0.0, 0.0], 0.01).expect("off-center arc stamps");
+        assert!(off_t.moves.iter().all(|m| m.arc.is_none() && on_station(m.axis.expect("pose"), m.rotary.expect("c"))));
     }
 }

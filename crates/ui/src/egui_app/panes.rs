@@ -20,7 +20,7 @@
 //! stays a direct field flip (view state, mirroring imgui ribbon.rs) and the
 //! browser pushes its `Select` alongside `actions::target` (the tree law).
 
-use egui::{Color32, Key, Label, Rect, RichText, Sense, Ui, Vec2};
+use egui::{Key, Label, Rect, RichText, Sense, Ui, Vec2};
 
 use camcraft_app::model;
 use camcraft_app::operation;
@@ -720,6 +720,7 @@ pub(super) fn icon_of(c: Cmd, state: &State) -> Option<Icon> {
             camcraft_app::machine::Kind::SinkerEdm => Icon::Pocket,
             // #669: a plasma table cuts 2D profiles - the contour glyph.
             camcraft_app::machine::Kind::Plasma => Icon::Contour,
+            camcraft_app::machine::Kind::Waterjet => Icon::ToolWaterjet,
         }),
         Cmd::Undo => Some(Icon::Undo),
         Cmd::Redo => Some(Icon::Redo),
@@ -974,9 +975,8 @@ pub(super) fn ribbon_cells(strip: Rect, pal: &Tokens, plan: &[Group]) -> RibbonG
         .unwrap_or(0.0);
     let cell_w = ((strip.width() - overhead - badge_w) / n_cells.max(1) as f32)
         .clamp(FLOOR_W, pal.cell_w);
-    // PAD_V (ribbon.rs): cells start 4 below the tab strip, inside the
-    // strip the caller passes (the whole panel: the tab band sits on top).
-    let cell_top = strip.top() + super::theme::RIBBON_TAB_H + 4.0;
+    // The cells start below the tab row and its gap, both theme tokens.
+    let cell_top = strip.top() + pal.ribbon_tab_h + pal.ribbon_cell_top_gap;
     let mut cells = Vec::new();
     let mut captions = Vec::new();
     let mut dividers = Vec::new();
@@ -1082,7 +1082,7 @@ fn ribbon_tabs(ui: &mut Ui, state: &mut State, pal: &Tokens, strip: Rect, band: 
             .layout_no_wrap(caption.to_uppercase(), font.clone(), ink);
         let w = galley.size().x + 24.0;
         let r = Rect::from_min_max(
-            egui::Pos2::new(x, band.top() + 4.0),
+            egui::Pos2::new(x, band.top()),
             egui::Pos2::new(x + w, band.bottom()),
         );
         let resp = ui.interact(r, ui.id().with(("ribbon-tab", caption)), Sense::click());
@@ -1122,31 +1122,6 @@ fn ribbon_tabs(ui: &mut Ui, state: &mut State, pal: &Tokens, strip: Rect, band: 
     }
 }
 
-/// A per-family hue for the Create cells and their section doors: 2D a
-/// steel blue, 3D a teal, drilling a leaf green, turning warm rust - our
-/// own palette picks, no asset or palette lifted from another product
-/// (the colours are derived from the toolpath families' own hues).
-/// Returns `None` for the command cells; `painted::cell` falls back to
-/// the theme's on-fill ink there.
-fn family_tint(c: Cmd) -> Option<Color32> {
-    use camcraft_app::operation::Section;
-    let sec = match c {
-        Cmd::Create(i) => camcraft_app::operation::KindInfo::ALL.get(i).map(|k| k.section)?,
-        Cmd::More(s) => s,
-        _ => return None,
-    };
-    Some(match sec {
-        Section::Mill2D => Color32::from_rgb(0x3D, 0x6C, 0xB8),
-        Section::Mill3D => Color32::from_rgb(0x0F, 0x8B, 0x8D),
-        Section::Drilling => Color32::from_rgb(0x2E, 0x7D, 0x32),
-        Section::MultiAxis => Color32::from_rgb(0x7A, 0x3F, 0xD0),
-        Section::Turning => Color32::from_rgb(0xB3, 0x55, 0x1E),
-        Section::Plasma => Color32::from_rgb(0xB5, 0x3A, 0x3A),
-        Section::WireEdm => Color32::from_rgb(0x4A, 0x5B, 0x66),
-        Section::Sinker => Color32::from_rgb(0x6B, 0x4B, 0x2A),
-    })
-}
-
 /// The ribbon strip: painted cells over a fixed-height top panel. Group
 /// captions and hairline dividers match imgui's layout math, the cells
 /// themselves are painted::cell - all from `ribbon_cells`'s geometry.
@@ -1166,7 +1141,7 @@ pub fn ribbon(
     // undoable `LoadBuiltinMachine` the Machine door queues.
     let band = Rect::from_min_max(
         rect.min,
-        egui::Pos2::new(rect.right(), rect.top() + super::theme::RIBBON_TAB_H),
+        egui::Pos2::new(rect.right(), rect.top() + pal.ribbon_tab_h),
     );
     ribbon_tabs(ui, state, pal, rect, band);
     let body = Rect::from_min_max(egui::Pos2::new(rect.left(), band.bottom()), rect.max);
@@ -1197,7 +1172,6 @@ pub fn ribbon(
             enabled(c, state),
             toggled(c, state),
             icon_of(c, state).and_then(|i| icons.and_then(|s| s.texture(i))),
-            family_tint(c),
         );
         // The pin gesture lives at the cell, not in a command: the
         // right-click that answers it names itself in every live tip
@@ -1227,8 +1201,9 @@ pub fn ribbon(
     // group's span. A single-door group (Milling 2D, Drilling ...) is one
     // narrow cell that already names its section, so its caption is
     // skipped rather than run under the neighbour's.
+    let caption_top = body.top() + pal.ribbon_cell_top_gap + pal.cell_h + pal.ribbon_caption_gap;
     for (mid, width, title) in captions {
-        painted::caption(ui, mid, width, title, body, pal, body.top() + 4.0 + pal.cell_h);
+        painted::caption(ui, mid, width, title, body, pal, caption_top);
     }
     for dx in dividers {
         painted::divider(ui.painter(), dx, body, pal);

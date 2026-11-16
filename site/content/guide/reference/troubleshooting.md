@@ -159,12 +159,15 @@ uncut stock.
 
 **Fix.** The same as above: more stickout or a smaller holder.
 
-### `rapid move <n> travels below the clearance plane inside stock`
+### `rapid move <n> travels through stock (below the clearance plane, or at it below the stock top)`
 
-**Means.** A fast move would run through stock instead of above it.
+**Means.** A fast move would run through stock instead of above it. The
+move is under the clearance plane, or it is at the clearance plane and the
+plane itself is inside the stock. In the second case the operation also
+carries the note `Clearance in stock: ...` with the heights.
 
-**Fix.** Raise the clearance height on the operation's Heights tab so
-rapids stay above the stock, and regenerate.
+**Fix.** Raise the clearance height on the operation's Heights tab to the
+stock top or above, or face the stock down first, and regenerate.
 
 ### `<shank|holder|spindle housing|rapid|flute> at move <n> strikes a fixture`
 
@@ -275,6 +278,34 @@ to another extension; an export that wrote something other than a model.
 
 **Fix.** Re-export from the CAD program, and check the file opens there.
 
+### STEP curve subdivision refused
+
+**Means.** An edge or swept curve is discontinuous, produces non-finite
+points, or exceeds the bounded evaluation budget. The message names the
+edge and shell, or the swept face. CamCraft stops that import instead
+of spending unbounded time subdividing it.
+
+**Fix.** Repair or re-export the source geometry. A joined B-spline knot
+can be valid; an actual jump cannot be made safe by a coarse tolerance.
+
+All faces and edges of one shell share one evaluation budget. When three
+of them run out, the import stops and says: "the tessellation stopped
+after 3 faces or edges ran out of evaluations; more of the model may be
+broken". The message names the first face or edge that really tripped. A
+file with many broken faces is refused in bounded time. Fix the whole
+model, not only the named face.
+
+### model '<model>' was `imported incomplete - <hole> - so it has walls missing and no gouge check against it can be trusted; ...`
+
+**Means.** The model loaded for inspection, but a closed STEP shell has
+missing walls after meshing. The model page and import status name the
+hole. Every operation on the model is refused at the post because no
+gouge check against it can be trusted.
+
+**Fix.** Re-export the model or import a sound STL. A higher facet budget
+addresses coarse surfaces, not these missing walls. Tool-body and fixture
+imports still refuse such shells instead of loading them incomplete.
+
 ### `unsupported file type: <ext>`
 
 **Means.** CamCraft reads STEP, STL and OBJ files; this extension is none
@@ -312,6 +343,17 @@ disagree. CamCraft refuses rather than guess your part's scale.
 **Fix.** Re-export the STEP file with a single length unit. A file in
 inches that arrives 25.4 times too small or large was exported without a
 stated unit: check the size on the model page and re-export in millimetres.
+
+### A machining mesh is refused or retried
+
+A machining mesh is the surface that gouge checks read. If its measured
+deviation from the model exceeds the requested tolerance, CamCraft retries
+it once at half the chord, keeping every acceptance check, and records the
+finer chord in the mesh report. Deviation on spline and revolved faces is
+measured by orthogonal projection, and the bound covers the surface between
+sample points, not only the sample points. A mesh whose bound still exceeds
+the tolerance is refused by name. Re-export a model with simpler faces, or
+accept a looser tolerance only if the part allows it.
 
 ### `Reduced fidelity: surfaces are approximated to within <tolerance>`
 

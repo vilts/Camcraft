@@ -16,10 +16,12 @@
 //! height (`ruled_laws`): where the two profiles turn against each
 //! other the wire's section between the planes stands nearer the
 //! surface than the offset on the planes. The generator never lets the
-//! kerf in: it widens the offset on both planes, uniformly, until the
-//! ruled kerf law holds at every height read, and says how much stands
-//! on the profile planes for it. More than the stated tolerance is
-//! refused by name.
+//! kerf in: it widens the offset until the ruled kerf law holds at
+//! every height read, and says how much stands on the profile planes
+//! for it. The widening is stated (#1170): per ruling (`ruled_widen` -
+//! each ruling takes what its own twist and lean need, the default) or
+//! uniform (one widening on both planes, the worst ruling's). More than
+//! the stated tolerance is refused by name.
 //!
 //! Refused by name, never trimmed: an open profile or profiles of
 //! different kinds, sync points that are unpaired, off their profile,
@@ -35,8 +37,8 @@
 //! control manual or CAM product behaviour was consulted.
 
 use super::pairing::{pair, Anchor, Ring};
-use super::ruled_laws::{clearance, crossing, folds, Ruling, MAX_RULINGS};
-use super::{laws, notes, ring, start_side, WireParams, MIN_LEAD};
+use super::ruled_laws::{clearance, crossing, folds, lean_law, Ruling, MAX_RULINGS};
+use super::{laws, notes, ring, ruled_widen, start_side, WireParams, MIN_LEAD};
 use crate::cl::{MoveKind, PathBuilder, Toolpath};
 use crate::geo2d::{Loop, Point2, Region};
 use crate::geometry::Point3;
@@ -47,7 +49,19 @@ pub const SYNC_TOL: f64 = 0.01;
 /// The widening passes before the offset is called unsettled.
 const MAX_PASSES: usize = 16;
 /// The ruled kerf law holds when need / clearance is within this of 1.
-const SETTLED: f64 = 1e-6;
+pub(super) const SETTLED: f64 = 1e-6;
+
+/// How the wire is widened off a twisted surface (#1170) - stated.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WireWidening {
+    /// Each ruling stands off by what its own twist and lean need: a
+    /// straight stretch stays at the kerf offset.
+    #[default]
+    PerRuling,
+    /// One widening on both planes, the worst ruling's: both wire
+    /// paths stay exact parallels of their profiles.
+    Uniform,
+}
 
 /// One sync pair: a point of the upper profile and the point of the
 /// lower profile the same ruling passes through. A side left `None` is
@@ -79,7 +93,7 @@ impl WirePairing {
         }
     }
 
-    fn hint(&self) -> &'static str {
+    pub(super) fn hint(&self) -> &'static str {
         match self {
             WirePairing::ArcLength => "state sync points that pair the profiles' matching corners",
             WirePairing::SyncPoints(_) => "restate the sync points so each pairs matching points of the two profiles",
@@ -103,13 +117,15 @@ pub struct WireRuled {
     /// The most (mm) the wire may stand off the profiles past the kerf
     /// offset to keep clear of a twisted surface.
     pub tolerance: f64,
+    /// Where the widening stands: per ruling, or uniform.
+    pub widening: WireWidening,
     /// The machine's stated maximum taper, degrees; `None` = not stated.
     pub max_deg: Option<f64>,
     /// The machine's name, as the refusals say it.
     pub machine: String,
 }
 
-fn invalid(why: String) -> GenError {
+pub(super) fn invalid(why: String) -> GenError {
     GenError::Invalid(format!("wire contour: {why}"))
 }
 
@@ -168,7 +184,7 @@ fn anchors(r: &WireRuled, gu: &Ring, gl: &Ring, start: Point2) -> Result<Vec<(Po
     Ok(out)
 }
 
-fn arcs(pts: &[(Point2, Point2, usize)], up: &Ring, lo: &Ring, corner: bool) -> Vec<Anchor> {
+pub(super) fn arcs(pts: &[(Point2, Point2, usize)], up: &Ring, lo: &Ring, corner: bool) -> Vec<Anchor> {
     pts.iter().map(|(u, l, no)| Anchor { upper: up.nearest(*u, corner).0, lower: lo.nearest(*l, corner).0, no: *no }).collect()
 }
 
@@ -216,6 +232,10 @@ pub fn wire_contour_ruled(upper: WireProfile<'_>, lower: WireProfile<'_>, p: &Wi
     let product = pair(&gu, &gl, &arcs(&pts, &gu, &gl, false), None)?;
     folds(&product, z0, h, &rule, hint)?;
     let k = p.kerf_offset();
+    if r.widening == WireWidening::PerRuling {
+        let stated = ruled_widen::Stated { p, r, start, max, product: &product, anchors: &pts };
+        return ruled_widen::per_ruling(&stated, [(&given_l, &region_l), (&given_u, &region_u)]);
+    }
     let mut s = 1.0f64;
     for _ in 0..MAX_PASSES {
         let scaled = |z: f64| WireParams { wire_diameter: p.wire_diameter * s, gap: p.gap * s, plane_z: z, ..p.clone() };
@@ -233,21 +253,11 @@ pub fn wire_contour_ruled(upper: WireProfile<'_>, lower: WireProfile<'_>, p: &Wi
             return Err(invalid(format!("the pairing lays {} rulings, more than {MAX_RULINGS} - simplify the profiles", wire.len())));
         }
         folds(&wire, z0, h, &rule, hint)?;
-        let steepest = lean_law(&wire, h, max, r)?;
+        let steepest = lean_law(&wire, z0, h, max, &rule, &r.machine)?;
         let read = clearance(&product, &wire, start, k, z0, h);
         let standing = k * (s * read.ratio.max(1.0) - 1.0);
         if !read.ratio.is_finite() || standing > r.tolerance + 1e-9 {
-            return Err(GenError::invalid_at(
-                format!(
-                    "wire contour: the pairing ({rule}) twists the surface too far for a straight wire near X{:.3} Y{:.3} Z{:.3}: keeping the kerf out of it needs the wire {} off the profiles past the kerf offset, and the 4-axis tolerance is {:.4} mm - {hint}, or raise the tolerance",
-                    read.at.x,
-                    read.at.y,
-                    read.at.z,
-                    if standing.is_finite() { format!("{standing:.4} mm") } else { "an unbounded distance".into() },
-                    r.tolerance
-                ),
-                read.at,
-            ));
+            return Err(too_far(r, read.at, standing));
         }
         if read.ratio > 1.0 + SETTLED {
             s *= read.ratio * (1.0 + SETTLED * 0.5);
@@ -267,45 +277,61 @@ pub fn wire_contour_ruled(upper: WireProfile<'_>, lower: WireProfile<'_>, p: &Wi
         }
         start_side(&region_u, &ring_u, start, &pu)?;
         start_side(&region_l, &ring_l, start, &pl)?;
-        if let Some((short, at)) = read.lead {
-            return Err(GenError::invalid_at(
-                format!(
-                    "wire contour: the lead from the start hole would bring the leaning wire's kerf {short:.4} mm into the paired surface near X{:.3} Y{:.3} Z{:.3} - move the start hole",
-                    at.x, at.y, at.z
-                ),
-                at,
-            ));
+        if let Some(lead) = read.lead {
+            return Err(lead_in(lead));
         }
-        return emit(&wire, p, r, start, lead, s, steepest);
+        let held = format!(
+            "wire EDM: 4-axis - the wire is held {:.4} mm off both profiles: the kerf offset {k:.4} and {:.4} mm more (tolerance {:.4}), which stands on the profile planes - a straight leaning wire cannot touch a twisted ruled surface along its whole height, and the kerf is kept out of it at every height",
+            k * s,
+            k * (s - 1.0),
+            r.tolerance
+        );
+        return emit(&wire, p, r, start, lead, steepest, held);
     }
     Err(invalid(format!("the wire's offset from the paired surface ({rule}) did not settle - refused")))
 }
 
-/// Every ruling's lean against the machine's maximum; the steepest.
-fn lean_law(wire: &[Ruling], h: f64, max: f64, r: &WireRuled) -> Result<f64, GenError> {
-    let mut steepest = 0.0f64;
-    for (l, u) in wire {
-        let lean = (u.x - l.x).hypot(u.y - l.y).atan2(h).to_degrees();
-        if lean.is_nan() || lean > max + 1e-9 {
-            return Err(GenError::invalid_at(
-                format!(
-                    "wire contour: the pairing ({}) leans the wire {lean:.3} degrees at X{:.3} Y{:.3}, and machine {} leans it at most {max:.3} degrees (edm.max_taper_deg)",
-                    r.pairing.word(),
-                    l.x,
-                    l.y,
-                    r.machine
-                ),
-                Point3::new(l.x, l.y, r.top_z - h),
-            ));
-        }
-        steepest = steepest.max(lean);
-    }
-    Ok(steepest)
+/// The refusal of a twist past the tolerance: `standing` mm past the
+/// kerf offset is what the kerf law needs at `at`.
+pub(super) fn too_far(r: &WireRuled, at: Point3, standing: f64) -> GenError {
+    GenError::invalid_at(
+        format!(
+            "wire contour: the pairing ({}) twists the surface too far for a straight wire near X{:.3} Y{:.3} Z{:.3}: keeping the kerf out of it needs the wire {} off the profiles past the kerf offset, and the 4-axis tolerance is {:.4} mm - {}, or raise the tolerance",
+            r.pairing.word(),
+            at.x,
+            at.y,
+            at.z,
+            if standing.is_finite() { format!("{standing:.4} mm") } else { "an unbounded distance".into() },
+            r.tolerance,
+            r.pairing.hint()
+        ),
+        at,
+    )
+}
+
+/// The refusal of a lead whose leaning kerf enters the surface.
+pub(super) fn lead_in((short, at): (f64, Point3)) -> GenError {
+    GenError::invalid_at(
+        format!(
+            "wire contour: the lead from the start hole would bring the leaning wire's kerf {short:.4} mm into the paired surface near X{:.3} Y{:.3} Z{:.3} - move the start hole",
+            at.x, at.y, at.z
+        ),
+        at,
+    )
 }
 
 /// The moves: upright at the start hole, each ruling's lower point with
 /// its pose, the first ruling again, and upright back at the hole.
-fn emit(wire: &[Ruling], p: &WireParams, r: &WireRuled, start: Point2, lead: f64, s: f64, steepest: f64) -> Result<Toolpath, GenError> {
+/// `held` is the note of where the wire stands off the profiles.
+pub(super) fn emit(
+    wire: &[Ruling],
+    p: &WireParams,
+    r: &WireRuled,
+    start: Point2,
+    lead: f64,
+    steepest: f64,
+    held: String,
+) -> Result<Toolpath, GenError> {
     let (z, h) = (p.plane_z, r.top_z - p.plane_z);
     let mut b = PathBuilder::new(Point3::new(start.x, start.y, z));
     for (l, u) in wire.iter().chain(wire.first()) {
@@ -322,19 +348,13 @@ fn emit(wire: &[Ruling], p: &WireParams, r: &WireRuled, start: Point2, lead: f64
     }
     let mut said = notes(p, start, lead);
     said.pop();
-    let k = p.kerf_offset();
     said.push(format!(
         "wire EDM: 4-axis - the upper profile on Z{:.3}, the lower on Z{z:.3}, paired {}; {} rulings, the wire leaning at most {steepest:.3} degrees, the moves' poses the wire toward the upper profile; vertical at the start hole; no feed (the control's generator sets the rate)",
         r.top_z,
         r.pairing.word(),
         wire.len()
     ));
-    said.push(format!(
-        "wire EDM: 4-axis - the wire is held {:.4} mm off both profiles: the kerf offset {k:.4} and {:.4} mm more (tolerance {:.4}), which stands on the profile planes - a straight leaning wire cannot touch a twisted ruled surface along its whole height, and the kerf is kept out of it at every height",
-        k * s,
-        k * (s - 1.0),
-        r.tolerance
-    ));
+    said.push(held);
     path.notes.extend(said);
     Ok(path)
 }

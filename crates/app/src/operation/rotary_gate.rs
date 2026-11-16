@@ -114,9 +114,17 @@ fn stamp_c_about(
     let center = [ax.origin.x + d.x * t, ax.origin.y + d.y * t];
     let tol = if tol.is_finite() && tol > 0.0 { tol } else { crate::machining2d::ARC_FIT_TOL };
     let stamped = crate::cl::stamp_c(path, center, tol).map_err(|e| GenError::Invalid(format!("{kind}: {e}")))?;
-    let Some((lo, hi)) = c_travel(machine) else {
+    let Some(c_ax) = c_axis(machine) else {
         return Ok(stamped);
     };
+    let model = machine.map_or("this machine", |m| m.0.as_str());
+    let sign = c_ax
+        .c_z_sense()
+        .map_err(|e| GenError::Invalid(format!("{kind}: {model}'s {e}")))?;
+    let Some((mach_lo, mach_hi)) = c_ax.travel else {
+        return Ok(stamped);
+    };
+    let (lo, hi) = if sign < 0.0 { (-mach_hi, -mach_lo) } else { (mach_lo, mach_hi) };
     if unwinds {
         let unwound = crate::cl::unwind_c(&stamped, center, (lo, hi), tol, false).map_err(|e| GenError::Invalid(format!("{kind}: {e}")))?;
         // #906: a rewind orbit is C-turning rapids, capped only by the
@@ -141,17 +149,18 @@ fn stamp_c_about(
         .filter_map(|m| m.rotary)
         .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), c| (l.min(c), h.max(c)));
     if c_lo < lo - 1e-9 || c_hi > hi + 1e-9 {
+        let (word_lo, word_hi) = if sign < 0.0 { (-c_hi, -c_lo) } else { (c_lo, c_hi) };
         return Err(GenError::Invalid(format!(
-            "{kind}: the path turns C over {c_lo:.3}..{c_hi:.3} deg, past the machine's C travel {lo:.3}..{hi:.3}; unwinding C at links is proven for Rotary Contour only, so {kind} is refused where it would need a rewind"
+            "{kind}: the path turns C over {word_lo:.3}..{word_hi:.3} deg, past the machine's C travel {mach_lo:.3}..{mach_hi:.3}; unwinding C at links is proven for Rotary Contour only, so {kind} is refused where it would need a rewind"
         )));
     }
     Ok(stamped)
 }
 
-/// The C travel the mounted machine states for its rotary named C
-/// (the same axis `machine::check`'s C letter gate reads), or None.
-fn c_travel(machine: Option<&(String, Vec<AxisLimits>)>) -> Option<(f64, f64)> {
-    machine?.1.iter().find(|a| a.rotary && a.name.eq_ignore_ascii_case("C"))?.travel
+/// The rotary named C on the mounted machine (the same axis
+/// `machine::check`'s C letter gate reads), or None.
+fn c_axis(machine: Option<&(String, Vec<AxisLimits>)>) -> Option<&AxisLimits> {
+    machine?.1.iter().find(|a| a.rotary && a.name.eq_ignore_ascii_case("C"))
 }
 
 /// True when the mounted machine's rotary named C states a rate -
@@ -309,6 +318,22 @@ mod tests {
         let m = ("Bench".to_owned(), vec![rot("A", [1.0, 0.0, 0.0])]);
         assert_eq!(rotary_letter(Some(&m), [1.0, 0.0, 0.0], "k").ok(), Some(Some('A')));
         assert_eq!(rotary_letter(Some(&m), [-1.0, 0.0, 0.0], "k").ok(), Some(Some('A')));
+    }
+
+    #[test]
+    fn minus_z_c_rotary_flips_asymmetric_travel_in_gate() {
+        use crate::cl::{Move, MoveKind};
+        use crate::geometry::Point3;
+        let q0 = Point3::new(10.0, 0.0, 0.0);
+        let q1 = Point3::new(0.0, 10.0, 0.0);
+        // Canonical azimuth at +Y is +90 -> C = -90 deg.
+        let path = crate::cl::Toolpath::new(vec![Move::new(MoveKind::Feed, q0, q1, Some(300.0)).with_axis([0.0, 1.0, 0.0])]);
+        let m_plus = ("PlusZ".to_owned(), vec![AxisLimits { name: "C".into(), rotary: true, axis: Some([0.0, 0.0, 1.0]), travel: Some((0.0, 95.0)), ..Default::default() }]);
+        let e = stamp_spindle_c(path.clone(), spindle(), (Some(&m_plus), false), 0.01, "Rotary Parallel").err().map(|e| e.to_string()).unwrap_or_default();
+        assert!(e.contains("past the machine's C travel"), "{e}");
+        let m_minus = ("MinusZ".to_owned(), vec![AxisLimits { name: "C".into(), rotary: true, axis: Some([0.0, 0.0, -1.0]), travel: Some((0.0, 95.0)), ..Default::default() }]);
+        let ok = stamp_spindle_c(path, spindle(), (Some(&m_minus), false), 0.01, "Rotary Parallel").expect("-Z flips 0..95 to -95..0");
+        assert!(ok.moves.last().and_then(|m| m.rotary).is_some_and(|c| (c + 90.0).abs() < 1e-9));
     }
 
     #[test]

@@ -25,13 +25,13 @@ use egui::{CornerRadius, Stroke, Ui, Vec2};
 use camcraft_app::operation::OpType;
 
 use super::contrast;
-use super::theme::Tokens;
+use super::theme::{Tokens, clamp};
 
 /// The section names in tab-bar order. The guard indices in
 /// `pages::params_fields` are these same numbers - one placement law,
 /// table and guards read each other.
 pub(crate) const SECTIONS: [&str; 6] = ["Geometry", "Heights", "Passes", "Lead in / Lead out", "Feeds", "Machine"];
-pub(super) const SEC_GEO: usize = 0;
+pub(crate) const SEC_GEO: usize = 0;
 pub(super) const SEC_HEIGHTS: usize = 1;
 pub(super) const SEC_PASSES: usize = 2;
 pub(super) const SEC_LEADS: usize = 3;
@@ -120,27 +120,39 @@ pub(super) fn sec_icon(i: usize) -> crate::egui_app::icons::Icon {
 }
 
 pub(super) fn tab_bar(ui: &mut Ui, kind: OpType, open: &mut usize, pal: &Tokens) -> usize {
-    const ICON_PX: f32 = 12.0;
-    const PAD_X: f32 = 6.0;
-    let radius = CornerRadius { nw: 4, ne: 4, sw: 0, se: 0 };
+    let icon_px = clamp::range(pal.op_tab_icon_px, clamp::GLYPH);
+    let pad_x = clamp::range(pal.op_tab_pad_x, clamp::SPACING);
+    let icon_gap = clamp::range(pal.op_tab_icon_gap, clamp::SPACING);
+    let tab_h = clamp::range(pal.op_tab_h, clamp::CONTROL_H);
+    let tab_gap = clamp::range(pal.op_tab_gap, clamp::SPACING);
+    let bottom_gap = clamp::range(pal.op_tab_bottom_gap, clamp::RIBBON_GAP);
+    let font_px = clamp::range(pal.font_op_tab, clamp::FONT);
+    let stroke_w = clamp::range(pal.highlight_stroke_px, clamp::STROKE);
+    let r = pal.op_tab_radius.min(clamp::RADIUS);
+    let radius = CornerRadius { nw: r, ne: r, sw: 0, se: 0 };
     let mut tab = resolve_tab(kind, *open);
     ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing.x = 1.0;
+        ui.spacing_mut().item_spacing.x = tab_gap;
         for (i, name) in SECTIONS.iter().enumerate() {
             if !has_section(kind, i) {
                 continue;
             }
             let sel = tab == i;
             let ink = if sel { contrast::on_fill(pal.accent) } else { ui.visuals().text_color() };
-            let font = egui::FontId::proportional(12.0);
+            let font = egui::FontId::proportional(font_px);
             let galley = ui.ctx().fonts_mut(|f| f.layout_no_wrap((*name).to_owned(), font.clone(), ink));
-            let w = PAD_X + ICON_PX + 3.0 + galley.size().x + PAD_X;
-            let size = Vec2::new(w, 22.0);
+            let w = pad_x + icon_px + icon_gap + galley.size().x + pad_x;
+            let size = Vec2::new(w, tab_h);
             let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
             let painter = ui.painter();
             if sel {
                 painter.rect_filled(rect, radius, pal.accent);
-                painter.rect_stroke(rect, radius, egui::Stroke::new(1.0, pal.accent_hover), egui::StrokeKind::Outside);
+                painter.rect_stroke(
+                    rect,
+                    radius,
+                    egui::Stroke::new((stroke_w * 0.5).max(0.5), pal.accent_hover),
+                    egui::StrokeKind::Outside,
+                );
             } else if resp.hovered() {
                 painter.rect_filled(rect, radius, pal.field_hover);
             }
@@ -148,8 +160,8 @@ pub(super) fn tab_bar(ui: &mut Ui, kind: OpType, open: &mut usize, pal: &Tokens)
                 && let Some(tex) = set.texture(sec_icon(i))
             {
                 let icon_rect = egui::Rect::from_center_size(
-                    egui::Pos2::new(rect.left() + PAD_X + ICON_PX * 0.5, rect.center().y),
-                    Vec2::splat(ICON_PX),
+                    egui::Pos2::new(rect.left() + pad_x + icon_px * 0.5, rect.center().y),
+                    Vec2::splat(icon_px),
                 );
                 painter.image(
                     tex.id(),
@@ -159,7 +171,7 @@ pub(super) fn tab_bar(ui: &mut Ui, kind: OpType, open: &mut usize, pal: &Tokens)
                 );
             }
             painter.galley(
-                egui::Pos2::new(rect.left() + PAD_X + ICON_PX + 3.0, rect.center().y - galley.size().y * 0.5),
+                egui::Pos2::new(rect.left() + pad_x + icon_px + icon_gap, rect.center().y - galley.size().y * 0.5),
                 galley,
                 ink,
             );
@@ -171,8 +183,8 @@ pub(super) fn tab_bar(ui: &mut Ui, kind: OpType, open: &mut usize, pal: &Tokens)
     });
     let rule = ui.available_rect_before_wrap();
     let y = rule.top();
-    ui.painter().hline(rule.x_range(), y, Stroke::new(2.0, pal.accent));
-    ui.add_space(4.0);
+    ui.painter().hline(rule.x_range(), y, Stroke::new(stroke_w, pal.accent));
+    ui.add_space(bottom_gap);
     *open = tab;
     tab
 }

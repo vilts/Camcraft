@@ -1,4 +1,4 @@
-//! Law (d), lateral rapids under the clearance plane over rest material - the shop practice of traversing only above the stock (machine-tool handbooks) on our own conservative rest model (split from `engine.rs` by M13.7; structure only).
+//! Law (d), lateral rapids under the stock top over rest material - the shop practice of traversing only above the stock (machine-tool handbooks) on our own conservative rest model (split from `engine.rs` by M13.7; structure only).
 //!
 //! Issue #106: the column is read under the tool's whole footprint -
 //! the disc of radius `r - gouge_tol` the mill law's other disc
@@ -58,7 +58,10 @@ use super::types::{Mode, VerifyContext, Warning};
 use crate::cl::{MoveKind, Toolpath};
 use crate::geo2d::Point2;
 
-/// (d) Rapids: lateral travel under the clearance plane inside stock.
+/// (d) Rapids: lateral travel inside stock - under the clearance plane
+/// or at it (issue #2121: the plane itself may be set inside the stock,
+/// so every lateral rapid under the stock top is read, whatever plane it
+/// rides).
 /// Mode::Revolve stands this law down (M5.2 D): the XY column is the
 /// mill's geometry - a turning insert is a POINT in XY and its whole
 /// form lives in the meridian plane. The pull-out from a thread's
@@ -122,9 +125,10 @@ pub(super) fn rapids_in_stock(
                 continue;
             }
             let low = m.from.z.min(m.to.z);
-            if low >= cx.clearance_z - cx.z_tol {
-                continue;
-            }
+            // Issue #2121: no clearance gate. A traverse AT the clearance
+            // plane is judged like one under it - a plane set inside the
+            // stock is no promise of air. What stands the law down is the
+            // stock top alone (`above`, below).
             // The overhang backstop (M13.7 B, [`super::hidden`]): the
             // tool disc swept through stock hidden under a ledge, which
             // no column surface shows - asked only when the column law

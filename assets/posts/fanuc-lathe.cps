@@ -213,6 +213,7 @@ var lastR = 0, lastZ = 0;  // ... and the station radius / Z it stood at
 var lastPC = 0, lastPR = 0, lastPZ = 0; // ... and the same as POSTED (mm, deg; #1398)
 var liveCRate = 0;         // the machine's stated C rate (deg/min), 0 = unstated
 var liveCTravel = false;   // the machine states a C travel (#906)
+var liveCSense = 1;        // +1 right-hand about +Z, -1 clockwise (-Z axis)
 var C_TOL = 0.005;         // mm a C-turned tip may stand off the station (lattice + milli-degree words)
 var inch = false;          // the document's unit is inch (onOpen, #902/#977: postOptions.Units)
 
@@ -573,7 +574,7 @@ function endPreamble() {
       block([liveCodes.cAxisOff]);
       block(["G99"]);
     }
-    liveAsk = false; liveOk = false; liveCodes = null; lastC = null;
+    liveAsk = false; liveOk = false; liveCodes = null; lastC = null; liveCSense = 1;
     spindleWait = false;
   } else {
     block(["M05"]);
@@ -603,9 +604,28 @@ function liveStart() {
   var hasC = false;
   liveCRate = 0;
   liveCTravel = false;
+  liveCSense = 1;
   for (var i = 0; i < rs.length; i++) {
     if (String(rs[i].name || "").toUpperCase() !== "C") continue;
     hasC = true;
+    var d = rs[i].direction;
+    if (d !== null && d !== undefined) {
+      if (!d || d.length !== 3 || !has(d[0]) || !has(d[1]) || !has(d[2])) {
+        refuse(coolantWho() + "C-axis live-tool work, but the C rotary states a non-vector direction");
+        return;
+      }
+      // Scale before squaring: finite directions can still overflow.
+      var scale = Math.max(Math.abs(d[0]), Math.abs(d[1]), Math.abs(d[2]));
+      var dx = scale > 0 ? d[0] / scale : 0;
+      var dy = scale > 0 ? d[1] / scale : 0;
+      var dz = scale > 0 ? d[2] / scale : 0;
+      var n2 = dx * dx + dy * dy + dz * dz;
+      if (!(n2 > 0) || dz * dz < 0.998 * n2) {
+        refuse(coolantWho() + "C-axis live-tool work, but the C rotary states direction [" + d[0].toFixed(3) + ", " + d[1].toFixed(3) + ", " + d[2].toFixed(3) + "], not along Z");
+        return;
+      }
+      liveCSense = d[2] < 0 ? -1 : 1;
+    }
     // A G01 is held to the C's stated feed rate; failing that, to its
     // stated rapid. Neither stated: the C rate is unbounded by data.
     var sp = rs[i].speeds || {};
@@ -658,17 +678,18 @@ function liveMove(p, rapid) {
     return;
   }
   var r = Math.max(xr, 0);
+  var outC = liveCSense * Number(p.C);
   // #1398: the words this move posts (X a diameter, Z origin-relative,
   // C at 0.001), read back: the caps judge what the control reads.
-  var pr = posted(fu(2 * r)) / 2, pz = posted(fu(p.Z - orgZ)), pc = Number(fc(p.C));
+  var pr = posted(fu(2 * r)) / 2, pz = posted(fu(p.Z - orgZ)), pc = Number(fc(outC));
   if (lastC === null) {
     if (!rapid) { refuse("a C-axis section that opens with a cut - the first move must position C"); return; }
-    block(["G00", "C" + fc(p.C)]);
+    block(["G00", "C" + fc(outC)]);
     block(["G00", xWord(r), zWord(p.Z)]);
   } else {
     // The control's composite rate counts C degrees as mm; the planned
     // rate is along the part-frame chord. Scale F by their ratio.
-    var dc = Number(p.C) - lastC, dr = r - lastR, dz = p.Z - lastZ;
+    var dc = outC - lastC, dr = r - lastR, dz = p.Z - lastZ;
     var lcmd = Math.sqrt(dr * dr + dz * dz + dc * dc);
     var sx = p.X - p.StartX, sy = p.Y - p.StartY, sz = p.Z - p.StartZ;
     var ltrue = Math.sqrt(sx * sx + sy * sy + sz * sz);
@@ -705,9 +726,9 @@ function liveMove(p, rapid) {
       refuse(fc_ >= capF ? "a C-axis feed whose machine-rate cap leaves under 0.1 mm/min - the F word would be F0; state a faster C rate or maximum feed" : "a C-axis feed under 0.1 mm/min - the F word would be F0");
       return;
     }
-    block(["G01", xWord(r), zWord(p.Z), "C" + fc(p.C), "F" + fw]);
+    block(["G01", xWord(r), zWord(p.Z), "C" + fc(outC), "F" + fw]);
   }
-  lastC = Number(p.C); lastR = r; lastZ = p.Z;
+  lastC = outC; lastR = r; lastZ = p.Z;
   lastPC = pc; lastPR = pr; lastPZ = pz;
 }
 

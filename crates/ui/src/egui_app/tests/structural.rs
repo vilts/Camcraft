@@ -14,6 +14,9 @@ use egui_kittest::kittest::NodeT;
 
 use super::*;
 
+#[path = "tool_properties.rs"]
+mod tool_properties;
+
 /// Every painted text of the last frame with its top-left, in paint order.
 pub(super) fn painted(h: &Harness<'static, ShellUi>) -> Vec<(String, egui::Pos2)> {
     fn walk(shape: &egui::Shape, out: &mut Vec<(String, egui::Pos2)>) {
@@ -191,12 +194,13 @@ fn tool_editor_structure() {
     harness.state_mut().state.ui_target = UiTarget::Tool("EM-0600-4FL".to_owned());
     harness.run();
     harness.run();
-    harness.get_by_label("Edit").click();
+    crate::actions::open_tool_editor(&mut harness.state_mut().state, "EM-0600-4FL");
     harness.run_steps(3);
+    assert_eq!(harness.query_all_by_label("Diameter").count(), 1, "the explicit window owns the only editable tool surface");
     let win = harness
         .query_all_by_role(egui::accesskit::Role::Window)
         .find(|n| n.accesskit_node().label().as_deref() == Some("Tool: EM-0600-4FL"))
-        .expect("Edit must open the editor window titled by the tool");
+        .expect("the explicit editor window is titled by the tool");
     let wr = win.rect();
     assert!(
         wr.min.x > 0.0 && wr.max.x < 1280.0 && wr.min.y > 0.0 && wr.max.y <= 720.0,

@@ -19,6 +19,7 @@
 
 pub use crate::cutting::{ToolMaterial, WorkMaterial};
 pub use crate::turning_data::TurningData;
+pub use crate::thread_hand::ThreadHand;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolKind {
@@ -89,6 +90,8 @@ pub enum ToolKind {
     /// refused by name, [`Tool::torch_refusal`]). Only the plasma
     /// operations mount it.
     Torch,
+    /// Abrasive waterjet nozzle: diameter is the stream kerf, rpm is zero.
+    Waterjet,
     /// Sinker EDM electrode (#541): a rectangular solid burned straight
     /// down Z. `diameter` is its X size and `width` its Y size (both
     /// across the burning face), `flute_len` its length below the
@@ -128,6 +131,7 @@ impl core::fmt::Display for ToolKind {
             ToolKind::Taper => "chamfer mill",
             ToolKind::Probe => "touch probe",
             ToolKind::Torch => "plasma torch",
+            ToolKind::Waterjet => "waterjet nozzle",
             ToolKind::Electrode => "sinker electrode",
             ToolKind::ThreadMill => "thread mill",
             ToolKind::ThreadMillSingle => "single-form thread mill",
@@ -180,6 +184,8 @@ pub struct Tool {
     /// `pitch` it is the tool's pitch range. Inert (0.0) on every other
     /// kind.
     pub pitch_min: f64,
+    /// Tap thread hand; older tools default to right-hand.
+    pub thread_hand: crate::thread_hand::ThreadHand,
     /// Insert nose radius in mm (the ISO corner circle ground into the
     /// tip): 0.8 is common roughing stock. Inert unless kind is
     /// Turning, where it is the circle the facing verdict sweeps, or
@@ -297,7 +303,7 @@ impl Tool {
             // A torch turns no spindle (#670): its rpm is 0 by law, and
             // every spinning kind states a positive one.
             // A sinker electrode turns none either (#541).
-            && (if matches!(self.kind, ToolKind::Torch | ToolKind::Electrode) {
+            && (if matches!(self.kind, ToolKind::Torch | ToolKind::Electrode | ToolKind::Waterjet) {
                 self.rpm == 0.0
             } else {
                 self.rpm > 0.0
@@ -306,7 +312,7 @@ impl Tool {
             && self.flutes.is_none_or(|z| (1..=32).contains(&z))
             && self.orientation.is_none_or(crate::orientation::is_valid)
             && self.catalog.refusal().is_none()
-            && crate::cutting_rows::refusal(&self.cutting, self.kind == ToolKind::Torch).is_none()
+            && crate::cutting_rows::refusal_for_kind(&self.cutting, self.kind).is_none()
             // #891: stated turning data is sane, and the constant rpm
             // the tool states never runs over its own max-rpm clamp.
             && self.turning.is_none_or(|t| t.is_sane() && t.max_rpm.is_none_or(|m| self.rpm <= m))
@@ -372,6 +378,7 @@ impl Tool {
                 // A torch's kerf is a cut width, never a corner: no
                 // corner radius rides it (#670).
                 ToolKind::Torch => self.corner_r == 0.0,
+                ToolKind::Waterjet => crate::waterjet::refusal(self).is_none(),
                 // A sinker electrode (#541): a rectangular face with a
                 // stated Y size, sharp-cornered (no corner rides it).
                 ToolKind::Electrode => crate::electrode::is_sane(self),
@@ -389,6 +396,9 @@ impl Tool {
     pub fn torch_refusal(&self) -> Option<String> {
         // #541: the sinker electrode's door rides the same seam - the
         // AddTool / ChangeTool / library refusals already call this.
+        if self.kind == ToolKind::Waterjet {
+            return crate::waterjet::refusal(self);
+        }
         if self.kind == ToolKind::Electrode {
             return crate::electrode::refusal(self);
         }
@@ -496,7 +506,7 @@ impl Tool {
             // not off this cylinder.
             ToolKind::EndMill | ToolKind::Tap | ToolKind::Bore | ToolKind::Turning
             | ToolKind::Groove | ToolKind::Thread | ToolKind::Form | ToolKind::Torch
-            | ToolKind::Electrode
+            | ToolKind::Electrode | ToolKind::Waterjet
             // A thread mill draws as the cylinder its tooth crests
             // sweep (#894) - the envelope the reach laws read.
             | ToolKind::ThreadMill | ToolKind::ThreadMillSingle => add_pt(&mut p, 0.0, r),
@@ -574,6 +584,7 @@ pub fn probe_tool(ball_d: f64, stylus_len: f64) -> Tool {
         tip_angle: 0.0,
         pitch: 0.0,
         pitch_min: 0.0,
+        thread_hand: Default::default(),
         nose_radius: 0.0,
         width: 0.0,
         flute_len: stylus_len,
@@ -608,6 +619,7 @@ pub fn torch_tool(kerf: f64) -> Tool {
         tip_angle: 0.0,
         pitch: 0.0,
         pitch_min: 0.0,
+        thread_hand: Default::default(),
         nose_radius: 0.0,
         width: 0.0,
         flute_len: 10.0,

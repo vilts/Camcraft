@@ -369,6 +369,28 @@ fn a_missing_sinker_code_refuses_the_post_by_name() {
     assert!(err.contains("states no edm.codes.condition"), "{err}");
 }
 
+/// #1135: the empty sinker template ships in the library with the sinker
+/// post as its post, and posting a burn on it (one condition added, no
+/// codes) refuses by name for the first missing code.
+#[test]
+fn the_shipped_sinker_template_lists_and_refuses_its_unfilled_codes_by_name() {
+    use camcraft_app::posting::{self, MACHINES};
+    let (name, text) = MACHINES.iter().find(|(n, _)| n.starts_with("Sinker EDM")).expect("the library ships the sinker template");
+    assert!(text.lines().eq(SINKER.lines()), "the fixture copy drifted from the shipped template");
+    let entry = camcraft_app::machine::library::builtins().into_iter().find(|e| e.name == *name).expect("listed");
+    assert!(entry.is_valid(), "{:?}", entry.refusals);
+    assert_eq!(entry.kind, Some(camcraft_app::machine::Kind::SinkerEdm));
+    assert_eq!(entry.posts, posting::SINKER_POSTS, "the sinker post is its post");
+    let err = post_burn(&sinker_machine_of(text), SINKER_POST).expect_err("an unfilled template posts nothing");
+    assert!(err.contains("states no edm.codes."), "{err}");
+}
+
+fn sinker_machine_of(text: &str) -> String {
+    let mut v: serde_json::Value = serde_json::from_str(text).expect("template json");
+    v["edm"]["conditions"] = serde_json::json!([{ "id": "S1", "name": "synthetic rough", "gap": GAP, "undersize": 0.1, "role": "rough" }]);
+    v.to_string()
+}
+
 #[test]
 fn a_mill_post_on_a_sinker_machine_is_still_refused() {
     use camcraft_app::machine::Kind;

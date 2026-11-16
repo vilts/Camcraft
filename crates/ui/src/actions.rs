@@ -323,6 +323,17 @@ pub(crate) fn toggle_projection(state: &mut State) {
 /// frame. Surfaces that also change what the world highlights (tree nodes,
 /// viewport picks) push a `Select` alongside; a bare retarget never does.
 pub(crate) fn target(state: &mut State, t: UiTarget) {
+    use crate::state::{LayoutRequest, Panel};
+    if let UiTarget::Tool(name) = &t {
+        if name.is_empty() {
+            state.layout_request = Some(LayoutRequest::ToolLibrary);
+            return;
+        }
+        if state.tool_editor.is_some() {
+            state.close_tool_editor_window();
+        }
+        state.layout_request = Some(LayoutRequest::Show(Panel::Properties));
+    }
     state.ui_target = t;
 }
 

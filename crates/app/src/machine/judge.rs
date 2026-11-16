@@ -175,15 +175,22 @@ fn x_rotary_problem(machine: &Machine, ax: &AxisLimits, i: usize, letters: [f64;
 }
 
 /// The C letter gate (issue #33): a move stating spindle C angle `c`
-/// needs a rotary named C on the machine, and a stated C travel must
-/// hold the unwrapped angle. None when it is fine.
+/// needs a rotary named C on the machine with a Z-aligned axis vector,
+/// and a stated C travel must hold the machine-sense C word (`+c` for
+/// `+Z` / unstated, `-c` for `-Z`). None when it is fine.
 pub(super) fn c_letter_problem(machine: &Machine, i: usize, c: f64) -> Option<String> {
-    let Some(ax) = machine.axes.iter().find(|x| x.rotary && x.name.eq_ignore_ascii_case("C")) else {
+    let Some(ax) = machine.c_axis() else {
         return Some(format!("move {i} turns the spindle as C {c:.3} deg; {} states no C axis", machine.model));
     };
+    let sign = match ax.c_z_sense() {
+        Ok(s) => s,
+        Err(why) => return Some(format!("move {i} turns the spindle as C {c:.3} deg; {}'s {why}", machine.model)),
+    };
+    let w = sign * c;
+    let word = if w.abs() < 1e-12 { 0.0 } else { w };
     let (lo, hi) = ax.travel?;
-    (c < lo - 1e-9 || c > hi + 1e-9)
-        .then(|| format!("move {i} commands C {c:.3} deg, the travel is {lo:.3}..{hi:.3}"))
+    (word < lo - 1e-9 || word > hi + 1e-9)
+        .then(|| format!("move {i} commands C {word:.3} deg, the travel is {lo:.3}..{hi:.3}"))
 }
 
 /// The rigid-tap gate (#786): a path that carries a tap cycle, on a

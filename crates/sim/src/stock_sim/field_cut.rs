@@ -209,7 +209,7 @@ impl SdfField {
 }
 
 /// One straight chord's swept solid for `kind`.
-fn chord_sweep(kind: &ToolKind, ax: [f64; 3], a: Point3, b: Point3) -> Result<Sweep, StockError> {
+pub(super) fn chord_sweep(kind: &ToolKind, ax: [f64; 3], a: Point3, b: Point3) -> Result<Sweep, StockError> {
     Ok(match kind {
         ToolKind::Ball(r) => {
             let off = scale(ax, *r);
@@ -240,7 +240,7 @@ fn window_cells(w: [(i32, i32); 3]) -> u64 {
 /// The move's path as straight chords: one segment for a linear move,
 /// the sagitta chords with Z interpolated uniformly for an arc the
 /// exact sweep does not take (a tilted pose, a lathe tool).
-fn chords(m: &Move, chord_tol: f64) -> Vec<(Point3, Point3)> {
+pub(super) fn chords(m: &Move, chord_tol: f64) -> Vec<(Point3, Point3)> {
     match m.arc {
         None => vec![(m.from, m.to)],
         // XZ / YZ arcs (M11.2 A): their own 3-D chords.

@@ -13,6 +13,7 @@ pub mod bore;
 pub mod cl_read;
 pub mod engine_consumers;
 pub mod engine_fixtures;
+pub mod g76;
 pub mod legacy_program;
 pub mod rotary_bar;
 pub mod solid_part;

@@ -427,6 +427,10 @@ function onCycle() {
   startPreamble();
   owedDwell();
   var p = properties;
+  if (p.CycleType === "BORE") {
+    msg(coolantWho() + "bore (G86) requires a spindle stop before rapid retract - expanded boring is not supported by this post; refused, not posted");
+    return;
+  }
   if (p.CycleType === "TAP") {
     msg("tapping is not possible on the Carvera (no canned cycles, and the spindle cannot reverse) - refused, not posted as plain moves");
     return;

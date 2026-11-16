@@ -11,7 +11,7 @@
 
 use super::height::Height;
 
-pub use crate::wire_edm::WireSide;
+pub use crate::wire_edm::{WireSide, WireWidening};
 
 /// The run-out clearance (mm) a new wire cut is seeded with (#1109): an
 /// open run is threaded and run out this far clear of the stock's edge,
@@ -116,6 +116,10 @@ pub struct WireSyncPair {
 pub const SYNC_PAIRS_MAX: usize = 4096;
 /// The 4-axis tolerance a new cut starts with, mm.
 pub const FOUR_AXIS_TOLERANCE: f64 = 0.05;
+/// The largest verify tolerance an operation stores, mm (#1170): far
+/// past any chord tolerance a model for wire work is tessellated at.
+/// The wire verify also refuses one that is not below the kerf offset.
+pub const VERIFY_TOLERANCE_MAX: f64 = 0.25;
 
 /// The 4-axis cut's stored parameters (#537).
 #[derive(Clone, Debug, PartialEq)]
@@ -127,11 +131,24 @@ pub struct WireFourAxis {
     /// offset to keep its kerf out of a twisted ruled surface
     /// (`motion::wire_edm::ruled`).
     pub tolerance: f64,
+    /// Where that standing-off is laid (#1170): per ruling, or uniform.
+    pub widening: WireWidening,
+    /// The stated verify tolerance, mm (#1170): how far the kerf may
+    /// enter the model's facets and still pass the wire verify's kerf
+    /// law - the chord tolerance the lofted model was tessellated at.
+    /// 0 judges the facets as they stand.
+    pub verify_tolerance: f64,
 }
 
 impl Default for WireFourAxis {
     fn default() -> Self {
-        WireFourAxis { pairing: WirePairingRule::ArcLength, sync: Vec::new(), tolerance: FOUR_AXIS_TOLERANCE }
+        WireFourAxis {
+            pairing: WirePairingRule::ArcLength,
+            sync: Vec::new(),
+            tolerance: FOUR_AXIS_TOLERANCE,
+            widening: WireWidening::PerRuling,
+            verify_tolerance: 0.0,
+        }
     }
 }
 
@@ -140,6 +157,8 @@ impl WireFourAxis {
         let pt = |q: Option<[f64; 2]>| q.is_none_or(|s| s.iter().all(|v| v.is_finite() && v.abs() < 1e9));
         self.tolerance.is_finite()
             && (0.0..=10.0).contains(&self.tolerance)
+            && self.verify_tolerance.is_finite()
+            && (0.0..=VERIFY_TOLERANCE_MAX).contains(&self.verify_tolerance)
             && self.sync.len() <= SYNC_PAIRS_MAX
             && self.sync.iter().all(|s| pt(s.upper) && pt(s.lower))
     }

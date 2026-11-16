@@ -85,13 +85,14 @@ unstated capability into existence.
   key). Like plasma, an EDM head states no `spindle`, `live_tool` or
   coolant list (`post::machine::edm_refusals`, read by the reader and
   the Machines pane's validator alike); a rotary is allowed. No vendor
-  values are shipped. No EDM machine is in the built-in library yet:
-  every library machine must have a post (`machine_library`). The
-  sinker's first post shipped with #542 (`sinker-iso.cps`), the wire's
-  with #533 (`wire-iso.cps`); the empty sinker template joining the
-  library is #1135. Until then they are test fixtures
-  (`crates/app/tests/edm/`, with `sinker-iso-dialect.mch` the synthetic
-  codes the sinker post's goldens are posted against).
+  values are shipped. The empty sinker template (`sinker-edm.mch`, #1135)
+  is in the built-in library with the sinker post (`sinker-iso.cps`,
+  #542): posting on it refuses by name for each missing `edm.codes` role
+  until the user fills them. No wire machine is in the library yet (the
+  wire's first post shipped with #533, `wire-iso.cps`); the wire
+  template stays a test fixture (`crates/app/tests/edm/`, with
+  `sinker-iso-dialect.mch` the synthetic codes the sinker post's goldens
+  are posted against).
 
 - `edm.conditions[]` (#531): the generator conditions the user states
   from their machine's manual. None ship. CamCraft reads only the
@@ -214,7 +215,8 @@ unstated capability into existence.
     `rigid_tapping` (#786: `true` | `false`, anything else refuses the
     file by name; absent is "not limited" - a stated `false` makes the
     program gate refuse every tap cycle by name, whatever the post; the
-    Tormach mills and routers state it); and
+    Tormach mills, routers and lathes state it - the lathes from their
+    G33.1 rigid-tap pages, #795); and
     `tool_station { max_tool_length, max_tool_diameter, coolants }`.
     Separately from first-match, the checker also COUNTS (M5.3 C):
     `Machine.spindles` is how many head parts anywhere in the tree

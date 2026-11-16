@@ -188,6 +188,17 @@ pub trait Command {
     fn invert(&self, world: &World);
 }
 
+// Globally unique identities survive Undo/Redo but never a replacement edit or document.
+fn next_history_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
+struct HistoryEntry {
+    id: u64,
+    command: Box<dyn Command>,
+}
+
 /// Linear undo/redo over executed commands. Executing a fresh command clears
 /// the redo stack (standard history semantics).
 ///
@@ -198,14 +209,20 @@ pub trait Command {
 /// command executed while the saved point sits on the redo stack discards
 /// that state for good, so the saved point becomes unreachable (`None`).
 pub struct History {
-    done: Vec<Box<dyn Command>>,
-    redo: Vec<Box<dyn Command>>,
+    done: Vec<HistoryEntry>,
+    redo: Vec<HistoryEntry>,
+    identity: u64,
     saved: Option<usize>,
 }
 
 impl Default for History {
     fn default() -> Self {
-        Self { done: Vec::new(), redo: Vec::new(), saved: Some(0) }
+        Self {
+            done: Vec::new(),
+            redo: Vec::new(),
+            saved: Some(0),
+            identity: next_history_id(),
+        }
     }
 }
 
@@ -216,7 +233,10 @@ impl History {
             self.saved = None;
         }
         command.apply(world);
-        self.done.push(Box::new(command));
+        self.done.push(HistoryEntry {
+            id: next_history_id(),
+            command: Box::new(command),
+        });
         self.redo.clear();
     }
 
@@ -224,7 +244,7 @@ impl History {
         match self.done.pop() {
             Some(command) => {
                 tracing::debug!("undo");
-                command.invert(world);
+                command.command.invert(world);
                 self.redo.push(command);
                 true
             }
@@ -235,7 +255,7 @@ impl History {
     pub fn redo(&mut self, world: &World) -> bool {
         match self.redo.pop() {
             Some(command) => {
-                command.apply(world);
+                command.command.apply(world);
                 self.done.push(command);
                 true
             }
@@ -252,6 +272,7 @@ impl History {
     /// Drop all history; used when a document replaces the current one.
     /// The replacing document (blank or loaded) starts clean.
     pub fn clear(&mut self) {
+        self.identity = next_history_id();
         self.done.clear();
         self.redo.clear();
         self.saved = Some(0);
@@ -275,6 +296,24 @@ impl History {
 
     pub fn can_redo(&self) -> bool {
         !self.redo.is_empty()
+    }
+
+    /// Number of committed commands currently on the undo stack.
+    #[must_use]
+    pub fn done_len(&self) -> usize {
+        self.done.len()
+    }
+
+    /// Identity of the document timeline; clearing history starts a new timeline.
+    #[must_use]
+    pub fn identity(&self) -> u64 {
+        self.identity
+    }
+
+    /// Exact committed entries, preserved by Undo/Redo and unique across replacement edits.
+    #[must_use]
+    pub fn done_entry_ids(&self) -> Vec<u64> {
+        self.done.iter().map(|entry| entry.id).collect()
     }
 
     pub fn is_empty(&self) -> bool {

@@ -38,9 +38,11 @@ pub mod lathe_insert_zone;
 pub mod orientation;
 // #894: the thread mills - form constants, sanity and the pitch door.
 pub mod thread_mill;
+pub mod thread_hand;
 pub mod catalog_fields;
 // #890: a tool's cutting data per workpiece material.
 pub mod cutting_rows;
+pub mod waterjet;
 pub mod tools;
 // #891: turning surface speed, feed per rev and the max-rpm clamp.
 pub mod turning_data;

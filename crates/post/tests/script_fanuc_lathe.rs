@@ -140,3 +140,68 @@ fn no_stop_asked_after_a_live_section_posts_no_stop() {
     // The program-end home stays the one trip home.
     assert_eq!(ls.iter().filter(|l| l.starts_with("G28")).count(), 1, "{prog}");
 }
+
+fn c_sense_path() -> Toolpath {
+    let mut b = PathBuilder::new(p(20.0, 0.0, 5.0));
+    b.push(MoveKind::Rapid, p(10.0, 0.0, 5.0), None);
+    b.push(MoveKind::Feed, p(0.0, 10.0, 5.0), Some(200.0));
+    b.push(MoveKind::Rapid, p(0.0, 20.0, 5.0), None);
+    let mut t = b.finish();
+    // Canonical right-hand +Z spindle angles: +X tip at C0, +Y tip at C-90.
+    t.moves[0].rotary = Some(0.0);
+    t.moves[1].rotary = Some(-90.0);
+    t.moves[2].rotary = Some(-90.0);
+    t
+}
+
+fn run_with_c_axis(axis: [f64; 3]) -> engine::PostOutput {
+    let text = std::fs::read_to_string(recorded::here().join("machines/millturn-live.mch")).expect("read mch");
+    let mut parsed = camcraft_post::machine::parse_mch(&text).expect("parse mch");
+    for a in &mut parsed.axes {
+        if a.rotary && a.name.eq_ignore_ascii_case("C") {
+            a.axis = Some(axis);
+            a.travel = Some((0.0, 360.0));
+        }
+    }
+    let mch = post::machine::mirror(&parsed);
+    let mut d = ctx("Live C sense", 2, "EM-6", 3000.0);
+    d.tool_diameter = 6.0;
+    let stream = cnc::serialize(&post::dump(&c_sense_path(), &d));
+    let cps = std::fs::read_to_string(recorded::repo().join("assets/posts/fanuc-lathe.cps")).expect("read script");
+    engine::run(&cps, &mch, &stream).expect("post runs")
+}
+
+#[test]
+fn a_minus_z_c_axis_posts_negated_c() {
+    let out = run_with_c_axis([0.0, 0.0, -1.0]);
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    assert!(out.program.contains("G01 X20. Z5. C90."), "negated C90 expected:\n{}", out.program);
+    assert!(!out.program.contains("C-90"), "canonical negative C must not post:\n{}", out.program);
+}
+
+#[test]
+fn a_non_z_c_axis_refuses_by_name() {
+    let out = run_with_c_axis([1.0, 0.0, 0.0]);
+    assert!(
+        out.warnings.iter().any(|w| w.contains("C rotary") && w.contains("Z")),
+        "expected named refusal for non-Z C axis: {:?}",
+        out.warnings
+    );
+}
+
+#[test]
+fn an_overflowing_non_z_c_axis_refuses_without_live_motion() {
+    let out = run_with_c_axis([1e200, 0.0, 1e200]);
+    assert!(
+        out.warnings
+            .iter()
+            .any(|w| w.contains("C rotary") && w.contains("not along Z")),
+        "expected named refusal for tilted C axis: {:?}",
+        out.warnings
+    );
+    assert!(
+        !out.program.lines().any(|line| line.contains("G01")),
+        "{}",
+        out.program
+    );
+}

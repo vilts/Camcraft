@@ -50,8 +50,7 @@ fn catalog_gate(name: &str, tool: &mut Tool) -> Result<(), CommandError> {
 /// (non-finite or non-positive rpm / feed, a material twice) by the
 /// tool's name, before anything enters the history.
 fn cutting_gate(name: &str, tool: &Tool) -> Result<(), CommandError> {
-    let torch = tool.kind == crate::tools::ToolKind::Torch;
-    match camcraft_tools::cutting_rows::refusal(&tool.cutting, torch) {
+    match camcraft_tools::cutting_rows::refusal_for_kind(&tool.cutting, tool.kind) {
         Some(why) => Err(CommandError::Invalid(format!("tool '{name}': {why}"))),
         None => Ok(()),
     }
@@ -125,7 +124,7 @@ impl AddTool {
             HolderPick::Bare => {}
             HolderPick::Named(entry) => {
                 let body = super::tool_body::library_body(&cmd.tool, name, &entry, None, None)?;
-                let canonical = camcraft_tools::holder_library::find(&entry).map(|e| e.name()).unwrap_or(entry);
+                let canonical = camcraft_tools::holder_library::resolve(&entry, cmd.tool.shank_d).map(|e| e.name()).unwrap_or(entry);
                 cmd.holder = Some((canonical, body));
             }
             HolderPick::MachineDefault => {

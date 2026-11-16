@@ -4,7 +4,7 @@
 
 use camcraft_motion::geo2d::{Loop, Point2};
 use camcraft_motion::wire_edm::{
-    wire_contour_ruled, WirePairing, WireParams, WireProfile, WireRuled, WireSide, WireSync,
+    wire_contour_ruled, WirePairing, WireParams, WireProfile, WireRuled, WireSide, WireSync, WireWidening,
 };
 
 fn fan_fixture() -> (Loop, Loop, Vec<WireSync>, WireParams) {
@@ -56,6 +56,7 @@ fn square_corners_fan_over_stated_round_arcs() {
         top_z: 100.0,
         pairing: WirePairing::SyncPoints(sync),
         tolerance: 0.5,
+        widening: WireWidening::PerRuling,
         max_deg: Some(80.0),
         machine: "synthetic".into(),
     };
@@ -107,6 +108,7 @@ fn upper_square_corners_can_be_fan_apices() {
         top_z: 100.0,
         pairing: WirePairing::SyncPoints(sync),
         tolerance: 0.5,
+        widening: WireWidening::PerRuling,
         max_deg: Some(80.0),
         machine: "synthetic".into(),
     };
@@ -147,6 +149,7 @@ fn an_identical_ruling_stated_twice_is_refused() {
         top_z: 100.0,
         pairing: WirePairing::SyncPoints(sync),
         tolerance: 0.5,
+        widening: WireWidening::PerRuling,
         max_deg: Some(80.0),
         machine: "synthetic".into(),
     };
@@ -180,6 +183,7 @@ fn crossing_fan_spans_are_refused() {
         top_z: 100.0,
         pairing: WirePairing::SyncPoints(sync),
         tolerance: 0.5,
+        widening: WireWidening::PerRuling,
         max_deg: Some(80.0),
         machine: "synthetic".into(),
     };
@@ -212,6 +216,7 @@ fn ambiguous_whole_ring_fan(hold_upper: bool) -> String {
         top_z: 100.0,
         pairing: WirePairing::SyncPoints(sync),
         tolerance: 0.5,
+        widening: WireWidening::PerRuling,
         max_deg: Some(80.0),
         machine: "synthetic".into(),
     };
@@ -268,6 +273,7 @@ fn an_upper_apex_fan_can_wrap_the_lower_ring_seam() {
         top_z: 100.0,
         pairing: WirePairing::SyncPoints(sync),
         tolerance: 0.5,
+        widening: WireWidening::PerRuling,
         max_deg: Some(80.0),
         machine: "synthetic".into(),
     };

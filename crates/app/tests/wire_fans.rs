@@ -105,6 +105,7 @@ fn op(pairing: WirePairingRule, sync: Vec<WireSyncPair>) -> WireContourOp {
             pairing,
             sync,
             tolerance: 0.5,
+            ..WireFourAxis::default()
         }),
     }
 }

@@ -9,6 +9,7 @@
 
 use super::*;
 use crate::state::SetupPage;
+use egui_kittest::kittest::NodeT;
 
 // #771: the orientation section's dropdowns (Axes expanded by default)
 // stand in for the old separate alignment / plane rows.
@@ -18,9 +19,11 @@ fn cube_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/cube.stl")
 }
 
-/// Whether any painted label contains `text` (the page may repeat one).
+/// Whether any painted label on a page contains `text` (the page may repeat one;
+/// the browser tree always shows its own `Browser: ...` rows, #1989).
 fn shows(h: &Harness<'static, ShellUi>, text: &str) -> bool {
-    h.query_all_by_label_contains(text).next().is_some()
+    h.query_all_by_label_contains(text)
+        .any(|n| n.accesskit_node().label().is_none_or(|l| !l.starts_with("Browser: ")))
 }
 
 fn open(h: &mut Harness<'static, ShellUi>, t: UiTarget) {

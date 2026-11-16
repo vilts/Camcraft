@@ -20,7 +20,8 @@ fn no_tool_routes_to_the_tool_library() {
     let face = Cmd::Create(kind(camcraft_app::operation::OpType::Face));
     assert_eq!(gate_route(face, &state), Some(GateRoute::Tools));
     follow_gate(face, &mut state);
-    assert_eq!(state.ui_target, UiTarget::Tool(String::new()));
+    assert_eq!(state.ui_target, UiTarget::None);
+    assert_eq!(state.layout_request, Some(crate::state::LayoutRequest::ToolLibrary));
     assert!(state.status.contains("no tool in the document") && state.status.ends_with("opened the tool library"), "{}", state.status);
 }
 

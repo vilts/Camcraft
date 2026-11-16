@@ -210,13 +210,9 @@ pub(super) fn tree_menu(ui: &mut Ui, state: &mut State, pal: &Tokens, rect: Rect
                 if is_current {
                     p.rect_filled(r, 0.0, pal.selection_bg);
                 }
-                let resp = item.map(|_| {
-                    ui.interact(r, ui.id().with(("tree-menu-row", k)), Sense::click())
-                });
-                if let Some(resp) = &resp
-                    && resp.hovered()
-                    && !is_current
-                {
+                let sense = if item.is_some() { Sense::click() } else { Sense::hover() };
+                let resp = ui.interact(r, ui.id().with(("tree-menu-row", k)), sense);
+                if item.is_some() && resp.hovered() && !is_current {
                     p.rect_filled(r, 0.0, pal.field_hover);
                 }
                 let armed = name.is_some_and(|name| state.retype_confirm.as_ref()
@@ -229,6 +225,12 @@ pub(super) fn tree_menu(ui: &mut Ui, state: &mut State, pal: &Tokens, rect: Rect
                 } else {
                     (*label).to_owned()
                 };
+                let (kind, live) = if item.is_some() {
+                    (egui::WidgetType::Button, *runnable && !is_current)
+                } else {
+                    (egui::WidgetType::Label, true)
+                };
+                resp.widget_info(|| egui::WidgetInfo::labeled(kind, live, &text));
                 p.text(
                     r.left_center() + Vec2::new(8.0, 0.0),
                     egui::Align2::LEFT_CENTER,
@@ -240,7 +242,7 @@ pub(super) fn tree_menu(ui: &mut Ui, state: &mut State, pal: &Tokens, rect: Rect
                         Some(_) => pal.text,
                     },
                 );
-                if let Some(resp) = resp
+                if item.is_some()
                     && resp.clicked()
                     && (*runnable || *item != Some(MENU_PASTE))
                 {

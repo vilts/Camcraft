@@ -7,6 +7,7 @@
 use super::*;
 use crate::state::ErrorScope;
 use camcraft_app::spun::SpunPoint;
+use egui_kittest::kittest::NodeT;
 
 const TOOL: &str = "EM-0600-4FL";
 
@@ -135,4 +136,58 @@ fn a_cutter_off_the_numbers_is_refused_by_name_live_and_at_apply() {
     assert!(drawn(&harness.state().state).is_none(), "nothing lands");
     let err = harness.state().state.error_for(ErrorScope::Tool).map(str::to_owned).unwrap_or_default();
     assert!(err.starts_with("cutter profile not set: ") && err.contains("Ø 7.000"), "{err}");
+}
+
+// #2003: pointer repaints must not feed the previous window width back into layout.
+fn assert_editor_width_stays_put(subject: &str, title: &str, unit: Unit, feed: Option<f64>) {
+    let _guard = snapshot_guard();
+    let mut harness = shell_harness();
+    harness.state_mut().state.pending.push_back(CommandKind::SetUnits(unit));
+    harness.state_mut().state.drain_actions();
+    crate::actions::open_tool_editor(&mut harness.state_mut().state, subject);
+    if let Some(feed) = feed {
+        harness.state_mut().state.tool_ui.feed = feed;
+    }
+    // The first pass measures an invisible egui window; the next paints it.
+    harness.run_steps(2);
+    let width = |h: &Harness<'static, ShellUi>| {
+        h.query_all_by_role(egui::accesskit::Role::Window)
+            .find(|n| n.accesskit_node().label().as_deref() == Some(title))
+            .expect("tool editor is visible")
+            .rect()
+            .width()
+    };
+    let first = width(&harness);
+    for frame in 0..100 {
+        harness.input_mut().events.push(Event::PointerMoved(egui::pos2(
+            20.0 + frame as f32,
+            20.0,
+        )));
+        harness.run_steps(1);
+    }
+    let last = width(&harness);
+    assert!(
+        (last - first).abs() <= 1.0,
+        "tool editor width changed after 100 pointer frames: first={first}, last={last}"
+    );
+}
+
+#[test]
+fn existing_tool_editor_width_stays_put_after_100_pointer_frames() {
+    assert_editor_width_stays_put(TOOL, "Tool: EM-0600-4FL", Unit::Millimeters, None);
+}
+
+#[test]
+fn new_tool_editor_width_stays_put_after_100_pointer_frames() {
+    assert_editor_width_stays_put("", "New tool", Unit::Millimeters, None);
+}
+
+#[test]
+fn wide_metric_feed_tool_editor_width_stays_put_after_100_pointer_frames() {
+    assert_editor_width_stays_put(TOOL, "Tool: EM-0600-4FL", Unit::Millimeters, Some(1.0e12));
+}
+
+#[test]
+fn wide_inch_feed_tool_editor_width_stays_put_after_100_pointer_frames() {
+    assert_editor_width_stays_put(TOOL, "Tool: EM-0600-4FL", Unit::Inches, Some(1.0e12));
 }

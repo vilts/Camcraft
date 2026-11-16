@@ -145,17 +145,18 @@ pub(super) fn render_datum(world: &World, ctx: Option<&str>, out: &mut String) {
     }
 }
 
-/// #375: one line per inverted linear axis of the machine this setup
-/// mounts - the operator must know the slide runs the other way and the
-/// program is mirrored for it. A standard machine prints nothing (sheets
-/// unchanged).
+/// #375 & #33: one line per inverted linear axis and a notice when
+/// the C rotary turns clockwise (`-Z` axis), so the operator knows the
+/// machine direction and posted negation. A standard machine prints
+/// nothing (sheets unchanged).
 pub(super) fn render_machine_axes(world: &World, ctx: Option<&str>, out: &mut String) {
     let (_, machine) = crate::machine::of_setup(world, ctx);
     let Some(m) = machine else {
         return;
     };
     let letters = m.inverted_axes();
-    if letters.is_empty() {
+    let rev_c = m.reversed_c_rotary();
+    if letters.is_empty() && !rev_c {
         return;
     }
     out.push_str("MACHINE AXES\n");
@@ -164,6 +165,9 @@ pub(super) fn render_machine_axes(world: &World, ctx: Option<&str>, out: &mut St
             "  {} - the program is mirrored in {l} for this machine\n",
             crate::machine::inverted_axis_line(l)
         ));
+    }
+    if rev_c {
+        out.push_str("  C rotary turns clockwise about +Z (-Z axis) - posted C is negated for this machine\n");
     }
     out.push('\n');
 }

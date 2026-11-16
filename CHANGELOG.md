@@ -10,6 +10,48 @@ v0.8.1).
 
 | Commit | Date | Change | Version |
 |---|---|---|---|
+| f90e9dc8e | 2026-11-16 | A toolpath generated before the clearance-plane rapid check now reads stale, and the post refuses it until you regenerate it; each saved operation regenerates one time after the upgrade (#2152, PR #2155) | 0.22.0 |
+| dab6498ae | 2026-11-16 | A rapid at the clearance plane is now judged against the stock: a clearance height set inside the stock is convicted by name and holds the post; MCP add/edit answer with a warning (#2121, PR #2138) | 0.22.0 |
+| 02a57646e | 2026-11-16 | The holder picker shows one Weldon entry for each taper; the bore and body come from the tool's shank, and a shank with no standard bore is refused by name (#2018, PR #2054) | 0.22.0 |
+| d4cf05682 | 2026-11-16 | 2D rest machining: an Adaptive generator planned on the proved remaining stock of earlier operations (`rest_adaptive`, motion crate); not reachable from the Pocket operation yet (#2031, PR #2112) | 0.22.0 |
+| 089e1a146 | 2026-11-16 | The 2D Contour's Lead in / Lead out tab has Start point and Exit point groups, where you type the X and Y at which the cut starts and leaves the closed contour (#1448, PR #1938) | 0.22.0 |
+| 60e62cd57 | 2026-11-16 | A 4-axis wire cut stands off the profiles only where the surface twists (uniform stays a choice), and it can state a verify tolerance for a lofted model's facets; a kerf gouge names the deepest reading at any height (#1170, PR #1921) | 0.22.0 |
+| 70da5191b | 2026-11-16 | The empty Sinker EDM template joins the built-in machine library (#1135, PR #1753) | 0.22.0 |
+| a3557e5f1 | 2026-11-15 | The Sodick wire post refuses, by name, a section that leans the wire (WireU / WireV) before its first cut, instead of threading and cutting it upright (#1497, PR #2120) | 0.22.0 |
+| c501b49e0 | 2026-11-15 | Spline and revolved surface deviation is projected, and the machining mesh bounds between samples are certified (#1029, PR #2107) | 0.22.0 |
+| 3623cb305 | 2026-11-15 | A C axis that turns about -Z is supported in the machine checks, the rotary gate, the Fanuc lathe post (posted C is negated) and the setup sheet; arcs on a C turn are subdivided (#33, PR #2103) | 0.22.0 |
+| af83da0f4 | 2026-11-15 | Stock verification credits bounded 3D chamfer, ball and rounded edge-break volumes, and keeps the operation bounds and real gouge verdicts (#1891, PR #2102) | 0.22.0 |
+| 268b4c09e | 2026-11-15 | The WCS pane disables X and Y tilt on milling setups and points to Part alignment on the Setup page (#1542, PR #2099) | 0.22.0 |
+| 5197f5ccb | 2026-11-15 | Painted browser tree rows, eye toggles and context-menu rows have AccessKit labels (#1989, PR #2097) | 0.22.0 |
+| 780b0a25a | 2026-11-15 | The operation tab strip, browser tree spacing, glyph and eye sizes, ribbon label floor and geometry highlight radius read theme tokens (#2066, PR #2095) | 0.22.0 |
+| 42438238c | 2026-11-15 | An offline-safe AI Chat dock panel with a background MCP worker, inline confirmations, opt-in context attachments and one-click Turn Undo (#1946, PR #2094) | 0.22.0 |
+| afdd059b0 | 2026-11-15 | Ribbon group captions read the theme caption font size; built-in themes default to 10 px (#2063, PR #2086) | 0.22.0 |
+| a277dd9d5 | 2026-11-15 | STEP import stops a shell's tessellation pass after 3 faces or edges run out of evaluations, so a file with many broken faces is refused by name in bounded time (#1599, PR #2084) | 0.22.0 |
+| b12e006c1 | 2026-11-15 | The document and setup post pages have an undoable Explain G-code switch, with a note that the program gets longer (#1390, PR #2079) | 0.22.0 |
+| 058557233 | 2026-11-15 | The Tormach 8L, 15L Slant-PRO and 15LX Slant-PRO machine files state rigid tapping (true, from their operator manuals); the Machines pane shows "yes" for them (#795, PR #2062) | 0.22.0 |
+| 9a79b5a5e | 2026-11-15 | The Machines pane filter offers the Waterjet and EDM kinds (#2030, PR #2061) | 0.22.0 |
+| de41d6292 | 2026-11-15 | The File menu opens the packaged example projects (#2043, PR #2059) | 0.22.0 |
+| 7a83b6751 | 2026-11-15 | A pure-Rust AC table-table forward and inverse kinematics solver with a chord subdivider in `camcraft-post`; no post uses it yet (#1965, PR #2056) | 0.22.0 |
+| 5d94c9753 | 2026-11-15 | The tool editor shows the conservative parameter-cylinder floor of an unchanged machine-default holder (#2009, PR #2041) | 0.22.0 |
+| c6c2dea6f | 2026-11-15 | Heidenhain, TinyG and Carvera refuse expanded bores, because their plain-move chains do not stop the spindle before the rapid retract (#1819, PR #2040) | 0.22.0 |
+| 7f3f50056 | 2026-11-15 | Slot: manual A/B fields in a "Manual" section; the A/B points and line show in the viewport while you edit them (#1732, PR #2034) | 0.22.0 |
+| c86d6db35 | 2026-11-15 | Properties shows the selected tool's settings; library browsing and import/export move to a separate docked Tool library panel (#2002, PR #2029) | 0.22.0 |
+| 6d9b2890f | 2026-11-15 | Live MCP schema mapping for Anthropic, OpenAI and Gemini, with validated local JSON proposals and read-only Q&A context (#1943, PR #2028) | 0.22.0 |
+| 6911182af | 2026-11-15 | The ribbon rows and the ribbon glyph ink come from the theme, so tab text, captions and glyphs read clearly in Horizon Day and Teal Night (#2021, PR #2027) | 0.22.0 |
+| 31f8d03d7 | 2026-11-15 | BREAKING: taps store their hand; older tools read as right-hand, and a left-hand tap is refused before posting. Saved projects use format 62, which older builds refuse (#1453, PR #2026) | 0.22.0 |
+| fa4012d09 | 2026-11-15 | The viewport shows a lathe with its spindle axis from left to right and the cross-slide up, so the work envelope lies along the spindle axis (#1993, PR #2023) | 0.22.0 |
+| 17a8c6e76 | 2026-11-15 | The tool editor width stays stable when numeric values exceed their field width (#2003, PR #2020) | 0.22.0 |
+| ac0e075f3 | 2026-11-15 | The tool editor preview shows a tool body in place of the overlapping parameter holder (#2005, PR #2010) | 0.22.0 |
+| 7d4ef4518 | 2026-11-15 | The displayed mill work envelope stands on the table plane and keeps its travel height (#1963, PR #2006) | 0.22.0 |
+| 8459f4375 | 2026-11-15 | Waterjet machine and nozzle kinds, validated material and thickness recipes, and XY machine checks with optional Z (#1881, PR #2001) | 0.22.0 |
+| 465b9439f | 2026-11-15 | Opening a document frames the camera on the opened part and stock, so the orbit turns about the part (#1997, PR #2000) | 0.22.0 |
+| 680d96795 | 2026-11-15 | 2D Contour Side Auto on a picked ring reads the material at the ring's own level: a blind bore rim is cut from inside, and a ring that Auto cannot read is refused by name (#1933, PR #1954) | 0.22.0 |
+| 2f6de7c5b | 2026-11-15 | A bounded ASCII DXF reader with explicit units, layers, exact planar primitives and named input refusals; not yet on the import menu (#1860, PR #1937) | 0.22.0 |
+| cfc8447ee | 2026-11-15 | 2D Contour refuses a picked ring whose side lies in the part at each level (Outside on a hole wall, Inside on a block outline), with the fix in the message (#1927, PR #1935) | 0.22.0 |
+| cda3d5896 | 2026-11-15 | Contour on an open edge of the stock cuts beside the edge, one tool radius plus stock to leave off it, on the side that Side names; a side that cannot be read is refused by name (#1928, PR #1934) | 0.22.0 |
+| a3f3927dc | 2026-11-15 | Machined wall positions and cavities survive side-on turns of box stock with retained cut history, and fixtures can touch those walls (#1805, PR #1932) | 0.22.0 |
+| a66664985 | 2026-11-15 | A refused machining mesh is tried again one time at a finer chord, with its requested tolerance and safety checks kept (#1463, PR #1930) | 0.22.0 |
+| d8dc64a30 | 2026-11-15 | The user guide has a "Your first router part" page, a Sienci AltMill 4x4 + grblHAL demo project and RichAuto DSP A11 shop-router notes (#1917, PR #1920) | 0.22.0 |
 | e0c11ca33 | 2026-11-15 | Give unsupported Sodick wire compensation requests an operation-specific refusal and suppress affected cutting blocks (#1498, PR #1913) | 0.21.0 |
 | 4c4e96ae6 | 2026-11-15 | Fanuc, Haas, Mazak, Doosan DNM and Fanuc lathe posts now write each whole-number length, angle and feed-per-revolution word with a decimal point (`Z14.`), so that a control with parameter 3401#0 DPI=0 does not read it in least increments (#1836, PR #1866) | 0.21.0 |
 | bca1ff4c0 | 2026-11-15 | Credit an earlier setup's declared chamfers, deburrs and marks before retaining gouges across a new block or side-on turn, while retaining real excess cuts (#1806, PR #1879) | 0.21.0 |

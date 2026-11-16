@@ -310,6 +310,7 @@ fn taper(diameter: f64, tip_angle: f64, flute_len: f64) -> Tool {
         flutes: None,
         orientation: None,
         pitch_min: 0.0,
+        thread_hand: Default::default(),
         catalog: camcraft_tools::catalog_fields::ToolCatalog::default(),
         cutting: Vec::new(),
         outline: Vec::new(),

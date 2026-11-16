@@ -1,5 +1,5 @@
-//! The edge break an operation declares (#303): the bevel a vertical-
-//! axis cone cuts when its apex rides `depth` below an edge.
+//! The edge break an operation declares (#303, #1891): a legacy
+//! vertical cone or an optional framed 3D cap (see [`super::EdgeBreakVolume`]).
 //!
 //! Provenance: the chamfer mill's cut law - a cone of half-angle `h`
 //! from its axis, apex `depth` under the edge, meets the edge's level
@@ -19,35 +19,53 @@
 
 use crate::geometry::Point3;
 
-/// One declared edge break: the edge as a polyline at the edge's own
-/// height (a closed loop repeats its first point), the bevel's depth
-/// at the edge, and its slope - the bevel rises `slope` mm per mm of
-/// plan distance from the edge, so it meets the edge's level `width()`
-/// mm out.
+/// One declared edge break, independent of the generated moves.
+/// Without `volume`, depth and slope describe the legacy vertical
+/// cone. A framed record instead states its maximum inward depth and
+/// full cross-edge width, with one local frame per polyline segment.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EdgeBreak {
     pub edge: Vec<Point3>,
     pub depth: f64,
     pub slope: f64,
+    /// A framed 3D cap, or the legacy vertical cone when absent.
+    /// Framed records use slope zero so older readers discard them.
+    pub volume: Option<super::EdgeBreakVolume>,
 }
 
 impl EdgeBreak {
-    /// The bevel's plan width at the edge's level: `depth / slope`.
+    /// The framed cap's full cross-edge width, or the legacy bevel's
+    /// plan width at the edge's level (`depth / slope`).
     #[must_use]
     pub fn width(&self) -> f64 {
-        self.depth / self.slope
+        self.volume.as_ref().map_or_else(|| self.depth / self.slope, |v| v.width)
     }
 
-    /// Finite, positive depth and slope, finite points: the door every
-    /// reader checks before trusting the record.
+    /// Finite positive dimensions and points, and a valid legacy slope
+    /// or bounded orthonormal framed profile: every reader's safety door.
     #[must_use]
     pub fn is_sane(&self) -> bool {
         self.depth.is_finite()
             && self.depth > 0.0
-            && self.slope.is_finite()
-            && self.slope > 0.0
             && !self.edge.is_empty()
             && self.edge.iter().all(|p| p.is_finite())
+            && match &self.volume {
+                Some(v) => self.slope == 0.0 && v.is_sane(&self.edge, self.depth),
+                None => self.slope.is_finite() && self.slope > 0.0 && self.width().is_finite() && self.width() > 0.0,
+            }
+    }
+
+    /// The lowest connected declared surface below the model top.
+    /// An isolated volume below a boss cannot forgive cutting the boss.
+    #[must_use]
+    pub fn floor_below(&self, x: f64, y: f64, model_top: f64) -> Option<f64> {
+        if !self.is_sane() || !x.is_finite() || !y.is_finite() || !model_top.is_finite() {
+            return None;
+        }
+        match &self.volume {
+            Some(v) => v.floor_below(&self.edge, self.depth, Point3::new(x, y, model_top)),
+            None => self.floor_at(x, y).filter(|&(_, z)| model_top <= z).map(|(floor, _)| floor),
+        }
     }
 
     /// The declared bevel over the column at plan point `(x, y)`, with
@@ -58,7 +76,7 @@ impl EdgeBreak {
     /// the cone swept along the edge.
     #[must_use]
     pub fn floor_at(&self, x: f64, y: f64) -> Option<(f64, f64)> {
-        if !self.is_sane() {
+        if self.volume.is_some() || !self.is_sane() {
             return None;
         }
         // (nearest plan distance, edge z there), and the lowest bevel.

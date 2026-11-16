@@ -131,6 +131,7 @@ mod probe_pick_round;
 pub use probe_pick::{PROBE_AXIS_TOL_DEG, ProbeSeed, probe_account, probe_from_picks, probe_seed, seeded_params};
 pub(crate) use probe::*;
 mod selection;
+mod contour_auto_pick;
 pub use selection::*;
 mod picks;
 pub use picks::*;
@@ -209,10 +210,12 @@ mod open_side;
 pub mod kept_rejudge;
 // #864: what a kind's gouge laws need of its model's fidelity.
 pub(crate) mod fidelity_law;
+mod clearance_stock;
 mod top_stock;
 mod stock_top_law;
 // #266: a tap judged at its thread's core.
 mod tap_core;
+pub use clearance_stock::{CLEARANCE_STOCK_WARNING, creation_advice as clearance_in_stock_advice};
 pub use top_stock::TOP_STOCK_WARNING;
 mod turning_credit;
 mod turning_axis;

@@ -153,8 +153,15 @@ pub(super) struct CurveGuard {
 }
 
 impl CurveGuard {
+    #[cfg(test)]
     pub(super) fn new(inner: truck_stepio::r#in::alias::Curve3D, cap: u64) -> Self {
-        Self { inner, meter: std::sync::Arc::new(super::step_guard::Meter::new(cap)), fallback: Point3::new(0.0, 0.0, 0.0) }
+        Self::in_pass(inner, cap, std::sync::Arc::default())
+    }
+
+    /// An edge curve whose meter shares `pass` with its shell's faces (#1599).
+    pub(super) fn in_pass(inner: truck_stepio::r#in::alias::Curve3D, cap: u64, pass: std::sync::Arc<super::step_meter::Pass>) -> Self {
+        let meter = std::sync::Arc::new(super::step_guard::Meter::in_pass(cap, pass));
+        Self { inner, meter, fallback: Point3::new(0.0, 0.0, 0.0) }
     }
 
     fn divide(&self, range: (f64, f64), tol: f64) -> Option<(Vec<f64>, Vec<Point3>)> {

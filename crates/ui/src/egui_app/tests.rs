@@ -59,18 +59,6 @@ use super::shell::{Tab, build_dock, headless, shell_layout};
 use super::viewcube;
 use super::{theme, world};
 
-/// The y of the browser tree's first row at the default window: the ribbon
-/// (its tab strip + cells) plus the browser's own header row, as the
-/// shipping layout resolves them. Pointer tests aim at rows through this
-/// one number; a header change moves it here, once.
-const BROWSER_TREE_TOP: f32 = 150.0;
-
-
-/// The x of the tree's eye column: the browser pane's right edge less the
-/// eye's inset (see `painted::tree`). Pointer tests aim at a row's eye
-/// through this one number, beside `BROWSER_TREE_TOP`.
-const BROWSER_EYE_X: f32 = 220.0;
-
 
 
 #[test]
@@ -112,7 +100,15 @@ mod program_units;
 mod gcode_viewer;
 mod first_setup;
 mod work_envelope;
+mod lathe_view;
+// #1997: the orbit pivot ignores the work envelope; open frames the part.
+mod camera_target;
 mod structural;
+mod ribbon_rows;
+mod theme_op_tabs_tree;
+mod theme_tree_hits;
+mod waterjet_recipe;
+mod catalog_filters;
 mod cycle_combo;
 mod radial_step_field;
 // #1509: 2D Adaptive's Method choice on the Passes tab.
@@ -196,6 +192,8 @@ mod setup_machine_bleed;
 mod setup_post_options_bleed;
 // #1617: a closed STEP solid wound inward is turned outward, and said.
 mod import_outward;
+// #1946: native AI chat dock panel, worker, Inbox::channel MCP dispatch, and offline UI tests.
+mod ai_chat;
 
 /// What the per-frame state of `Shell` is, minus the GPU half: the fields
 /// `shell_layout` touches, so the harness exercises the window's real body.
@@ -1001,7 +999,7 @@ fn every_field_lives_on_exactly_one_section() {
                     ],
                 ),
                 ("Passes", vec!["Stock to leave"]),
-                ("Lead in / Lead out", vec!["Lead in/out", "Entry", "Level to level", "Between levels", "Between passes", "Plunge", "Ramp / helix / arc feed", "Entry plunge feed", "Lead-in feed", "Engagement", "Lead out", "Before lead-in", "After lead-out", "Vertical lead-in height", "Overlap past the start", "Compensation", "Tab count", "Tab width", "Tab height"]),
+                ("Lead in / Lead out", vec!["Lead in/out", "Entry", "Level to level", "Between levels", "Between passes", "Plunge", "Ramp / helix / arc feed", "Entry plunge feed", "Lead-in feed", "Engagement", "Lead out", "Before lead-in", "After lead-out", "Vertical lead-in height", "Overlap past the start", "Start point", "Exit point", "Compensation", "Tab count", "Tab width", "Tab height"]),
                 ("Feeds", vec!["Feed", "Plunge feed", "Climb milling"]),
             ],
         ),
@@ -1965,9 +1963,9 @@ fn egui_shell_snapshot_light() {
 }
 
 /// M1.4: the graphical tool editor, end to end through the real drain. The
-/// dock page is the LIBRARY (no field widgets, so every label queried here
-/// resolves in exactly one surface); `Edit` opens the window on the world's
-/// numbers; a drag stages into `tool_ui` WITHOUT touching the world (the
+/// selected tool starts in Properties; opening the explicit editor hides
+/// those fields so every label queried here resolves in one surface.
+/// A drag stages into `tool_ui` WITHOUT touching the world (the
 /// draft law); `Apply` lands it through `ChangeTool`; and the dock's
 /// `Delete` proves the ghost law - the named tool is gone, so the window
 /// is gone the next frame.
@@ -1984,11 +1982,8 @@ fn tool_editor_window_edits_live_and_stages_through_commands() {
             .and_then(|e| model::tool_of(&h.state().state.world, &e))
             .map(|t| t.diameter)
     };
-    assert!(
-        harness.query_by_label("Diameter").is_none(),
-        "the dock library must not own the editor's labels"
-    );
-    harness.get_by_label("Edit").click();
+    assert!(harness.query_by_label("Diameter").is_some(), "Properties owns the selected tool's settings");
+    crate::actions::open_tool_editor(&mut harness.state_mut().state, "EM-0600-4FL");
     harness.run();
     harness.run();
     assert_eq!(harness.state().state.tool_editor.as_deref(), Some("EM-0600-4FL"));
@@ -1998,8 +1993,8 @@ fn tool_editor_window_edits_live_and_stages_through_commands() {
         (harness.state().state.tool_ui.diameter - d0).abs() < 1e-12,
         "the window must open on the world's diameter"
     );
-    // The window's first SpinButton is Diameter (the library renders no
-    // DragValues, so "first" is deterministic): 30 px at speed 0.1.
+    // The window's first SpinButton is Diameter (Properties hides its
+    // fields while the explicit editor is open): 30 px at speed 0.1.
     let c = harness
         .get_all_by_role(egui::accesskit::Role::SpinButton)
         .next()
@@ -2052,7 +2047,7 @@ fn tool_editor_snapshot() {
     harness.state_mut().state.ui_target = UiTarget::Tool("EM-0600-4FL".to_owned());
     harness.run();
     harness.run();
-    harness.get_by_label("Edit").click();
+    crate::actions::open_tool_editor(&mut harness.state_mut().state, "EM-0600-4FL");
     harness.run_steps(3);
     harness.snapshot_options(
         "egui_tool_editor",
@@ -2843,7 +2838,7 @@ fn tips_match_the_imgui_table() {
         (Cmd::Tools, "Tool library"),
         (
             Cmd::Machine,
-            "Switch the workspace: Milling, Turning, Mill-turning, Plasma cutting or Wire EDM (mounts the kind's built-in machine, undoable)",
+            "Switch the workspace: Milling, Turning, Mill-turning, Plasma cutting, Wire EDM or Sinker EDM (mounts the kind's built-in machine, undoable)",
         ),
         (Cmd::Undo, undo.as_str()),
         (Cmd::Redo, redo.as_str()),
@@ -2993,7 +2988,7 @@ fn inch_mode_drag_keeps_px_parity_and_types_onto_the_lattice() {
 
     harness.state_mut().state.ui_target = UiTarget::Tool("EM-0600-4FL".to_owned());
     harness.run();
-    harness.get_by_label("Edit").click();
+    crate::actions::open_tool_editor(&mut harness.state_mut().state, "EM-0600-4FL");
     harness.run();
     harness.run();
     let world_d = |h: &Harness<'static, ShellUi>| {
@@ -3359,7 +3354,7 @@ fn a_create_cell_darkens_with_the_tool_laws_reason() {
         assert!(model::find_by_name(&st.world, "Drill1").is_none(), "a dark cell creates nothing");
         assert!(st.status.contains(&reason), "the click answers with the reason: {}", st.status);
         // #191: and takes the user to the fix - the tool library.
-        assert_eq!(st.ui_target, UiTarget::Tool(String::new()), "the click opens the tool library");
+        assert!(super::layout::is_open(&harness.state().dock, &Tab::Tools), "the click opens the tool library dock");
         assert!(st.status.ends_with("opened the tool library"), "{}", st.status);
     }
     rack(&mut harness.state_mut().state, &["DR-0400"]);
@@ -4684,22 +4679,16 @@ fn stock_eye_hides_the_viewport_stock_without_removing_it_from_the_document() {
     let mut harness = shell_harness();
     harness.run_steps(2);
     let stock_name = camcraft_app::setup::stock_entity_name(&harness.state().state.world, None);
-    let (_, leaves) = panes::browser_rows(&harness.state().state);
-    let row = leaves.iter().position(|leaf| matches!(leaf, panes::Leaf::Stock(_))).expect("stock row");
-    let eye = egui::pos2(BROWSER_EYE_X, BROWSER_TREE_TOP + (row as f32 + 0.5) * theme::current().row_height);
     assert!(world::collect(&harness.state().state).parts.iter().any(|part| part.stock));
 
-    set_pos(&mut harness, eye);
-    button_at(&mut harness, egui::PointerButton::Primary, eye, true);
-    button_at(&mut harness, egui::PointerButton::Primary, eye, false);
+    harness.get_by_label("Hide Stock").click();
     harness.run();
     let state = &harness.state().state;
     assert!(state.active_stock_hidden());
     assert!(model::find_by_name(&state.world, &stock_name).is_some());
     assert!(!world::collect(state).parts.iter().any(|part| part.stock));
 
-    button_at(&mut harness, egui::PointerButton::Primary, eye, true);
-    button_at(&mut harness, egui::PointerButton::Primary, eye, false);
+    harness.get_by_label("Show Stock").click();
     harness.run();
     assert!(!harness.state().state.active_stock_hidden());
     assert!(world::collect(&harness.state().state).parts.iter().any(|part| part.stock));
@@ -4874,19 +4863,11 @@ fn dragging_an_operation_row_reorders_within_global_setup() {
     let mut harness = Harness::builder().with_size(Vec2::new(1280.0, 720.0))
         .build_ui_state(frame, shell);
     harness.run_steps(2);
-    let (_, leaves) = panes::browser_rows(&harness.state().state);
-    let first = leaves.iter().position(|leaf| matches!(leaf, panes::Leaf::Op(name) if name == "Contour1"))
-        .expect("first row");
-    let second = leaves.iter().position(|leaf| matches!(leaf, panes::Leaf::Op(name) if name == "Contour2"))
-        .expect("second row");
-    assert_eq!(second, first + 1);
-    // The browser tree begins at y=200 below its view controls (the
-    // projection radios joined them for #434) in the
-    // 1280x720 shell. The row indices come from the current flat browser,
-    // so the drag follows the rows after setup nesting was removed.
-    let row_h = theme::current().row_height;
-    let from = egui::pos2(120.0, BROWSER_TREE_TOP + (second as f32 + 0.5) * row_h);
-    let to = egui::pos2(120.0, BROWSER_TREE_TOP + (first as f32 + 0.25) * row_h);
+    let r2 = harness.get_by_label("Browser: Contour2").rect();
+    let r1 = harness.get_by_label("Browser: Contour1").rect();
+    assert!(r2.top() > r1.top());
+    let from = r2.center();
+    let to = egui::pos2(r1.center().x, r1.top() + r1.height() * 0.25);
     set_pos(&mut harness, from);
     button_at(&mut harness, egui::PointerButton::Primary, from, true);
     set_pos(&mut harness, to);
@@ -5023,22 +5004,12 @@ fn operations_heading_menu_pastes_the_copied_operation() {
     let mut harness = shell_harness();
     harness.state_mut().state.copy_operation("Contour1");
     harness.run_steps(2);
-    let (_, leaves) = panes::browser_rows(&harness.state().state);
-    let row = leaves.iter().position(|leaf| matches!(leaf,
-        panes::Leaf::SetupOps(_)))
-        .expect("Operations heading");
-    let row_height = theme::current().row_height;
-    let heading = egui::pos2(90.0, BROWSER_TREE_TOP + (row as f32 + 0.5) * row_height);
-    set_pos(&mut harness, heading);
-    button_at(&mut harness, egui::PointerButton::Secondary, heading, true);
-    button_at(&mut harness, egui::PointerButton::Secondary, heading, false);
+    harness.get_by_label("Browser: Operations").click_secondary();
+    harness.run();
     assert_eq!(harness.state().state.tree_menu, Some(TreeMenuTarget::Operations));
+    assert!(harness.query_by_label("Operation").is_some());
 
-    let paste = egui::pos2(90.0,
-        BROWSER_TREE_TOP + (row as f32 + 1.0) * row_height + panes::DROP_GAP + 1.5 * row_height);
-    set_pos(&mut harness, paste);
-    button_at(&mut harness, egui::PointerButton::Primary, paste, true);
-    button_at(&mut harness, egui::PointerButton::Primary, paste, false);
+    harness.get_by_label("Paste operation").click();
     harness.run_steps(2);
     assert!(model::find_by_name(&harness.state().state.world, "Contour1 Copy").is_some());
 }
@@ -5047,33 +5018,20 @@ fn operations_heading_menu_pastes_the_copied_operation() {
 fn operation_type_menu_requires_confirmation() {
     let mut harness = shell_harness();
     harness.run_steps(2);
-    let (_, leaves) = panes::browser_rows(&harness.state().state);
-    let row = leaves.iter().position(|leaf| matches!(leaf,
-        panes::Leaf::Op(name) if name == "Contour1"))
-        .expect("operation row");
-    let row_height = theme::current().row_height;
-    let operation = egui::pos2(90.0, BROWSER_TREE_TOP + (row as f32 + 0.5) * row_height);
-    set_pos(&mut harness, operation);
-    button_at(&mut harness, egui::PointerButton::Secondary, operation, true);
-    button_at(&mut harness, egui::PointerButton::Secondary, operation, false);
+    harness.get_by_label("Browser: Contour1").click_secondary();
+    harness.run();
     assert_eq!(harness.state().state.tree_menu,
         Some(TreeMenuTarget::Operation("Contour1".into())));
 
-    // Operation, Rename, Copy, Paste, Clear, Delete, Suppress, After
-    // (#110), add pause / home / optional stop (#155), section header, Face.
-    let face = egui::pos2(90.0,
-        BROWSER_TREE_TOP + (row as f32 + 1.0) * row_height + panes::DROP_GAP + 12.5 * row_height);
-    set_pos(&mut harness, face);
-    button_at(&mut harness, egui::PointerButton::Primary, face, true);
-    button_at(&mut harness, egui::PointerButton::Primary, face, false);
+    harness.get_by_label("Face").click();
+    harness.run();
     assert_eq!(harness.state().state.retype_confirm,
         Some(("Contour1".into(), camcraft_app::operation::OpType::Face as usize)));
     let entity = model::find_by_name(&harness.state().state.world, "Contour1").unwrap();
     assert_eq!(model::operation_of(&harness.state().state.world, &entity).unwrap().params.kind(),
         camcraft_app::operation::OpType::Contour);
 
-    button_at(&mut harness, egui::PointerButton::Primary, face, true);
-    button_at(&mut harness, egui::PointerButton::Primary, face, false);
+    harness.get_by_label("Confirm change to Face").click();
     harness.run_steps(2);
     let entity = model::find_by_name(&harness.state().state.world, "Contour1").unwrap();
     assert_eq!(model::operation_of(&harness.state().state.world, &entity).unwrap().params.kind(),
@@ -5086,38 +5044,22 @@ fn operation_type_menu_requires_confirmation() {
 fn operation_menu_suppresses_and_sets_the_after_action() {
     let mut harness = shell_harness();
     harness.run_steps(2);
-    let (_, leaves) = panes::browser_rows(&harness.state().state);
-    let row = leaves.iter().position(|leaf| matches!(leaf,
-        panes::Leaf::Op(name) if name == "Contour1"))
-        .expect("operation row");
-    let row_height = theme::current().row_height;
-    let operation = egui::pos2(90.0, BROWSER_TREE_TOP + (row as f32 + 0.5) * row_height);
-    let open_menu = |harness: &mut Harness<'static, ShellUi>| {
-        set_pos(harness, operation);
-        button_at(harness, egui::PointerButton::Secondary, operation, true);
-        button_at(harness, egui::PointerButton::Secondary, operation, false);
-    };
-    let click_row = |harness: &mut Harness<'static, ShellUi>, k: f32| {
-        let at = egui::pos2(90.0, BROWSER_TREE_TOP + (row as f32 + 1.0) * row_height + panes::DROP_GAP + k * row_height);
-        set_pos(harness, at);
-        button_at(harness, egui::PointerButton::Primary, at, true);
-        button_at(harness, egui::PointerButton::Primary, at, false);
+    let open_and_pick = |harness: &mut Harness<'static, ShellUi>, item: &str| {
+        harness.get_by_label("Browser: Contour1").click_secondary();
+        harness.run();
+        harness.get_by_label(item).click();
         harness.run_steps(2);
     };
     let op = |harness: &Harness<'static, ShellUi>| {
         let world = &harness.state().state.world;
         model::find_by_name(world, "Contour1").and_then(|e| model::operation_of(world, &e)).expect("op")
     };
-    // Operation, Rename, Copy, Paste, Clear, Delete, then Suppress.
-    open_menu(&mut harness);
-    click_row(&mut harness, 6.5);
+    open_and_pick(&mut harness, "Suppress operation");
     assert!(op(&harness).suppressed, "the Suppress row suppresses");
     // ... then the After row, which steps Continue -> Optional -> Program stop.
-    open_menu(&mut harness);
-    click_row(&mut harness, 7.5);
+    open_and_pick(&mut harness, "After: continue (click to change)");
     assert_eq!(op(&harness).after, camcraft_app::operation::AfterOperation::OptionalStop);
-    open_menu(&mut harness);
-    click_row(&mut harness, 7.5);
+    open_and_pick(&mut harness, "After: optional stop (M1)");
     assert_eq!(op(&harness).after, camcraft_app::operation::AfterOperation::ProgramStop);
 }
 

@@ -15,6 +15,8 @@ mod kind;
 mod no_spindle;
 mod parse;
 mod plasma;
+mod waterjet;
+pub use waterjet::waterjet_refusals;
 mod rows;
 mod swing;
 mod tooling;

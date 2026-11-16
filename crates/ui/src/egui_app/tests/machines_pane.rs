@@ -329,3 +329,39 @@ fn the_machines_pane_names_every_input() {
     assert!(seen >= 1, "only {seen} inputs found in the machines pane");
     assert!(bad.is_empty(), "unnamed inputs in machines pane: {bad:?}");
 }
+
+/// #2030: every machine kind has a filter entry, including both EDM kinds.
+#[test]
+fn the_kind_filter_offers_every_machine_kind_and_filters_its_rows() {
+    use camcraft_app::machine::Kind;
+    use egui::accesskit::Role;
+    let kinds = [
+        Kind::Mill, Kind::Lathe, Kind::MillTurn, Kind::Plasma,
+        Kind::Waterjet, Kind::WireEdm, Kind::SinkerEdm,
+    ];
+    let mut h = blank_harness();
+    h.run();
+    open_machines(&mut h);
+    h.run_steps(3);
+    let rows: Vec<_> = h.state().state.machines_pane.list.as_ref()
+        .expect("the catalogue was read").iter()
+        .map(|e| (e.kind, row_label(e))).collect();
+    let mut current = "All";
+    for kind in kinds {
+        let at = h.get_by(|n| n.role() == Role::ComboBox
+            && n.value().as_deref() == Some(current)).rect().center();
+        click(&mut h, at);
+        h.run_steps(10);
+        for entry in kinds {
+            h.get_by_label(entry.word());
+        }
+        h.get_by_label(kind.word()).click();
+        h.run_steps(3);
+        for (row_kind, label) in &rows {
+            assert_eq!(h.query_by_label(label).is_some(), *row_kind == Some(kind),
+                "{label} under the {} filter", kind.word());
+        }
+        current = kind.word();
+    }
+    assert_no_commands(&h);
+}

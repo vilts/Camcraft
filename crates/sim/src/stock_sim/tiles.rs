@@ -83,6 +83,7 @@ impl Dexel {
     /// `top[k] = min(top[k], z)` - the cut law. A cell that does not
     /// drop never touches (never even allocates) its tile.
     pub fn lower(&mut self, k: usize, z: f64) {
+        self.history = None;
         let Some((t, off)) = self.slot(k) else { return };
         let cur = match &self.tiles[t] {
             None => self.stock_z,
@@ -112,6 +113,7 @@ impl Dexel {
     /// law need. A uniform tile keeps its economy when the new value
     /// IS its value; only a real change pays a box.
     pub fn set(&mut self, k: usize, z: f64) {
+        self.history = None;
         let Some((t, off)) = self.slot(k) else { return };
         if let Some(Tile::Cut(b)) = &mut self.tiles[t] {
             b[off] = z;
@@ -132,6 +134,7 @@ impl Dexel {
     /// Every cell to one height: the whole field collapses to the
     /// representation of "nothing happened but this".
     pub fn fill(&mut self, z: f64) {
+        self.history = None;
         if z == self.stock_z {
             self.tiles.fill(None);
         } else {
@@ -157,6 +160,11 @@ impl Dexel {
     /// the caller translates `stock_z` itself, and they travel
     /// together - what the old whole-field loop did cell by cell.
     pub fn translate_finite(&mut self, dz: f64) {
+        self.history = self.history.as_ref().filter(|h| !h.active && h.cuts.is_empty() && h.clips.is_empty())
+            .map(|_| std::sync::Arc::new(super::carry_history::History::block(
+                self.x0, self.y0, self.x0 + self.nx as f64 * self.cell,
+                self.y0 + self.ny as f64 * self.cell, self.stock_z, self.cell,
+            )));
         for t in &mut self.tiles {
             match t {
                 None => {}
@@ -230,6 +238,7 @@ impl Dexel {
             ny,
             stock_z,
             tiles,
+            history: None,
         }
     }
 
@@ -240,6 +249,7 @@ impl Dexel {
     /// boundary crosses pays a box. The cell test on the ring is the
     /// old `hypot` law exactly, so the mask is bit-identical.
     pub(super) fn air_outside_circle(&mut self, r: f64) {
+        self.history = None;
         let air = f64::NEG_INFINITY;
         let (tx, ty) = (self.tx(), self.ny.div_ceil(TILE));
         for tiy in 0..ty {

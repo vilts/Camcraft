@@ -10,10 +10,16 @@
     "accent": "#2A7F79",
     "accent_hover": "#3CA099",
     "selection_bg": "#1F5A56",
-    "selection_stroke": "#3CA099"
+    "selection_stroke": "#3CA099",
+    "ribbon_ink": "#FFFFFF"
   },
   "geometry": {
     "radius_widget": 3,
-    "glyph_px": 22.0
+    "glyph_px": 22.0,
+    "ribbon_tab_h": 24.0,
+    "ribbon_cell_top_gap": 4.0,
+    "ribbon_caption_gap": 12.0,
+    "ribbon_caption_row_h": 18.0,
+    "ribbon_bottom_gap": 4.0
   }
 }

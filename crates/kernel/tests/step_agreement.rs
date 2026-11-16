@@ -132,6 +132,12 @@ const ROWS: &[Row] = &[
         mesh: "watertight, within tolerance",
     },
     Row {
+        file: "spline_revolved.step",
+        mm_per_unit: 1.0,
+        import: "agree",
+        mesh: "watertight, within tolerance",
+    },
+    Row {
         file: "tool_csys_box_iso13399.step",
         mm_per_unit: 1.0,
         import: "agree",
@@ -432,6 +438,7 @@ per_file! {
     step_modular_clamp_unit => "modular_clamp_unit.step",
     step_modular_lathe_head => "modular_lathe_head.step",
     step_sample_ap214 => "sample_ap214.step",
+    step_spline_revolved => "spline_revolved.step",
     step_tool_csys_box_iso13399 => "tool_csys_box_iso13399.step",
     step_tool_csys_degenerate => "tool_csys_degenerate.step",
     step_tool_csys_iso13399 => "tool_csys_iso13399.step",

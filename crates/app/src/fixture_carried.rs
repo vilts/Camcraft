@@ -145,7 +145,19 @@ fn scan(
 /// Column `k`'s material overlap with the box's Z span.
 fn box_depth(body: &Body, b: &FixtureBox, k: usize) -> f64 {
     let (bz0, bz1) = (b.min.z.min(b.max.z), b.max.z.max(b.min.z));
-    body.dex.top_at(k).min(bz1) - body.floor_at(k).max(bz0)
+    overlap(&material(body, k), bz0, bz1)
+}
+
+/// An unread exact ray keeps the conservative column hull.
+fn material(body: &Body, k: usize) -> Vec<(f64, f64)> {
+    body.material_spans_at(k).unwrap_or_else(|_| vec![(body.floor_at(k), body.dex.top_at(k))])
+}
+
+fn shared_spans(a: &[(f64, f64)], b: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    a.iter().flat_map(|&(lo, hi)| b.iter().filter_map(move |&(l, h)| {
+        let span = (lo.max(l), hi.min(h));
+        (span.0 < span.1).then_some(span)
+    })).collect()
 }
 
 /// How deep `b` stands in `body`'s material: the largest Z overlap of a
@@ -199,10 +211,11 @@ fn on_columns(body: &Body, b: &FixtureBox, mesh: &FixtureMesh, budget: &mut u64)
         if !inside {
             return Some(boxed);
         }
-        let (lo, hi) = (body.floor_at(k), body.dex.top_at(k));
+        let stock = material(body, k);
         let mut depth = f64::INFINITY;
         for (dx, dy) in [(0.0, 0.0), (t, 0.0), (-t, 0.0), (0.0, t), (0.0, -t)] {
-            let d = mesh.steel_on_line(c.x + dx, c.y + dy, budget).map_or(boxed, |s| overlap(&s, lo, hi));
+            let d = mesh.steel_on_line(c.x + dx, c.y + dy, budget)
+                .map_or(boxed, |s| stock.iter().map(|&(lo, hi)| overlap(&s, lo, hi)).sum());
             depth = depth.min(d);
             if depth <= t {
                 return None; // one line clear within the tolerance: contact
@@ -233,30 +246,31 @@ fn between_columns(body: &Body, b: &FixtureBox, mesh: &FixtureMesh, budget: &mut
             if ks.iter().any(|&k| body.empty_at(k)) {
                 continue; // a boundary of the material: judged on its columns
             }
-            let lo = ks.iter().map(|&k| body.floor_at(k)).fold(f64::NEG_INFINITY, f64::max);
-            let hi = ks.iter().map(|&k| dex.top_at(k)).fold(f64::INFINITY, f64::min);
-            let reach = hi.min(bz1) - lo.max(bz0);
-            if !(reach.is_finite() && reach > t) || worst.is_some_and(|w| reach <= w) {
-                continue; // the box acquits, or cannot deepen the verdict
+            let shared = ks.iter().skip(1).fold(material(body, ks[0]), |s, &k| shared_spans(&s, &material(body, k)));
+            for (lo, hi) in shared {
+                let reach = hi.min(bz1) - lo.max(bz0);
+                if !(reach.is_finite() && reach > t) || worst.is_some_and(|w| reach <= w) {
+                    continue; // the box acquits, or cannot deepen the verdict
+                }
+                let (c0, c1) = (dex.center(ix, iy), dex.center(ix + 1, iy + 1));
+                let (x0, x1, y0, y1) = (c0.x + t, c1.x - t, c0.y + t, c1.y - t);
+                // A rectangle too slim to read once trimmed (a pitch under
+                // ~0.02 mm inverts it, x0 > x1) is not read: the box speaks.
+                // Tested BEFORE the off-footprint test, which an inverted
+                // rectangle always passes (#1530 review: it cleared a post
+                // the box refuses). `!(..>=..)` also keeps the box on NaN.
+                let slim = !(x1 - x0 >= 1e-3 && y1 - y0 >= 1e-3);
+                if !slim && (x0.max(bx0) > x1.min(bx1) || y0.max(by0) > y1.min(by1)) {
+                    continue; // the rectangle is off the footprint: no steel
+                }
+                let reading = if slim { PrismReading::Unread } else { mesh.steel_in_prism((x0, x1), (y0, y1), (lo, hi), t, budget) };
+                let d = match reading {
+                    PrismReading::Clear => continue,
+                    PrismReading::Steel(d) => d.min(reach).max(f64::MIN_POSITIVE),
+                    PrismReading::Unread => reach,
+                };
+                worst = Some(worst.map_or(d, |w| w.max(d)));
             }
-            let (c0, c1) = (dex.center(ix, iy), dex.center(ix + 1, iy + 1));
-            let (x0, x1, y0, y1) = (c0.x + t, c1.x - t, c0.y + t, c1.y - t);
-            // A rectangle too slim to read once trimmed (a pitch under
-            // ~0.02 mm inverts it, x0 > x1) is not read: the box speaks.
-            // Tested BEFORE the off-footprint test, which an inverted
-            // rectangle always passes (#1530 review: it cleared a post
-            // the box refuses). `!(..>=..)` also keeps the box on NaN.
-            let slim = !(x1 - x0 >= 1e-3 && y1 - y0 >= 1e-3);
-            if !slim && (x0.max(bx0) > x1.min(bx1) || y0.max(by0) > y1.min(by1)) {
-                continue; // the rectangle is off the footprint: no steel
-            }
-            let reading = if slim { PrismReading::Unread } else { mesh.steel_in_prism((x0, x1), (y0, y1), (lo, hi), t, budget) };
-            let d = match reading {
-                PrismReading::Clear => continue,
-                PrismReading::Steel(d) => d.min(reach).max(f64::MIN_POSITIVE),
-                PrismReading::Unread => reach,
-            };
-            worst = Some(worst.map_or(d, |w| w.max(d)));
         }
     }
     worst

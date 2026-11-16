@@ -91,6 +91,8 @@ pub(super) fn image(lat: &Lattice, turn: &LatticeTurn) -> Lattice {
 /// own stock, same frame) no column of `dex` may stand above that
 /// stock's top; outside it, and over its air, what stands is untouched.
 pub fn clip_columns_under(dex: &mut Dexel, grid: &Dexel) {
+    let mut history = dex.history.as_deref().cloned();
+    if let Some(h) = &mut history { h.clip(grid); }
     for iy in 0..dex.ny {
         for ix in 0..dex.nx {
             let q = dex.center(ix, iy);
@@ -101,6 +103,7 @@ pub fn clip_columns_under(dex: &mut Dexel, grid: &Dexel) {
             }
         }
     }
+    dex.history = history.map(std::sync::Arc::new);
 }
 
 impl FieldBody {
@@ -196,7 +199,17 @@ impl CarriedStock {
     /// The engine's refusals, before a cell is written.
     pub fn simulate(&mut self, ops: &[SimOp]) -> Result<(), StockError> {
         match self {
-            CarriedStock::Column(b) => super::cut::simulate(&mut b.dex, ops),
+            CarriedStock::Column(b) => {
+                if !b.dex.history.as_ref().is_some_and(|h| h.active) {
+                    return super::cut::simulate(&mut b.dex, ops);
+                }
+                let mut dex = b.dex.clone();
+                super::cut::simulate(&mut dex, ops)?;
+                if let Some(h) = dex.history.as_ref().filter(|h| h.active) {
+                    *b = h.read(b.floor_judged()).map_err(StockError::Invalid)?;
+                } else { b.dex = dex; }
+                Ok(())
+            }
             CarriedStock::Field(f) => f.simulate(ops),
         }
     }
@@ -216,7 +229,10 @@ impl CarriedStock {
     /// A column the field cannot read (refused by name, never guessed).
     pub fn into_body(self) -> Result<Body, String> {
         match self {
-            CarriedStock::Column(b) => Ok(b),
+            CarriedStock::Column(b) => match b.dex.history.as_ref().filter(|h| h.active) {
+                Some(h) => h.read(b.floor_judged()),
+                None => Ok(b),
+            },
             CarriedStock::Field(f) => f.body(),
         }
     }

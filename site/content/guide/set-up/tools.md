@@ -7,22 +7,44 @@ aliases = ["guide/tools/"]
 
 ## Create and edit a tool
 
-Open **Tools** in the Setup ribbon group. Choose **New tool…**, give the
+Open {{ <icon name="tools" /> }} **Tools** in the Setup ribbon group. Choose **New tool…**, give the
 tool a unique name, and select its type. Enter its cutter, flute, shank,
 holder, speed and feed values. Choose **Add tool** to save it.
 
-To change a document tool, select it in the browser and choose **Edit**.
-Change the fields and choose **Apply**. **Close** closes the editor.
+To change a document tool, select it in the browser. Its settings show
+directly in the Properties pane: geometry, holder, body and profile,
+cutting data, tool numbers and identification. The setup's Tool list opens
+the same form. Change the fields and choose **Apply**. The Tool list's
+**Edit** button opens the wider editor, and **Close** closes it. Browsing the catalog, **Add**,
+**New tool…** and import and export live in the separate **Tool library**
+pane. Open it from **Tools** or from **Tool library…** in the browser; it
+does not replace the tool in Properties.
 Edits and imports enter the undo history. A geometry change can make the
 operations that use the tool stale. Generate those operations again before
 posting.
 
-The **Catalog** on the Tool library page offers built-in tools. Choose
+The catalog in the Tool library pane offers built-in tools. Choose
 **Add** beside an available entry to copy it into the document. The copy
-can then be edited. In the editor, the separate **Catalog** section stores
+can then be edited. In the editor, the separate **Tool information** section stores
 part number, vendor, coating, helix angle and notes. These facts travel with
 the tool in a project and in a library. Import matches tools by name, not
 by part number.
+
+A tap stores its hand. The tap editor has a **Left-hand tap (posting
+unavailable)** checkbox; older tools are right-hand. No built-in post
+writes a left-hand tapping cycle, so CamCraft refuses a left-hand tap at
+posting, before any NC file is written. The message names the operation and
+the tool: `<operation>: left-hand tap <tool> is not supported by posting`.
+Right-hand output is unchanged. The hand travels with the tool in
+projects, tool libraries and undo.
+
+The tool editor's preview shows the tool body in place of an overlapping
+parameter holder. For a machine-default holder you have not changed, it
+shows the conservative parameter-cylinder floor that the checks use. The
+editor keeps its width when a number is too long for its field.
+
+A **Waterjet nozzle** is a tool kind for waterjet machines (see
+[Machine types](@/guide/check-and-post/machines.md)).
 
 **Centre cutting (may plunge into solid)** states whether the cutter can
 plunge into material. Set it from the real tool's specification. Turning
@@ -142,6 +164,7 @@ numbers that match the real machine's tool table before posting.
 | `replace would remove tool` | Keep that tool in the library or assign another tool to the named operation. |
 | A retained or imported body does not fit | Correct the tool and body dimensions or placement. The import applies nothing. |
 | A mate is absent or ambiguous | Supply the required frames and select the named target and piece coordinate systems. |
+| `<operation>: left-hand tap <tool> is not supported by posting` | Use a right-hand tap, or thread another way. No post writes a left-hand cycle. |
 | `would both post as T` | Give the two named tools distinct controller numbers. |
 
 These checks do not replace measurement, a correct machine tool table or

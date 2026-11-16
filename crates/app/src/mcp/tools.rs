@@ -279,7 +279,7 @@ fn s_add_tool() -> Value {
             "name": { "type": "string", "description": "Tool name in the document; defaults to the catalog name." },
             "catalog": { "type": "string", "description": "A list_tool_catalog name to copy." },
             "definition": { "type": "object", "description": "A full tool definition (get_job's tool shape). Optional catalog keys part_number, vendor, coating, helix_deg (0-90) and notes ride it; unusable ones refuse the add by tool name. Optional cutting_data: [{material, rpm, feed}] per workpiece material word (aluminium_6061, mild_steel, stainless_304, grey_cast_iron, brass, plastics_pom), feed mm/min; a material twice or a non-positive rpm/feed refuses the add by tool name. When the document states a material the tool has a row for, the tool lands running that row's rpm/feed, and add_operation seeds a milling op's feed from it." },
-            "holder": { "type": "string", "description": "A built-in library holder for it (\"BT30 ER20\"), or \"none\" for no holder body. Omitted: the active setup's machine's default holder (tooling.default_holder), when it states one and the holder takes the tool. The reply names the holder it landed with (holder, holder_from) or why the default was left off (note)." }
+            "holder": { "type": "string", "description": "A built-in library holder for it (\"BT30 ER20\", or a taper's Weldon pick \"BT40 Weldon\": the bore for the tool's shank), or \"none\" for no holder body. Omitted: the active setup's machine's default holder (tooling.default_holder), when it states one and the holder takes the tool. The reply names the holder it landed with (holder, holder_from) or why the default was left off (note)." }
         }),
         &[],
     )

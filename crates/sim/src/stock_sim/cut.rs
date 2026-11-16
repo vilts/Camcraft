@@ -155,6 +155,14 @@ pub fn simulate(dex: &mut Dexel, ops: &[SimOp]) -> Result<(), StockError> {
     // stock being removed. The VERDICT scan (`envelope_scan`) keeps
     // the stricter quarter-tolerance law, because a measurement may
     // never be coarser than the promise it measures.
+    let mut history = dex.history.as_deref().cloned();
+    if let Some(h) = &mut history {
+        h.add_ops(ops).map_err(StockError::Invalid)?;
+        if h.active {
+            *dex = h.read(false).map_err(StockError::Invalid)?.dex;
+            return Ok(());
+        }
+    }
     let chord_tol = (dex.cell * 0.25).max(1e-9);
     for op in ops {
         for m in op.moves {
@@ -166,6 +174,7 @@ pub fn simulate(dex: &mut Dexel, ops: &[SimOp]) -> Result<(), StockError> {
             }
         }
     }
+    dex.history = history.map(std::sync::Arc::new);
     Ok(())
 }
 

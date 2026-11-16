@@ -7,6 +7,7 @@
 use crate::geo2d::{Point2, Region};
 
 use crate::machining2d::GenError;
+mod conservative;
 
 /// Front-half rim samples (over 180 degrees): the measuring stock's
 /// own count, so a reading here is a reading there.

@@ -181,17 +181,29 @@ impl State {
     /// #793: pick library holder `entry` for Apply holder; the gauge
     /// length starts at the entry's own and (#792) the projection at
     /// the stored tool's stickout (flute plus shank length), the
-    /// command's own default. An unknown name clears the pick.
+    /// command's own default. An unknown name clears the pick. #2018: a
+    /// taper's Weldon row ("BT40 Weldon") stays the pick as it is named,
+    /// its bore the one for the tool's shank (resolved on Apply), and
+    /// takes the taper's Weldon gauge length.
     pub(crate) fn pick_library_holder(&mut self, entry: &str) {
         let stickout = self.editor_stored_tool().map(|t| t.flute_len + t.shank_len);
+        let key = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase();
+        let group = holder_library::picker_rows().into_iter().find_map(|r| match &r {
+            holder_library::PickerRow::Weldon { taper, bores } if key(&r.name()) == key(entry) => {
+                let e = bores.first().and_then(|b| holder_library::weldon_for(taper.name, *b).ok())?;
+                Some((r.name(), e))
+            }
+            _ => None,
+        });
+        let pick = group.or_else(|| holder_library::find(entry).ok().map(|e| (e.name(), e)));
         let d = &mut self.tool_profile_ui;
-        match holder_library::find(entry) {
-            Ok(e) => {
-                d.library = Some(e.name());
+        match pick {
+            Some((name, e)) => {
+                d.library = Some(name);
                 d.gauge = e.gauge_len;
                 d.projection = stickout.unwrap_or(d.projection);
             }
-            Err(_) => d.library = None,
+            None => d.library = None,
         }
     }
 

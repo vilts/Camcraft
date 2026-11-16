@@ -76,14 +76,15 @@ fn applying_a_ball_nose_saves_its_corner_as_half_the_diameter() {
 }
 
 #[test]
-fn the_library_summary_reads_a_ball_noses_corner_as_its_ball() {
+fn properties_reads_a_ball_noses_corner_as_its_ball() {
     let mut state = with_tool(BALL, Tool { corner_r: 0.0, ..catalog_tool(BALL) });
     state.ui_target = UiTarget::Tool(BALL.to_owned());
     let mut h = Harness::builder()
         .with_size(Vec2::new(620.0, 900.0))
         .build_ui_state(|ui, st: &mut State| super::pages::properties(ui, st, &super::theme::current()), state);
     h.run();
-    assert!(h.query_by_label_contains("corner r 3.00").is_some(), "the summary names the ball's corner");
+    assert!(h.query_by_label("3.000 mm").is_some(), "Properties names the ball's corner");
+    assert_eq!(corner_fields(&h), 0, "Properties keeps the ball's corner read-only");
 }
 
 #[test]

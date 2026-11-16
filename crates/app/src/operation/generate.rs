@@ -417,7 +417,7 @@ fn run_job_arms(job: GenJob) -> Result<(Toolpath, Vec<Warning>), GenError> {
                     // together they machine the whole pick list. The
                     // walk resolved them on the caller's thread (M5.3 B);
                     // this arm only takes the answer.
-                    let (loops, runs, auto_inside) = contour_sel
+                    let (loops, runs, auto) = contour_sel
                         .take()
                         .ok_or_else(|| unreached("contour selection geometry"))??;
                     if loops.is_empty() && runs.is_empty() {
@@ -426,10 +426,15 @@ fn run_job_arms(job: GenJob) -> Result<(Toolpath, Vec<Warning>), GenError> {
                         ));
                     }
                     let mut cp = cp;
-                    cp.side = match side {
-                        Side::Auto if auto_inside => Side::Inside,
-                        Side::Auto => Side::Outside,
-                        s => *s,
+                    cp.side = match (side, auto) {
+                        (Side::Auto, machining2d::AutoSide::Inside) => Side::Inside,
+                        (Side::Auto, machining2d::AutoSide::Outside) => Side::Outside,
+                        // #1933: the level reading could not tell - named, never guessed.
+                        (Side::Auto, machining2d::AutoSide::Undecided(why)) if !loops.is_empty() => {
+                            return Err(GenError::Invalid(why));
+                        }
+                        (Side::Auto, _) => Side::Outside,
+                        (s, _) => *s,
                     };
                     if loops.is_empty() && area.is_some() {
                         return Err(GenError::Invalid(
@@ -454,7 +459,9 @@ fn run_job_arms(job: GenJob) -> Result<(Toolpath, Vec<Warning>), GenError> {
                         // to the floor of the wall it trims - the part
                         // read as the union of its touching bodies
                         // (M13.11) when the picks span several models.
-                        machining2d::contour_on_bodies(&region, &m_gen.facets, &m_gen.bodies, &cp)?
+                        // #1927: a picked ring that meets its wall at no
+                        // level - the side stands in the part - is refused.
+                        machining2d::contour_on_picked(&region, &m_gen.facets, &m_gen.bodies, &cp)?
                     } else {
                         machining2d::contour(&region, &cp)?
                     };
@@ -465,17 +472,23 @@ fn run_job_arms(job: GenJob) -> Result<(Toolpath, Vec<Warning>), GenError> {
                     }
                     // #1777: a run on a part is cut on its air side, read
                     // from the part's sections; Side applies to rings only.
-                    let section_at = |z: f64| match super::material::section(&m_gen.facets, z) {
+                    let cut = |f: &[Triangle], z: f64| match super::material::section(f, z) {
                         Ok(r) => Ok(Some(r)),
                         Err(GenError::Empty(_)) => Ok(None),
                         Err(e) => Err(e),
                     };
+                    let section_at = |z: f64| cut(&m_gen.facets, z);
+                    // #1928: a run on the stock stands one radius off its
+                    // line on the side Side names (a picked selection has
+                    // no tilt frame: world facets are the job's frame).
+                    let stock_at = |z: f64| stock_facets.as_deref().map_or(Ok(None), |f| cut(f, z));
+                    let part_at = |z: f64| if keep_parts.is_empty() { Ok(None) } else { cut(&keep_parts, z) };
                     for run in &runs {
                         // #1015: a run refused shows the rings and runs before it.
                         let next = if part_solid {
                             machining2d::contour_open_run(run, &cp, &section_at)
                         } else {
-                            machining2d::contour_along_chain(run, &cp)
+                            machining2d::contour_open_run_sided(run, &cp, *side, &stock_at, &part_at)
                         }
                         .map_err(|e| e.after_moves(&path.moves))?;
                         let said = next.notes.clone();
@@ -2928,6 +2941,12 @@ fn run_job_arms(job: GenJob) -> Result<(Toolpath, Vec<Warning>), GenError> {
                 let prior = crate::stock_sim::Columns::of_grid(dex);
                 verify::acquit_by_prior(&path, &prior, geom.radius, Z_TOL, &mut warns);
             }
+            // #2121: a traverse AT the clearance plane is judged too; one
+            // the program ahead cleared the stock under is re-read, and
+            // one that stands is named (the plane is inside the stock).
+            let reread = super::clearance_stock::Reread { stock: judged_stock, part: &material.facets, fidelity_known: stock_fidelity_known, tool: &geom, clearance: hl.clearance, excess: material.excess };
+            super::clearance_stock::acquit(&path, mode, &reread, Some(&mut verify_prior), &mut warns);
+            let clearance_note = super::clearance_stock::note(&path, hl.clearance, stock_top_z, false, &warns);
             // A turned path's axial rapids are judged in the meridian
             // plane, not by the column (#96, #103): the revolved stock
             // less what the program ahead faced and this path cut.
@@ -3145,6 +3164,7 @@ fn run_job_arms(job: GenJob) -> Result<(Toolpath, Vec<Warning>), GenError> {
             // The all-air verdict (M13.8): a finish that provably cuts
             // nothing says so by name instead of passing silent.
             let mut path = super::air_law::air_noted(path, mode, &material.facets, stock_top_z, &geom);
+            path.notes.extend(clearance_note);
             path.notes.extend(super::mark_law::notes(params.kind().info().label, marked, mark_budget, unit));
             // #104: explain the height mismatch, without replacing any move-level
             // verdict. Tilted, rotary and turning heights are not world-Z tops.
@@ -3243,6 +3263,11 @@ fn run_job_arms(job: GenJob) -> Result<(Toolpath, Vec<Warning>), GenError> {
             );
             // #1091: the dive re-read under the tool, in the plane's frame.
             super::stock_top_law::acquit(&path, mode, stock_local.as_deref().filter(|_| stock_fidelity_known), &m_gen.facets, &geom, m_gen.excess, &mut warns);
+            // #2121: a traverse at the plane's clearance, re-read under the
+            // tool in the plane's frame; one that stands is named.
+            let reread = super::clearance_stock::Reread { stock: stock_local.as_deref(), part: &m_gen.facets, fidelity_known: stock_fidelity_known, tool: &geom, clearance: hl.clearance, excess: m_gen.excess };
+            super::clearance_stock::acquit(&path, mode, &reread, None, &mut warns);
+            let clearance_note = super::clearance_stock::note(&path, hl.clearance, st_local, true, &warns);
             // The containment kinds' solid law (their verify runs without
             // the model - exact rims): the tool's own tip and stack swept
             // along every move against the part solid. The Section kinds
@@ -3265,6 +3290,7 @@ fn run_job_arms(job: GenJob) -> Result<(Toolpath, Vec<Warning>), GenError> {
             // local part, the budget measured along the tool (#1607:
             // the setup's parts on a stock source).
             let mut path_world = path_world;
+            path_world.notes.extend(clearance_note);
             let mark_part = (depth_law == DepthLaw::Mark).then_some(&m_gen.facets).or(keep_local.as_ref().filter(|_| parts_marked));
             if let Some(part) = mark_part {
                 let marked = super::mark_law::mark_into(&mut warns, &path, part, &cutter, mark_budget, material.excess);

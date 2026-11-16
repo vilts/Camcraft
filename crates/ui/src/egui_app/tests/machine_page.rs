@@ -10,6 +10,15 @@ use crate::state::SetupPage;
 
 type H = Harness<'static, ShellUi>;
 
+/// The shell at the app's default height (800 px). The 720 px harness
+/// leaves the machine page's button row below the fold: the ribbon is 22 px
+/// taller since #2021 (see `shell_harness`).
+fn tall_harness() -> H {
+    Harness::builder()
+        .with_size(Vec2::new(1280.0, 800.0))
+        .build_ui_state(frame, ShellUi::seeded())
+}
+
 fn open_machine(h: &mut H, machine: Option<&str>) {
     h.state_mut().state.pending.push_back(CommandKind::CreateSetup { name: None, datum_from: None });
     // A fresh document has no machine: `None` loads nothing.
@@ -123,7 +132,7 @@ fn the_machine_page_keeps_its_message_and_load_button_with_no_machine() {
 
 #[test]
 fn the_machine_page_buttons_still_queue_their_commands() {
-    let mut h = shell_harness();
+    let mut h = tall_harness();
     open_machine(&mut h, Some("Tormach 770MX"));
     assert!(camcraft_app::machine::of(&h.state().state.world).1.is_some());
     h.get_by_label("Clear").click();
@@ -141,7 +150,7 @@ fn the_machine_page_buttons_still_queue_their_commands() {
 #[test]
 fn load_other_and_edit_queue_their_own_dialogs() {
     let mut h = Harness::builder()
-        .with_size(Vec2::new(1280.0, 720.0))
+        .with_size(Vec2::new(1280.0, 800.0))
         .build_ui_state(frame_undrained, ShellUi::seeded());
     let st = &mut h.state_mut().state;
     st.pending.push_back(CommandKind::CreateSetup { name: None, datum_from: None });

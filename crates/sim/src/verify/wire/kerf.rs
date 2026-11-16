@@ -11,7 +11,7 @@
 use crate::cl::Toolpath;
 use crate::geo2d::Point2;
 
-use super::{dist, Product, WireFinding, KERF_TOL};
+use super::{dist, Product, WireFinding, WireUnder, KERF_TOL};
 
 /// The wire as the laws read it: each vertex on the programmed plane
 /// `z0` and the wire's lean there per unit height (0 when vertical).
@@ -35,24 +35,57 @@ impl Wire {
     }
 }
 
-/// The first move whose kerf enters the product at height `z`: the
-/// wire's segment there against `k` widened by its lean toward the
-/// product (the ellipse's reach, module head).
-pub(super) fn gouge_at(p: &Product<'_>, wire: &Wire, k: f64, z: f64) -> Option<WireFinding> {
-    let pts = wire.at(z);
-    let mut first: Option<(usize, Point2, f64)> = None;
-    let mut moves = 0;
-    for (i, w) in pts.windows(2).enumerate() {
-        let (d, at) = dist::clearance(p, w[0], w[1]);
-        let need = reach(k, w[0], w[1], wire.lean.get(i).copied(), wire.lean.get(i + 1).copied(), at);
-        if d < need - KERF_TOL {
-            moves += 1;
-            if first.is_none() {
-                first = Some((i + 1, at, need - d));
-            }
+/// One height's kerf readings under the stated verify tolerance `tol`
+/// (#1170): the moves that gouge, and the deepest reading the
+/// tolerance let pass.
+pub(super) struct Reading {
+    tol: f64,
+    first: Option<(usize, Point2, f64)>,
+    moves: usize,
+    under: Option<(f64, Point2)>,
+    deepest: f64,
+}
+
+impl Reading {
+    pub(super) fn new(tol: f64) -> Self {
+        Reading { tol, first: None, moves: 0, under: None, deepest: 0.0 }
+    }
+
+    /// Move `move_no` (1-based): its kerf needs `need` and the product
+    /// stands `d` from it, nearest at `at`.
+    pub(super) fn take(&mut self, move_no: usize, d: f64, need: f64, at: Point2) {
+        if d < need - KERF_TOL - self.tol {
+            self.moves += 1;
+            self.deepest = self.deepest.max(need - d);
+            self.first.get_or_insert((move_no, at, need - d));
+        } else if d < need - KERF_TOL && self.under.is_none_or(|(deep, _)| need - d > deep) {
+            self.under = Some((need - d, at));
         }
     }
-    first.map(|(move_no, at, depth)| WireFinding::Gouge { move_no, z, at, depth, moves })
+
+    /// The first gouge at height `z` with the count of moves that
+    /// gouge, and the deepest reading passed under the tolerance.
+    pub(super) fn close(self, z: f64) -> (Option<WireFinding>, Option<WireUnder>) {
+        let (moves, tol, deepest) = (self.moves, self.tol, self.deepest);
+        (
+            self.first.map(|(move_no, at, depth)| WireFinding::Gouge { move_no, z, at, depth, moves, tol, deepest }),
+            self.under.map(|(depth, at)| WireUnder { depth, z, at }),
+        )
+    }
+}
+
+/// The first move whose kerf enters the product at height `z` by more
+/// than the verify tolerance `tol`: the wire's segment there against
+/// `k` widened by its lean toward the product (the ellipse's reach,
+/// module head).
+pub(super) fn gouge_at(p: &Product<'_>, wire: &Wire, k: f64, z: f64, tol: f64) -> (Option<WireFinding>, Option<WireUnder>) {
+    let pts = wire.at(z);
+    let mut read = Reading::new(tol);
+    for (i, w) in pts.windows(2).enumerate() {
+        let (d, at) = dist::clearance(p, w[0], w[1]);
+        read.take(i + 1, d, reach(k, w[0], w[1], wire.lean.get(i).copied(), wire.lean.get(i + 1).copied(), at), at);
+    }
+    read.close(z)
 }
 
 /// How far the kerf of the leaning wire on `a`-`b` reaches toward the

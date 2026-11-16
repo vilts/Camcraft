@@ -10,7 +10,7 @@
         { "id": "ms", "name": "head", "type": "head",
           "spindle": { "min_speed": 180.0, "max_speed": 5000.0, "power": 1.1,
             "ranges": [{ "min_speed": 180.0, "max_speed": 2500.0 }, { "min_speed": 350.0, "max_speed": 5000.0 }],
-            "body_diameter": 0.0, "body_length": 0.0 },
+            "body_diameter": 0.0, "body_length": 0.0, "rigid_tapping": true },
           "tool_station": {
             "coolants": [ { "name": "Flood", "mCode": "M8" } ] } }
       ] }

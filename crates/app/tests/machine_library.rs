@@ -193,7 +193,7 @@ fn required_keys_per_kind_refuse_by_name() {
 #[test]
 fn other_stated_values_refuse_by_name() {
     let t = mill(|v| *at(v, "/general/kind") = "drill press".into());
-    one_refusal(&t, "general.kind", "not mill, lathe, mill-turn or plasma");
+    one_refusal(&t, "general.kind", "not mill, lathe, mill-turn, plasma, waterjet, wire_edm or sinker_edm");
     let t = mill(|v| *at(v, "/kinematics/default/units/length") = "cm".into());
     one_refusal(&t, "units.length", "not mm or inch");
     let t = mill(|v| *at(v, "/tooling/number_of_tools") = 0.into());

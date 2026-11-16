@@ -90,7 +90,7 @@ fn quarter_turns_are_equal_buttons_filling_the_pane() {
     let turns = ["Turn X+", "Turn Y+", "Turn Z+", "Turn X-", "Turn Y-", "Turn Z-"];
     let r: Vec<Rect> = turns.iter().map(|l| rect(&h, l)).collect();
     for (i, l) in turns.iter().enumerate() {
-        assert!(live(&h, l), "{l} is live");
+        assert_eq!(live(&h, l), l.starts_with("Turn Z"), "{l} enabled state on milling setup");
         assert!(same_size(r[i], r[0]), "{l} is the size of Turn X+: {:?} vs {:?}", r[i], r[0]);
     }
     for k in 0..3 {
@@ -201,3 +201,132 @@ fn turning_an_unplaced_wcs_applies_the_typed_position() {
     );
 }
 
+#[test]
+fn quarter_turns_follow_each_oblique_setup_axis_in_both_directions() {
+    for axis in 0..3 {
+        for sign in [-1.0, 1.0] {
+            let mut state = State::new();
+            let pos = [7.0, -11.0, 23.0];
+            state.pending.push_back(CommandKind::SetWcs {
+                pos,
+                roll_deg: 23.0,
+                pitch_deg: -31.0,
+                yaw_deg: 47.0,
+            });
+            state.drain_actions();
+            state.sync_setup_ui();
+            let before = location(&state, "G54");
+            turn_wcs(&mut state, axis, sign);
+            assert!(matches!(state.pending.back(), Some(CommandKind::SetWcs { .. })));
+            state.drain_actions();
+            let after = location(&state, "G54");
+            assert_eq!([after.pos.x, after.pos.y, after.pos.z], pos);
+            for basis in [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] {
+                let [x, y, z] = basis;
+                // Right-hand quarter turns in the setup frame, then map to world.
+                let local = match axis {
+                    0 => [x, -sign * z, sign * y],
+                    1 => [sign * z, y, -sign * x],
+                    _ => [-sign * y, sign * x, z],
+                };
+                let expected = transform_point(Point3::new(local[0], local[1], local[2]), before.pos, before.rot);
+                let actual = transform_point(Point3::new(x, y, z), after.pos, after.rot);
+                assert!(
+                    [(actual.x - expected.x), (actual.y - expected.y), (actual.z - expected.z)]
+                        .iter().all(|v| v.abs() < 1e-9),
+                    "axis {axis}, sign {sign}, basis {basis:?}: {actual:?} != {expected:?}"
+                );
+            }
+        }
+    }
+}
+
+fn spin_live(h: &Harness<'static, State>, label: &str) -> bool {
+    let l = rect(h, label);
+    let spin = h
+        .get_all_by_role(Role::SpinButton)
+        .find(|s| (s.rect().center().y - l.center().y).abs() < 4.0 && s.rect().min.x > l.max.x)
+        .unwrap_or_else(|| panic!("spin button for {label}"));
+    !spin.accesskit_node().is_disabled()
+}
+
+fn label_texts(h: &Harness<'static, State>) -> Vec<String> {
+    h.get_all_by_role(Role::Label)
+        .filter_map(|n| n.accesskit_node().value())
+        .collect()
+}
+
+#[test]
+fn milling_setup_disables_xy_wcs_tilt_and_points_to_part_alignment() {
+    let h = page(with_stock());
+    for label in ["X origin", "Y origin", "Z origin", "Turn about Z (yaw)"] {
+        assert!(spin_live(&h, label), "{label} stays live on a milling setup");
+    }
+    for label in ["Tilt about X (roll)", "Tilt about Y (pitch)"] {
+        assert!(!spin_live(&h, label), "{label} must be disabled on a milling setup");
+    }
+    for label in ["Turn Z+", "Turn Z-", "Level", "Set Origin"] {
+        assert!(live(&h, label), "{label} stays live on a milling setup");
+    }
+    for label in ["Turn X+", "Turn X-", "Turn Y+", "Turn Y-"] {
+        assert!(!live(&h, label), "{label} must be disabled on a milling setup");
+    }
+    let texts = label_texts(&h);
+    assert!(
+        texts.iter().any(|t| t.contains("Part alignment") && t.contains("Setup page")),
+        "expected Part alignment on Setup page guidance, got: {texts:?}"
+    );
+    assert!(
+        !texts.iter().any(|t| t.contains("Setups page")),
+        "must never say 'Setups page': {texts:?}"
+    );
+
+    let mut tilted = with_stock();
+    tilted.pending.push_back(CommandKind::SetWcs {
+        pos: [0.0, 0.0, 0.0],
+        roll_deg: 15.0,
+        pitch_deg: 0.0,
+        yaw_deg: 0.0,
+    });
+    tilted.drain_actions();
+    tilted.sync_setup_ui();
+    let mut h_tilted = page(tilted);
+    let tilted_texts = label_texts(&h_tilted);
+    assert!(
+        tilted_texts.iter().any(|t| t.contains("tilted") && t.contains("Level")),
+        "expected tilted-WCS warning naming Level, got: {tilted_texts:?}"
+    );
+    h_tilted.get_by_label("Level").click();
+    h_tilted.run();
+    let loc = location(h_tilted.state(), "G54");
+    assert!((loc.rot[0]).abs() < 1e-9 && (loc.rot[1]).abs() < 1e-9, "Level clears tilt: {:?}", loc.rot);
+}
+
+#[test]
+fn non_mill_setup_keeps_xy_wcs_tilt_and_turns_live() {
+    let mut st = with_stock();
+    let lathe = camcraft_app::machine::Machine {
+        kind: Some("lathe".into()),
+        ..Default::default()
+    };
+    let load = camcraft_app::commands::LoadMachine::new(&st.world, "lathe.mch".into(), Some(lathe));
+    st.history.execute(&st.world, load.expect("valid lathe"));
+    st.drain_actions();
+    st.sync_setup_ui();
+
+    let mut h = page(st);
+    for label in [
+        "Tilt about X (roll)",
+        "Tilt about Y (pitch)",
+        "Turn about Z (yaw)",
+    ] {
+        assert!(spin_live(&h, label), "{label} stays live on non-mill setups");
+    }
+    for label in ["Turn X+", "Turn X-", "Turn Y+", "Turn Y-", "Turn Z+", "Turn Z-"] {
+        assert!(live(&h, label), "{label} stays live on non-mill setups");
+    }
+    h.get_by_label("Turn X+").click();
+    h.run();
+    let loc = location(h.state(), "G54");
+    assert!(loc.rot[0].abs() > 0.1 || loc.rot[1].abs() > 0.1, "Turn X+ tilts non-mill WCS: {:?}", loc.rot);
+}

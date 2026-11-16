@@ -12,7 +12,7 @@ anything posts. Modelling the workholding is how a verify becomes worth
 trusting. A fixture is never machined; an operation whose source is a
 fixture is refused.
 
-Everything below is added on the setup's **Fixtures** node in the browser
+Everything below is added on the setup's {{ <icon name="tree-fixture" /> }} **Fixtures** node in the browser
 (each setup holds its own), and every placement or edit is one undo step.
 Each action also has an MCP tool, named under each kind.
 

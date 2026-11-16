@@ -119,7 +119,7 @@ pub(super) fn s_set_tool_holder() -> Value {
         "type": "object",
         "properties": {
             "tool": { "type": "string", "description": "A document tool name (see get_job)." },
-            "library": { "type": "string", "description": "A list_holder_library entry name, e.g. \"BT30 ER20\"." },
+            "library": { "type": "string", "description": "A list_holder_library entry name, e.g. \"BT30 ER20\", or a taper's Weldon pick (\"BT40 Weldon\"): the bore is the one that takes the tool's shank." },
             "gauge_len": { "type": "number", "minimum": 0, "description": "With library: gauge line to nose face, mm (default: the entry's)." },
             "projection": { "type": "number", "minimum": 0, "description": "With library: nose face above the tool tip, mm (default: the tool's flute plus shank length)." },
             "points": { "type": "array", "description": "A drawn spun holder profile, tip-up: [{z, r, arc}] (mm; arc 0 = line, else the signed arc radius to the next point).",

@@ -10,7 +10,8 @@
 //! strikes a wall a straight body would miss, and a Weldon body carries
 //! its clamp screw allowance. #794 adds the Tormach TTS holders: the
 //! collar face is the gauge line (tip to collar = the TTS tool length),
-//! and the TTS ER20's collar strikes a wall its nut would miss.
+//! and the TTS ER20's collar strikes a wall its nut would miss. #2018:
+//! one Weldon pick for each taper takes the bore of the tool's shank.
 //!
 //! Gate map (M4.4): covers app::commands, app::tool_body, tools::tools.
 
@@ -314,4 +315,34 @@ fn the_tts_er20_collar_strikes_a_wall_its_nut_misses() {
     history.execute(&world, SetToolBody::library(&world, TOOL, "TTS ER20", None, None).expect("tts"));
     regenerate(&world, &mut history);
     assert_eq!(holder_hits(&world), 0, "a wall beyond the collar is clear");
+}
+
+/// #2018: the taper's one Weldon pick takes the bore for the tool's
+/// shank (6 mm here) and lands exactly the old "BT40 Weldon 6 mm"
+/// entry - the same outline, so the same judged holder and the same
+/// collision bands; undo and a misfit refuse as before.
+#[test]
+fn a_weldon_pick_takes_the_bore_of_the_tools_shank() {
+    let (world, mut history) = face_world();
+    let tool = model::find_by_name(&world, TOOL).expect("tool");
+    history.execute(&world, SetToolBody::library(&world, TOOL, "BT40 Weldon", None, None).expect("a 6 mm bore"));
+    let picked = (drawn(&world), tool_body::judged(&world, &tool, catalog_tool(TOOL)).expect("judged"));
+    let bands = |w: &World| tool_body::body_of(w, &tool).and_then(|b| b.spun).map(|s| s.holder_profile().bands().to_vec());
+    let picked_bands = bands(&world);
+    history.execute(&world, SetToolBody::library(&world, TOOL, "BT40 Weldon 6 mm", None, None).expect("the old entry"));
+    let old = (drawn(&world), tool_body::judged(&world, &tool, catalog_tool(TOOL)).expect("judged"));
+    assert!(picked.0.is_some());
+    assert_eq!(picked.0, old.0, "the outline is the 6 mm bore's");
+    assert_eq!(picked.1 .0.holder_d.to_bits(), old.1 .0.holder_d.to_bits(), "the judged holder is the same");
+    assert_eq!(picked_bands, bands(&world), "the collision bands are the same");
+    let body_r = old.0.as_ref().and_then(|p| p.get(1).map(|q| q.1));
+    assert_eq!(body_r, Some(25.0 * 0.5 + holder_library::WELDON_SCREW), "the 6 mm bore's Ø25 body");
+    // A shank no standard bore takes is refused by name.
+    let odd = Tool { shank_d: 7.0, ..catalog_tool(TOOL) };
+    history.execute(&world, AddTool::new(&world, "T7", odd).expect("tool"));
+    let refused = SetToolBody::library(&world, "T7", "BT40 Weldon", None, None).err().map(|e| e.to_string());
+    assert!(
+        refused.as_deref().is_some_and(|m| m.contains("tool 'T7': holder: a Ø7.000 mm shank does not fit - the holder takes a BT40 Weldon bore")),
+        "{refused:?}"
+    );
 }

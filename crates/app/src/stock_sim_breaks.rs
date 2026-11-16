@@ -46,7 +46,7 @@ pub fn bounded(name: &str, params: &OpParams, breaks: Vec<EdgeBreak>) -> Vec<Edg
                     op = name,
                     declared = w,
                     record = b.width(),
-                    "edge-break record wider than its operation declares - dropped, judged sharp"
+                    "edge-break record has invalid dimensions, profile or frame, or is wider than its operation declares - dropped, judged sharp"
                 );
             }
             ok

@@ -83,6 +83,75 @@ fn hostile_geometry_lands_clamped() {
     assert_eq!(t.tokens.glyph_px, 8.0); // GLYPH floor
 }
 
+/// #2066: every new op-tab, browser-tree, min-label and stroke token
+/// fits inside MAX_MAP_ENTRIES and clamps at both ends of its window.
+#[test]
+fn op_tab_and_tree_tokens_fit_cap_and_clamp() {
+    assert!(
+        tf::GEOM_NAMES.len() <= tf::MAX_MAP_ENTRIES,
+        "{} geometry tokens must fit MAX_MAP_ENTRIES ({})",
+        tf::GEOM_NAMES.len(),
+        tf::MAX_MAP_ENTRIES,
+    );
+    let low = tf::parse_text(
+        r#"{"format":"camcraft-theme/1","descriptor":{"name":"Lo2066"},"base":"dark",
+            "geometry":{"font_label_min":-9,"op_tab_h":-9,"op_tab_pad_x":-9,"op_tab_gap":-9,
+            "op_tab_bottom_gap":-9,"op_tab_icon_px":-9,"op_tab_icon_gap":-9,"op_tab_radius":-9,
+            "font_op_tab":-9,"tree_glyph_px":-9,"tree_inset_x":-9,"tree_indent":-9,
+            "tree_eye_reserve":-9,"tree_pad_x":-9,"tree_pad_y":-9,"tree_suffix_gap":-9,
+            "tree_header_boost":-9,"highlight_stroke_px":-9}}"#,
+        "lo2066",
+    )
+    .expect("low extreme parses clamped");
+    assert_eq!(low.tokens.font_label_min, 6.0);
+    assert_eq!(low.tokens.op_tab_h, 12.0);
+    assert_eq!(low.tokens.op_tab_pad_x, 0.0);
+    assert_eq!(low.tokens.op_tab_gap, 0.0);
+    assert_eq!(low.tokens.op_tab_bottom_gap, 0.0);
+    assert_eq!(low.tokens.op_tab_icon_px, 8.0);
+    assert_eq!(low.tokens.op_tab_icon_gap, 0.0);
+    assert_eq!(low.tokens.op_tab_radius, 0);
+    assert_eq!(low.tokens.font_op_tab, 6.0);
+    assert_eq!(low.tokens.tree_glyph_px, 8.0);
+    assert_eq!(low.tokens.tree_inset_x, 0.0);
+    assert_eq!(low.tokens.tree_indent, 0.0);
+    assert_eq!(low.tokens.tree_eye_reserve, 12.0);
+    assert_eq!(low.tokens.tree_pad_x, 0.0);
+    assert_eq!(low.tokens.tree_pad_y, 0.0);
+    assert_eq!(low.tokens.tree_suffix_gap, 0.0);
+    assert_eq!(low.tokens.tree_header_boost, 0.0);
+    assert_eq!(low.tokens.highlight_stroke_px, 0.5);
+
+    let hi = tf::parse_text(
+        r#"{"format":"camcraft-theme/1","descriptor":{"name":"Hi2066"},"base":"dark",
+            "geometry":{"font_label":15.0,"font_label_min":999,"op_tab_h":999,"op_tab_pad_x":999,
+            "op_tab_gap":999,"op_tab_bottom_gap":999,"op_tab_icon_px":999,"op_tab_icon_gap":999,
+            "op_tab_radius":999,"font_op_tab":999,"tree_glyph_px":999,"tree_inset_x":999,
+            "tree_indent":999,"tree_eye_reserve":999,"tree_pad_x":999,"tree_pad_y":999,
+            "tree_suffix_gap":999,"tree_header_boost":999,"highlight_stroke_px":999}}"#,
+        "hi2066",
+    )
+    .expect("high extreme parses clamped");
+    assert_eq!(hi.tokens.font_label_min, 15.0);
+    assert_eq!(hi.tokens.op_tab_h, 64.0);
+    assert_eq!(hi.tokens.op_tab_pad_x, 32.0);
+    assert_eq!(hi.tokens.op_tab_gap, 32.0);
+    assert_eq!(hi.tokens.op_tab_bottom_gap, 24.0);
+    assert_eq!(hi.tokens.op_tab_icon_px, 64.0);
+    assert_eq!(hi.tokens.op_tab_icon_gap, 32.0);
+    assert_eq!(hi.tokens.op_tab_radius, 12);
+    assert_eq!(hi.tokens.font_op_tab, 32.0);
+    assert_eq!(hi.tokens.tree_glyph_px, 64.0);
+    assert_eq!(hi.tokens.tree_inset_x, 32.0);
+    assert_eq!(hi.tokens.tree_indent, 32.0);
+    assert_eq!(hi.tokens.tree_eye_reserve, 64.0);
+    assert_eq!(hi.tokens.tree_pad_x, 32.0);
+    assert_eq!(hi.tokens.tree_pad_y, 32.0);
+    assert_eq!(hi.tokens.tree_suffix_gap, 32.0);
+    assert_eq!(hi.tokens.tree_header_boost, 12.0);
+    assert_eq!(hi.tokens.highlight_stroke_px, 8.0);
+}
+
 /// The whole vocabulary lands: colours by name, alpha included.
 #[test]
 fn colours_override_by_name() {

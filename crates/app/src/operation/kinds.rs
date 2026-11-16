@@ -1749,6 +1749,8 @@ pub enum Family {
     /// The sinker EDM's electrode work (#541): admitted on a sinker
     /// EDM only.
     Sinker,
+    /// Abrasive waterjet work; operations are added by the following slice.
+    Waterjet,
 }
 
 impl Family {
@@ -1767,6 +1769,7 @@ impl Family {
                 | (Family::Plasma, Kind::Plasma)
                 | (Family::WireEdm, Kind::WireEdm)
                 | (Family::Sinker, Kind::SinkerEdm)
+                | (Family::Waterjet, Kind::Waterjet)
         )
     }
 
@@ -1779,6 +1782,7 @@ impl Family {
             Family::Plasma => "plasma cutting",
             Family::WireEdm => "wire EDM",
             Family::Sinker => "sinker EDM",
+            Family::Waterjet => "waterjet",
         }
     }
 
@@ -1791,6 +1795,7 @@ impl Family {
             Family::Plasma => "plasma table",
             Family::WireEdm => "wire EDM",
             Family::Sinker => "sinker EDM",
+            Family::Waterjet => "waterjet",
         }
     }
 }

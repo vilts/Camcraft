@@ -32,7 +32,7 @@ use crate::operation::{self, OpParams, WireContourOp};
 use crate::post::AfterOperation;
 use crate::post::{self, cnc, Dump};
 use crate::schema::Operation;
-use crate::verify::wire::Slug;
+use crate::verify::wire::slugs_said;
 use flecs_ecs::prelude::*;
 use serde_json::json;
 
@@ -45,24 +45,6 @@ pub const WIRE_VERDICT: &str = "the 3D stock sim does not run for wire EDM";
 pub struct WireClause {
     pub problems: Vec<String>,
     pub line: Option<String>,
-}
-
-fn slugs(s: &[Slug]) -> String {
-    if s.is_empty() {
-        return "frees nothing".into();
-    }
-    s.iter()
-        .map(|g| {
-            format!(
-                "frees {:.2} mm² near X{:.3} Y{:.3} ({})",
-                g.area,
-                g.at.x,
-                g.at.y,
-                if g.product_area > crate::verify::wire::SLUG_AREA_TOL { "the part" } else { "waste" }
-            )
-        })
-        .collect::<Vec<_>>()
-        .join(", ")
 }
 
 /// Judge every Wire Contour of the program (document order, suppressed
@@ -80,7 +62,12 @@ pub fn wire_clause(world: &World) -> WireClause {
         match verdict {
             Err(why) => out.problems.push(format!("{name}: {why}")),
             Ok(v) => {
-                out.problems.extend(v.findings.iter().map(|f| format!("{name}: wire {}", f.describe())));
+                // #1170: a 4-axis cut's surface is the model's tessellation.
+                let four = matches!(&op.params, OpParams::WireContour(w) if w.four_axis.is_some());
+                out.problems.extend(v.findings.iter().map(|f| match f.facets_hint().filter(|_| four) {
+                    Some(hint) => format!("{name}: wire {} - {hint}", f.describe()),
+                    None => format!("{name}: wire {}", f.describe()),
+                }));
                 let (how, tail) = if v.held {
                     ("holds its slug by tabs through the main cut; the tab cut-off ", "")
                 } else if v.captured {
@@ -92,9 +79,12 @@ pub fn wire_clause(world: &World) -> WireClause {
                     // #1109: an open run says which laws it skipped and why.
                     (Some(why), OpParams::WireContour(w)) => format!("open run ({} of travel): kerf judged; {why}", w.side.word()),
                     (Some(why), _) => why.to_owned(),
-                    (None, _) => format!("{how}{}{tail}", slugs(&v.slugs)),
+                    (None, _) => format!("{how}{}{tail}", slugs_said(&v.slugs)),
                 };
-                judged.push(format!("{name} {what}"));
+                judged.push(match v.tolerance_said() {
+                    Some(tol) => format!("{name} {what}; {tol}"),
+                    None => format!("{name} {what}"),
+                });
             }
         }
     }

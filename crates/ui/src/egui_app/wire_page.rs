@@ -2,7 +2,8 @@
 //! the start hole on Geometry, the two workpiece planes on Heights, the
 //! machine's condition on Passes, and the taper angle (#536) and the
 //! 4-axis block (#537: the pairing rule, the twist tolerance and the
-//! sync pairs as numbers) on Geometry. Every value edits the page draft;
+//! sync pairs as numbers; #1170: where the wire stands off, and the
+//! verify tolerance) on Geometry. Every value edits the page draft;
 //! Apply rides the command history (EditOperationParams, undoable),
 //! whose door refuses a condition the machine does not state. No Feeds
 //! tab: a wire cut states no feed - the control's generator sets it.
@@ -15,7 +16,9 @@
 //! EDM practice, cited in `motion::wire_edm`); no vendor text.
 
 use super::fields::*;
-use camcraft_app::operation::{WireContourOp, WireFourAxis, WirePairingRule, WireSide, WireSkim, WireSyncPair, WireTabs, SKIMS_MAX};
+use camcraft_app::operation::{
+    WireContourOp, WireFourAxis, WirePairingRule, WireSide, WireSkim, WireSyncPair, WireTabs, WireWidening, SKIMS_MAX,
+};
 
 #[cfg(test)]
 #[path = "wire_page_tests.rs"]
@@ -29,6 +32,7 @@ const SIDES: [&str; 4] = [
 ];
 const SIDE_OF: [WireSide; 4] = [WireSide::Die, WireSide::Punch, WireSide::Left, WireSide::Right];
 const PAIRINGS: [&str; 2] = ["By arc length from the start hole", "By sync points"];
+const WIDENINGS: [&str; 2] = ["Only where the surface twists", "The same all round"];
 
 /// Keep a removed machine condition visible until the user chooses another.
 fn condition_field(ui: &mut Ui, label: &str, condition: &mut String, ids: &[String]) {
@@ -133,6 +137,13 @@ fn four_axis_fields(ui: &mut Ui, u: Unit, f: &mut WireFourAxis, cx: &mut Cx<'_>)
     f.pairing = if pi == 1 { WirePairingRule::SyncPoints } else { WirePairingRule::ArcLength };
     prop_row(ui, "Twist tolerance", |ui| num(ui, u, &mut f.tolerance));
     hint(ui, "pick two profiles: the upper on the top plane, the lower on the bottom plane; where they turn against each other the wire stands this much farther off them at most, to keep its kerf out of the surface between");
+    // #1170: where that standing-off is laid, and the verify tolerance.
+    let mut wi = usize::from(f.widening == WireWidening::Uniform);
+    prop_row(ui, "Stand off", |ui| combo(ui, "wire.widening", &mut wi, &WIDENINGS));
+    f.widening = if wi == 1 { WireWidening::Uniform } else { WireWidening::PerRuling };
+    hint(ui, "only where the surface twists: straight stretches are cut to size and the wire stands off at the twist alone; the same all round: every stretch stands off as far as the worst one needs");
+    prop_row(ui, "Verify tolerance", |ui| num(ui, u, &mut f.verify_tolerance));
+    hint(ui, "a lofted model is made of flat facets that stand a little past its true surface; state the tolerance the model was faceted at and the check before posting lets the wire into the facets by that much, and says how much it used; 0 checks the facets as they are");
     if f.pairing != WirePairingRule::SyncPoints {
         return;
     }

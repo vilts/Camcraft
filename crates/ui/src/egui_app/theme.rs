@@ -20,6 +20,9 @@ use egui::{Color32, CornerRadius, Margin, Stroke, Style, Visuals, vec2};
 
 use super::contrast;
 
+pub mod clamp;
+mod tables;
+
 /// One theme's whole truth: colours, then geometry.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tokens {
@@ -46,6 +49,8 @@ pub struct Tokens {
     pub selection_stroke: Color32,
     /// The viewport's 3D ground (the render pass clear colour).
     pub viewport: Color32,
+    /// Ink of a plain ribbon glyph, read against `strip_fill` (#2021).
+    pub ribbon_ink: Color32,
     // -- geometry: the Phase-6 complaint made themeable - ribbon size,
     // input fields and button size are tokens, not literals.
     /// Corner radius of widget rects and painted cells/rows.
@@ -78,124 +83,53 @@ pub struct Tokens {
     pub font_row: f32,
     /// Browser row suffix size.
     pub font_row_suffix: f32,
+    /// Ribbon rows (#2021): the tab row, then the gap to the cells.
+    pub ribbon_tab_h: f32,
+    pub ribbon_cell_top_gap: f32,
+    /// Gap from the cell box to the caption row, the row, the bottom gap.
+    pub ribbon_caption_gap: f32,
+    pub ribbon_caption_row_h: f32,
+    pub ribbon_bottom_gap: f32,
+    /// Minimum point size when shrinking an overflowing ribbon cell label.
+    pub font_label_min: f32,
+    /// Operation tab strip (#2066): row height, inner horizontal pad, inter-tab gap, bottom gap.
+    pub op_tab_h: f32,
+    pub op_tab_pad_x: f32,
+    pub op_tab_gap: f32,
+    pub op_tab_bottom_gap: f32,
+    /// Operation tab icon edge, icon-to-label gap, top corner radius and font size.
+    pub op_tab_icon_px: f32,
+    pub op_tab_icon_gap: f32,
+    pub op_tab_radius: u8,
+    pub font_op_tab: f32,
+    /// Browser tree & pane (#2066): glyph edge, root left inset, per-depth indent.
+    pub tree_glyph_px: f32,
+    pub tree_inset_x: f32,
+    pub tree_indent: f32,
+    /// Eye reserve width, header/row pad x/y, label-to-suffix gap, header font boost.
+    pub tree_eye_reserve: f32,
+    pub tree_pad_x: f32,
+    pub tree_pad_y: f32,
+    pub tree_suffix_gap: f32,
+    pub tree_header_boost: f32,
+    /// Active rule / row highlight / drop-target stroke thickness (px).
+    pub highlight_stroke_px: f32,
 }
 
-/// The painted path's clamps: geometry a theme file supplies can make
-/// the shell ugly, never impossible - each value is clamped to the
-/// window it must live in at the draw site (M6.1 law: a 400-point
-/// radius cannot blow out a checkbox, a 0-height cell cannot eat the
-/// viewport).
-pub mod clamp {
-    /// Widget/cell corner radius.
-    pub const RADIUS: u8 = 12;
-    /// Item spacing and button padding (px per axis): a window, so a
-    /// file can space the shell out or in, never apart.
-    pub const SPACING: (f32, f32) = (0.0, 32.0);
-    /// Input-field height, browser row height (px).
-    pub const CONTROL_H: (f32, f32) = (12.0, 64.0);
-    /// Ribbon cell height/width (px).
-    pub const CELL: (f32, f32) = (24.0, 96.0);
-    /// Ribbon glyph edge (px).
-    pub const GLYPH: (f32, f32) = (8.0, 64.0);
-    /// Caption/row font sizes (px).
-    pub const FONT: (f32, f32) = (6.0, 32.0);
-
-    #[must_use]
-    pub fn range(v: f32, lo_hi: (f32, f32)) -> f32 {
-        if v.is_finite() { v.clamp(lo_hi.0, lo_hi.1) } else { lo_hi.0 }
-    }
-}
-
-/// The ribbon strip's height: the cell box plus the caption row and the
-/// pad, so a theme that grows the cells grows the ribbon with them
-/// (66 = 16 + 30 + 20 is today's arithmetic, kept exact at the defaults).
+/// The ribbon strip's height: the tab row, its gap, the cell box, the
+/// caption gap, the caption row and the bottom gap, all from the theme
+/// (88 at the built-in tables). A theme that grows a row grows the ribbon.
 #[must_use]
 pub const fn ribbon_h(t: &Tokens) -> f32 {
-    RIBBON_TAB_H + t.cell_h + 20.0
+    t.ribbon_tab_h
+        + t.ribbon_cell_top_gap
+        + t.cell_h
+        + t.ribbon_caption_gap
+        + t.ribbon_caption_row_h
+        + t.ribbon_bottom_gap
 }
 
-/// The ribbon's workspace tab strip height (above the cell row).
-pub const RIBBON_TAB_H: f32 = 16.0;
-
 impl Tokens {
-    /// The imgui shell's numbers, as tokens - unchanged values, now the
-    /// dark COLUMN of a table that will carry a second one (M6.1 C).
-    pub const DARK: Tokens = Tokens {
-        ink: Color32::from_rgb(0x23, 0x26, 0x2B),
-        ink_alt: Color32::from_rgb(0x2C, 0x30, 0x37),
-        well: Color32::from_rgb(0x1B, 0x1E, 0x22),
-        text: Color32::from_rgb(0xD6, 0xDA, 0xE0),
-        text_dim: Color32::from_rgb(0x9A, 0xA1, 0xAB),
-        text_faint: Color32::from_rgb(0x6E, 0x75, 0x7E),
-        border: Color32::from_rgb(0x3D, 0x43, 0x4C),
-        accent: Color32::from_rgb(0x35, 0x6D, 0xA8),
-        accent_hover: Color32::from_rgb(0x4A, 0x86, 0xC2),
-        field_bg: Color32::from_rgb(0x1E, 0x21, 0x26),
-        field_hover: Color32::from_rgb(0x2A, 0x2E, 0x35),
-        field_active: Color32::from_rgb(0x1A, 0x2B, 0x3A),
-        selection_bg: Color32::from_rgb(0x26, 0x4A, 0x6E),
-        selection_stroke: Color32::from_rgb(0x4A, 0x86, 0xC2),
-        viewport: Color32::from_rgb(0x17, 0x1A, 0x1F),
-        radius_widget: 2,
-        radius_window: 6,
-        radius_menu: 6,
-        item_spacing_x: 8.0,
-        item_spacing_y: 3.0,
-        button_padding_x: 4.0,
-        button_padding_y: 1.0,
-        control_height: 18.0,
-        row_height: 20.0,
-        cell_h: 30.0,
-        cell_w: 76.0,
-        glyph_px: 16.0,
-        font_label: 11.0,
-        font_caption: 12.5,
-        font_row: 13.5,
-        font_row_suffix: 11.5,
-    };
-
-    /// The same shell, inverted: paper grounds, dark ink, the steel
-    /// accent stepped down for contrast against light (a hover still
-    /// lifts, a well still sinks - the RELATIVE laws of the dark column
-    /// are what carry over; the numbers are ours, chosen so body text
-    /// clears 4.5:1 against every ground it sits on - the check itself
-    /// rides `contrast::readable` and the light golden, M6.1 D). Geometry is
-    /// identical in both columns - sizes are the shell's body, not its
-    /// weather; a theme file is what restyles them, per document.
-    pub const LIGHT: Tokens = Tokens {
-        ink: Color32::from_rgb(0xEC, 0xEE, 0xF2),
-        ink_alt: Color32::from_rgb(0xF6, 0xF7, 0xF9),
-        well: Color32::from_rgb(0xDF, 0xE2, 0xE8),
-        text: Color32::from_rgb(0x1F, 0x24, 0x2A),
-        text_dim: Color32::from_rgb(0x53, 0x5B, 0x66),
-        text_faint: Color32::from_rgb(0x84, 0x8C, 0x97),
-        border: Color32::from_rgb(0xC4, 0xCA, 0xD3),
-        accent: Color32::from_rgb(0x2F, 0x66, 0x9E),
-        accent_hover: Color32::from_rgb(0x47, 0x7D, 0xB8),
-        field_bg: Color32::from_rgb(0xFF, 0xFF, 0xFF),
-        field_hover: Color32::from_rgb(0xDD, 0xE1, 0xE7),
-        field_active: Color32::from_rgb(0xE2, 0xEB, 0xF5),
-        selection_bg: Color32::from_rgb(0xC6, 0xDC, 0xF0),
-        selection_stroke: Color32::from_rgb(0x47, 0x7D, 0xB8),
-        viewport: Color32::from_rgb(0xDD, 0xE1, 0xE7),
-        radius_widget: 2,
-        radius_window: 6,
-        radius_menu: 6,
-        item_spacing_x: 8.0,
-        item_spacing_y: 3.0,
-        button_padding_x: 4.0,
-        button_padding_y: 1.0,
-        control_height: 18.0,
-        row_height: 20.0,
-        cell_h: 30.0,
-        cell_w: 76.0,
-        glyph_px: 16.0,
-        font_label: 11.0,
-        font_caption: 12.5,
-        font_row: 13.5,
-        font_row_suffix: 11.5,
-    };
-
     /// The panel ground behind the ribbon/browser strips (painted.rs).
     #[must_use]
     pub const fn strip_fill(&self) -> Color32 {
@@ -214,13 +148,20 @@ impl Tokens {
         let Tokens {
             ink, ink_alt, well, text, text_dim, text_faint, border, accent,
             accent_hover, field_bg, field_hover, field_active, selection_bg,
-            selection_stroke, viewport: _,
+            selection_stroke, viewport: _, ribbon_ink: _,
             radius_widget, radius_window, radius_menu,
             item_spacing_x: _, item_spacing_y: _,
             button_padding_x: _, button_padding_y: _,
             control_height: _, row_height: _, cell_h: _, cell_w: _,
             glyph_px: _, font_label: _, font_caption: _,
-            font_row: _, font_row_suffix: _,
+            font_row: _, font_row_suffix: _, ribbon_tab_h: _,
+            ribbon_cell_top_gap: _, ribbon_caption_gap: _,
+            ribbon_caption_row_h: _, ribbon_bottom_gap: _,
+            font_label_min: _, op_tab_h: _, op_tab_pad_x: _, op_tab_gap: _,
+            op_tab_bottom_gap: _, op_tab_icon_px: _, op_tab_icon_gap: _,
+            op_tab_radius: _, font_op_tab: _, tree_glyph_px: _, tree_inset_x: _,
+            tree_indent: _, tree_eye_reserve: _, tree_pad_x: _, tree_pad_y: _,
+            tree_suffix_gap: _, tree_header_boost: _, highlight_stroke_px: _,
         } = *self;
         let mut v = Visuals::dark();
         v.panel_fill = ink;
@@ -319,10 +260,18 @@ const fn geom_legal(t: &Tokens) -> bool {
         ink: _, ink_alt: _, well: _, text: _, text_dim: _, text_faint: _,
         border: _, accent: _, accent_hover: _, field_bg: _, field_hover: _,
         field_active: _, selection_bg: _, selection_stroke: _, viewport: _,
+        ribbon_ink: _,
         radius_widget, radius_window, radius_menu,
         item_spacing_x, item_spacing_y, button_padding_x, button_padding_y,
         control_height, row_height, cell_h, cell_w, glyph_px,
         font_label, font_caption, font_row, font_row_suffix,
+        ribbon_tab_h, ribbon_cell_top_gap, ribbon_caption_gap,
+        ribbon_caption_row_h, ribbon_bottom_gap,
+        font_label_min, op_tab_h, op_tab_pad_x, op_tab_gap, op_tab_bottom_gap,
+        op_tab_icon_px, op_tab_icon_gap, op_tab_radius, font_op_tab,
+        tree_glyph_px, tree_inset_x, tree_indent, tree_eye_reserve,
+        tree_pad_x, tree_pad_y, tree_suffix_gap, tree_header_boost,
+        highlight_stroke_px,
     } = *t;
     radius_widget <= clamp::RADIUS
         && radius_window <= 24
@@ -349,6 +298,52 @@ const fn geom_legal(t: &Tokens) -> bool {
         && font_row <= clamp::FONT.1
         && font_row_suffix >= clamp::FONT.0
         && font_row_suffix <= clamp::FONT.1
+        && ribbon_tab_h >= clamp::RIBBON_ROW.0
+        && ribbon_tab_h <= clamp::RIBBON_ROW.1
+        && ribbon_caption_row_h >= clamp::RIBBON_ROW.0
+        && ribbon_caption_row_h <= clamp::RIBBON_ROW.1
+        && ribbon_cell_top_gap >= clamp::RIBBON_GAP.0
+        && ribbon_cell_top_gap <= clamp::RIBBON_GAP.1
+        && ribbon_caption_gap >= clamp::RIBBON_GAP.0
+        && ribbon_caption_gap <= clamp::RIBBON_GAP.1
+        && ribbon_bottom_gap >= clamp::RIBBON_GAP.0
+        && ribbon_bottom_gap <= clamp::RIBBON_GAP.1
+        && font_label_min >= clamp::FONT.0
+        && font_label_min <= clamp::FONT.1
+        && font_label_min <= font_label
+        && op_tab_h >= clamp::CONTROL_H.0
+        && op_tab_h <= clamp::CONTROL_H.1
+        && op_tab_pad_x >= clamp::SPACING.0
+        && op_tab_pad_x <= clamp::SPACING.1
+        && op_tab_gap >= clamp::SPACING.0
+        && op_tab_gap <= clamp::SPACING.1
+        && op_tab_bottom_gap >= clamp::RIBBON_GAP.0
+        && op_tab_bottom_gap <= clamp::RIBBON_GAP.1
+        && op_tab_icon_px >= clamp::GLYPH.0
+        && op_tab_icon_px <= clamp::GLYPH.1
+        && op_tab_icon_gap >= clamp::SPACING.0
+        && op_tab_icon_gap <= clamp::SPACING.1
+        && op_tab_radius <= clamp::RADIUS
+        && font_op_tab >= clamp::FONT.0
+        && font_op_tab <= clamp::FONT.1
+        && tree_glyph_px >= clamp::GLYPH.0
+        && tree_glyph_px <= clamp::GLYPH.1
+        && tree_inset_x >= clamp::SPACING.0
+        && tree_inset_x <= clamp::SPACING.1
+        && tree_indent >= clamp::SPACING.0
+        && tree_indent <= clamp::SPACING.1
+        && tree_eye_reserve >= clamp::EYE_RESERVE.0
+        && tree_eye_reserve <= clamp::EYE_RESERVE.1
+        && tree_pad_x >= clamp::SPACING.0
+        && tree_pad_x <= clamp::SPACING.1
+        && tree_pad_y >= clamp::SPACING.0
+        && tree_pad_y <= clamp::SPACING.1
+        && tree_suffix_gap >= clamp::SPACING.0
+        && tree_suffix_gap <= clamp::SPACING.1
+        && tree_header_boost >= clamp::HEADER_BOOST.0
+        && tree_header_boost <= clamp::HEADER_BOOST.1
+        && highlight_stroke_px >= clamp::STROKE.0
+        && highlight_stroke_px <= clamp::STROKE.1
 }
 
 const _: () = assert!(geom_legal(&Tokens::DARK));

@@ -74,7 +74,9 @@ pub(crate) fn library_body(
     projection: Option<f64>,
 ) -> Result<ToolBody, CommandError> {
     let invalid = |e: holder_library::LibraryError| CommandError::Invalid(format!("tool '{name}': holder: {e}"));
-    let e = holder_library::find(entry).map_err(invalid)?;
+    // #2018: a grouped Weldon pick ("BT40 Weldon") takes the bore for
+    // the tool's shank; it is then that bore's entry, fit-checked alike.
+    let e = holder_library::resolve(entry, tool.shank_d).map_err(invalid)?;
     e.fits_shank(tool.shank_d).map_err(invalid)?;
     let nose = projection.unwrap_or(tool.flute_len + tool.shank_len);
     let points = e.points(nose, gauge_len.unwrap_or(e.gauge_len)).map_err(invalid)?;

@@ -153,6 +153,9 @@ pub(super) fn digest(f: &WireFourAxis, h: &mut std::hash::DefaultHasher) {
     h.write(b"four-axis");
     h.write_u8(u8::from(f.pairing == WirePairingRule::SyncPoints));
     h.write(&f.tolerance.to_bits().to_le_bytes());
+    // #1170: the widening moves the wire. The verify tolerance does not:
+    // the wire verify reads it at each post, never the stored path.
+    h.write_u8(u8::from(f.widening == crate::wire_edm::WireWidening::Uniform));
     h.write_usize(f.sync.len());
     for s in &f.sync {
         for q in [s.upper, s.lower] {
@@ -199,7 +202,14 @@ pub(super) fn generate(
         }
     };
     let ruled =
-        WireRuled { top_z: top, pairing, tolerance: four.tolerance, max_deg: cond.max_taper_deg, machine: cond.machine.clone() };
+        WireRuled {
+        top_z: top,
+        pairing,
+        tolerance: four.tolerance,
+        widening: four.widening,
+        max_deg: cond.max_taper_deg,
+        machine: cond.machine.clone(),
+    };
     let (upper, lower) = (
         WireProfile { loops: &picks.upper.loops, chains: &picks.upper.chains },
         WireProfile { loops: &picks.lower.loops, chains: &picks.lower.chains },

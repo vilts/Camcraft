@@ -39,6 +39,7 @@ const ROWS: &[(&str, f64, [&str; 2])] = &[
     ("box.step", 1.0, ["within", "within"]),
     ("empty_list.step", 1.0, ["within", "within"]),
     ("sample_ap214.step", 1000.0, ["within", "within"]),
+    ("spline_revolved.step", 1.0, ["within", "within"]),
     ("tool_csys_box_iso13399.step", 1.0, ["within", "within"]),
     ("tool_csys_degenerate.step", 1.0, ["no solid", "no solid"]),
     ("tool_csys_iso13399.step", 1.0, ["no solid", "no solid"]),

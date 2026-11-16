@@ -1064,6 +1064,9 @@ pub struct Camera {
     /// How this camera projects; carried by every camera transform so
     /// draw, pick and dolly math stay on one matrix by construction.
     pub projection: ProjectionMode,
+    /// The orbit frame (#1993): which world axis stays up. Yaw and pitch
+    /// are read in this frame; the eye and basis map back to the world.
+    pub frame: crate::view_frame::ViewFrame,
 }
 
 impl Default for Camera {
@@ -1074,6 +1077,7 @@ impl Default for Camera {
             pitch: 0.5,
             dist: 80.0,
             projection: ProjectionMode::default(),
+            frame: crate::view_frame::ViewFrame::default(),
         }
     }
 }
@@ -1092,12 +1096,12 @@ impl Camera {
 
     pub fn pan(&mut self, dx: f32, dy: f32) {
         let scale = self.dist * 0.0015;
-        let (rx, ry, _) = self.basis_right();
+        let (rx, ry, rz) = self.basis_right();
         let (ux, uy, uz) = self.basis_up();
         self.target = [
             self.target[0] - f64::from(dx) * scale * rx + f64::from(dy) * scale * ux,
             self.target[1] - f64::from(dx) * scale * ry + f64::from(dy) * scale * uy,
-            self.target[2] + f64::from(dy) * scale * uz,
+            self.target[2] - f64::from(dx) * scale * rz + f64::from(dy) * scale * uz,
         ];
         if self.target.iter().any(|t| !t.is_finite()) {
             self.target = [0.0, 0.0, 0.0];
@@ -1242,7 +1246,17 @@ impl Camera {
             pitch: 0.5,
             dist: (radius * 3.2).clamp(1.0, 50_000.0),
             projection: ProjectionMode::default(),
+            frame: crate::view_frame::ViewFrame::default(),
         }
+    }
+
+    /// The same camera in orbit frame `frame`, at that frame's home
+    /// (yaw, pitch) - the view a newly mounted machine kind opens on
+    /// (#1993). Target, distance and projection are kept.
+    #[must_use]
+    pub fn with_frame(&self, frame: crate::view_frame::ViewFrame) -> Camera {
+        let (yaw, pitch) = frame.home();
+        Camera { frame, ..self.oriented(yaw, pitch) }
     }
 
     /// Look at the same target, from the same distance, along the world
@@ -1272,6 +1286,10 @@ impl Camera {
             return *self;
         }
         n = [n[0] / l, n[1] / l, n[2] / l];
+        // The cube names world directions; yaw and pitch live in the
+        // orbit frame (#1993).
+        let (a, b, c) = self.frame.to_local((n[0], n[1], n[2]));
+        n = [a, b, c];
         // At an exact Z pole the atan2 vanishes; take the roll from the
         // yaw this camera already had, snapped to the nearest quarter
         // turn, so the click levels the view without turning it (#622).
@@ -1287,6 +1305,7 @@ impl Camera {
             pitch: n[2].clamp(-1.0, 1.0).asin(),
             dist: self.dist,
             projection: self.projection,
+            frame: self.frame,
         }
     }
 
@@ -1300,6 +1319,7 @@ impl Camera {
             pitch,
             dist: self.dist,
             projection: self.projection,
+            frame: self.frame,
         }
     }
 
@@ -1314,11 +1334,12 @@ impl Camera {
     #[must_use]
     pub(crate) fn eye(&self) -> [f64; 3] {
         let cp = self.pitch.cos();
-        [
-            self.target[0] + self.dist * cp * self.yaw.cos(),
-            self.target[1] + self.dist * cp * self.yaw.sin(),
-            self.target[2] + self.dist * self.pitch.sin(),
-        ]
+        let (ox, oy, oz) = self.frame.to_world((
+            self.dist * cp * self.yaw.cos(),
+            self.dist * cp * self.yaw.sin(),
+            self.dist * self.pitch.sin(),
+        ));
+        [self.target[0] + ox, self.target[1] + oy, self.target[2] + oz]
     }
 
     /// Camera position as f32, for the shader's specular term.
@@ -1335,18 +1356,20 @@ impl Camera {
         normalize([self.target[0] - e[0], self.target[1] - e[1], self.target[2] - e[2]])
     }
 
-    /// Right = normalize(cross(forward, +Z)); at an exact Z pole the cross
+    /// Right = normalize(cross(forward, up)), with up the orbit frame's
+    /// local +Z (world Z on a mill, #1993); at an exact pole the cross
     /// vanishes, and the guard evaluates the same expression at the camera's
     /// (quarter-snapped, see `toward`) yaw instead - the limit every
     /// near-pole view already rides (#622).
     #[must_use]
     fn basis_right(&self) -> (f64, f64, f64) {
-        let (fx, fy, _) = self.fwd();
+        let (fx, fy, _) = self.frame.to_local(self.fwd());
         let (x, y, _) = normalize([fy, -fx, 0.0]);
         if x == 0.0 && y == 0.0 {
-            return (-self.yaw.sin(), self.yaw.cos(), 0.0); // looking straight along Z
+            // looking straight along the frame's up axis
+            return self.frame.to_world((-self.yaw.sin(), self.yaw.cos(), 0.0));
         }
-        (x, y, 0.0)
+        self.frame.to_world((x, y, 0.0))
     }
 
     /// Up = cross(right, forward).

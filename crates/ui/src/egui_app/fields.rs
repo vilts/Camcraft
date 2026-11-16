@@ -92,17 +92,26 @@ const NARROW_W: f32 = 62.0;
 
 fn num_sized(ui: &mut Ui, u: Unit, v: &mut f64, prec: usize, suffix: &str, width: f32) -> egui::Response {
     let h = ui.spacing().interact_size.y;
+    // Long values must overflow forward; add_sized centers overflow and moves the window's origin.
+    let layout = egui::Layout::centered_and_justified(ui.layout().main_dir())
+        .with_main_align(egui::Align::Min)
+        .with_cross_align(egui::Align::Min);
     if u == Unit::Millimeters {
-        ui.add_sized([width, h], DragValue::new(v).speed(0.1).suffix(suffix))
+        ui.allocate_ui_with_layout([width, h].into(), layout, |ui| {
+            ui.add(DragValue::new(v).speed(0.1).suffix(suffix))
+        })
+        .inner
     } else {
         let mut d = units::to_display(*v, u);
-        let resp = ui.add_sized(
-            [width, h],
-            DragValue::new(&mut d)
-                .speed(0.1 / 25.4)
-                .custom_formatter(move |n, _| format!("{n:.prec$}"))
-                .suffix(suffix),
-        );
+        let resp = ui.allocate_ui_with_layout([width, h].into(), layout, |ui| {
+            ui.add(
+                DragValue::new(&mut d)
+                    .speed(0.1 / 25.4)
+                    .custom_formatter(move |n, _| format!("{n:.prec$}"))
+                    .suffix(suffix),
+            )
+        })
+        .inner;
         if resp.changed() {
             *v = units::from_display(d, u);
         }

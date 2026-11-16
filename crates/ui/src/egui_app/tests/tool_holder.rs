@@ -5,7 +5,8 @@
 //! Custom profile, and a shank the holder cannot take is refused by
 //! name. #792: the picker lists the standalone ER chucks, and its
 //! projection field rides the same undoable command. #794: the list
-//! carries the Tormach TTS holders. Provenance: our own page law.
+//! carries the Tormach TTS holders. #2018: one Weldon row for each
+//! taper, its bore from the tool's shank. Provenance: our own page law.
 
 use super::*;
 use camcraft_app::holder_library;
@@ -128,8 +129,12 @@ fn the_picker_lists_the_tts_holders_and_names_the_collar() {
     harness.get_by_label("Library holder").click();
     harness.run();
     harness.run();
-    for n in ["TTS ER20", "TTS ER16", "TTS Weldon 3/8 in", "TTS Weldon 1/2 in", "TTS Weldon 6 mm"] {
+    for n in ["TTS ER20", "TTS ER16", "TTS Weldon"] {
         assert!(harness.query_by_label(n).is_some(), "{n} is in the list");
+    }
+    // #2018: one Weldon row for the taper, not one for each bore.
+    for n in ["TTS Weldon 3/8 in", "TTS Weldon 1/2 in", "TTS Weldon 6 mm"] {
+        assert!(harness.query_by_label(n).is_none(), "{n} is not a row of its own");
     }
     harness.state_mut().state.pick_library_holder("TTS ER20");
     harness.run();
@@ -138,4 +143,38 @@ fn the_picker_lists_the_tts_holders_and_names_the_collar() {
     assert_eq!((st.tool_profile_ui.library.as_deref(), st.tool_profile_ui.gauge), (Some("TTS ER20"), 52.0));
     assert!(harness.query_all_by_label_contains("TTS collar Ø38.1").next().is_some(), "the pick names its collar");
     assert!(harness.query_all_by_label_contains("ER20 nut Ø35").next().is_some(), "and its nut");
+}
+
+/// #2018: the list has one Weldon row for each taper; picking it on the
+/// editor tool's 8 mm shank names the 8 mm bore and its Ø28 body, and
+/// Apply holder lands the old "BT40 Weldon 8 mm" outline - the same
+/// collision shape.
+#[test]
+fn one_weldon_row_for_each_taper_takes_the_bore_of_the_shank() {
+    let mut harness = profile_tab();
+    harness.state_mut().state.pick_library_holder("BT40 Weldon");
+    harness.run();
+    harness.run();
+    let st = &harness.state().state;
+    assert_eq!((st.tool_profile_ui.library.as_deref(), st.tool_profile_ui.gauge), (Some("BT40 Weldon"), 63.0));
+    assert!(harness.query_all_by_label_contains("Weldon bore Ø8.00, body Ø28.00").next().is_some(), "the bore of the shank");
+    harness.get_by_label("Apply holder").click();
+    harness.run();
+    harness.run();
+    let want = holder_library::find("BT40 Weldon 8 mm").and_then(|e| e.points(55.0, 63.0)).expect("draws");
+    assert_eq!(
+        drawn(&harness.state().state),
+        Some(want.iter().map(|p| (p.z, p.r)).collect()),
+        "status: {}",
+        harness.state().state.status
+    );
+    // The list: one Weldon row for each taper, none for each bore.
+    harness.get_by_label("Library holder").click();
+    harness.run();
+    harness.run();
+    for t in ["BT30", "BT40", "CAT40", "TTS"] {
+        assert!(harness.query_all_by_label(&format!("{t} Weldon")).count() >= 1, "{t} has a Weldon row");
+    }
+    assert!(harness.query_by_label("BT40 Weldon 10 mm").is_none(), "no row for each bore");
+    assert!(harness.query_by_label("BT30 Weldon 6 mm").is_none(), "no row for each bore");
 }

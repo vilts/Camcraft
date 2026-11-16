@@ -17,6 +17,21 @@ use egui::Ui;
 
 use crate::state::{CommandKind, State};
 
+/// #1390: the document and setup pages share the existing undoable
+/// post-options routing; unsupported posts retain the engine's refusal.
+pub(super) fn explain_switch(ui: &mut Ui, state: &mut State) {
+    let now = posting::post_options(&state.world);
+    let mut want = now.explain;
+    let label = "Explain G-code (add a comment to each block)";
+    let response = super::layout::check_row(ui, label, &mut want);
+    response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), want, label));
+    super::layout::hint(ui, "Add a comment to each block with Explain G-code. The program gets longer.");
+    super::layout::consequence(ui, "The program gets longer.");
+    if want != now.explain {
+        state.pending.push_back(CommandKind::SetPostOptions(PostOptions { explain: want, ..now }));
+    }
+}
+
 /// The pass word a lathe post writes when it does not write the cycle:
 /// G32 (Fanuc) or G33 (LinuxCNC / PathPilot); `None` for a post with no
 /// threading option.

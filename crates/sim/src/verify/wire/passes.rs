@@ -11,8 +11,8 @@
 //! decreasing offsets, each offset the wire radius plus that pass's
 //! gap); our own code.
 
-use super::kerf::{reach, Wire};
-use super::{dist, Product, WireFinding, KERF_TOL};
+use super::kerf::{reach, Reading, Wire};
+use super::{dist, Product, WireFinding, WireUnder};
 use crate::geo2d::Point2;
 
 /// One pass of the wire path: the wire's vertices `first..=last`
@@ -85,26 +85,19 @@ pub(super) fn widest(passes: &[Pass]) -> f64 {
     passes.iter().map(|p| p.k).fold(0.0, f64::max)
 }
 
-/// The first move whose kerf enters the product at height `z`, with
-/// the count of moves that do: each move at its own pass's kerf,
-/// widened by the wire's lean toward the product (`kerf::gouge_at` per
-/// pass).
-pub(super) fn gouge_at(p: &Product<'_>, wire: &Wire, passes: &[Pass], z: f64) -> Option<WireFinding> {
+/// The first move whose kerf enters the product at height `z` by more
+/// than the verify tolerance `tol`, with the count of moves that do:
+/// each move at its own pass's kerf, widened by the wire's lean toward
+/// the product (`kerf::gouge_at` per pass).
+pub(super) fn gouge_at(p: &Product<'_>, wire: &Wire, passes: &[Pass], z: f64, tol: f64) -> (Option<WireFinding>, Option<WireUnder>) {
     let pts = wire.at(z);
-    let mut first: Option<(usize, Point2, f64)> = None;
-    let mut moves = 0;
+    let mut read = Reading::new(tol);
     for pass in passes {
         for i in pass.first..pass.last {
             let (Some(&a), Some(&b)) = (pts.get(i), pts.get(i + 1)) else { break };
             let (d, at) = dist::clearance(p, a, b);
-            let need = reach(pass.k, a, b, wire.lean.get(i).copied(), wire.lean.get(i + 1).copied(), at);
-            if d < need - KERF_TOL {
-                moves += 1;
-                if first.is_none() {
-                    first = Some((i + 1, at, need - d));
-                }
-            }
+            read.take(i + 1, d, reach(pass.k, a, b, wire.lean.get(i).copied(), wire.lean.get(i + 1).copied(), at), at);
         }
     }
-    first.map(|(move_no, at, depth)| WireFinding::Gouge { move_no, z, at, depth, moves })
+    read.close(z)
 }

@@ -30,6 +30,10 @@ pub const MAX_MACHINING_TRIANGLES: usize = 30_000_000;
 /// size; a tolerance under that is refused, never quietly coarsened.
 pub const MIN_TOL_FRACTION: f64 = 1e-6;
 
+/// Factor applied when replanning a mesh whose certified continuous bound
+/// overshoots `tol_mm` between planner sag points (M12.1, #1029).
+pub const PLAN_MARGIN: f64 = 0.5;
+
 /// A machining mesh: indexed triangles in millimetres, vertices welded by
 /// exact position (so a side is shared by index), outward-facing.
 #[derive(Debug, Clone, PartialEq)]
@@ -211,34 +215,51 @@ pub fn machining_mesh(
             why: format!("under a millionth of the body's {size:.3e} mm size"),
         });
     }
-    if stop.is_cancelled() {
-        return Err(MeshRefusal::TimedOut("before planning"));
-    }
-    let tol = MeshTolerance::chord(tol_mm);
-    let planned = catch_unwind(AssertUnwindSafe(|| {
-        solidcore_tess::plan(record, &tol, size)
-    }))
-    .map_err(|_| MeshRefusal::Planner("the planner panicked".into()))?;
-    let (plan, stats) = planned.map_err(|e| MeshRefusal::Planner(e.to_string()))?;
-    if stop.is_cancelled() {
-        return Err(MeshRefusal::TimedOut("planning"));
-    }
-    let notes = judge_stats(&stats)?;
-    let planned_tris: usize = plan.faces.iter().map(|f| f.triangles.len()).sum();
-    if planned_tris > MAX_MACHINING_TRIANGLES {
-        return Err(MeshRefusal::TooLarge(planned_tris));
-    }
-    let deviation = mesh_deviation::measure(&plan, record, stop).map_err(|e| match e {
-        Unmeasured::Cancelled => MeshRefusal::TimedOut("measuring"),
-        other => MeshRefusal::Unmeasured(other),
-    })?;
-    // A NaN deviation is refused too.
-    if deviation.largest().is_nan() || deviation.largest() > tol_mm {
-        return Err(MeshRefusal::Deviation {
-            measured: deviation.largest(),
-            tol: tol_mm,
-            face: deviation.worst_face,
-        });
+    let mut chord = tol_mm;
+    let (plan, deviation, mut notes) = loop {
+        if stop.is_cancelled() {
+            return Err(MeshRefusal::TimedOut("before planning"));
+        }
+        let tol = MeshTolerance::chord(chord);
+        let planned = catch_unwind(AssertUnwindSafe(|| {
+            solidcore_tess::plan(record, &tol, size)
+        }))
+        .map_err(|_| MeshRefusal::Planner("the planner panicked".into()))?;
+        let (plan, stats) = planned.map_err(|e| MeshRefusal::Planner(e.to_string()))?;
+        if stop.is_cancelled() {
+            return Err(MeshRefusal::TimedOut("planning"));
+        }
+        let notes = judge_stats(&stats)?;
+        let planned_tris: usize = plan.faces.iter().map(|f| f.triangles.len()).sum();
+        if planned_tris > MAX_MACHINING_TRIANGLES {
+            return Err(MeshRefusal::TooLarge(planned_tris));
+        }
+        let deviation = mesh_deviation::measure_within(&plan, record, tol_mm, stop).map_err(|e| match e {
+            Unmeasured::Cancelled => MeshRefusal::TimedOut("measuring"),
+            other => MeshRefusal::Unmeasured(other),
+        })?;
+        // A NaN deviation is refused too.
+        if deviation.largest().is_nan() || deviation.largest() > tol_mm {
+            // The display planner checks sag at centroids and midpoints only;
+            // continuous bounds between samples can overshoot near seams. Try
+            // one finer plan with `PLAN_MARGIN`, keeping the requested tolerance.
+            let finer = (chord * PLAN_MARGIN).max(size * MIN_TOL_FRACTION);
+            if chord == tol_mm && finer < chord && deviation.largest().is_finite() {
+                chord = finer;
+                continue;
+            }
+            return Err(MeshRefusal::Deviation {
+                measured: deviation.largest(),
+                tol: tol_mm,
+                face: deviation.worst_face,
+            });
+        }
+        break (plan, deviation, notes);
+    };
+    if chord < tol_mm {
+        notes.push(format!(
+            "replanned at {chord:e} mm chord to meet the requested {tol_mm:e} mm measured tolerance"
+        ));
     }
     let mesh = evaluate(&plan, record.faces.len())?;
     let (positions, triangles, tri_face) = weld(&mesh);

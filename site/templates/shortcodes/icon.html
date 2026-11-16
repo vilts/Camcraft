@@ -1,0 +1,4 @@
+{# Provenance: CamCraft's own component for the app's bundled UI icons (#1901). #}
+{%- component icon(name: string, alt: string = "") -%}
+<img class="ui-icon" src="{{ get_url(path='icons/' ~ name ~ '.png') }}" width="18" height="18" alt="{{ alt }}"{% if not alt %} aria-hidden="true"{% endif %} loading="lazy">
+{%- endcomponent -%}

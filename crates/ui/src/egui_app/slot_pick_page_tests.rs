@@ -24,7 +24,7 @@ const ECHO: &str = "From selection: room 40.000 x 20.000 mm - the slot stays ins
 
 /// A 40 x 20 x 10 block, a 10 mm end mill and a Slot "Op" typed across
 /// the block, opened on its Geometry tab.
-fn opened() -> State {
+pub(super) fn opened() -> State {
     let mut state = State::new();
     state.history.execute(
         &state.world,

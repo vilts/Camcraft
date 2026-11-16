@@ -68,6 +68,7 @@ pub(crate) fn tab_of(p: Panel) -> Tab {
         Panel::Browser => Tab::Browser,
         Panel::Properties => Tab::Properties,
         Panel::Machines => Tab::Machines,
+        Panel::AiChat => Tab::AiChat,
     }
 }
 
@@ -90,14 +91,14 @@ pub(crate) fn panels_open(dock: &DockState<Tab>) -> PanelsOpen {
         browser: is_open(dock, &Tab::Browser),
         properties: is_open(dock, &Tab::Properties),
         machines: is_open(dock, &Tab::Machines),
+        ai_chat: is_open(dock, &Tab::AiChat),
     }
 }
 
 /// Reopen a closed panel at its default side of the whole main dock.
 /// A main surface with no usable root (egui_dock's `split` asserts on
 /// one) takes the panel as its first leaf instead - placed, not lost.
-fn reopen(dock: &mut DockState<Tab>, p: Panel) {
-    let tab = tab_of(p);
+fn reopen(dock: &mut DockState<Tab>, tab: Tab) {
     if is_open(dock, &tab) {
         return;
     }
@@ -112,18 +113,28 @@ fn reopen(dock: &mut DockState<Tab>, p: Panel) {
     // #287: the Machines pane opens as a tab beside the properties pane
     // when that is open (same side, same width - one more context pane),
     // else alone at the right like the properties pane would.
-    if p == Panel::Machines
+    if matches!(tab, Tab::Machines | Tab::Tools | Tab::AiChat)
         && let Some(props) = dock.find_tab(&Tab::Properties)
         && let Ok(leaf) = dock.leaf_mut(props.node_path())
     {
         leaf.append_tab(tab);
         return;
     }
-    let (side, frac) = match p {
-        Panel::Browser => (Split::Left, BROWSER_FRAC),
-        Panel::Properties | Panel::Machines => (Split::Right, REOPEN_PROPS_FRAC),
+    let (side, frac) = match tab {
+        Tab::Browser => (Split::Left, BROWSER_FRAC),
+        _ => (Split::Right, REOPEN_PROPS_FRAC),
     };
     dock.split(NodePath::MAIN_ROOT, side, frac, Node::leaf(tab));
+}
+
+fn show(dock: &mut DockState<Tab>, tab: Tab) {
+    reopen(dock, tab.clone());
+    if let Some(path) = dock.find_tab(&tab)
+        && let Ok(leaf) = dock.leaf_mut(path.node_path())
+    {
+        leaf.active = path.tab;
+        leaf.collapsed = false;
+    }
 }
 
 fn close(dock: &mut DockState<Tab>, p: Panel) {
@@ -135,8 +146,10 @@ fn close(dock: &mut DockState<Tab>, p: Panel) {
 /// Carry out one View-door ask on the dock.
 pub(crate) fn apply(dock: &mut DockState<Tab>, req: LayoutRequest) {
     match req {
+        LayoutRequest::Show(p) => show(dock, tab_of(p)),
+        LayoutRequest::ToolLibrary => show(dock, Tab::Tools),
         LayoutRequest::Toggle(p) if is_open(dock, &tab_of(p)) => close(dock, p),
-        LayoutRequest::Toggle(p) => reopen(dock, p),
+        LayoutRequest::Toggle(p) => show(dock, tab_of(p)),
         LayoutRequest::Reset => *dock = build_dock(),
     }
 }
@@ -163,11 +176,12 @@ pub(crate) enum ViewRow {
     Reset,
 }
 
-const ROWS: [ViewRow; 5] = [
+const ROWS: [ViewRow; 6] = [
     ViewRow::Viewport,
     ViewRow::Panel(Panel::Browser),
     ViewRow::Panel(Panel::Properties),
     ViewRow::Panel(Panel::Machines),
+    ViewRow::Panel(Panel::AiChat),
     ViewRow::Reset,
 ];
 
@@ -177,6 +191,7 @@ fn row_label(r: ViewRow) -> &'static str {
         ViewRow::Panel(Panel::Browser) => "Browser",
         ViewRow::Panel(Panel::Properties) => "Properties",
         ViewRow::Panel(Panel::Machines) => "Machines",
+        ViewRow::Panel(Panel::AiChat) => "AI Chat",
         ViewRow::Reset => "Reset layout",
     }
 }

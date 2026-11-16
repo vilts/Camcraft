@@ -15,7 +15,7 @@ use super::fields::field;
 /// (open when the tool states any fact) so the editor keeps its height.
 pub(super) fn catalog_rows(ui: &mut Ui, t: &mut ToolUi) {
     let any = [&t.part_number, &t.vendor, &t.coating, &t.helix_deg, &t.notes].iter().any(|s| !s.trim().is_empty());
-    egui::CollapsingHeader::new("Catalog")
+    egui::CollapsingHeader::new("Tool information")
         .id_salt("tool_catalog_header")
         .default_open(any)
         .show(ui, |ui| {

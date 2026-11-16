@@ -1,7 +1,7 @@
 //! The rigid-tapping capability (#786): `spindle.rigid_tapping` in the
 //! `.mch` schema is a boolean or a refusal by name (the reader and the
 //! Machines pane's validator agree), the pane's sheet says what it does,
-//! every Tormach mill and router file states it, and a tap cycle on a
+//! every Tormach mill, router and lathe file states it (#795), and a tap cycle on a
 //! machine that says it cannot rigid-tap is refused by name at the post
 //! gate - whatever post is chosen - and never posted as G84.
 //!
@@ -92,23 +92,31 @@ fn the_machines_sheet_states_rigid_tapping_in_words() {
     assert_eq!(row("VMC 3-axis"), "not stated - not limited");
 }
 
-/// Every Tormach mill and router file states the capability (from the
-/// manuals: the MX mills rigid-tap from the spindle encoder; the R8
-/// M/M+ mills, the PCNC series and the routers do not). The lathes and
-/// the plasma table are outside it (docs/decisions/786-rigid-tapping.md).
+/// Every Tormach mill, router and lathe file states the capability (from
+/// the manuals: the MX mills rigid-tap from the spindle encoder; the R8
+/// M/M+ mills, the PCNC series and the routers do not; the 8L, 15L
+/// Slant-PRO and 15LX Slant-PRO lathes rigid-tap with G33.1 from their
+/// spindle encoders, #795). The plasma table is outside it
+/// (docs/decisions/786-rigid-tapping.md, docs/decisions/795-lathe-rigid-tapping.md).
 #[test]
-fn every_tormach_mill_and_router_file_states_rigid_tapping() {
-    let mut checked = 0;
+fn every_tormach_mill_router_and_lathe_file_states_rigid_tapping() {
+    let (mut mills, mut lathes) = (0, 0);
     for (name, text) in posting::MACHINES.iter().filter(|(n, _)| n.starts_with("Tormach")) {
         let m = parse_mch(text).unwrap_or_else(|e| panic!("{name}: {e}"));
-        if matches!(camcraft_app::machine::kind(Some(&m)), Kind::Lathe | Kind::Plasma) {
-            continue;
+        match camcraft_app::machine::kind(Some(&m)) {
+            Kind::Plasma => continue,
+            Kind::Lathe => {
+                assert_eq!(m.rigid_tapping, Some(true), "{name}");
+                lathes += 1;
+            }
+            _ => {
+                assert_eq!(m.rigid_tapping, Some(name.contains("MX")), "{name}");
+                mills += 1;
+            }
         }
-        let want = name.contains("MX");
-        assert_eq!(m.rigid_tapping, Some(want), "{name}");
-        checked += 1;
     }
-    assert!(checked >= 16, "the Tormach mills and routers: {checked}");
+    assert!(mills >= 16, "the Tormach mills and routers: {mills}");
+    assert_eq!(lathes, 3, "the Tormach lathes: 8L, 15L Slant-PRO, 15LX Slant-PRO");
 }
 
 /// A Ø40 x 10 mm puck with a blind Ø6.2 hole 8 mm deep on its axis.

@@ -38,16 +38,18 @@ pub struct CuttingRowDto {
     pub material: MaterialWord,
     pub rpm: f64,
     pub feed: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waterjet: Option<camcraft_tools::waterjet::WaterjetCutData>,
 }
 
 impl CuttingRowDto {
     #[must_use]
     pub fn from_row(r: &CuttingRow) -> Self {
-        Self { material: MaterialWord(r.material), rpm: r.rpm, feed: r.feed }
+        Self { material: MaterialWord(r.material), rpm: r.rpm, feed: r.feed, waterjet: r.waterjet }
     }
 
     #[must_use]
     pub fn to_row(self) -> CuttingRow {
-        CuttingRow { material: self.material.0, rpm: self.rpm, feed: self.feed }
+        CuttingRow { material: self.material.0, rpm: self.rpm, feed: self.feed, waterjet: self.waterjet }
     }
 }

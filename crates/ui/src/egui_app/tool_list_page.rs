@@ -3,7 +3,7 @@
 //! readout, the exports - with the readout as a real table instead of
 //! space-padded text lines. Read-only by law: tools live in the Tool
 //! Library and operations pick them (M3.2 stage C), so the only writes
-//! here are the existing `OpenToolEditor` hop and the export dialogs;
+//! here are the Properties navigation and the export dialogs;
 //! nothing new is a command and no project field changes.
 //!
 //! Provenance: the arithmetic is `camcraft_app::tool_list` (handbook
@@ -130,7 +130,7 @@ fn tool_table(ui: &mut Ui, state: &mut State, ctx: Option<&str>) {
         super::error_text::error_text(ui, ink, &why);
     }
     if let Some(tool) = open {
-        crate::actions::open_tool_editor(state, &tool);
+        crate::actions::target(state, crate::state::UiTarget::Tool(tool));
     }
 }
 

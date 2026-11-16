@@ -218,3 +218,20 @@ fn fixed_steel_under_a_c_no_line_places_fails_closed() {
     let wh = Workholding { turning: &f, fixed: &[], axis: Some(spindle()) };
     assert!(bands_vs_workholding(&path, &tool(), &wh, None, 0.01).is_empty());
 }
+
+#[test]
+fn an_arc_stamped_turn_convicts_fixed_station_steel_mid_turn() {
+    use camcraft_sim::geo2d::Point2;
+    let (a, _) = at(10.0, 0.0, 0.0);
+    let (b, pb) = at(10.0, 90.0, -10.0);
+    let arc_mv = Move::new(MoveKind::Feed, a, b, Some(400.0))
+        .with_arc(Point2::new(0.0, 0.0), true)
+        .with_axis(pb);
+    let path = stamp_c(&Toolpath::new(vec![arc_mv]), [0.0, 0.0], 0.01).expect("arc stamps");
+    assert!(path.moves.iter().all(|m| m.arc.is_none()));
+    // Mid-arc the tip stands on r 10, so the shank at +20 reaches x 30 (inside 29..32).
+    let block = FixtureBox { min: Point3::new(29.0, -2.0, -6.0), max: Point3::new(32.0, 2.0, -4.0) };
+    assert!(!fixed_hits(&path, block, false, Some(spindle())).is_empty());
+    let clear = FixtureBox { min: Point3::new(120.0, -2.0, -6.0), max: Point3::new(124.0, 2.0, -4.0) };
+    assert!(fixed_hits(&path, clear, false, Some(spindle())).is_empty());
+}

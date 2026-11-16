@@ -7,7 +7,7 @@ aliases = ["guide/workflows/"]
 
 Short how-to recipes, one per task. They are not a reference: each links
 the page that explains the screen in depth. Every recipe ends the same way:
-**Simulate**, **Deviate**, then **Post**, which refuses by name if
+{{ <icon name="act-simulate" /> }} **Simulate**, {{ <icon name="tree-stock" /> }} **Deviate**, then {{ <icon name="act-post" /> }} **Post**, which refuses by name if
 something is unsafe (see [Reading a refusal](@/guide/reference/refusals.md)). A
 passing post is not a guarantee; read the program and dry-run it
 ([Posting](@/guide/check-and-post/posting.md)).
@@ -15,8 +15,8 @@ passing post is not a guarantee; read the program and dry-run it
 The recipes use one sample part: `testdata/models/Milling-test.step` in the
 repository, a small STEP model. Any STEP part of your own works the same.
 
-All recipes start the same way: **Model** to import the part, **Stock** to
-describe the block, **Origin** to place the work offset, **Tools** >
+All recipes start the same way: {{ <icon name="folder-open" /> }} **Model** to import the part, {{ <icon name="tree-stock" /> }} **Stock** to
+describe the block, {{ <icon name="tree-wcs" /> }} **Origin** to place the work offset, {{ <icon name="tools" /> }} **Tools** >
 **New tool…** to make the cutters
 ([First run](@/guide/getting-started/first-run.md)).
 
@@ -110,9 +110,11 @@ More: [Setups](@/guide/set-up/setups.md).
 
 ## Cut a sheet part
 
-On a router: use **Contour** (Milling 2D) around the part; its **Lead in /
-Lead out** tab has **Tab count**, **Tab width** and **Tab height** to leave
-the part held.
+On a router: follow the full walkthrough in
+[Your first router part](@/guide/getting-started/first-router-part.md)
+(Sienci AltMill 4x4, grblHAL, corner `G54`, `Drill`, `2D Pocket`, and `2D Contour`
+with holding tabs — **Tab count**, **Tab width** and **Tab height** under **Lead
+in / Lead out** — plus RichAuto DSP A11 shop-router notes).
 
 On a plasma table: click the machine button and pick **Plasma cutting**,
 add a **Plasma Profile**, and set **Compensation** and **Direction** on its

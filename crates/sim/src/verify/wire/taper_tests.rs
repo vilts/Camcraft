@@ -36,7 +36,7 @@ fn leaning_path(h: f64, t: Option<[f64; 2]>) -> Toolpath {
 fn judge_at(tp: &Toolpath, zs: &[f64], taper: bool) -> WireVerdict {
     let (part, stock) = (square(5.0), square(15.0));
     let sections = zs.iter().map(|&z| WireSection { z, part: part.clone(), stock: Some(stock.clone()) }).collect();
-    judge(&WireJob { path: tp, kerf_offset: K, skim_offsets: Vec::new(), side: CutSide::Punch, start: Some(Point2::new(-10.0, 0.0)), sections, taper, burnout: false, cutoff_from: None, capture: true })
+    judge(&WireJob { path: tp, kerf_offset: K, skim_offsets: Vec::new(), side: CutSide::Punch, start: Some(Point2::new(-10.0, 0.0)), sections, taper, burnout: false, cutoff_from: None, capture: true, verify_tol: 0.0 })
 }
 
 fn gouges(v: &WireVerdict) -> Vec<f64> {

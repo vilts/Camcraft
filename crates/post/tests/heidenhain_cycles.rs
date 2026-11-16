@@ -353,12 +353,11 @@ fn legacy_missing_feed_uses_chain_feed_and_chain_bottom_mismatch_is_refused() {
 }
 
 #[test]
-fn nonzero_entry_peck_and_deep_and_all_borings_keep_the_expanded_chain() {
+fn nonzero_entry_peck_and_deep_and_backbore_keep_the_expanded_chain() {
     let mut rs = setup(3000.0);
     let mut n = 0;
     add_hole(&mut rs, &mut n, hole(CycleKind::Peck, 10.0, 2.0, -8.0, 5.0, 0.0, Some(100.0)), None);
     add_hole(&mut rs, &mut n, hole(CycleKind::Deep, 30.0, 2.0, -8.0, 5.0, 0.0, Some(100.0)), None);
-    add_hole(&mut rs, &mut n, hole(CycleKind::Bore, 50.0, 2.0, -8.0, 0.0, 0.25, Some(100.0)), None);
     add_hole(&mut rs, &mut n, hole(CycleKind::BackBore, 70.0, 2.0, -8.0, 0.0, 0.25, Some(100.0)), None);
     finish(&mut rs);
     let out = post(&stream(&rs));
@@ -366,9 +365,9 @@ fn nonzero_entry_peck_and_deep_and_all_borings_keep_the_expanded_chain() {
     assert!(!out.program.contains("G200") && !out.program.contains("G205") && !out.program.contains("M99"));
     let bs = bodies(&out.program);
     let cuts: Vec<_> = bs.iter().filter(|b| b.starts_with("G01 ")).collect();
-    assert_eq!(cuts.len(), 7, "both nonzero-R peck chains and both boring chains stay explicit: {cuts:?}");
+    assert_eq!(cuts.len(), 6, "both nonzero-R peck chains and the backbore chain stay explicit: {cuts:?}");
     assert!(cuts.iter().any(|b| b.contains("Z-3 F100")) && cuts.iter().any(|b| b.contains("Z-8 F100")), "the from-R infeed chain is preserved: {cuts:?}");
-    assert_eq!(bs.iter().filter(|b| b.starts_with("FUNCTION DWELL TIME")).count(), 2);
+    assert_eq!(bs.iter().filter(|b| b.starts_with("FUNCTION DWELL TIME")).count(), 1);
 }
 
 #[test]

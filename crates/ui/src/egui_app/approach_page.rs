@@ -178,6 +178,8 @@ pub(super) fn contour_leads_editor(ui: &mut Ui, u: Unit, a: &mut Approach) {
             |ui| num_unit(ui, &mut a.axis_tol, "°"),
         );
     });
+    // #1448: the user's start and exit points, typed in model X/Y.
+    super::start_exit_rows::start_exit_groups(ui, u, a);
     // M13.11: where the cutter radius comes off - the computer walks
     // the centre (the simulation and every file before the option), the
     // control offsets the part contour by its register.

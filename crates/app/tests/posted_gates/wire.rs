@@ -49,7 +49,7 @@ pub fn wire_verdict() -> WireVerdict {
     let part = Region::new(vec![outline()]).expect("the profile region");
     let stock = region(&[rect(-40.0, -40.0, 40.0, 40.0)]);
     let sections = [0.01, 6.0, 11.99].into_iter().map(|z| WireSection { z, part: part.clone(), stock: Some(stock.clone()) }).collect();
-    judge(&WireJob { path: &t, kerf_offset: 0.25 * 0.5 + 0.04, skim_offsets: Vec::new(), side: CutSide::Punch, start: Some(start), sections, burnout: false, cutoff_from: None, capture: true, taper: false })
+    judge(&WireJob { path: &t, kerf_offset: 0.25 * 0.5 + 0.04, skim_offsets: Vec::new(), side: CutSide::Punch, start: Some(start), sections, burnout: false, cutoff_from: None, capture: true, taper: false, verify_tol: 0.0 })
 }
 
 /// The punch golden's findings at the wire laws, each one blocking.
@@ -67,7 +67,7 @@ pub fn wire_taper_verdict() -> WireVerdict {
     assert_eq!(gen_to_cltext(&t), golden("wire_taper_punch.cl"), "wire_taper_punch.cl: the regenerated program is the golden");
     let stock = region(&[rect(-40.0, -40.0, 40.0, 40.0)]);
     let sections = [0.01, 6.0, 11.99].into_iter().map(|z| WireSection { z, part: part.clone(), stock: Some(stock.clone()) }).collect();
-    judge(&WireJob { path: &t, kerf_offset: 0.25 * 0.5 + 0.04, skim_offsets: Vec::new(), side: CutSide::Punch, start: Some(start), sections, taper: true, burnout: false, cutoff_from: None, capture: true })
+    judge(&WireJob { path: &t, kerf_offset: 0.25 * 0.5 + 0.04, skim_offsets: Vec::new(), side: CutSide::Punch, start: Some(start), sections, taper: true, burnout: false, cutoff_from: None, capture: true, verify_tol: 0.0 })
 }
 
 /// The tapered punch golden's findings at the wire laws.

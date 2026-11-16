@@ -760,6 +760,7 @@ fn every_shipped_machine_mounts_and_speaks_its_declaration() {
         ("Sienci AltMill 4x8", Kind::Mill),
         ("Doosan DNM 5700", Kind::Mill),
         ("Doosan DNM 5700 + rotary table", Kind::Mill),
+        ("Sinker EDM 3-axis (template)", Kind::SinkerEdm),
         ("Sodick ALC400G", Kind::WireEdm),
     ];
     assert_eq!(MACHINES.len(), expectations.len(), "the pane offers what the tests pin");
@@ -770,8 +771,10 @@ fn every_shipped_machine_mounts_and_speaks_its_declaration() {
         assert_eq!(kind(Some(&m)), want_kind, "{name} declared");
         let mut inferred = m.clone();
         inferred.kind = None;
-        // #669: plasma is declared, never inferred - its X/Y/Z reads mill; #1501: so is a wire EDM.
-        let axes_say = if matches!(want_kind, Kind::Plasma | Kind::WireEdm) { Kind::Mill } else { want_kind };
+        // #669: plasma is declared, never inferred - its X/Y/Z reads mill.
+        // #1135: so is a sinker EDM (#530: no axis inventory infers an EDM); #1501: so is a wire EDM.
+        let axes_say =
+            if matches!(want_kind, Kind::Plasma | Kind::SinkerEdm | Kind::WireEdm) { Kind::Mill } else { want_kind };
         assert_eq!(kind(Some(&inferred)), axes_say, "{name}'s axes agree with its word");
     }
 }

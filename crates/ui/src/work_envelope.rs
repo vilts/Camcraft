@@ -2,8 +2,9 @@
 //! mounted machine's travel volume, drawn only while the Browser's "Show
 //! work envelope" box is on. Display only - view state, not undoable, never
 //! saved, and it never reaches posting, simulation or the collision and
-//! travel checks. The volume comes from the same travel figures and work
-//! origin those checks read (`camcraft_app::machine::work_envelope`).
+//! travel checks. X/Y use the setup work origin and the stated travels.
+//! A mill box stands on the Z=0 table plane and keeps its full Z travel;
+//! the program-space envelope and all safety checks stay unchanged.
 //! Provenance: our own view-state design (issue #1567); no vendor material.
 
 use camcraft_app::geometry::Point3;
@@ -33,7 +34,7 @@ pub(crate) fn machine_mounted(state: &State) -> bool {
 /// The tooltip of the checkbox.
 #[must_use]
 pub(crate) fn tooltip(state: &State) -> String {
-    let what = "Outline of the tool-tip travel of the mounted machine, measured from the setup's work origin (not the table).";
+    let what = "Outline of the mounted machine travel. Mill boxes stand on the Z=0 table plane; X/Y and lathe cylinders use the setup work origin. This display does not change travel checks.";
     match envelope_problem(state) {
         None => what.to_owned(),
         Some(why) => format!("Nothing to draw: {why}. {what}"),
@@ -52,7 +53,12 @@ pub(crate) fn envelope_lines(state: &State) -> Vec<[f32; 6]> {
     };
     let mut out = Vec::new();
     match shape {
-        EnvelopeShape::Box { min, max } => box_lines(&mut out, min, max),
+        EnvelopeShape::Box { mut min, mut max } => {
+            // #1963: the table is Z=0; program travel can straddle its origin.
+            max[2] -= min[2];
+            min[2] = 0.0;
+            box_lines(&mut out, min, max);
+        },
         EnvelopeShape::Cylinder { cx, cy, radius, z0, z1 } => cylinder_lines(&mut out, cx, cy, radius, z0, z1),
     }
     out

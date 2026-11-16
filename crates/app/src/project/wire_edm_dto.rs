@@ -10,7 +10,8 @@
 use super::*;
 
 use crate::operation::{
-    WireContourOp, WireFourAxis, WirePairingRule, WireSide, WireSkim, WireSyncPair, WireTabs, FOUR_AXIS_TOLERANCE,
+    WireContourOp, WireFourAxis, WirePairingRule, WireSide, WireSkim, WireSyncPair, WireTabs, WireWidening,
+    FOUR_AXIS_TOLERANCE,
 };
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,6 +111,24 @@ pub struct WireFourAxisDto {
     /// The twist tolerance, mm; absent is the default.
     #[serde(default = "four_axis_tolerance")]
     pub tolerance: f64,
+    /// Where the widening is laid (#1170); absent is per ruling.
+    #[serde(default, skip_serializing_if = "is_per_ruling")]
+    pub widening: WireWideningDto,
+    /// The stated verify tolerance, mm (#1170); absent is none (0).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub verify_tolerance: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum WireWideningDto {
+    #[default]
+    PerRuling,
+    Uniform,
+}
+
+fn is_per_ruling(w: &WireWideningDto) -> bool {
+    *w == WireWideningDto::PerRuling
 }
 
 fn four_axis_tolerance() -> f64 {
@@ -161,6 +180,11 @@ impl WireContourDto {
                 },
                 sync: f.sync.iter().map(|s| WireSyncDto { upper: s.upper, lower: s.lower }).collect(),
                 tolerance: f.tolerance,
+                widening: match f.widening {
+                    WireWidening::PerRuling => WireWideningDto::PerRuling,
+                    WireWidening::Uniform => WireWideningDto::Uniform,
+                },
+                verify_tolerance: f.verify_tolerance,
             }),
             burnout_clearance: p.burnout,
             clearance: p.clearance,
@@ -195,6 +219,11 @@ impl WireContourDto {
                 },
                 sync: f.sync.iter().map(|s| WireSyncPair { upper: s.upper, lower: s.lower }).collect(),
                 tolerance: f.tolerance,
+                widening: match f.widening {
+                    WireWideningDto::PerRuling => WireWidening::PerRuling,
+                    WireWideningDto::Uniform => WireWidening::Uniform,
+                },
+                verify_tolerance: f.verify_tolerance,
             }),
             burnout: self.burnout_clearance,
             clearance: self.clearance,

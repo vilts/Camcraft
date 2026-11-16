@@ -46,13 +46,14 @@ mod open;
 mod ring;
 mod ruled;
 mod ruled_laws;
+mod ruled_widen;
 mod skims;
 mod tabs;
 mod taper;
 
 pub use skims::{check_passes, wire_passes, WirePass};
 
-pub use ruled::{wire_contour_ruled, WirePairing, WireProfile, WireRuled, WireSync, SYNC_TOL};
+pub use ruled::{wire_contour_ruled, WirePairing, WireProfile, WireRuled, WireSync, WireWidening, SYNC_TOL};
 pub use tabs::{cutoff_split, TabParams, MAX_TABS};
 
 pub use taper::{wire_contour_tapered, WireCorner, WireTaper};
@@ -352,5 +353,7 @@ fn pass_notes(p: &WireParams, start: Point2, lead: f64, reverse: bool) -> Vec<St
 mod open_tests;
 #[cfg(test)]
 mod ruled_tests;
+#[cfg(test)]
+mod ruled_widen_tests;
 #[cfg(test)]
 mod tests;

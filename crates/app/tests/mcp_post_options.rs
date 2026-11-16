@@ -85,7 +85,7 @@ fn set_post_options_on_setup2_leaves_setup1_and_document_unchanged_and_undo_rest
     // Give Setup2 its own post options.
     let s2 = c.ok(
         "set_post_options",
-        json!({ "setup": "Setup2", "skip_stops": false, "per_op": true, "end_units": "inch" }),
+        json!({ "setup": "Setup2", "skip_stops": false, "per_op": true, "end_units": "inch", "explain": true }),
     );
     assert_eq!(s2["setup"], json!("Setup2"));
     assert_eq!(s2["follows_document"], json!(false));
@@ -93,6 +93,8 @@ fn set_post_options_on_setup2_leaves_setup1_and_document_unchanged_and_undo_rest
     assert_eq!(s2["options"]["skip_stops"], json!(false));
     assert_eq!(s2["options"]["per_op"], json!(true));
     assert_eq!(s2["options"]["end_units"], json!("inch"));
+    assert_eq!(s2["options"]["explain"], json!(true));
+    assert_eq!(s2["own"]["explain"], json!(true));
 
     // Setup1 and document resolved options are unchanged.
     let s1_after = c.ok("get_post_options", json!({ "setup": "Setup1" }));
@@ -100,11 +102,13 @@ fn set_post_options_on_setup2_leaves_setup1_and_document_unchanged_and_undo_rest
     assert_eq!(s1_after["options"]["skip_stops"], json!(true));
     assert_eq!(s1_after["options"]["per_op"], json!(false));
     assert_eq!(s1_after["options"]["end_units"], json!("leave"));
+    assert_eq!(s1_after["options"]["explain"], json!(false));
 
     let doc_after = c.ok("get_post_options", json!({}));
     assert_eq!(doc_after["options"]["skip_stops"], json!(true));
     assert_eq!(doc_after["options"]["per_op"], json!(false));
     assert_eq!(doc_after["options"]["end_units"], json!("leave"));
+    assert_eq!(doc_after["options"]["explain"], json!(false));
 
     // Undo restores Setup2 to following the document; redo brings its own back.
     c.ok("undo", json!({}));
@@ -113,6 +117,7 @@ fn set_post_options_on_setup2_leaves_setup1_and_document_unchanged_and_undo_rest
     assert_eq!(s2_undone["own"], Value::Null);
     assert_eq!(s2_undone["options"]["skip_stops"], json!(true));
     assert_eq!(s2_undone["options"]["per_op"], json!(false));
+    assert_eq!(s2_undone["options"]["explain"], json!(false));
 
     c.ok("redo", json!({}));
     let s2_redone = c.ok("get_post_options", json!({ "setup": "Setup2" }));
@@ -120,6 +125,7 @@ fn set_post_options_on_setup2_leaves_setup1_and_document_unchanged_and_undo_rest
     assert_eq!(s2_redone["options"]["skip_stops"], json!(false));
     assert_eq!(s2_redone["options"]["per_op"], json!(true));
     assert_eq!(s2_redone["options"]["end_units"], json!("inch"));
+    assert_eq!(s2_redone["options"]["explain"], json!(true));
 }
 
 #[test]

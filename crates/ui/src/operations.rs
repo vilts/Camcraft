@@ -602,7 +602,7 @@ mod warning_fold_tests {
         );
         assert_eq!(
             folded[2],
-            "warning: rapid move 3 travels below the clearance plane inside stock"
+            "warning: rapid move 3 travels through stock (below the clearance plane, or at it below the stock top)"
         );
     }
 }

@@ -41,20 +41,20 @@ defaults and common refusals, in [2D milling operations](@/guide/operations/oper
 An operation's page groups its settings on tabs. A kind shows only the
 tabs it has settings for:
 
-- **Geometry:** the tool and what to cut. Pick faces, edges or loops in
+- {{ <icon name="sec-geometry" /> }} **Geometry:** the tool and what to cut. Pick faces, edges or loops in
   the viewport, then set containment, offset, extension and extra or open
   boundaries where the kind has an area.
-- **Heights:** clearance, retract, top and bottom heights, and where each
+- {{ <icon name="sec-heights" /> }} **Heights:** clearance, retract, top and bottom heights, and where each
   is measured from.
-- **Passes:** stepover, stepdown, stock to leave and the kind's own
+- {{ <icon name="sec-passes" /> }} **Passes:** stepover, stepdown, stock to leave and the kind's own
   strategy settings.
-- **Lead in / Lead out:** how the tool enters, moves between levels and
+- {{ <icon name="sec-leads" /> }} **Lead in / Lead out:** how the tool enters, moves between levels and
   leaves the cut, and the links between cuts.
-- **Feeds:** spindle speed and feed rates.
-- **Machine:** only on the few kinds that drive a machine function of
+- {{ <icon name="sec-feeds" /> }} **Feeds:** spindle speed and feed rates.
+- {{ <icon name="sec-machine" /> }} **Machine:** only on the few kinds that drive a machine function of
   their own.
 
-Edits on a page are pending until you click **Apply** or **Generate**.
+Edits on a page are pending until you click **Apply** or {{ <icon name="act-generate" /> }} **Generate**.
 Both are undoable with Ctrl+Z (Cmd+Z on macOS).
 
 Each turning kind has its own section, with its settings, defaults and
@@ -98,16 +98,16 @@ and why, is covered in [Order of operations](@/guide/check-and-post/order-of-ope
 
 ## Generating
 
-**Generate** computes the toolpath and checks it. An operation can be in
-one of three states:
+{{ <icon name="act-generate" /> }} **Generate** computes the toolpath and checks it. An operation can be in
+one of three states (shown by its browser icon):
 
-- **No toolpath yet:** it has never been generated.
-- **Stale:** something it depends on (the model, the stock, the tool, the
+- {{ <icon name="badge-never" /> }} **No toolpath yet:** it has never been generated.
+- {{ <icon name="badge-stale" /> }} **Stale:** something it depends on (the model, the stock, the tool, the
   work offset or its own settings) has changed since it was generated.
   Generate it again.
-- **Generated:** the cached toolpath matches its inputs.
+- {{ <icon name="badge-ok" /> }} **Generated:** the cached toolpath matches its inputs.
 
-When CamCraft cannot compute a safe path for some part of an operation, it
+When CamCraft cannot compute a safe path for some part of an operation {{ <icon name="badge-warning" /> }}, it
 does not hand you a partial or guessed one: generation stops with a
 message that names the setting or the geometry at fault. Moves the checks
 flag as unsafe are marked in the viewport, and a message that names a place
@@ -115,10 +115,10 @@ can be clicked to frame it.
 
 ## Checking
 
-- **Paths** shows every cached toolpath at once.
-- **Simulate** plays the program against the stock with a transport bar;
+- {{ <icon name="act-show-paths" /> }} **Paths** ({{ <icon name="act-hide-paths" /> }} when hidden) shows every cached toolpath at once.
+- {{ <icon name="act-simulate" /> }} **Simulate** plays the program against the stock with a transport bar;
   drag the playback slider to jump.
-- **Deviate** compares the machined stock with the model and colours where
+- {{ <icon name="tree-stock" /> }} **Deviate** compares the machined stock with the model and colours where
   material is left or where the program cut into the part. **Frame rest**
   and **Frame gouge** take the view to the worst spot of each.
 

@@ -312,3 +312,62 @@ fn trochoid_wide_channel_leaves_no_post_at_the_start() {
     assert!(rest < 0.5, "{rest:.2} mm2 left standing at the start");
     assert!(q.max_deg <= 90.0 + 1e-9, "max {:.1} deg at {:?}", q.max_deg, q.max_at);
 }
+
+mod common;
+
+#[test]
+fn trochoid_slot_shape_mask_holds_shape_and_engagement() {
+    use camcraft_motion::geo2d::{Point2 as P2, Region as Reg};
+    use camcraft_motion::machining2d::{
+        DEFAULT_MICROLIFT as LIFT, TrochoidParams as TP, TrochoidReturn as TR,
+        plan_trochoidal_slot as plan_slot,
+    };
+    use common::shape_mask::{CutDepth, MaskSpec, ShapeMask, Symmetry};
+
+    let chain = vec![P2::new(-20.0, 0.0), P2::new(20.0, 0.0)];
+    let width = 16.0;
+    let Ok(expected) = Reg::sweep(std::slice::from_ref(&chain), 0.5 * width) else { panic!("expected") };
+    let p = TP {
+        tool_diameter: 10.0,
+        width,
+        loop_width: None,
+        step: 2.0,
+        max_engagement: 90.0,
+        ret: TR::Microlift { height: LIFT },
+        smoothing: 0.0,
+        stock_to_leave: 0.0,
+        clearance_z: 10.0,
+        retract_z: Some(2.0),
+        top_z: 0.0,
+        bottom_z: -6.0,
+        stepdown: 6.0,
+        feed: 800.0,
+        return_feed: 1600.0,
+        plunge_feed: 250.0,
+        climb: true,
+    };
+    let Ok(pl) = plan_slot(&chain, &p) else { panic!("plan_trochoidal_slot") };
+    let spec = MaskSpec {
+        name: "trochoid_slot_mask",
+        expected: &expected,
+        path: &pl.path,
+        tool_diameter: p.tool_diameter,
+        cell: 0.25,
+        depth: CutDepth::AllCut,
+        diff_dir: None,
+    };
+    // Radial engagement fixture: a separately drilled starter bore reaches the
+    // floor before this operation. A descending helix alone does not clear its
+    // whole floor footprint. The bore radius is helix radius (3) + cutter radius (5).
+    let Ok(starter_bore) = Reg::sweep(&[vec![chain[0]]], 8.0) else {
+        panic!("starter bore");
+    };
+    let Ok(mask) = ShapeMask::evaluate_with_precleared(&spec, &starter_bore, p.bottom_z) else {
+        panic!("evaluate");
+    };
+    mask.assert_no_overcut();
+    mask.assert_bounded_leftover(20.0, None);
+    mask.assert_max_engagement(0.5 * p.tool_diameter);
+    mask.assert_symmetric(Symmetry::MirrorY(0.0));
+    mask.assert_within_stock_extension(&expected, 0.0);
+}

@@ -32,6 +32,15 @@ pub(crate) fn family_at_post(world: &World, ops: &[(String, Entity)]) -> Result<
                     machine.label()
                 ));
             }
+            // #1453: no post currently declares a left-hand tapping cycle.
+            if op.params.kind().info().mounts_tool()
+                && let Some(tool) = model::find_by_name(world, &op.tool)
+                    .and_then(|entity| model::tool_of(world, &entity))
+                && tool.kind == crate::tools::ToolKind::Tap
+                && tool.thread_hand == crate::tools::ThreadHand::Left
+            {
+                return Err(format!("{name}: left-hand tap {} is not supported by posting", op.tool));
+            }
             // #532/#533: an op that mounts no tool posts only as its own
             // kind's section - the Wire Contour's (`posting_wire`), whose
             // condition word only a wire EDM post voices; any other

@@ -59,7 +59,10 @@ pub struct MachinesPane {
 }
 
 /// The kinds New blank offers, in the combo's order.
-const KINDS: [Kind; 4] = [Kind::Mill, Kind::Lathe, Kind::MillTurn, Kind::Plasma];
+const KINDS: [Kind; 7] = [
+    Kind::Mill, Kind::Lathe, Kind::MillTurn, Kind::Plasma,
+    Kind::Waterjet, Kind::WireEdm, Kind::SinkerEdm,
+];
 
 /// The dropdown's first entry: no filter, New blank shut.
 pub(crate) const ALL_KINDS: &str = "All";

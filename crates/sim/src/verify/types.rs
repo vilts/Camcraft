@@ -103,7 +103,11 @@ pub struct VerifyContext<'a> {
     pub mode: Mode,
     /// Top of the stock column in Z (the surface the tool starts from).
     pub stock_top_z: f64,
-    /// Safe plane: rapids must live at or above it.
+    /// The op's safe plane. Law (d) no longer stands down at it (issue
+    /// #2121: a plane inside the stock is not safe) - it reads every
+    /// lateral rapid under the stock top; the plane only says which
+    /// convictions the operation layer may re-read against the program
+    /// ahead (`acquit_traverses_by_prior`).
     pub clearance_z: f64,
     /// Finish allowance already baked into the path offsets.
     pub stock_to_leave: f64,
@@ -251,7 +255,8 @@ pub enum Warning {
     /// move, at most: moves law (c) already convicted are not
     /// re-tried here, and `part` reads like (c)'s.
     SweepHit { at: usize, part: bool },
-    /// Rapid `move` travels under the clearance plane through stock.
+    /// Rapid `move` travels through stock: under the clearance plane,
+    /// or (#2121) at it under the stock top.
     RapidInStock { at: usize },
     /// Move `move` carries a modelled lathe holder body (#369) through
     /// material standing about the spindle: `part` as ShankHit reads
@@ -368,7 +373,7 @@ impl core::fmt::Display for Warning {
                 if *part { "part or an island" } else { "uncut stock" }
             ),
             Warning::RapidInStock { at } => {
-                write!(f, "rapid move {at} travels below the clearance plane inside stock")
+                write!(f, "rapid move {at} travels through stock (below the clearance plane, or at it below the stock top)")
             }
             Warning::FixtureHit { at, fixture_part } => write!(
                 f,

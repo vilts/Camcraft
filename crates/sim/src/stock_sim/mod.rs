@@ -64,11 +64,17 @@ mod backend_edit;
 mod carried;
 mod carried_read;
 mod carry;
+mod carry_verdict;
+mod carry_exact;
+mod carry_history;
+mod carry_profile;
+mod carry_capsule;
 // #874: the side-on quarter turns.
 mod carry_side;
 mod columns;
 mod cut;
 mod dexel;
+mod dexel_ball;
 mod dexel_arc;
 // #541: the sinker electrode's box atom.
 mod dexel_box;

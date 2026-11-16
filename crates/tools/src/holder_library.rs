@@ -352,6 +352,10 @@ pub fn find(name: &str) -> Result<HolderEntry, LibraryError> {
 mod tts;
 pub use tts::{TTS, TTS_BODY_D};
 
+#[path = "holder_library_weldon.rs"]
+mod weldon;
+pub use weldon::{picker_rows, resolve, weldon_for, weldon_name, PickerRow};
+
 #[cfg(test)]
 #[path = "holder_library_tests.rs"]
 mod tests;

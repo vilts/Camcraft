@@ -74,7 +74,7 @@ the tool turning and the work held on C.
 
 ## Facing
 
-![Side view of radial passes facing the end of a rotating bar.](../../../operation-paths.svg#Facing)
+{{ <icon name="op-facing" /> }} ![Side view of radial passes facing the end of a rotating bar.](../../../operation-paths.svg#Facing)
 
 **For:** facing the end of the bar square to the axis, stepping in from
 the part top to the facing plane. Choose it to clean the end before
@@ -99,7 +99,7 @@ too fine ...".
 
 ## Profile Rough
 
-![Side view of successive roughing passes outside a turned profile.](../../../operation-paths.svg#ProfileRough)
+{{ <icon name="op-profile-rough" /> }} ![Side view of successive roughing passes outside a turned profile.](../../../operation-paths.svg#ProfileRough)
 
 **For:** roughing the outside profile down a ladder of radial rungs,
 leaving a skin for a finish pass. Choose it before Profile Finish; choose
@@ -125,7 +125,7 @@ ladder would run ... radial rungs - the stepdown is far too ...".
 
 ## Profile Finish
 
-![Side view of one finishing pass along a turned profile.](../../../operation-paths.svg#ProfileFinish)
+{{ <icon name="op-profile-finish" /> }} ![Side view of one finishing pass along a turned profile.](../../../operation-paths.svg#ProfileFinish)
 
 **For:** one ride of the insert's nose along the finished profile.
 Choose it after Profile Rough (or after a stock that is already close).
@@ -145,7 +145,7 @@ profile has nothing to ride".
 
 ## Groove Rough
 
-![Side view of successive blade plunges across a groove.](../../../operation-paths.svg#GrooveRough)
+{{ <icon name="op-groove-rough" /> }} ![Side view of successive blade plunges across a groove.](../../../operation-paths.svg#GrooveRough)
 
 **For:** sinking a groove with a grooving blade, plunge by plunge, with a
 skin left on the walls and floor. Choose it over Profile Rough where the
@@ -172,7 +172,7 @@ than ... passes - the blade is far too narrow for the window ...".
 
 ## Groove Finish
 
-![Side view of blade plunges to the finished groove floor.](../../../operation-paths.svg#GrooveFinish)
+{{ <icon name="op-groove-finish" /> }} ![Side view of blade plunges to the finished groove floor.](../../../operation-paths.svg#GrooveFinish)
 
 **For:** one plunge per centre to the groove's floor, with no leave.
 Choose it after Groove Rough.
@@ -188,7 +188,7 @@ Choose it after Groove Rough.
 
 ## Part
 
-![Side view of one radial parting path toward the spindle axis.](../../../operation-paths.svg#Part)
+{{ <icon name="op-part-off" /> }} ![Side view of one radial parting path toward the spindle axis.](../../../operation-paths.svg#Part)
 
 **For:** cutting the finished part off the bar with a grooving blade, at
 the parting plane. The ladder runs down through the bar's full height and
@@ -216,7 +216,7 @@ past the bar's top"; "parting needs a positive stepdown".
 
 ## Threading
 
-![View of synchronized helical threading passes on a rotating bar.](../../../operation-paths.svg#Threading)
+{{ <icon name="op-threading" /> }} ![View of synchronized helical threading passes on a rotating bar.](../../../operation-paths.svg#Threading)
 
 **For:** single-point threading of a modeled thread (a revolved V
 section) with a threading insert, in passes of rising depth. Every pass
@@ -236,6 +236,21 @@ The V's angle comes from the tool (its form angle), not the operation.
 Right hand posts under M03; left hand under M04, with the insert mounted
 for reverse rotation. Threading posts a constant rpm (G97).
 
+**Repeat each depth**, off by default on Passes, repeats each roughing
+pass at the same depth, flank and helix phase. It does not repeat the
+finishing or root spring passes. G32/G33 output carries those repeated
+passes; Fanuc and Tormach PathPilot G76 cycles refuse the option because
+their cycles cut each roughing depth once.
+
+With the Fanuc **G76** post option, the finish allowance and spring count
+describe the verified passes. The default metric thread now writes
+`R0.4`, rather than `R0`, to avoid an extra full-depth pass. G32 remains
+the default output. G76 refuses alternating infeed, a one-pass thread,
+or a doubled flank angle outside 0, 29, 30, 55, 60 or 80 degrees. It also
+refuses a rounded-word schedule that cannot match the verified pass count.
+These are software checks; Fanuc flank G76 behavior still needs a control
+run. Read the program and confirm the control's cycle before machining.
+
 **Common refusals:** "nothing to thread - no valley ... down from the
 bar's surface stands in the window: threading cuts a MODELED thread ...";
 "a ... wide insert does not fit a ... pitch - the V is wider than the
@@ -248,7 +263,7 @@ the spindle ..."; "the thread would run more than ... turns ...";
 
 ## Chamfer
 
-![Side view of a turning pass across a modeled chamfer.](../../../operation-paths.svg#Chamfering)
+{{ <icon name="op-chamfering" /> }} ![Side view of a turning pass across a modeled chamfer.](../../../operation-paths.svg#Chamfering)
 
 **For:** riding a chamfer the model already has, at a stated angle, with
 a turning insert. Choose it over Profile Finish to cut one modeled cone
@@ -269,7 +284,7 @@ cylinder - the kind only speaks a cone ...".
 
 ## Taper
 
-![Side view of a turning pass along a modeled taper.](../../../operation-paths.svg#TaperTurning)
+{{ <icon name="op-taper-turning" /> }} ![Side view of a turning pass along a modeled taper.](../../../operation-paths.svg#TaperTurning)
 
 **For:** riding a modeled taper between two stated diameters with a
 turning insert.
@@ -291,7 +306,7 @@ at both ends is a line, not a part ...".
 
 ## Multi-Pass
 
-![Side view of roughing and finishing passes along a turned profile.](../../../operation-paths.svg#MultiPassTurning)
+{{ <icon name="op-multipass-turning" /> }} ![Side view of roughing and finishing passes along a turned profile.](../../../operation-paths.svg#MultiPassTurning)
 
 **For:** roughing and finishing the outside profile in one operation: the
 Profile Rough ladder, then finishing rides that share out the leave.
@@ -315,7 +330,7 @@ Rough.
 
 ## Form
 
-![Side view of a form tool plunging into a curved groove.](../../../operation-paths.svg#FormTurning)
+{{ <icon name="op-form-turning" /> }} ![Side view of a form tool plunging into a curved groove.](../../../operation-paths.svg#FormTurning)
 
 **For:** sinking a modeled form (a revolved groove with a curved floor)
 with a form gauge whose ground crown matches it. Choose it over Groove
@@ -341,7 +356,7 @@ are boring work".
 
 ## Bore
 
-![Side view of a boring bar following an existing hole wall.](../../../operation-paths.svg#BoringTurning)
+{{ <icon name="op-boring-turning" /> }} ![Side view of a boring bar following an existing hole wall.](../../../operation-paths.svg#BoringTurning)
 
 **For:** turning the inside wall of a hole the part already has, with a
 boring bar riding the wall on its nose. Choose it for an inside diameter

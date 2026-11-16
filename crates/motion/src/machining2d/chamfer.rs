@@ -151,6 +151,7 @@ pub fn chamfer(region: &crate::geo2d::Region, p: &ChamferParams) -> Result<Toolp
             edge: pass.iter().map(|q| Point3::new(q.x, q.y, p.top_z)).collect(),
             depth: p.top_z - z,
             slope,
+            volume: None,
         })
         .filter(EdgeBreak::is_sane)
         .collect();

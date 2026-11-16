@@ -10,7 +10,7 @@ use crate::geometry::{Point3, Triangle};
 use crate::links::{Link, LinkTally};
 
 use super::arcs::{fit_arcs_sided, push_segs};
-use super::contour_depth::{Ladder, ladder};
+use super::contour_depth::{Ladder, ladder, picked_law};
 use super::contour_entry::{Engage, crosses, flatten, say, seam_leads, wall_arc, wall_arc_top};
 use super::contour_comp::{self, SpanCtx};
 use super::contour_link::{plan_links, push_stay, ring_link};
@@ -68,7 +68,7 @@ pub fn contour_on_part(
     part: &[Triangle],
     p: &ContourParams,
 ) -> Result<Toolpath, GenError> {
-    contour_impl(region, p, Some((part, &[])))
+    contour_impl(region, p, Some((part, &[], false)))
 }
 
 /// [`contour_on_part`] of a part that is the union of touching bodies
@@ -83,14 +83,27 @@ pub fn contour_on_bodies(
     bodies: &[std::ops::Range<usize>],
     p: &ContourParams,
 ) -> Result<Toolpath, GenError> {
-    contour_impl(region, p, Some((part, bodies)))
+    contour_impl(region, p, Some((part, bodies, false)))
 }
 
-fn contour_impl(
+/// [`contour_on_bodies`] of rings the user PICKED (#1927): a ring that
+/// meets its wall at no level below the part's top - the chosen side
+/// stands in the part all the way down - is refused by name, never a
+/// silent top-plane pass in air (`contour_depth::picked_law`).
+pub fn contour_on_picked(
     region: &Region,
+    part: &[Triangle],
+    bodies: &[std::ops::Range<usize>],
     p: &ContourParams,
-    part: Option<(&[Triangle], &[std::ops::Range<usize>])>,
 ) -> Result<Toolpath, GenError> {
+    contour_impl(region, p, Some((part, bodies, true)))
+}
+
+/// The part a contour reads: its facets, its body ranges, and whether the
+/// rings were picked (the #1927 law applies).
+type PartRef<'a> = (&'a [Triangle], &'a [std::ops::Range<usize>], bool);
+
+fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -> Result<Toolpath, GenError> {
     p.validate()?;
     // Control-side compensation (M13.11): its parameter door first.
     contour_comp::door(p)?;
@@ -157,7 +170,7 @@ fn contour_impl(
     // a flat region; against a part, each ring down to its own floor.
     let lad = match part {
         None => Ladder::uniform(&flat, loops.len()),
-        Some((f, bodies)) => ladder(&plan, f, bodies, &flat, r, p.stock_to_leave, &mut lead_notes),
+        Some((f, bodies, _)) => ladder(&plan, f, bodies, &flat, r, p.stock_to_leave, &mut lead_notes),
     };
     if lad.zs.is_empty() {
         // Every ring stands in the part at its first level: nothing is
@@ -167,6 +180,9 @@ fn contour_impl(
              without a gouge ({})",
             lead_notes.join("; ")
         )));
+    }
+    if let Some((f, _, true)) = part {
+        picked_law(&plan, f, &flat, &lad, d, p.side)?;
     }
     let lad = &lad;
 

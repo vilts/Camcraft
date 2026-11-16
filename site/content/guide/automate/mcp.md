@@ -132,6 +132,42 @@ Each call is a `tools/call`; the answers below are shortened.
 8. `undo {}` - takes back the last change if the result is not what you
    wanted.
 
+## The AI Chat panel
+
+The window has a dock pane for talking to an AI model without leaving the
+app. Open it from **View > Panels > AI Chat**; it opens beside Properties.
+It calls the same MCP tools as an outside agent, so every edit is an
+undoable command with the same checks.
+
+What the pane offers:
+
+- **Provider** and **Model**. The presets are Anthropic (Cloud), OpenAI
+  Responses (Cloud), OpenAI Chat (Cloud), Gemini (Cloud), Offline local
+  (Ollama), Local Prompt-JSON and Local Q&A (Read-Only). A line under the
+  boxes shows the mode and whether the endpoint is Cloud or Local.
+- **Offline only** refuses any cloud preset before anything is sent.
+- **Attach selection** sends your current selection with the prompt. It is
+  off until you tick it. **Attach screenshot** is disabled: the pane says
+  viewport screenshot capture is unavailable.
+- A **Prompt** box with **Send** and **Cancel**. Each tool the model calls
+  shows as a card with its status.
+- **Native tools** mode runs tools directly, but asks first for **post**,
+  **open_project**, **save_project**, **import_model**,
+  **import_tool_library** and **export_tool_library**. **Prompt JSON
+  (confirm every edit)** mode asks before every tool that changes the
+  document. **Read-only Q&A** mode runs no tools and shows a banner. A
+  prompt shows **Confirmation required**, the tool and its arguments, with
+  **Allow** and **Deny**. Deny tells the model the user refused.
+- **Undo Turn** reverts all the changes of one chat turn in one click. It
+  is disabled, and refuses, once you have made a later edit by hand.
+
+Not yet usable: the pane has no network transport in this release. Sending
+to any preset ends with "no live transport endpoint is configured for
+'<preset>'", and an API key setting is not shipped. To use an AI model
+today, connect an outside agent over MCP as described above. These
+worked examples and provider setup will be added when the transport
+ships.
+
 ## Undo and redo
 
 Each mutating tool is one undo step, and `undo` / `redo` walk the same

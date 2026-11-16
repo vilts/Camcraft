@@ -108,6 +108,8 @@ pub fn wire_verdict(world: &World, e: &Entity) -> Option<Result<WireVerdict, Str
             taper: w.taper_deg != 0.0 || w.four_axis.is_some(),
 
             burnout: w.burnout.is_some(),
+            // #1170: the 4-axis cut's stated verify tolerance.
+            verify_tol: w.four_axis.as_ref().map_or(0.0, |f| f.verify_tolerance),
         }))
     })())
 }

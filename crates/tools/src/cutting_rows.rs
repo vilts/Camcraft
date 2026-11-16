@@ -18,6 +18,8 @@ pub struct CuttingRow {
     pub material: WorkMaterial,
     pub rpm: f64,
     pub feed: f64,
+    /// A material-and-thickness recipe, never selected by material alone.
+    pub waterjet: Option<crate::waterjet::WaterjetCutData>,
 }
 
 /// The row for `material`, if the table names it. `None` for an
@@ -25,7 +27,39 @@ pub struct CuttingRow {
 #[must_use]
 pub fn row_for(rows: &[CuttingRow], material: Option<WorkMaterial>) -> Option<&CuttingRow> {
     let m = material?;
-    rows.iter().find(|r| r.material == m)
+    rows.iter().find(|r| r.material == m && r.waterjet.is_none())
+}
+
+/// A waterjet recipe requires both keys; no nearest-thickness substitution.
+#[must_use]
+pub fn waterjet_row_for(rows: &[CuttingRow], material: WorkMaterial, thickness: f64) -> Option<&CuttingRow> {
+    rows.iter().find(|r| r.material == material && r.waterjet.is_some_and(|w| w.thickness == thickness))
+}
+
+/// Validate a table against its tool kind before storing it.
+#[must_use]
+pub fn refusal_for_kind(rows: &[CuttingRow], kind: crate::tools::ToolKind) -> Option<String> {
+    use crate::tools::ToolKind;
+    if kind != ToolKind::Waterjet {
+        if rows.iter().any(|r| r.waterjet.is_some()) {
+            return Some("waterjet cutting data requires a waterjet tool".into());
+        }
+        return refusal(rows, kind == ToolKind::Torch);
+    }
+    for (i, r) in rows.iter().enumerate() {
+        let Some(w) = r.waterjet else {
+            return Some("waterjet cutting data requires thickness, kerf and pierce data".into());
+        };
+        if let Some(why) = w.refusal() { return Some(why); }
+        if r.rpm != 0.0 { return Some("waterjet cutting data rpm must be 0".into()); }
+        if !r.feed.is_finite() || r.feed <= 0.0 {
+            return Some("waterjet cutting data feed must be finite and above zero".into());
+        }
+        if rows[..i].iter().any(|p| p.material == r.material && p.waterjet.is_some_and(|p| p.thickness == w.thickness)) {
+            return Some(format!("waterjet cutting data names {} at thickness {} twice", r.material.label(), w.thickness));
+        }
+    }
+    None
 }
 
 /// The refusal text for a table that cannot be stored, or `None`.
@@ -56,7 +90,7 @@ mod tests {
     use super::*;
 
     fn row(m: WorkMaterial, rpm: f64, feed: f64) -> CuttingRow {
-        CuttingRow { material: m, rpm, feed }
+        CuttingRow { material: m, rpm, feed, waterjet: None }
     }
 
     #[test]

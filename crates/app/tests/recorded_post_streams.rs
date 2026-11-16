@@ -112,6 +112,7 @@ fn drill_retract() -> String {
         outline: Vec::new(),
         turning: None,
         pitch_min: 0.0,
+        thread_hand: Default::default(),
     };
     let hole = |x: f64, floor_z: f64| Hole {
         xy: Point2::new(x, 10.0),

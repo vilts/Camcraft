@@ -162,6 +162,12 @@ pub fn readable(t: &Tokens) -> Option<String> {
             ));
         }
     }
+    let r = ratio(t.ribbon_ink, t.strip_fill());
+    if r < BODY {
+        return Some(format!(
+            "ribbon_ink on the ribbon ground reads {r:.1}:1, under the {BODY}:1 floor - the ribbon glyphs would vanish"
+        ));
+    }
     let r = ratio(t.selection_stroke, t.ink_alt);
     if r < UI {
         return Some(format!(

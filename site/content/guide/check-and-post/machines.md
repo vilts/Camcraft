@@ -6,9 +6,10 @@ aliases = ["guide/machines/"]
 +++
 
 A machine file (`.mch`) declares a **kind**: `mill`, `lathe`, `mill-turn`,
-`plasma`, `wire_edm` or `sinker_edm`. A file that declares nothing is read
-from its axes (a mill unless it has a lathe's X/Z pair or a turning
-rotary); plasma and EDM are never guessed, only declared. The kind decides
+`plasma`, `wire_edm`, `sinker_edm` or `waterjet`. A file that declares
+nothing is read from its axes (a mill unless it has a lathe's X/Z pair or
+a turning rotary); plasma, EDM and waterjet are never guessed, only
+declared. The kind decides
 which operations the document accepts, which posts the picker lists and
 which limits the program is checked against. See [Setups](@/guide/set-up/setups.md)
 for mounting a machine and [Reading a refusal](@/guide/reference/refusals.md) for the
@@ -20,7 +21,18 @@ messages below.
 | Lathe | Turning, plus the axial Drill | Fanuc Lathe, Tormach PathPilot Lathe | Turning center 2-axis, Tormach 8L, 15L, 15LX |
 | Mill-turn | milling and turning | every post except plasma | Multitasking 5-axis |
 | Plasma | Plasma Profile only | Tormach PathPilot Plasma | Tormach 1300PL |
-| Wire / sinker EDM | Wire Contour (wire EDM); Sinker Burn, Side Burn (sinker EDM) | Generic ISO Wire EDM, Sodick Wire EDM (Mark 21); Sinker EDM (ISO) | supply a machine file with the required EDM data |
+| Wire / sinker EDM | Wire Contour (wire EDM); Sinker Burn, Side Burn (sinker EDM) | Generic ISO Wire EDM, Sodick Wire EDM (Mark 21); Sinker EDM (ISO) | Sodick ALC400G (complete its EDM data); supply a sinker machine file |
+
+A **waterjet** machine file needs linear X and Y axes; Z is optional. It
+is refused by name if it states a spindle, live tooling, a rotary axis or
+milling coolant. The matching **Waterjet nozzle** tool kind turns no spindle
+(its rpm must be zero), needs a positive kerf, and can hold cut recipes per
+material and thickness: cut feed, kerf, pierce time, abrasive delay,
+re-pierce time and pierce method. The machine check judges X/Y travel and
+feed limits, including arc extremes, and says which Z and spindle checks do
+not apply. No waterjet operation kind and no post for it ship yet, so a
+waterjet machine can be declared, mounted and checked but nothing can be
+posted for it.
 
 The picker lists posts for the setup's machine kind. A loaded post also
 refuses by name any operation or move that it cannot express.
@@ -49,14 +61,18 @@ Tormach PathPilot, Doosan DNM and Makera Carvera. Machine files:
 table** is the separate rotary configuration. Pick the one that matches
 your installed hardware.
 
-The Machine page has a **Library** picker and **Load other**, **Edit** and
+The {{ <icon name="tree-machine" /> }} Machine page has a **Library** picker and **Load other**, **Edit** and
 **Clear** actions. The overview shows the file's stated limits. A blank
 means **not stated**. The editor names invalid inputs and blocks saving
 until all refusals are fixed.
 
 In the browser's View controls, select **Show work envelope** to draw the
 active setup's machine travel as an outline. Mount a machine first. The
-outline uses its stated travel and the work origin. Missing travel data
+outline uses its stated travel and the work origin. A mill's outline
+stands on the table plane (Z = 0) and keeps its full Z travel height,
+even when the machine's program-space travel reaches below the table. X
+and Y keep the setup's work origin as their reference; the tooltip states
+these references. Missing travel data
 produces a reason instead of a guessed volume. This is a display aid;
 posting still checks the path against the machine limits.
 
@@ -78,7 +94,10 @@ ordinary milling operations and the setup's fixtures, not by the machine.
 The library also supplies **Sienci AltMill 2x4**, **4x4** and **4x8**
 machines, paired with the **grblHAL** post. **grblHAL 3-axis** and
 **TinyG 3-axis** are generic controller examples. Check their travel,
-spindle and retract settings against your actual machine before use.
+spindle and retract settings against your actual machine before use. For a
+complete sheet-goods walkthrough on the Sienci AltMill 4x4 (plus shop-router
+notes for RichAuto DSP A11), see
+[Your first router part](@/guide/getting-started/first-router-part.md).
 
 ## Lathe
 
@@ -92,6 +111,11 @@ rated maximum. Under constant surface speed (G96) the posted rpm ceiling is
 the lowest of the machine's, the tool's and the workholding's. Under
 constant rpm (G97) an operation over the limit is refused at the program
 gate, never silently capped. Slide strokes are judged on the posted path.
+
+The Tormach 8L, 15L Slant-PRO and 15LX Slant-PRO files state rigid
+tapping (from their operator manuals), so the Machines pane shows **yes**
+for them. In the viewport, a lathe's spindle axis lies from left to right
+and its work envelope is a cylinder about that axis.
 
 Posts: Fanuc Lathe (the default for a lathe) and Tormach PathPilot Lathe.
 
@@ -110,6 +134,15 @@ except plasma. For a live-tool move the machine's C rate is what is judged,
 and the work's chuck rpm limit applies to sections that run on the work
 spindle. Each shipped post script declares its dialect in
 `capabilities` (1 = milling, 2 = turning).
+
+A machine can state its C rotary axis along -Z in its `.mch` file. CamCraft
+then reads positive C as clockwise about +Z. It flips an asymmetric C
+travel range for the machine check, and the Fanuc Lathe post writes C
+negated. The setup sheet says so under MACHINE AXES: "C rotary turns
+clockwise about +Z (-Z axis) - posted C is negated for this machine". A C
+axis that is not along Z, or whose axis is not a finite vector, is
+refused by name. Curved (arc) moves can now ride a C turn: CamCraft
+breaks them into short chords within tolerance.
 
 Common refusals: `<post> is not a turning post - on <machine>, a mill-turning
 machine, these sections turn the work` (turning sections through a milling
@@ -141,6 +174,15 @@ tapping` and `a plasma table cuts flat sheet in X and Y - it states no
 rotary axis`.
 
 ## Wire and sinker EDM
+
+The library includes **Sodick ALC400G** (`sodick-alc400g.mch`): X/Y
+travel is 400/300 mm and U/V travel is 150/150 mm, centred on zero in
+the file. Its stated taper maximum is 25 degrees at 130 mm work height.
+The file supplies no conditions, wire diameter, guide heights, automatic
+threading or EDM codes. Add those from your actual machine and control
+documentation before use. The taper figure alone does not enable taper:
+the missing guide planes cause a nonzero taper edit to be refused.
+The ALC400G control has not been confirmed to match the Mark 21 post.
 
 Wire Contour runs on a machine file that declares `wire_edm`. The
 **Generic ISO Wire EDM** post takes its EDM words from the file's

@@ -298,10 +298,10 @@ fn shell_facets(
         if let Some(i) = cshell.edges.iter().position(|e| e.curve.meter.refused()) {
             return Err(PassError::Unconverged {
                 continuous: false,
-                refusal: ImportError::Step(format!(
+                refusal: super::step_meter::noted(guarded.stopped(), ImportError::Step(format!(
                     "edge {} of {} in shell #{shell_id} could not be tessellated: its curve subdivision did not converge within {cap} evaluations (a discontinuous or degenerate curve) - re-export the model, or import an STL",
                     i + 1, cshell.edges.len()
-                )),
+                ))),
             });
         }
         if let Some(trip) = guarded.tripped() {
@@ -323,10 +323,10 @@ fn shell_facets(
             let faces = cshell.faces.len();
             // #1602: a boundary search that could not be answered soundly
             // is refused in its own words, not as a runaway division.
-            let refusal = match fault {
+            let refusal = super::step_meter::noted(guarded.stopped(), match fault {
                 Some(f) => f.refusal(&super::step_guard::face_name(trip, faces, entity, Some(shell_id))),
                 None => super::step_guard::refusal(trip, faces, entity, Some(shell_id), cap),
-            };
+            });
             return Err(PassError::Unconverged { continuous: trip.continuous, refusal });
         }
         let polys = meshed.unwrap_or_else(|panic| std::panic::resume_unwind(panic));

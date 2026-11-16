@@ -38,7 +38,7 @@ judged instead by the plasma laws at the post gate (below).
 
 ## Plasma Profile
 
-![Top view of torch travel from a pierce point along the lead and outer plate profile.](../../../operation-paths.svg#PlasmaProfile)
+{{ <icon name="op-plasma-profile" /> }} ![Top view of torch travel from a pierce point along the lead and outer plate profile.](../../../operation-paths.svg#PlasmaProfile)
 
 **For:** cutting parts out of flat plate: one through-cut per contour,
 with the kerf offset to the waste side, arc leads, holes before the

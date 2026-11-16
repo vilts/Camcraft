@@ -14,8 +14,9 @@
 use egui::{Button, ComboBox, RichText, Ui, Vec2};
 
 use camcraft_app::geometry::{quat_from_axis_angle, quat_from_euler, quat_mul, quat_to_euler};
-use camcraft_app::model;
+use camcraft_app::machine::{Kind, kind_of};
 use camcraft_app::units::{self, Unit};
+use camcraft_app::{model, setup, setup_wcs_tilt};
 
 use crate::interact;
 use crate::state::{CommandKind, State, quat_yaw_deg};
@@ -30,22 +31,37 @@ const CIRCLE: usize = 2;
 const BUTTON_H: f32 = 24.0;
 const CELL_MAX: Vec2 = Vec2::new(72.0, 30.0);
 
-/// The quarter turns, two rows of three: (label, world axis, sign).
+/// The quarter turns, two rows of three: (label, setup axis, sign).
 const TURNS: [[(&str, usize, f64); 3]; 2] = [
     [("Turn X+", 0, 1.0), ("Turn Y+", 1, 1.0), ("Turn Z+", 2, 1.0)],
     [("Turn X-", 0, -1.0), ("Turn Y-", 1, -1.0), ("Turn Z-", 2, -1.0)],
 ];
 
+const MILL_TILT_HINT: &str =
+    "Milling cuts along machine Z. Use Part alignment on the Setup page to turn the part.";
+
 pub(super) fn wcs_page(ui: &mut Ui, state: &mut State) {
     let u = state.units();
-    group(ui, "Origin and orientation", None, |ui| origin_fields(ui, state, u));
-    group(ui, "Quarter turns", None, |ui| quarter_turns(ui, state));
+    let is_mill = kind_of(&state.world) == Kind::Mill;
+    let active = setup::active(&state.world);
+    let tilted_mill = setup_wcs_tilt::setup_problem(&state.world, active.as_deref()).is_some();
+    if tilted_mill {
+        ui.label(
+            RichText::new(
+                "This milling WCS is tilted off machine Z and generation will refuse it. Click Level, then turn the part with Part alignment on the Setup page.",
+            )
+            .small()
+            .color(ui.visuals().warn_fg_color),
+        );
+    }
+    group(ui, "Origin and orientation", None, |ui| origin_fields(ui, state, u, is_mill));
+    group(ui, "Quarter turns", None, |ui| quarter_turns(ui, state, is_mill));
     group(ui, "Anchor on", None, |ui| anchor_section(ui, state));
     readout(ui, state, u);
 }
 
 /// Label | field rows, one grid so the fields share one column.
-fn origin_fields(ui: &mut Ui, state: &mut State, u: Unit) {
+fn origin_fields(ui: &mut Ui, state: &mut State, u: Unit, is_mill: bool) {
     let w = &mut state.wcs_ui;
     prop_grid(ui, "wcs_origin_grid", |ui| {
         for (label, v) in [("X origin", &mut w.x), ("Y origin", &mut w.y), ("Z origin", &mut w.z)] {
@@ -53,16 +69,22 @@ fn origin_fields(ui: &mut Ui, state: &mut State, u: Unit) {
             num(ui, u, v);
             ui.end_row();
         }
-        for (label, v) in [
-            ("Tilt about X (roll)", &mut w.roll_deg),
-            ("Tilt about Y (pitch)", &mut w.pitch_deg),
-            ("Turn about Z (yaw)", &mut w.yaw_deg),
+        for (label, v, tilt_axis) in [
+            ("Tilt about X (roll)", &mut w.roll_deg, true),
+            ("Tilt about Y (pitch)", &mut w.pitch_deg, true),
+            ("Turn about Z (yaw)", &mut w.yaw_deg, false),
         ] {
             ui.label(label);
-            num_plain(ui, v);
+            let enabled = !is_mill || !tilt_axis;
+            ui.add_enabled_ui(enabled, |ui| num_plain(ui, v))
+                .response
+                .on_disabled_hover_text(MILL_TILT_HINT);
             ui.end_row();
         }
     });
+    if is_mill {
+        ui.label(RichText::new(MILL_TILT_HINT).small().weak());
+    }
 }
 
 /// One row of `labels` as equal buttons filling the available width;
@@ -85,13 +107,29 @@ pub(super) fn cell_w(ui: &Ui, avail: f32, n: usize) -> f32 {
     ((avail - gaps) / n.max(1) as f32).max(24.0)
 }
 
-fn quarter_turns(ui: &mut Ui, state: &mut State) {
-    ui.label(RichText::new("About the world axes; applied at once.").small().weak());
+fn turn_row(ui: &mut Ui, row: &[(&str, usize, f64); 3], size: Vec2, is_mill: bool) -> Option<usize> {
+    let mut hit = None;
+    ui.horizontal(|ui| {
+        for (i, &(label, axis, _)) in row.iter().enumerate() {
+            let enabled = !is_mill || axis == 2;
+            let resp = ui
+                .add_enabled_ui(enabled, |ui| ui.add_sized(size, Button::new(label)))
+                .inner
+                .on_disabled_hover_text(MILL_TILT_HINT);
+            if resp.clicked() {
+                hit = Some(i);
+            }
+        }
+    });
+    hit
+}
+
+fn quarter_turns(ui: &mut Ui, state: &mut State, is_mill: bool) {
+    ui.label(RichText::new("About the setup axes; applied at once.").small().weak());
     let avail = ui.available_width();
     let size3 = Vec2::new(cell_w(ui, avail, 3), BUTTON_H);
     for row in TURNS {
-        let labels = row.map(|(l, _, _)| l);
-        if let Some(i) = even_row(ui, &labels, size3)
+        if let Some(i) = turn_row(ui, &row, size3, is_mill)
             && let Some((_, axis, sign)) = row.get(i)
         {
             turn_wcs(state, *axis, *sign);
@@ -267,7 +305,8 @@ pub(super) fn turn_wcs(state: &mut State, axis: usize, sign: f64) {
         state.wcs_ui.yaw_deg.to_radians(),
     );
     let turn = quat_from_axis_angle(axis, sign * 90.0f64.to_radians());
-    let (r, p, y) = quat_to_euler(quat_mul(turn, q));
+    // Right composition turns about the current setup axes.
+    let (r, p, y) = quat_to_euler(quat_mul(q, turn));
     state.wcs_ui.roll_deg = r.to_degrees();
     state.wcs_ui.pitch_deg = p.to_degrees();
     state.wcs_ui.yaw_deg = y.to_degrees();

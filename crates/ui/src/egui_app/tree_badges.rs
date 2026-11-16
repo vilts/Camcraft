@@ -32,22 +32,25 @@ const BADGE: f32 = 9.0;
 /// any) over the lower right on a disc of `ground`, so the glyph's strokes
 /// do not run into it. Returns false when there is no texture to paint
 /// (headless, or a failed decode): the caller draws its vector stand-in.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn row_glyph(
     painter: &Painter,
     icons: Option<&IconSet>,
     icon: Option<Icon>,
     badge: Option<Icon>,
     at: Pos2,
+    glyph_px: f32,
     ink: Color32,
     ground: Color32,
 ) -> bool {
     let uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
     let Some(tex) = icons.and_then(|s| icon.and_then(|i| s.texture(i))) else { return false };
-    painter.image(tex.id(), Rect::from_center_size(at, Vec2::splat(GLYPH)), uv, ink);
+    let badge_px = glyph_px * (BADGE / GLYPH);
+    painter.image(tex.id(), Rect::from_center_size(at, Vec2::splat(glyph_px)), uv, ink);
     if let Some(b) = icons.and_then(|s| badge.and_then(|i| s.texture(i))) {
-        let c = at + Vec2::splat(GLYPH * 0.5 - BADGE * 0.5 + 1.0);
-        painter.circle_filled(c, BADGE * 0.5 + 1.0, ground);
-        painter.image(b.id(), Rect::from_center_size(c, Vec2::splat(BADGE)), uv, ink);
+        let c = at + Vec2::splat(glyph_px * 0.5 - badge_px * 0.5 + 1.0);
+        painter.circle_filled(c, badge_px * 0.5 + 1.0, ground);
+        painter.image(b.id(), Rect::from_center_size(c, Vec2::splat(badge_px)), uv, ink);
     }
     true
 }

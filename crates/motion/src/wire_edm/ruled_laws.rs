@@ -43,8 +43,21 @@ pub(super) const MAX_RULINGS: usize = 4000;
 
 pub(super) type Ruling = (Point2, Point2);
 
-fn lerp(p: Point2, q: Point2, v: f64) -> Point2 {
+pub(super) fn lerp(p: Point2, q: Point2, v: f64) -> Point2 {
     Point2::new(p.x + (q.x - p.x) * v, p.y + (q.y - p.y) * v)
+}
+
+/// Where the surface between two consecutive rulings folds (the module
+/// head's fold law): the height fraction its section turns back at and
+/// the turn of the upper end against the lower, degrees.
+pub(super) fn fold_of((l0, u0): Ruling, (l1, u1): Ruling) -> Option<(f64, f64)> {
+    let (a, b) = ((l1.x - l0.x, l1.y - l0.y), (u1.x - u0.x, u1.y - u0.y));
+    let (aa, bb, ab) = (a.0 * a.0 + a.1 * a.1, b.0 * b.0 + b.1 * b.1, a.0 * b.0 + a.1 * b.1);
+    // A ruling end that stands still makes no fold of its own.
+    if aa.sqrt() < 1e-9 || bb.sqrt() < 1e-9 || ab >= -1e-9 * aa.sqrt() * bb.sqrt() {
+        return None;
+    }
+    Some((aa / (aa - ab), (ab / (aa.sqrt() * bb.sqrt())).clamp(-1.0, 1.0).acos().to_degrees()))
 }
 
 /// The fold law over the closed ring of rulings; `rule` and `hint` are
@@ -52,15 +65,10 @@ fn lerp(p: Point2, q: Point2, v: f64) -> Point2 {
 pub(super) fn folds(r: &[Ruling], z0: f64, h: f64, rule: &str, hint: &str) -> Result<(), GenError> {
     let n = r.len();
     for i in 0..n {
-        let ((l0, u0), (l1, u1)) = (r[i], r[(i + 1) % n]);
-        let (a, b) = ((l1.x - l0.x, l1.y - l0.y), (u1.x - u0.x, u1.y - u0.y));
-        let (aa, bb, ab) = (a.0 * a.0 + a.1 * a.1, b.0 * b.0 + b.1 * b.1, a.0 * b.0 + a.1 * b.1);
-        // A ruling end that stands still makes no fold of its own.
-        if aa.sqrt() < 1e-9 || bb.sqrt() < 1e-9 || ab >= -1e-9 * aa.sqrt() * bb.sqrt() {
+        let Some((v, turn)) = fold_of(r[i], r[(i + 1) % n]) else {
             continue;
-        }
-        let v = aa / (aa - ab);
-        let turn = (ab / (aa.sqrt() * bb.sqrt())).clamp(-1.0, 1.0).acos().to_degrees();
+        };
+        let l0 = r[i].0;
         return Err(GenError::invalid_at(
             format!(
                 "wire contour: the pairing ({rule}) folds near X{:.3} Y{:.3}: the upper profile runs {turn:.1} degrees against the lower there, so consecutive rulings cross within the part height (the wire's section turns back at Z{:.3}) - {hint}",
@@ -78,41 +86,50 @@ fn cross(o: Point2, a: Point2, b: Point2) -> f64 {
     (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
 }
 
+/// Where the closed ring `s` crosses itself: the start of the first
+/// segment another one crosses. Segments that share a vertex never count.
+pub(super) fn tangle(s: &[Point2]) -> Option<Point2> {
+    let n = s.len();
+    for i in 0..n {
+        let (p, q) = (s[i], s[(i + 1) % n]);
+        // Segments i and j share no vertex: j runs past i's
+        // neighbours on both sides.
+        for j in i + 2..n {
+            if i == 0 && j == n - 1 {
+                continue;
+            }
+            let (c, d) = (s[j], s[(j + 1) % n]);
+            let (d1, d2, d3, d4) = (cross(c, d, p), cross(c, d, q), cross(p, q, c), cross(p, q, d));
+            if d1 * d2 < 0.0 && d3 * d4 < 0.0 {
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
 /// The crossing law: the wire's section at each quarter height is a
 /// simple ring.
 pub(super) fn crossing(r: &[Ruling], z0: f64, h: f64) -> Result<(), GenError> {
-    let n = r.len();
     for v in [0.25, 0.5, 0.75] {
         let s: Vec<Point2> = r.iter().map(|(l, u)| lerp(*l, *u, v)).collect();
-        for i in 0..n {
-            let (p, q) = (s[i], s[(i + 1) % n]);
-            // Segments i and j share no vertex: j runs past i's
-            // neighbours on both sides.
-            for j in i + 2..n {
-                if i == 0 && j == n - 1 {
-                    continue;
-                }
-                let (c, d) = (s[j], s[(j + 1) % n]);
-                let (d1, d2, d3, d4) = (cross(c, d, p), cross(c, d, q), cross(p, q, c), cross(p, q, d));
-                if d1 * d2 < 0.0 && d3 * d4 < 0.0 {
-                    return Err(GenError::invalid_at(
-                        format!(
-                            "wire contour: the paired surface crosses itself at Z{:.3} near X{:.3} Y{:.3} - rulings from different parts of the profiles cross within the part height; state sync points that keep the profiles aligned",
-                            z0 + v * h,
-                            p.x,
-                            p.y
-                        ),
-                        Point3::new(p.x, p.y, z0 + v * h),
-                    ));
-                }
-            }
+        if let Some(p) = tangle(&s) {
+            return Err(GenError::invalid_at(
+                format!(
+                    "wire contour: the paired surface crosses itself at Z{:.3} near X{:.3} Y{:.3} - rulings from different parts of the profiles cross within the part height; state sync points that keep the profiles aligned",
+                    z0 + v * h,
+                    p.x,
+                    p.y
+                ),
+                Point3::new(p.x, p.y, z0 + v * h),
+            ));
         }
     }
     Ok(())
 }
 
 /// The nearest point of segment a-b to `q`: (parameter, point).
-fn foot(q: Point2, a: Point2, b: Point2) -> (f64, Point2) {
+pub(super) fn foot(q: Point2, a: Point2, b: Point2) -> (f64, Point2) {
     let (dx, dy) = (b.x - a.x, b.y - a.y);
     let dd = dx * dx + dy * dy;
     let t = if dd > 0.0 { (((q.x - a.x) * dx + (q.y - a.y) * dy) / dd).clamp(0.0, 1.0) } else { 0.0 };
@@ -127,6 +144,11 @@ pub(super) struct Clearance {
     pub(super) at: Point3,
     /// The worst shortfall (mm) of a lead move, and its spot.
     pub(super) lead: Option<(f64, Point3)>,
+    /// Each wire ruling's own worst need / clearance (#1170), for its
+    /// `[lower, upper]` end: a reading at a ruling is that ruling's, one
+    /// between two rulings is both's; a reading on a profile plane is
+    /// that plane's end's alone.
+    pub(super) per: Vec<[f64; 2]>,
 }
 
 /// The ruled kerf law: the wire rulings `wire` (walked from the lead's
@@ -134,7 +156,8 @@ pub(super) struct Clearance {
 /// rulings `product`, for kerf offset `k`, lower plane `z0` and height
 /// `h`.
 pub(super) fn clearance(product: &[Ruling], wire: &[Ruling], start: Point2, k: f64, z0: f64, h: f64) -> Clearance {
-    let mut out = Clearance { ratio: 0.0, at: Point3::new(start.x, start.y, z0), lead: None };
+    let n = wire.len();
+    let mut out = Clearance { ratio: 0.0, at: Point3::new(start.x, start.y, z0), lead: None, per: vec![[0.0; 2]; n] };
     let Some(first) = wire.first().copied() else {
         return out;
     };
@@ -165,9 +188,23 @@ pub(super) fn clearance(product: &[Ruling], wire: &[Ruling], start: Point2, k: f
                 }
             } else {
                 let ratio = if d > 0.0 { need / d } else { f64::INFINITY };
-                if ratio.is_nan() || ratio > out.ratio {
-                    out.ratio = if ratio.is_nan() { f64::INFINITY } else { ratio };
+                let ratio = if ratio.is_nan() { f64::INFINITY } else { ratio };
+                if ratio > out.ratio {
+                    out.ratio = ratio;
                     out.at = spot;
+                }
+                // Walk segment `seg` runs from ruling `seg - 1` to the
+                // next one round the ring.
+                for (end, mine) in [(seg - 1, s < 1.0), (seg % n, s > 0.0)] {
+                    let Some(worst) = out.per.get_mut(end).filter(|_| mine) else {
+                        continue;
+                    };
+                    if j < HEIGHTS {
+                        worst[0] = worst[0].max(ratio);
+                    }
+                    if j > 0 {
+                        worst[1] = worst[1].max(ratio);
+                    }
                 }
             }
         };
@@ -200,4 +237,24 @@ pub(super) fn clearance(product: &[Ruling], wire: &[Ruling], start: Point2, k: f
         }
     }
     out
+}
+
+/// Every ruling's lean against the machine's maximum `max` (degrees);
+/// the steepest. `rule` and `machine` are the refusal's words.
+pub(super) fn lean_law(wire: &[Ruling], z0: f64, h: f64, max: f64, rule: &str, machine: &str) -> Result<f64, GenError> {
+    let mut steepest = 0.0f64;
+    for (l, u) in wire {
+        let lean = (u.x - l.x).hypot(u.y - l.y).atan2(h).to_degrees();
+        if lean.is_nan() || lean > max + 1e-9 {
+            return Err(GenError::invalid_at(
+                format!(
+                    "wire contour: the pairing ({rule}) leans the wire {lean:.3} degrees at X{:.3} Y{:.3}, and machine {machine} leans it at most {max:.3} degrees (edm.max_taper_deg)",
+                    l.x, l.y
+                ),
+                Point3::new(l.x, l.y, z0),
+            ));
+        }
+        steepest = steepest.max(lean);
+    }
+    Ok(steepest)
 }

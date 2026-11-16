@@ -29,8 +29,10 @@ use crate::tools::Tool;
 
 /// The envelope's `format` tag.
 pub const FORMAT: &str = "camcraft-tools";
-/// The envelope's `version`; a reader refuses any other.
+/// The original envelope version, retained for libraries without left-hand taps.
 pub const VERSION: u64 = 1;
+/// Older readers must refuse libraries containing left-hand taps.
+pub const LEFT_HAND_VERSION: u64 = 2;
 /// The extension the file dialogs offer.
 pub const EXTENSION: &str = "camtools";
 
@@ -72,8 +74,14 @@ impl LibraryTool {
 /// #889: a tool's body rides its definition as `body`.
 pub fn export_tool_library(world: &World) -> Result<String, String> {
     let mut tools: Vec<Value> = Vec::new();
+    let mut version = VERSION;
     for (n, e) in model::named_entities(world) {
         let Some(t) = model::tool_of(world, &e) else { continue };
+        if t.kind == crate::tools::ToolKind::Tap
+            && t.thread_hand == camcraft_tools::thread_hand::ThreadHand::Left
+        {
+            version = LEFT_HAND_VERSION;
+        }
         let mut def = project::tool_to_json(&t);
         if let Some(b) = tool_body::body_of(world, &e) {
             let body = serde_json::to_value(ToolBodyDto::from_body(&b))
@@ -87,7 +95,7 @@ pub fn export_tool_library(world: &World) -> Result<String, String> {
     if tools.is_empty() {
         return Err("the document has no tools to export".into());
     }
-    let doc = json!({ "format": FORMAT, "version": VERSION, "units": "mm", "tools": tools });
+    let doc = json!({ "format": FORMAT, "version": version, "units": "mm", "tools": tools });
     serde_json::to_string_pretty(&doc).map_err(|e| format!("tool library not written: {e}"))
 }
 
@@ -108,8 +116,8 @@ pub fn parse_tool_library(text: &str) -> Result<Vec<LibraryTool>, String> {
                 None => return Err(format!("not a tool library: no \"format\": \"{FORMAT}\"")),
             }
             match o.get("version").and_then(Value::as_u64) {
-                Some(VERSION) => {}
-                Some(v) => return Err(format!("tool library version {v} is not supported (this build reads {VERSION})")),
+                Some(VERSION | LEFT_HAND_VERSION) => {}
+                Some(v) => return Err(format!("tool library version {v} is not supported (this build reads {VERSION} or {LEFT_HAND_VERSION})")),
                 None => return Err("not a tool library: no \"version\"".into()),
             }
             if let Some(u) = o.get("units").and_then(Value::as_str)

@@ -30,6 +30,9 @@
 mod error;
 pub mod machining_mesh;
 mod measure;
+pub mod mesh_bound;
+mod mesh_bound_blossom;
+mod mesh_bound_spline;
 pub mod mesh_deviation;
 mod solidcore_blend;
 pub mod solidcore_impl;
