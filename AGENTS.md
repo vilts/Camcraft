@@ -590,6 +590,17 @@ tests are in `crates/ui/tests/`; they start the real app through
   suite what a snapshot guards: AccessKit labels, roles, enabled state,
   window presence, and the text and coarse position of the painted strips.
   A UI change updates those assertions, not the PNGs.
+- **A UI refit PR keeps its tests** (#1953). A refit PR (a new look, chrome
+  or layout) changes one page or one component, and that page's tests.
+  - A behaviour test asserts labels, roles, enabled state and commands. It
+    does not assert a position, a size or a colour.
+  - Each page and window has one named layout test,
+    `crates/ui/src/egui_app/tests/page_layout.rs` (`layout_page_<page>`,
+    `layout_window_<window>`). The refit PR of that page updates it.
+  - The PR is not ready while a UI test that it touches is red, ignored or
+    deleted. The `#[test]` count of `crates/ui` does not go down.
+  - The quick gate of the PR runs the `camcraft-ui` lib tests. No refit
+    failure waits for the cut gate.
 - Add headless tests for toolpath generation (golden CLFile and G-code
   outputs in `tests/golden/`), stock simulation and post processing. Add fuzz
   tests for the geometry importers and the toolpath generators: degenerate

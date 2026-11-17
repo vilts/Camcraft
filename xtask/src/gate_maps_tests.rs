@@ -61,6 +61,22 @@ fn sim_verify_change_selects_the_verify_suites() {
     assert!(count("crates/sim/src/verify/mod.rs", "app") >= 20, "verify change selects too few app suites");
 }
 
+/// #2307: verification changes must select the fig8 regression suite.
+#[test]
+fn sim_verify_change_selects_the_fig8_regression_suite() {
+    let got = selected("crates/sim/src/verify/mod.rs", "app");
+    assert!(got.iter().any(|b| b == "adaptive_fig8_crossing"), "adaptive_fig8_crossing missing from {got:?}");
+}
+
+/// #2307: both posting modules must select their shipped-file regression suite.
+#[test]
+fn posting_changes_select_the_shipped_from_disk_suite() {
+    for file in ["crates/app/src/posting.rs", "crates/app/src/posting_files.rs"] {
+        let got = selected(file, "app");
+        assert!(got.iter().any(|b| b == "shipped_from_disk"), "{file}: shipped_from_disk missing from {got:?}");
+    }
+}
+
 #[test]
 fn motion_machining2d_change_selects_the_machining2d_suites() {
     let got = selected("crates/motion/src/machining2d/mod.rs", "app");

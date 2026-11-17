@@ -34,6 +34,22 @@ and the root file differ, the root file wins.
   `ui.button`, `ui.checkbox`, `ui.label` or `ui.add` calls in pages. The
   remaining pages move one family per PR; the work is tracked in #1122.
 
+## Frame cost
+
+- A still frame computes no derived geometry again. A region, a fill mesh,
+  a chain, a note or a label list is computed when its input changes and
+  read from a cache on each other frame. The frame target is under 10 ms.
+  (#2238, maintainer, 2026-11-16; `docs/decisions/2238-frame-cost-rule.md`.)
+- The cache key is the input: the value, an `Arc` that a change replaces,
+  or a revision that the input's one writer bumps. Never `doc_version`
+  alone. The writer invalidates; no widget or page holds a cache. (Same
+  decision.)
+- Each cache has a counter test (a still frame computes nothing) and a
+  changed-input test. The verify check, collision checks and the post gate
+  never read a display cache or a simulation keyframe. (Same decision.)
+- Name a new frame piece with `frame_cost::span`. The probe
+  `egui_app::tests::frame_cost_probe` prints the costs. (Same decision.)
+
 ## File size
 
 - No source file grows past about 400 lines. Split along the domain seam
@@ -50,6 +66,15 @@ and the root file differ, the root file wins.
   tier's snapshot lane. A PR never changes a snapshot PNG, not to refresh a
   conflict and not to accept a new render; they are regenerated once at a
   minor or major cut. (Root `AGENTS.md`, "Testing".)
+- A refit PR (new look, chrome or layout) changes one page or component and
+  its tests. Behaviour tests assert labels, roles, enabled state and
+  commands, never a position, size or colour; each page's coarse layout is
+  its named `layout_page_<page>` / `layout_window_<window>` test in
+  `src/egui_app/tests/page_layout.rs`, which the page's refit PR updates. The
+  PR is not ready while a UI test it touches is red, ignored or deleted, and
+  the crate's `#[test]` count does not go down. Pointer targets in behaviour
+  tests come from the live layout (`tests/anchors.rs`), not fixed screen
+  numbers. (Root `AGENTS.md`, "A UI refit PR keeps its tests"; #1953.)
 
 ## Icons and assets
 
