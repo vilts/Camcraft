@@ -29,6 +29,7 @@ disagree, this file is correct.
 | Cut a release | `release-cut` |
 | Work in a fork of NeoTech/Camcraft | `fork-sync` |
 | Install or change a self-hosted runner or a workflow | `runners` |
+| Start the agent team from a clean session | `start-orchestrator` |
 | Drive CamCraft through MCP | `camcraft-mcp` |
 
 A rule name in **bold** is a stable name. Skills, agents and code comments
@@ -58,9 +59,36 @@ He reviews them later. The work must not interrupt him.
   issue list is empty, start a subagent that reminds the session to claim
   the next issue. A stall is a bug.
 - **Side work rides subagents.** Subagents do all testing, documentation and
-  knowledge-graph updates. The main session plans, writes code and decides.
+  knowledge-graph updates. The coordinator plans and decides, and workers
+  write the code ("Agent roles").
   A subagent's completion notice starts the next step. Never give one
   subagent both a code change and its verification.
+
+### Agent roles
+
+Each role has one job (#2464). The model of each role is set only in its
+file in `.claude/agents/`.
+
+| Role | Agent file | Model | Does |
+|---|---|---|---|
+| Main session | - | - | Keeps the user: reports, questions, maintainer decisions (question dialog). Starts the coordinator. Orchestrates nothing |
+| Coordinator | `coordinator.md` | Fable; Opus if Fable is not available | Merges, picks issues, dispatches, resolves stuck processes, decides by reasoning. One long-running agent |
+| Worker | `issue-worker-max.md`, `-high.md`, `-medium.md` | Opus | Each code change. Comes and goes with its issue |
+| Small-fix worker | `issue-worker-low.md` | Sonnet | A quick, small fix that is easy to understand (`effort:low`) |
+| Context scout | `context-scout.md` | Haiku | Reads, searches, locates, queries the knowledge graph, writes context packs. Four run at all times |
+
+- **Scouts read, workers write.** The coordinator and the workers do not
+  explore the repository. A scout gives them a context pack with exact
+  paths and line ranges. A worker reads only those ranges and the lines
+  that it changes. The `work-issue` skill has the fallback for when no
+  scout answers.
+- **Scouts do not count as builds.** They never build, test or write to
+  GitHub. The limit on local builds applies to workers, gates and reviews.
+- **The coordinator writes no code and reads no source.** It reads `gh`
+  output and agent reports. A maintainer decision goes to the main session
+  as an `ASK:` line, and the coordinator continues with other work.
+- **Reviews and gates do not change.** The review tier, the gate-runner
+  and the graph-updater stay as they are.
 
 ## Issue Law - work is tracked as GitHub issues
 
@@ -207,7 +235,7 @@ with `gh`. `ROADMAP.md` and `DONE.md` are retired; read them only for history
   - **Safety floor.** Work that can change posted G-code, a collision or
     gouge check, stock simulation or geometry is `effort:high` or more. Each
     `P1` is `effort:high` or more.
-  - **Who works it.** The main session picks the issue and dispatches it to
+  - **Who works it.** The coordinator ("Agent roles") picks the issue and dispatches it to
     `.claude/agents/issue-worker-<effort>.md`. The worker runs the
     `work-issue` skill and never merges. The model for each effort is set
     only in those agent files. If the model is not available (a 404), run the

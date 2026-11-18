@@ -1,5 +1,5 @@
-//! The release tier's executor: builds first and alone, then a work queue of shared lanes (each lane pulls
-//! the next step as it finishes, longest first), then the alone steps one at a time with the whole budget.
+//! The release tier's executor: builds first and alone, then heavy targets before debug suites. Each phase
+//! drains its longest-first shared queue, then runs isolated steps one at a time with the whole budget.
 //! Provenance: our own build law (AGENTS.md "Three gate tiers", #1703, #2057); Graham's LPT list
 //! scheduling (see `lanes`); standard Rust scoped threads and atomics.
 
@@ -9,7 +9,11 @@ use std::sync::{Mutex, MutexGuard};
 use crate::budget;
 use crate::exec::{Done, Run, moved};
 use crate::lanes::{self, Schedule};
-use crate::plan::Plan;
+use crate::plan::{Plan, Step};
+
+fn heavy(s: &Step) -> bool {
+    s.args.iter().any(|a| a == "--release") && s.args.iter().any(|a| a == "--ignored")
+}
 
 fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
     match m.lock() {
@@ -25,8 +29,8 @@ impl Run {
         let (history, from) = lanes::history(&self.root);
         let sched: Schedule = lanes::schedule(&plan.steps, &history);
         match &from {
-            Some(f) => println!("queue order: longest first, by {}", f.display()),
-            None => println!("queue order: plan order (no gate-logs/release-*/{} yet)", lanes::TIMINGS),
+            Some(f) => println!("queue order: heavy targets first; longest first within each phase, by {}", f.display()),
+            None => println!("queue order: heavy targets first; plan order within each phase (no gate-logs/release-*/{} yet)", lanes::TIMINGS),
         }
         let result = self.run_schedule(plan, &sched);
         if !self.dry && !self.done.is_empty() {
@@ -52,27 +56,31 @@ impl Run {
                 return Ok(());
             }
         }
-        if !sched.queue.is_empty() {
-            if self.check("before the release queue") {
-                return Ok(());
+        // Finish isolated heavy targets too before any debug suite starts (#2372).
+        for is_heavy in [true, false] {
+            let queue: Vec<usize> = sched.queue.iter().copied().filter(|&i| heavy(&plan.steps[i]) == is_heavy).collect();
+            if !queue.is_empty() {
+                if self.check("before the release queue") {
+                    return Ok(());
+                }
+                let lanes = budget::lane_limit(self.budget).min(queue.len()).max(1);
+                let jobs = budget::per_lane(self.budget, lanes);
+                println!("-- queue: {} step(s) in {lanes} lane(s) x -j {jobs}, each lane takes the next step when it finishes", queue.len());
+                let done = self.drain(plan, &queue, lanes, jobs)?;
+                self.done.extend(done);
+                if self.void.is_some() {
+                    return Ok(());
+                }
             }
-            let lanes = budget::lane_limit(self.budget).min(sched.queue.len()).max(1);
-            let jobs = budget::per_lane(self.budget, lanes);
-            println!("-- queue: {} step(s) in {lanes} lane(s) x -j {jobs}, each lane takes the next step when it finishes", sched.queue.len());
-            let done = self.drain(plan, &sched.queue, lanes, jobs)?;
-            self.done.extend(done);
-            if self.void.is_some() {
-                return Ok(());
+            for &i in sched.alone.iter().filter(|&&i| heavy(&plan.steps[i]) == is_heavy) {
+                let s = &plan.steps[i];
+                if self.check(&format!("before {}", s.name)) {
+                    return Ok(());
+                }
+                println!("-- alone x -j {}", self.budget);
+                let d = Self::execute(&self.root, &self.log_dir, self.dry, i + 1, s, self.budget)?;
+                self.done.push(d);
             }
-        }
-        for &i in &sched.alone {
-            let s = &plan.steps[i];
-            if self.check(&format!("before {}", s.name)) {
-                break;
-            }
-            println!("-- alone x -j {}", self.budget);
-            let d = Self::execute(&self.root, &self.log_dir, self.dry, i + 1, s, self.budget)?;
-            self.done.push(d);
         }
         Ok(())
     }

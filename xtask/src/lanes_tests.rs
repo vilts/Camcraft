@@ -19,6 +19,43 @@ fn none() -> std::collections::HashMap<String, u64> {
 }
 
 #[test]
+fn release_executor_finishes_heavy_steps_before_debug_despite_history() {
+    use std::{fs, process::Command};
+    let root = std::env::temp_dir().join(format!("xtask-heavy-first-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let logs = root.join("gate-logs/release-20261101-000000");
+    fs::create_dir_all(&logs).expect("timing fixture");
+    fs::write(logs.join(lanes::TIMINGS), "900\tdebug\n1\tmotion heavy: lib\n").expect("old timings");
+    for args in [vec!["init", "--quiet"], vec!["add", "."], vec!["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "fixture"]] {
+        assert!(Command::new("git").args(args).current_dir(&root).status().expect("git fixture").success());
+    }
+    let steps = vec![
+        Step::new("debug", &["test", "-p", "camcraft-motion", "--lib"], ""),
+        Step::new("debug build", &["test", "--no-run"], ""),
+        Step::new("app heavy: lib", &["test", "--release", "-p", "camcraft-app", "--lib", "--", "--ignored"], ""),
+        Step::new("release build", &["test", "--release", "--no-run"], ""),
+        Step::new("motion heavy: lib", &["test", "--release", "-p", "camcraft-motion", "--lib", "--", "--ignored"], ""),
+        Step::new("ui", &["test", "-p", "camcraft-ui", "--lib"], "ui"),
+        Step::new("kernel heavy: step_import", &["test", "--release", "-p", "camcraft-kernel", "--test", "step_import", "--", "--ignored"], ""),
+        Step::new("clippy", &["clippy"], ""),
+        Step::new("release only", &["test", "--release", "-p", "camcraft-motion", "--lib"], ""),
+        Step::new("debug ignored", &["test", "-p", "camcraft-ui", "--lib", "--", "--ignored"], "ui"),
+    ];
+    assert!(!lanes::alone(&steps[4]), "motion heavy tests can share lanes");
+    for i in [1, 2, 3, 5, 6, 7, 9] {
+        assert!(lanes::alone(&steps[i]), "{} must run alone", steps[i].name);
+    }
+    let mut runner = crate::exec::Run::new(&root, "release", true).expect("dry runner");
+    runner.plan(&crate::plan::Plan { notes: Vec::new(), steps }).expect("dry plan");
+    let names: Vec<&str> = runner.done.iter().map(|d| d.name.as_str()).collect();
+    assert_eq!(names, [
+        "debug build", "release build", "motion heavy: lib", "app heavy: lib",
+        "kernel heavy: step_import", "debug", "release only", "ui", "clippy", "debug ignored",
+    ], "heavy targets, including isolated targets, must finish before debug despite longer debug history");
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
 fn release_queue_holds_every_ordinary_suite_of_both_profiles_and_loses_none() {
     let mut steps = Vec::new();
     for i in 0..7 {

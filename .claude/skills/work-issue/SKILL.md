@@ -34,6 +34,24 @@ order of the steps. Load the `gh-issues` skill for the `gh` mechanics.
   in the main checkout. Check free disk first (10-20 GB per target).
 - Build cache: Prefer `cargo xtask gate ...` (it turns the compile cache on); for a direct cargo call set `RUSTC_WRAPPER=sccache` only when `sccache` is on PATH (cargo fails if the wrapper is missing), and never export `CARGO_TARGET_DIR`.
 
+## 1a. Context comes from a scout
+AGENTS.md "Agent roles": a worker changes code, a `context-scout` finds and
+reads. This keeps the worker's context for the change.
+- The brief names a context pack (`.claude/tmp/context/N.md`) and a scout
+  (`scout-1` .. `scout-4`). Read the pack first.
+- Read only the `path:line-line` ranges that the pack names, and the lines
+  that you change. A targeted read of a file that you edit is your own
+  work. A search across files is not.
+- Do not run a broad search, a directory listing or a knowledge graph
+  query. Ask instead: SendMessage to your scout with one precise question
+  ("who calls `X`", "which tests cover `Y`", "where is the refusal text
+  for Z"). Give your worktree path, so that the scout reads your tree.
+- If no scout answers, or the brief names none, start one `context-scout`
+  agent for the question. If that fails too, do the search yourself and
+  say so in your report. Do not stop the issue for it.
+- A pack can be wrong or stale. If the code does not agree with it, the
+  code is correct: tell the scout, and say it in your report.
+
 ## 2. Fix
 - Smallest change that meets the issue's "Done means". Follow AGENTS.md:
   the Prime Directive (no `unwrap`/`expect`/`panic!` outside tests; refuse
@@ -79,6 +97,7 @@ something under the safety floor that your label didn't account for):
 - Swap `claimed` for `in-review`; comment
   `fix on issue/N-<slug> · PR #M · pinned by <tests> · merges when reviewed`.
 - Remove the worktree and its target dir.
-- Report to the caller: PR number, tests, anything not exercised. Never
-  mark the PR ready, merge it, or review it yourself - the main session
-  decides.
+- Report to the caller: PR number, tests, anything not exercised, and
+  each search that you did yourself in place of a scout (section 1a).
+  Never mark the PR ready, merge it, or review it yourself - the
+  coordinator (or the main session, when there is no coordinator) decides.

@@ -16,6 +16,32 @@ fn heavy() -> Vec<Step> {
 }
 
 #[test]
+fn release_plan_runs_heavy_targets_before_debug_suites() {
+    let root = root();
+    for snapshots in [false, true] {
+        let release = plan::release_with(&root, snapshots);
+        let heavy = plan::heavy_steps(&root);
+        for (actual, expected) in release.steps[1..=heavy.len()].iter().zip(&heavy) {
+            assert_eq!(actual, expected, "heavy targets must immediately follow the two builds");
+        }
+        let mut expected = vec![plan::debug_build(plan::ALL_CRATES)];
+        expected.extend(heavy);
+        expected.extend(plan::run_suites(&root, plan::ALL_CRATES, false));
+        expected.push(plan::clippy());
+        if snapshots {
+            // Existing snapshot coverage stays in the plan; the exact commands are pinned elsewhere.
+            expected.extend(release.steps.iter().filter(|s| s.name.contains("snapshot lane")).cloned());
+        }
+        let sorted = |steps: Vec<Step>| {
+            let mut steps = steps;
+            steps.sort_by(|a, b| a.name.cmp(&b.name));
+            steps
+        };
+        assert_eq!(sorted(release.steps), sorted(expected), "reordering must preserve every step and its command");
+    }
+}
+
+#[test]
 fn heavy_lanes_are_one_build_then_one_step_per_target() {
     let steps = heavy();
     assert_eq!(steps[0].name, "heavy build (release --no-run)");

@@ -237,7 +237,7 @@ pub fn release(root: &Path) -> Plan {
 pub fn release_with(root: &Path, snapshots: bool) -> Plan {
     let mut plan = Plan::default();
     plan.notes.push(
-        "release: prebuild both profiles, then a longest-first queue of lanes that share the job budget; ui, clippy and the lanes::ISOLATED app/kernel targets run alone after it"
+        "release: prebuild both profiles, then heavy targets before debug suites; each phase runs a longest-first shared queue, then ui, clippy and lanes::ISOLATED targets alone"
             .into(),
     );
     if !snapshots {
@@ -257,10 +257,10 @@ pub fn release_with(root: &Path, snapshots: bool) -> Plan {
     if let Some(build) = heavy.next() {
         plan.steps.push(build);
     }
+    plan.steps.extend(heavy);
     plan.steps.extend(run_suites(root, &non_ui, false));
     plan.steps.extend(run_suites(root, &["ui"], false));
     plan.steps.push(clippy());
-    plan.steps.extend(heavy);
     if !snapshots {
         return plan;
     }
