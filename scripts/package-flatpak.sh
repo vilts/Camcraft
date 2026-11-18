@@ -65,6 +65,7 @@ modules:
       - install -Dm755 camcraft-cli /app/bin/camcraft-cli
       - install -Dm755 post /app/bin/post
       - cp -a assets /app/bin/assets
+      - cp -a examples /app/bin/examples
       - install -Dm644 io.github.NeoTech.Camcraft.desktop /app/share/applications/io.github.NeoTech.Camcraft.desktop
       - install -Dm644 io.github.NeoTech.Camcraft.png /app/share/icons/hicolor/256x256/apps/io.github.NeoTech.Camcraft.png
     sources:

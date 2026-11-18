@@ -15,9 +15,7 @@ use serde_json::Value;
 
 use super::super::ai_chat::{ChatTransport, TransportOutput, TransportRequest};
 use super::super::browser_tree::Leaf;
-use super::super::layout::ViewRow;
 use super::*;
-use crate::state::Panel;
 
 pub(super) fn blank_harness() -> Harness<'static, ShellUi> {
     Harness::builder()
@@ -25,34 +23,12 @@ pub(super) fn blank_harness() -> Harness<'static, ShellUi> {
         .build_ui_state(frame, ShellUi::blank())
 }
 
-pub(super) fn click_pos(h: &mut Harness<'static, ShellUi>, at: egui::Pos2) {
-    set_pos(h, at);
-    button_at(h, egui::PointerButton::Primary, at, true);
-    button_at(h, egui::PointerButton::Primary, at, false);
-    h.run_steps(2);
-}
-
 /// Toggle AI Chat through the ribbon's View ("Panels") door just like a user.
 pub(super) fn toggle_ai_chat_via_view_door(h: &mut Harness<'static, ShellUi>) {
-    let strip = egui::Rect::from_min_size(
-        egui::Pos2::ZERO,
-        Vec2::new(1280.0, super::super::shell::RIBBON_H),
-    );
-    let (cells, _) = mill_plan_at(1280.0);
-    let button = cells
-        .iter()
-        .find(|c| c.cmd == Cmd::View)
-        .expect("View door stands on ribbon")
-        .rect;
-    let rows = panes::view_rows_of(button, strip, &theme::current());
-    let at = rows
-        .iter()
-        .find(|(r, _)| *r == ViewRow::Panel(Panel::AiChat))
-        .expect("View door lists AI Chat")
-        .1
-        .center();
-    click_pos(h, button.center());
-    click_pos(h, at);
+    h.get_by_role_and_label(Role::Button, "Panels").click();
+    h.run_steps(2);
+    h.get_by_role_and_label(Role::MenuItem, "AI Chat").click();
+    h.run_steps(2);
 }
 
 pub(super) fn select_provider(h: &mut Harness<'static, ShellUi>, preset_label: &str) {

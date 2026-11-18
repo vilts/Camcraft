@@ -30,6 +30,11 @@ mod solve_impl;
 
 pub use solve_impl::{LEN_TOL_MM, LocateOffset, MAX_MATES, NORMAL_TOL, solve};
 
+#[path = "fixture_locate_land.rs"]
+mod land_impl;
+
+pub use land_impl::{FACE_AREA_REL_TOL, stock_lands};
+
 use flecs_ecs::prelude::{Entity, World};
 
 pub use crate::fixture_clash::PENETRATION_MM;
@@ -60,11 +65,28 @@ pub enum Mover {
     Fixture,
 }
 
+/// Which body the mates' first picks are on (#2173): the part itself, or
+/// the setup's stock round it. A vise holds the blank, so the stock is
+/// the Fixtures page's default; the API's default stays the part.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LocateBody {
+    /// The part's own faces and points meet the fixture.
+    #[default]
+    Part,
+    /// The faces and points of the stock of the fixture's setup meet the
+    /// fixture. The part moves and its stock follows it (the one
+    /// stock-follows law), so the part keeps its place in the blank.
+    Stock,
+}
+
 /// Everything a locate is asked for.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LocateSpec {
+    /// The part that moves (or that the fixture comes to).
     pub part: String,
     pub fixture: String,
+    /// The body the mates' first picks are on.
+    pub body: LocateBody,
     pub mates: Vec<Mate>,
     pub offset: LocateOffset,
 }
@@ -104,18 +126,45 @@ fn require_part(world: &World, name: &str) -> Result<Entity, String> {
     Ok(e)
 }
 
+/// The stock entity of the setup `fixture` belongs to, when that stock
+/// exists (#2173): the body a stock locate mates.
+#[must_use]
+pub fn stock_of(world: &World, fixture: &str) -> Option<String> {
+    let setup = model::find_by_name(world, fixture).and_then(|fe| fixture::def_of(world, &fe)).and_then(|d| d.setup);
+    let name = crate::setup::stock_entity_name(world, setup.as_deref());
+    model::find_by_name(world, &name).filter(|e| model::is_stock(world, e)).map(|_| name)
+}
+
+/// The held body's name and pose in the setup frame, refused by name.
+fn held(world: &World, spec: &LocateSpec, part: &Entity, setup: Option<&str>) -> Result<(String, Location), String> {
+    match spec.body {
+        LocateBody::Part => Ok((spec.part.clone(), setup_align::pose_in(world, part, setup).unwrap_or_default())),
+        LocateBody::Stock => {
+            let name = stock_of(world, &spec.fixture).ok_or_else(|| {
+                format!("the setup of '{}' has no stock to locate - set the stock first, or locate the part", spec.fixture)
+            })?;
+            let e = model::find_by_name(world, &name).ok_or_else(|| format!("no stock named '{name}'"))?;
+            Ok((name, model::transform_of(world, &e).unwrap_or_default()))
+        }
+    }
+}
+
 /// Read and solve a locate. Every refusal names what to change.
 pub fn plan(world: &World, spec: &LocateSpec) -> Result<Plan, String> {
     let fe = require_fixture(world, &spec.fixture)?;
+    if spec.body == LocateBody::Stock && spec.part.trim().is_empty() {
+        return Err("the stock follows its part - name the part (locate from its row on the Model page)".into());
+    }
     let pe = require_part(world, &spec.part)?;
     let setup = fixture::def_of(world, &fe).and_then(|d| d.setup);
-    let part_pose = setup_align::pose_in(world, &pe, setup.as_deref()).unwrap_or_default();
+    let (held, part_pose) = held(world, spec, &pe, setup.as_deref())?;
+    let noun = if spec.body == LocateBody::Stock { "stock" } else { "part" };
     let fixture_pose = model::transform_of(world, &fe).unwrap_or_default();
     let mut pairs = Vec::with_capacity(spec.mates.len());
     for (i, m) in spec.mates.iter().enumerate() {
         let k = i + 1;
-        if m.part.entity != spec.part {
-            return Err(format!("mate {k}: {} of '{}' is not on the part '{}'", m.part.feature, m.part.entity, spec.part));
+        if m.part.entity != held {
+            return Err(format!("mate {k}: {} of '{}' is not on the {noun} '{held}'", m.part.feature, m.part.entity));
         }
         if m.fixture.entity != spec.fixture {
             return Err(format!(
@@ -138,7 +187,12 @@ pub fn plan(world: &World, spec: &LocateSpec) -> Result<Plan, String> {
 pub fn read_pick(world: &World, fixture: &str, g: &GeoSel) -> Result<crate::pick::MateDatum, String> {
     let setup = model::find_by_name(world, fixture).and_then(|fe| fixture::def_of(world, &fe)).and_then(|d| d.setup);
     let e = model::find_by_name(world, &g.entity).ok_or_else(|| format!("no model named '{}'", g.entity))?;
-    let pose = setup_align::pose_in(world, &e, setup.as_deref()).unwrap_or_default();
+    // A stock reads where `plan` reads it: its own placement (#2173).
+    let pose = if model::is_stock(world, &e) {
+        model::transform_of(world, &e).unwrap_or_default()
+    } else {
+        setup_align::pose_in(world, &e, setup.as_deref()).unwrap_or_default()
+    };
     mate_datum(world, g, pose)
 }
 

@@ -31,7 +31,18 @@ fn open_machine(h: &mut H, machine: Option<&str>) {
 }
 
 fn rect(h: &H, label: &str) -> egui::Rect {
-    let all: Vec<egui::Rect> = h.query_all_by_label(label).map(|n| n.rect()).collect();
+    let pane_top = h
+        .state()
+        .dock
+        .iter_leaves()
+        .find(|(_, l)| l.tabs.contains(&Tab::Properties))
+        .map(|(_, l)| l.viewport.top())
+        .expect("the properties leaf");
+    let all: Vec<egui::Rect> = h
+        .query_all_by_label(label)
+        .map(|n| n.rect())
+        .filter(|r| r.center().y >= pane_top)
+        .collect();
     assert_eq!(all.len(), 1, "{label:?} drawn exactly once: {all:?}");
     all[0]
 }

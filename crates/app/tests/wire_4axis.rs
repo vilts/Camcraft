@@ -26,7 +26,7 @@ use camcraft_app::operation::{
     self, FeatureSel, GeoSel, Height, OpParams, OpStatus, SrcRef, WireContourOp, WireFourAxis, WirePairingRule, WireSide, WireTabs,
     WireSyncPair,
 };
-use camcraft_app::posting::{self, BUILTINS};
+use camcraft_app::posting;
 use camcraft_app::project;
 use camcraft_app::world::new_world;
 
@@ -43,7 +43,7 @@ const N: usize = 64;
 type P2 = (f64, f64);
 
 fn cps() -> &'static str {
-    BUILTINS.iter().find(|(n, _)| *n == WIRE).map(|(_, s)| *s).expect("registered")
+    camcraft_app::posting::builtin_post_text(WIRE).expect("registered")
 }
 
 /// A square of half-side `a` as N points, counter-clockwise from the
@@ -185,9 +185,14 @@ fn punch(text: &str, mesh: Mesh, picks: &[f64], op: WireContourOp) -> (World, Re
     let mut h = History::default();
     let m = parse_mch(text).expect("the fixture parses");
     h.execute(&world, LoadMachine::new(&world, "wire-iso.mch".into(), Some(m)).expect("mount"));
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("part", mesh));
     let src = SrcRef::Selection(picks.iter().map(|z| face_at(&world, *z)).collect());
-    let c = CreateOperation::new(&world, "Punch1", "", src, OpParams::WireContour(op)).expect("op");
+    let c = CreateOperation::new(&world, "Punch1", "EDM-W025", src, OpParams::WireContour(op)).expect("op");
     h.execute(&world, c);
     let made = GenerateOperation::new(&world, "Punch1").map(|g| h.execute(&world, g)).map_err(|e| e.to_string());
     (world, made)

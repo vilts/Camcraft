@@ -1,4 +1,4 @@
-//! Mesh file importers (STL, OBJ, STEP). Public API: `load_model` / `parse_*`.
+//! Mesh file importers (STL, OBJ, STEP, Solidcraft `.sc`). Public API: `load_model` / `parse_*`.
 //!
 //! The facet/vertex caps below are enforced before anything large is
 //! allocated. STL (M5.3 E) streams from the file - the size law runs off
@@ -63,6 +63,10 @@ pub enum ImportError {
     Obj(String),
     #[error("corrupt STEP: {0}")]
     Step(String),
+    /// A Solidcraft design that the kernel reader or the machining mesh
+    /// refused (#1456), with its own reason.
+    #[error("Solidcraft design refused: {0}")]
+    Solidcraft(String),
     #[error("imported mesh contains non-finite coordinates")]
     NonFinite,
     #[error("mesh may have nested or overlapping shells; inward winding may describe a cavity, so automatic orientation is ambiguous; re-export as separate non-overlapping solids")]
@@ -76,6 +80,8 @@ pub enum Format {
     Stl,
     Obj,
     Step,
+    /// A Solidcraft design (#1456): its cached final body, meshed.
+    Solidcraft,
 }
 
 /// Load a model from disk, dispatching on extension. STL (M5.3 E)
@@ -109,6 +115,8 @@ pub struct Graded {
     /// mesh has walls missing there. Only the `*_open` loaders return one;
     /// every other loader refuses such a file by name. `None` for STL/OBJ.
     pub open: Option<String>,
+    /// Raw STEP text preserved for library/project persistence (#744).
+    pub step_source: Option<String>,
 }
 
 impl Graded {
@@ -146,7 +154,7 @@ pub fn load_model_open_within(path: &Path, budget: usize) -> Result<Graded, Impo
     if format == Format::Stl {
         let mut mesh = gate(stl::parse_file(path)?)?;
         let notes = mesh_outward::turn_outward(&mut mesh)?.into_iter().collect();
-        return Ok(Graded { mesh, coarse_mm: None, notes, open: None });
+        return Ok(Graded { mesh, coarse_mm: None, notes, open: None, step_source: None });
     }
     let data = std::fs::read(path)?;
     parse_model_open_within(&data, format, budget)
@@ -167,6 +175,15 @@ pub fn parse_model_graded_within(data: &[u8], format: Format, budget: usize) -> 
 /// the bytes twin of [`load_model_open_within`] (#1610).
 pub fn parse_model_open_within(data: &[u8], format: Format, budget: usize) -> Result<Graded, ImportError> {
     let (mesh, coarse_mm, notes, open) = match format {
+        // #1456: the machining mesh is watertight and outward, at the chord cap.
+        Format::Solidcraft => {
+            let (mesh, notes) = camcraft_geometry::solidcraft::parse(data, budget, step::CHORD_CAP)
+                .map_err(|error| match error {
+                    camcraft_geometry::solidcraft::SolidcraftError::TooLarge => ImportError::TooLarge,
+                    camcraft_geometry::solidcraft::SolidcraftError::Refused(reason) => ImportError::Solidcraft(reason),
+                })?;
+            (mesh, None, notes, None)
+        }
         Format::Stl | Format::Obj => {
             let mut mesh = gate(match format {
                 Format::Stl => stl::parse(data)?,
@@ -183,7 +200,10 @@ pub fn parse_model_open_within(data: &[u8], format: Format, budget: usize) -> Re
             (mesh, step::coarse(chord), notes, open)
         }
     };
-    Ok(Graded { mesh: gate(mesh)?, coarse_mm, notes, open })
+    let step_source = (format == Format::Step)
+        .then(|| std::str::from_utf8(data).ok().map(str::to_owned))
+        .flatten();
+    Ok(Graded { mesh: gate(mesh)?, coarse_mm, notes, open, step_source })
 }
 
 /// Belt-and-gate: each importer checks finiteness at the parse site, and
@@ -205,6 +225,7 @@ pub fn format_from_path(path: &Path) -> Result<Format, ImportError> {
         "stl" => Ok(Format::Stl),
         "obj" => Ok(Format::Obj),
         "step" | "stp" => Ok(Format::Step),
+        "sc" => Ok(Format::Solidcraft),
         _ => Err(ImportError::Unsupported(
             path.file_name()
                 .map(PathBuf::from)

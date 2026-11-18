@@ -22,7 +22,7 @@
 //! Gate map (M4.4): covers app::stock_sim, sim::stock_sim (plan_program's lathe clause,
 //! stock_sim::lathe), app::stock_view (field_view_with's lathe arm),
 //! app::operation (source_facets).
-//! Lane shape (M4.4): all tests here run in seconds in debug.
+//! Lane shape (M4.4): multi-pass contour parity runs in the release heavy lane.
 
 use flecs_ecs::prelude::World;
 
@@ -319,6 +319,7 @@ fn profile_rough_and_finish_simulate_with_meridian_parity() {
 }
 
 #[test]
+#[ignore = "heavy lane: multi-pass field parity exceeds 60 s in debug; run with cargo xtask gate release"]
 fn multi_pass_contour_simulates_with_meridian_parity() {
     let stepped = revolve(&[(0.0, -16.0), (6.0, -16.0), (6.0, 2.0), (5.0, 2.0), (5.0, 16.0), (0.0, 16.0)]);
     let (world, mut history) = lathe_world(40.0, stepped);

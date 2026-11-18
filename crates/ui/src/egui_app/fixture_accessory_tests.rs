@@ -2,7 +2,8 @@
 //! Fixtures page offer "Add accessory…"; the dialog lists the kinds and
 //! their figures, and its Place queues one `InsertAccessory` (undo takes
 //! it away); parallels fit under the stock in a built-in vise; a refusal
-//! is named in the dialog; each placed accessory's row keeps its own size
+//! is named in the dialog; a lathe chuck offers "Fit to the stock" and
+//! its grip direction (#1468); each placed accessory's row keeps its own size
 //! draft and "Apply sizes" lands one `SetAccessory`. Driven through the
 //! real dialog and page code in a kittest harness - no pixels (the
 //! snapshot lane is release).
@@ -123,7 +124,7 @@ fn the_fit_says_it_sinks_the_vise_and_holds_the_height() {
     state.pending.push_back(CommandKind::AccessoryDialog(String::new()));
     let mut h = dialog(state);
     h.run();
-    let label = h.get_by_label(super::fixture_accessory_dialog::FIT_HEIGHT_LABEL);
+    let label = h.get_by_label("Height (set by the fit)");
     assert!(label.accesskit_node().is_disabled(), "the fit's height is not editable");
     assert!(h.query_by_label("Height").is_none(), "no plain, editable Height row while fitting");
     assert!(h.query_by_label_contains("the vise ends below the table").is_some(), "the sink is said before Place");
@@ -133,7 +134,7 @@ fn the_fit_says_it_sinks_the_vise_and_holds_the_height() {
     }
     h.run();
     assert!(h.query_by_label("Height").is_some(), "the plain Height row is back");
-    assert!(h.query_by_label(super::fixture_accessory_dialog::FIT_HEIGHT_LABEL).is_none());
+    assert!(h.query_by_label("Height (set by the fit)").is_none());
     assert!(h.query_by_label_contains("the vise ends below the table").is_none());
 }
 
@@ -186,4 +187,103 @@ fn each_accessory_row_keeps_its_own_sizes_and_applies_them() {
     let st = h.state_mut();
     assert!(st.history.undo(&st.world));
     assert_eq!(params(st, "1-2-3 block"), Accessory::default_of("block"), "one undo each");
+}
+
+fn with_bar() -> State {
+    let mut state = State::new();
+    let at = Location { pos: camcraft_app::geometry::Point3::new(5.0, -3.0, -20.0), ..Location::default() };
+    let cmd = SetStock::new(&state.world, StockShape::Cylinder { diameter: 30.0, height: 40.0 }, at);
+    state.history.execute(&state.world, cmd.expect("bar"));
+    state.doc_version += 1;
+    state
+}
+
+fn draft(state: &State) -> &crate::state::AccessoryDraft {
+    let Some(FixtureLibDialog::Accessory(d)) = &state.fixture_lib else { panic!("the dialog is open") };
+    d
+}
+
+#[test]
+fn chuck_dialog_offers_fit_to_the_stock() {
+    use super::fixture_accessory_dialog::{FIT_STOCK_LABEL, fit_label};
+    // #1468: on round stock the dialog fits a chuck by default.
+    let mut state = with_bar();
+    state.pending.push_back(CommandKind::AccessoryDialog(String::new()));
+    let mut h = dialog(state);
+    h.run();
+    assert!(h.query_by_label(FIT_STOCK_LABEL).is_none(), "parallels have no stock fit");
+    h.get_by_label("3-jaw chuck").click();
+    h.run();
+    h.run();
+    let fit = h.get_by_label(FIT_STOCK_LABEL);
+    assert_eq!(fit.accesskit_node().toggled(), Some(egui::accesskit::Toggled::True), "a chuck offers stock fitting, on for round stock");
+    assert!(!fit.accesskit_node().is_disabled());
+    // The fit sets the grip: labelled so, not editable, and no pose rows.
+    assert!(h.get_by_label(fit_label("Grip diameter").as_str()).accesskit_node().is_disabled());
+    assert!(h.query_by_label("Grip diameter").is_none() && h.query_by_label("Origin X").is_none());
+    assert!(h.query_by_label_contains("closes on the setup's round stock").is_some(), "the fit is said before Place");
+    for label in ["Grip", "Outside", "Inside (in a bore)", "Step height (0: plain jaws)", "Step depth (radial, under the work)"] {
+        assert!(h.query_by_label(label).is_some(), "a jaw chuck shows {label}");
+    }
+    assert_eq!(draft(h.state()).placement(), AccessoryPlacement::OnStock);
+    h.get_by_label("Place").click();
+    h.run();
+    h.run();
+    assert!(h.state().fixture_lib.is_none(), "placed and closed: {:?}", h.state().fixture_lib);
+    let Some(Accessory::ThreeJawChuck(c)) = params(h.state(), "3-jaw chuck") else { panic!("placed") };
+    assert!((c.grip_diameter - 30.0).abs() < 1e-6, "closed on the 30 mm bar: {c:?}");
+    let e = model::find_by_name(&h.state().world, "3-jaw chuck").expect("placed");
+    let pos = model::transform_of(&h.state().world, &e).unwrap_or_default().pos;
+    assert!((pos.x - 5.0).abs() < 1e-9 && (pos.y + 3.0).abs() < 1e-9 && (pos.z + 20.0).abs() < 1e-9, "on the bar's axis, at its underside: {pos:?}");
+    let st = h.state_mut();
+    assert!(st.history.undo(&st.world));
+    assert!(model::find_by_name(&st.world, "3-jaw chuck").is_none(), "one undo takes it");
+}
+
+#[test]
+fn chuck_fit_is_off_by_pose_for_an_inside_grip_and_square_stock() {
+    use super::fixture_accessory_dialog::{FIT_STOCK_LABEL, fit_label};
+    // Square stock: the box opens unticked (a fit would be refused); ticked,
+    // Place names the refusal in the dialog.
+    let mut state = with_stock();
+    state.pending.push_back(CommandKind::AccessoryDialog(String::new()));
+    let mut h = dialog(state);
+    h.run();
+    h.get_by_label("Collet chuck").click();
+    h.run();
+    h.run();
+    let fit = h.get_by_label(FIT_STOCK_LABEL);
+    assert_eq!(fit.accesskit_node().toggled(), Some(egui::accesskit::Toggled::False), "square stock: by pose");
+    assert!(h.query_by_label("Collet bore").is_some() && h.query_by_label("Origin X").is_some());
+    assert!(matches!(draft(h.state()).placement(), AccessoryPlacement::At(_)));
+    fit.click();
+    h.run();
+    h.run();
+    assert!(h.get_by_label(fit_label("Collet bore").as_str()).accesskit_node().is_disabled());
+    h.get_by_label("Place").click();
+    h.run();
+    h.run();
+    assert!(draft(h.state()).error.as_deref().is_some_and(|e| e.contains("only round stock")), "{:?}", draft(h.state()).error);
+    assert!(h.query_by_label_contains("only round stock").is_some(), "said in the dialog");
+
+    // An inside grip: the fit is unticked and disabled, with the reason,
+    // and Place goes by pose.
+    let mut state = with_bar();
+    state.pending.push_back(CommandKind::AccessoryDialog(String::new()));
+    let mut h = dialog(state);
+    h.run();
+    h.get_by_label("4-jaw chuck").click();
+    h.run();
+    h.run();
+    assert_eq!(draft(h.state()).placement(), AccessoryPlacement::OnStock);
+    h.get_by_label("Inside (in a bore)").click();
+    h.run();
+    h.run();
+    let fit = h.get_by_label(FIT_STOCK_LABEL);
+    assert!(fit.accesskit_node().is_disabled(), "an inside grip has no stock fit");
+    assert_eq!(fit.accesskit_node().toggled(), Some(egui::accesskit::Toggled::False));
+    assert!(h.query_by_label_contains("An inside grip opens into the work's bore").is_some());
+    assert!(h.query_by_label("Grip diameter").is_some() && h.query_by_label("Origin X").is_some(), "by pose, the grip typed");
+    assert!(matches!(draft(h.state()).placement(), AccessoryPlacement::At(_)));
+    assert_eq!(draft(h.state()).params.grip(), Some(camcraft_app::accessory::chuck::Grip::Inside));
 }

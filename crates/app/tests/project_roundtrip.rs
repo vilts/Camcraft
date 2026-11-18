@@ -966,7 +966,7 @@ fn v5_roundtrips_retract_and_auto() {
             "Pocket1",
             "EM-0400-2FL",
             SrcRef::Stock,
-            OpParams::Pocket { blend_radius: None, tilt: None,
+            OpParams::Pocket { rest: None, blend_radius: None, tilt: None,
                 links: camcraft_app::links::Links::PLANAR,
                 stepover: 1.0,
                 stock_to_leave: 0.0,
@@ -2850,10 +2850,15 @@ fn side_choice_round_trips_and_a_hand_edited_inside_refuses_at_generate() {
     // the cutter 3 mm into the 5 mm-tall part from Z 4 down: a groove
     // through the finished part. The depth law refuses it by name -
     // the choice still round-trips below, the cut never generates.
+    // #2004: with no air level at Top Z the ring walks no level, and the
+    // picked-ring law (#1927) speaks first: the same refusal, with the
+    // side named and Outside advised.
     let err = GenerateOperation::new(&world2, "C2")
         .err()
-        .expect("an Inside ring inside the part solid must refuse");
-    assert!(err.to_string().contains("cuts into the part"), "{err}");
+        .expect("an Inside ring inside the part solid must refuse")
+        .to_string();
+    assert!(err.contains("the cutter Inside this ring stands in the part material"), "{err}");
+    assert!(err.contains("set Side to Outside"), "{err}");
     project::save(&world2, &path).expect("save");
     let first = std::fs::read_to_string(&path).expect("read");
     assert!(

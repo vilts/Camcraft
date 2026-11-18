@@ -10,6 +10,9 @@
 //! refuses the program by name; stock to the mouth is silent, and a
 //! face ahead that takes the block down to the mouth acquits the dive
 //! (`verify::acquit_by_prior`).
+//! Since #1559 the 2D Pocket and Contour read that taller block as
+//! carried stock and enter over it (no dive, the program posts); the
+//! Bore, which is not carried, keeps the rapid law's refusal.
 //!
 //! The Bore case was the hole in it: a Bore whose source is the stock
 //! reads a region with the holes' rims punched out, and the column law
@@ -116,7 +119,7 @@ fn floor_pick(world: &World) -> SrcRef {
 }
 
 fn pocket() -> OpParams {
-    OpParams::Pocket {
+    OpParams::Pocket { rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 3.0,
@@ -142,6 +145,7 @@ fn pocket() -> OpParams {
 /// ladder's top is the hole's `entry_z`, not the op's top height.
 fn bore() -> OpParams {
     OpParams::Bore {
+        break_through: None,
         links: camcraft_app::links::Links::PLANAR,
         clearance_z: Height::fixed(40.0),
         retract_z: None,
@@ -240,20 +244,32 @@ fn run(kind: Kind, lift: f64, faced: bool) -> ((usize, f64), Vec<Warning>, Resul
 }
 
 #[test]
-fn a_ladder_entry_rapid_under_a_taller_block_is_named_and_blocks_the_post() {
-    // The block stands 5 mm over the mouth: the entry rapid from
+fn a_bore_entry_rapid_under_a_taller_block_is_named_and_blocks_the_post() {
+    // The block stands 5 mm over the mouth: the Bore's entry rapid from
     // clearance to the plunge height (Z 22) ends 3 mm inside uncut stock.
-    for kind in [Kind::Pocket, Kind::Bore, Kind::Contour] {
-        let ((at, z), warns, posted) = run(kind, 5.0, false);
-        assert!(z < MOUTH + 5.0 - 1e-6, "{kind:?}: the fixture must rapid down under the block's top, not to Z {z}");
-        assert!(warns.contains(&Warning::RapidInStock { at }), "{kind:?}: the entry dive went unnamed: {warns:?}");
-        match posted {
-            Ok(()) => panic!("{kind:?}: a program with a rapid into the block posted"),
-            Err(e) => assert!(
-                e.contains("post blocked") && e.contains(&format!("rapid move {at} ")),
-                "{kind:?}: refused, but not by the rapid law: {e}"
-            ),
-        }
+    let ((at, z), warns, posted) = run(Kind::Bore, 5.0, false);
+    assert!(z < MOUTH + 5.0 - 1e-6, "the fixture must rapid down under the block's top, not to Z {z}");
+    assert!(warns.contains(&Warning::RapidInStock { at }), "the entry dive went unnamed: {warns:?}");
+    match posted {
+        Ok(()) => panic!("a program with a rapid into the block posted"),
+        Err(e) => assert!(
+            e.contains("post blocked") && e.contains(&format!("rapid move {at} ")),
+            "refused, but not by the rapid law: {e}"
+        ),
+    }
+}
+
+#[test]
+fn a_pocket_or_contour_under_a_taller_block_enters_over_it_and_posts() {
+    // #1559: the 2D Pocket and Contour read the block standing 5 mm over
+    // their top as carried stock - the entry rapid stops over the block
+    // and the descent feeds through it; nothing is convicted and the
+    // program posts.
+    for kind in [Kind::Pocket, Kind::Contour] {
+        let ((_, z), warns, posted) = run(kind, 5.0, false);
+        assert!(z >= MOUTH + 5.0 - 1e-6, "{kind:?}: the entry rapid dove under the block's top to Z {z}");
+        assert!(!warns.iter().any(|w| matches!(w, Warning::RapidInStock { .. })), "{kind:?}: {warns:?}");
+        assert!(posted.is_ok(), "{kind:?}: {posted:?}");
     }
 }
 

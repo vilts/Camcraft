@@ -22,7 +22,7 @@
 //!   stated cylinder stands, which can only over-report.
 
 use crate::cutter_profile;
-use crate::holder_profile::{HolderBand, HolderStack, MAX_BANDS, merge};
+use crate::holder_profile::{HolderBand, HolderProfile, HolderStack, MAX_BANDS, merge};
 use crate::spun::SpunProfile;
 use crate::tools::{Tool, ToolGeom};
 
@@ -76,6 +76,60 @@ pub fn neck_bands(tool: &Tool, spun: &SpunProfile) -> Vec<HolderBand> {
     if out.iter().all(|b| b.r >= sr) { Vec::new() } else { out }
 }
 
+/// The neck over `stored`'s shank span widened band-by-band by any
+/// bands of `body` reaching strictly beside the shank (#2199).
+///
+/// Leaves `neck` untouched when `body` is absent or never enters the
+/// interior of `(flute_len, flute_len + shank_len)` (a holder starting
+/// at or past `shank_top` is bit-identical). Otherwise partitions
+/// `[fl, top]` across the band edges of `neck` (or `stored`'s stated
+/// shank) and `body`, taking the wider radius on every sub-span.
+#[must_use]
+pub fn shank_with_body(stored: &ToolGeom, body: Option<&HolderProfile>, neck: Vec<HolderBand>) -> Vec<HolderBand> {
+    let Some(body) = body else { return neck };
+    let (fl, top, sr) = (stored.flute_len, stored.flute_len + stored.shank_len, stored.shank_radius);
+    if !([fl, top, sr].iter().all(|v| v.is_finite()) && fl >= 0.0 && top - fl > EPS && sr >= 0.0) {
+        return neck;
+    }
+    let reach = |bands: &[HolderBand], lo: f64, hi: f64| {
+        bands.iter().filter(|b| b.above < hi - 1e-9 && b.above + b.len > lo + 1e-9).fold(0.0_f64, |m, b| m.max(b.r))
+    };
+    let max_body = reach(body.bands(), fl, top);
+    if max_body <= 0.0 {
+        return neck;
+    }
+    let judged_sr = sr.max(max_body);
+    let base = if neck.is_empty() {
+        vec![HolderBand { above: fl, len: top - fl, r: sr }]
+    } else {
+        HolderStack { neck: neck.clone(), ..HolderStack::cylinder(stored) }.shank_bands(stored)
+    };
+    let mut cuts: Vec<f64> = Vec::with_capacity((base.len() + body.bands().len()) * 2);
+    for b in base.iter().chain(body.bands().iter()) {
+        for e in [b.above, b.above + b.len] {
+            if e.is_finite() && e > fl + EPS && e < top - EPS {
+                cuts.push(e);
+            }
+        }
+    }
+    cuts.sort_by(f64::total_cmp);
+    let mut z = fl;
+    let mut out: Vec<HolderBand> = Vec::with_capacity(cuts.len() + 1);
+    for c in cuts.into_iter().chain(std::iter::once(top)) {
+        if c - z <= EPS {
+            continue;
+        }
+        let r = reach(&base, z, c).max(reach(body.bands(), z, c));
+        out.push(HolderBand { above: z, len: c - z, r });
+        z = c;
+    }
+    let mut out = merge(out, MAX_BANDS);
+    if let Some(last) = out.last_mut() {
+        last.len = top - last.above;
+    }
+    if out.iter().all(|b| b.r >= judged_sr - 1e-12) { Vec::new() } else { out }
+}
+
 impl HolderStack {
     /// This stack with the tool's drawn neck (#852, [`neck_bands`]);
     /// an empty neck is the stated shank.
@@ -115,7 +169,7 @@ impl HolderStack {
         // A body band beside the shank (its foot below the stickout):
         // the neck there is never narrower than it.
         let beside = |lo: f64, hi: f64| {
-            self.bands.iter().filter(|h| h.above < hi && h.above + h.len > lo).fold(0.0_f64, |m, h| m.max(h.r))
+            self.bands.iter().filter(|h| h.above < hi - 1e-9 && h.above + h.len > lo + 1e-9).fold(0.0_f64, |m, h| m.max(h.r))
         };
         let bands: Vec<HolderBand> = self
             .neck

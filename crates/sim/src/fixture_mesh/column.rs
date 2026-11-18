@@ -25,6 +25,7 @@
 use super::bvh::tri_box;
 use super::FixtureMesh;
 use super::gjk::{V, cross, dot, sub};
+use crate::geometry::Point3;
 
 /// Barycentric margin under which a crossing is "at an edge".
 const EDGE_EPS: f64 = 1e-7;
@@ -50,80 +51,107 @@ fn nudge_unit(mesh: &FixtureMesh) -> f64 {
     (1e3 * mesh.pad).clamp(1e-6, NUDGE_CAP)
 }
 
-/// Distance from `q` to segment `ab` in the XY plane.
-fn seg_dist(q: (f64, f64), a: V, b: V) -> f64 {
-    let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+/// Distance from `q` to segment `ab` in the `(u_ax, v_ax)` plane.
+fn seg_dist(q: (f64, f64), a: V, b: V, u_ax: usize, v_ax: usize) -> f64 {
+    let (dx, dy) = (b[u_ax] - a[u_ax], b[v_ax] - a[v_ax]);
     let l2 = dx * dx + dy * dy;
-    let t = if l2 > 0.0 { (((q.0 - a[0]) * dx + (q.1 - a[1]) * dy) / l2).clamp(0.0, 1.0) } else { 0.0 };
-    let (px, py) = (a[0] + t * dx - q.0, a[1] + t * dy - q.1);
+    let t = if l2 > 0.0 {
+        (((q.0 - a[u_ax]) * dx + (q.1 - a[v_ax]) * dy) / l2).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let (px, py) = (a[u_ax] + t * dx - q.0, a[v_ax] + t * dy - q.1);
     (px * px + py * py).sqrt()
 }
 
-/// One line's crossings `(z, +1 entering / -1 leaving)` or None when the
-/// line is ambiguous.
-fn crossings(mesh: &FixtureMesh, x: f64, y: f64, budget: &mut u64) -> Option<Vec<(f64, i32)>> {
+/// One line's crossings `(w, +1 entering / -1 leaving)` along right-handed
+/// `(u_ax, v_ax, w_ax)` or None when the line is ambiguous.
+fn crossings_along(
+    mesh: &FixtureMesh,
+    tris: Option<&[usize]>,
+    axes: (usize, usize, usize),
+    u0: f64,
+    v0: f64,
+    budget: &mut u64,
+) -> Option<Vec<(f64, i32)>> {
+    let (u_ax, v_ax, w_ax) = axes;
     let pad = mesh.pad;
     let mut out: Vec<(f64, i32)> = Vec::new();
     let mut ambiguous = false;
-    mesh.bvh.walk(
-        |n| n.lo[0] - pad <= x && x <= n.hi[0] + pad && n.lo[1] - pad <= y && y <= n.hi[1] + pad,
-        |t| {
-            // Out of budget: unread, never a guess.
-            let Some(left) = budget.checked_sub(1) else {
+    let mut visit = |t: usize| -> bool {
+        // Out of budget: unread, never a guess.
+        let Some(left) = budget.checked_sub(1) else {
+            ambiguous = true;
+            return true;
+        };
+        *budget = left;
+        let Some(tri) = mesh.tris.get(t) else {
+            ambiguous = true; // a facet the mesh does not hold: unread
+            return true;
+        };
+        if mesh.flat.get(t).copied().unwrap_or(false) {
+            return false; // no interior to cross
+        }
+        let [a, b, c] = *tri;
+        let (lo, hi) = tri_box(tri);
+        if u0 < lo[u_ax] - pad || u0 > hi[u_ax] + pad || v0 < lo[v_ax] - pad || v0 > hi[v_ax] + pad {
+            return false;
+        }
+        let n = cross(sub(b, a), sub(c, a));
+        let nn = dot(n, n).sqrt();
+        let det = n[w_ax];
+        if !(det.is_finite() && nn.is_finite()) {
+            ambiguous = true;
+            return true;
+        }
+        if det.abs() <= GRAZE_SIN * nn {
+            // A facet parallel to the ray: ambiguous when on it.
+            let q = (u0, v0);
+            if seg_dist(q, a, b, u_ax, v_ax)
+                .min(seg_dist(q, b, c, u_ax, v_ax))
+                .min(seg_dist(q, c, a, u_ax, v_ax))
+                <= pad
+            {
                 ambiguous = true;
                 return true;
-            };
-            *budget = left;
-            let Some(tri) = mesh.tris.get(t) else {
-                ambiguous = true; // a facet the mesh does not hold: unread
-                return true;
-            };
-            if mesh.flat.get(t).copied().unwrap_or(false) {
-                return false; // no interior to cross
             }
-            let [a, b, c] = *tri;
-            let (lo, hi) = tri_box(tri);
-            if x < lo[0] - pad || x > hi[0] + pad || y < lo[1] - pad || y > hi[1] + pad {
-                return false;
-            }
-            let n = cross(sub(b, a), sub(c, a));
-            let nn = dot(n, n).sqrt();
-            if !(n[2].is_finite() && nn.is_finite()) {
-                ambiguous = true;
-                return true;
-            }
-            if n[2].abs() <= GRAZE_SIN * nn {
-                // A (near-)vertical facet: the line crosses it only by
-                // running in its plane - ambiguous when on it.
-                let q = (x, y);
-                if seg_dist(q, a, b).min(seg_dist(q, b, c)).min(seg_dist(q, c, a)) <= pad {
-                    ambiguous = true;
-                    return true;
+            return false;
+        }
+        // Barycentric coordinates in the `(u_ax, v_ax)` projection.
+        let u = ((b[u_ax] - u0) * (c[v_ax] - v0) - (c[u_ax] - u0) * (b[v_ax] - v0)) / det;
+        let v = ((c[u_ax] - u0) * (a[v_ax] - v0) - (a[u_ax] - u0) * (c[v_ax] - v0)) / det;
+        let w = 1.0 - u - v;
+        if !(u.is_finite() && v.is_finite()) {
+            ambiguous = true;
+            return true;
+        }
+        if u < -EDGE_EPS || v < -EDGE_EPS || w < -EDGE_EPS {
+            return false;
+        }
+        if u <= EDGE_EPS || v <= EDGE_EPS || w <= EDGE_EPS {
+            ambiguous = true; // through an edge or a vertex
+            return true;
+        }
+        let w_hit = u * a[w_ax] + v * b[w_ax] + w * c[w_ax];
+        // An outward normal opposing `+w_ax` is where a `+w_ax` line enters.
+        out.push((w_hit, if det < 0.0 { 1 } else { -1 }));
+        false
+    };
+    match tris {
+        Some(list) => {
+            for &t in list {
+                if visit(t) {
+                    break;
                 }
-                return false;
             }
-            // Barycentric coordinates in the XY projection.
-            let det = n[2];
-            let u = ((b[0] - x) * (c[1] - y) - (c[0] - x) * (b[1] - y)) / det;
-            let v = ((c[0] - x) * (a[1] - y) - (a[0] - x) * (c[1] - y)) / det;
-            let w = 1.0 - u - v;
-            if !(u.is_finite() && v.is_finite()) {
-                ambiguous = true;
-                return true;
-            }
-            if u < -EDGE_EPS || v < -EDGE_EPS || w < -EDGE_EPS {
-                return false;
-            }
-            if u <= EDGE_EPS || v <= EDGE_EPS || w <= EDGE_EPS {
-                ambiguous = true; // through an edge or a vertex
-                return true;
-            }
-            let z = u * a[2] + v * b[2] + w * c[2];
-            // An outward normal pointing down is where an upward line enters.
-            out.push((z, if n[2] < 0.0 { 1 } else { -1 }));
-            false
-        },
-    );
+        }
+        None => {
+            mesh.bvh.walk(
+                |n| n.lo[u_ax] - pad <= u0 && u0 <= n.hi[u_ax] + pad && n.lo[v_ax] - pad <= v0 && v0 <= n.hi[v_ax] + pad,
+                visit,
+            );
+        }
+    }
     (!ambiguous).then_some(out)
 }
 
@@ -154,6 +182,31 @@ fn spans_of(mut xs: Vec<(f64, i32)>) -> Option<Vec<(f64, f64)>> {
     (wind == 0).then_some(out)
 }
 
+pub(super) fn line_along(
+    mesh: &FixtureMesh,
+    tris: Option<&[usize]>,
+    axes: (usize, usize, usize),
+    u0: f64,
+    v0: f64,
+    budget: &mut u64,
+) -> Option<Vec<(f64, f64)>> {
+    if !(u0.is_finite() && v0.is_finite()) {
+        return None;
+    }
+    let u = nudge_unit(mesh);
+    for (dx, dy) in NUDGES {
+        if *budget == 0 {
+            return None;
+        }
+        if let Some(xs) = crossings_along(mesh, tris, axes, u0 + u * dx, v0 + u * dy, budget) {
+            // An inconsistent winding is the mesh's, not the line's:
+            // no nudge mends it.
+            return spans_of(xs);
+        }
+    }
+    None
+}
+
 impl FixtureMesh {
     /// The Z spans, ascending and disjoint, where the vertical line
     /// through `(x, y)` runs inside the solid; empty where it misses the
@@ -166,20 +219,42 @@ impl FixtureMesh {
     /// facets that every line meets stays bounded in time.
     #[must_use]
     pub fn steel_on_line(&self, x: f64, y: f64, budget: &mut u64) -> Option<Vec<(f64, f64)>> {
-        if !(x.is_finite() && y.is_finite()) {
+        line_along(self, None, (0, 1, 2), x, y, budget)
+    }
+
+    /// [`Self::steel_on_line`] restricted to pre-filtered local triangle
+    /// indices covering `(x, y)` and its nudge neighbourhood.
+    #[must_use]
+    pub fn steel_on_line_local(&self, tris: &[usize], x: f64, y: f64, budget: &mut u64) -> Option<Vec<(f64, f64)>> {
+        line_along(self, Some(tris), (0, 1, 2), x, y, budget)
+    }
+
+    /// The parameter spans `t` where `origin + t * dir` runs inside the
+    /// solid, for a signed coordinate axis `dir`.
+    #[must_use]
+    pub fn steel_on_axis_line(&self, origin: Point3, dir: [f64; 3], budget: &mut u64) -> Option<Vec<(f64, f64)>> {
+        let o = [origin.x, origin.y, origin.z];
+        if !o.iter().all(|c| c.is_finite()) {
             return None;
         }
-        let u = nudge_unit(self);
-        for (dx, dy) in NUDGES {
-            if *budget == 0 {
-                return None;
-            }
-            if let Some(xs) = crossings(self, x + u * dx, y + u * dy, budget) {
-                // An inconsistent winding is the mesh's, not the line's:
-                // no nudge mends it.
-                return spans_of(xs);
-            }
-        }
-        None
+        let (w_ax, sign) = if dir[0].abs() == 1.0 && dir[1] == 0.0 && dir[2] == 0.0 {
+            (0, dir[0])
+        } else if dir[1].abs() == 1.0 && dir[0] == 0.0 && dir[2] == 0.0 {
+            (1, dir[1])
+        } else if dir[2].abs() == 1.0 && dir[0] == 0.0 && dir[1] == 0.0 {
+            (2, dir[2])
+        } else {
+            return None;
+        };
+        let (u_ax, v_ax) = ((w_ax + 1) % 3, (w_ax + 2) % 3);
+        let spans = line_along(self, None, (u_ax, v_ax, w_ax), o[u_ax], o[v_ax], budget)?;
+        let w0 = o[w_ax];
+        let mut out: Vec<(f64, f64)> = if sign > 0.0 {
+            spans.into_iter().map(|(a, b)| (a - w0, b - w0)).collect()
+        } else {
+            spans.into_iter().rev().map(|(a, b)| (w0 - b, w0 - a)).collect()
+        };
+        out.retain(|&(a, b)| b > a);
+        Some(out)
     }
 }

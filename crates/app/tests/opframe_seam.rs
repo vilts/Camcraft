@@ -104,6 +104,7 @@ fn op_of(world: &World, name: &str) -> camcraft_app::schema::Operation {
 
 fn t45x(origin: [f64; 3]) -> Tilt {
     Tilt {
+        basis_version: 1,
         a_deg: 45.0,
         b_deg: 0.0,
         origin,
@@ -159,6 +160,7 @@ fn a_zero_tilt_index_reproduces_the_prismatic_path_exactly() {
     let mut tilted = face(Height::fixed(9.0), 25.0);
     if let OpParams::Face { tilt, .. } = &mut tilted {
         *tilt = Some(Tilt {
+            basis_version: 1,
             a_deg: 0.0,
             b_deg: 0.0,
             origin: [0.0; 3],

@@ -207,18 +207,16 @@ fn a_plane_face_pick_disarms_when_its_page_is_left() {
 /// Press the ribbon's View door, then its `panel` row - the user's way
 /// to close or reopen a pane.
 fn view_door_toggle(harness: &mut Harness<'static, ShellUi>, panel: crate::state::Panel) {
-    let strip = egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, super::super::shell::RIBBON_H));
-    let (cells, _) = mill_plan_at(1280.0);
-    let button = cells.iter().find(|c| c.cmd == Cmd::View).expect("the View door stands on the bar").rect;
-    let rows = panes::view_rows_of(button, strip, &theme::current());
-    let at = rows
-        .iter()
-        .find(|(r, _)| *r == super::super::layout::ViewRow::Panel(panel))
-        .expect("the View door lists the panel")
-        .1
-        .center();
-    super::machines_pane::click(harness, button.center());
-    super::machines_pane::click(harness, at);
+    let label = match panel {
+        crate::state::Panel::Browser => "Browser",
+        crate::state::Panel::Properties => "Properties",
+        crate::state::Panel::Machines => "Machines",
+        crate::state::Panel::AiChat => "AI Chat",
+    };
+    harness.get_by_role_and_label(egui::accesskit::Role::Button, "Panels").click();
+    harness.run_steps(2);
+    harness.get_by_role_and_label(egui::accesskit::Role::MenuItem, label).click();
+    harness.run_steps(2);
 }
 
 fn properties_shown(harness: &Harness<'static, ShellUi>) -> bool {

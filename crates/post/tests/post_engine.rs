@@ -119,8 +119,30 @@ fn every_golden_is_a_legal_post_input() {
         // cycle on four motion records. Count intent, not just moves.
         let records_here = moves
             + records.iter().filter(|r| matches!(r, Record::Cycle(_))).count();
-        let floor = if name.starts_with("drill") || name.starts_with("tap") { 4 } else { 10 };
+        // The full-width slot is two levels (-3, -6) of one row each
+        // since #2004 dropped its air level at Top Z: 9 motion records.
+        // Its floor is 8, and the depth assert below proves the cut.
+        let floor = if name.starts_with("drill") || name.starts_with("tap") {
+            4
+        } else if name == "slot_fullwidth_centerline.cl" {
+            8
+        } else {
+            10
+        };
         assert!(records_here > floor, "{name}: {records_here} records is not a toolpath");
+        if name == "slot_fullwidth_centerline.cl" {
+            // Top 0, bottom -6, stepdown 3: both levels feed the full row.
+            for z in [-3.0, -6.0] {
+                let rows = records
+                    .iter()
+                    .filter(|r| {
+                        matches!(r, Record::Move(m) if m.kind == MoveKind::Feed
+                            && (m.z - z).abs() < 1e-6 && (m.x - 60.0).abs() < 1e-6)
+                    })
+                    .count();
+                assert_eq!(rows, 1, "{name}: the slot row at Z {z} is fed to X 60");
+            }
+        }
         if name.starts_with("drill") || name.starts_with("tap") {
             assert!(
                 records.iter().any(|r| matches!(r, Record::Cycle(_))),

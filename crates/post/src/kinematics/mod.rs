@@ -13,6 +13,9 @@ mod tests;
 mod travel;
 mod types;
 
+pub use crate::post::g93::{
+    solve_g93_solved_moves, AxisSpeedLimits, G93Decision, G93Error, G93Options, G93Timing,
+};
 pub use math::{forward_machine, forward_part, validate_trunnion};
 pub use path::{solve_path, solve_toolpath};
 pub use solve::{analytical_branches, AcSolver};

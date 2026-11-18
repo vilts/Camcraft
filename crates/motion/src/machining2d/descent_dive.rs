@@ -117,6 +117,35 @@ pub(super) fn restart(l: &Lvl, leg: Point2, z: f64, from: f64, m: &Motion) -> De
     ))
 }
 
+/// A pass start inside a level that a centre-cutting tool would plunge
+/// into solid, where the user asked for a helix, ramp or arc entry
+/// (#2265: a second piece of the area, a ring its neighbours have not
+/// cleared): entered by the asked arm onto it - a helix only where it
+/// closes on the start or links to it at depth - else the ramp along the
+/// pass, else the plunge. Each stand-in is named with the site, the
+/// level and the reason; a plunge into material is never silent.
+pub(super) fn entry_restart(l: &Lvl, leg: Point2, z: f64, from: f64, m: &Motion) -> Descent {
+    let e = l.pass.first().copied().unwrap_or(leg);
+    let d = plan_arm(m.entry, false, l, leg, z, from, m);
+    let why = match &d {
+        Descent::Helix(h) if (h.start.x == e.x && h.start.y == e.y) || links_to(l, h.start, e) => return d,
+        Descent::Helix(_) => "the helix fits only away from the pass start",
+        Descent::Sub(why) => *why,
+        _ => match axial_why(&d, l) {
+            None => return d,
+            Some(why) => why,
+        },
+    };
+    let site = format!("the pass start ({:.3}, {:.3}) at Z {z:.3} is in material and {why}", e.x, e.y);
+    match ramp_fallback(l, z, from, m) {
+        Some(r) => Descent::Named(Box::new(r), format!("entry: {site} - ramp along the pass instead")),
+        None => Descent::Named(
+            Box::new(Descent::Plunge(e)),
+            format!("entry: {site}, and the pass is too short to ramp - plunged into material at the plunge feed"),
+        ),
+    }
+}
+
 /// The entry family's honorable failure (M8.1): the stated motion
 /// could not be honored at this level for `why`, so the ladder
 /// substitutes the axial dive - at the pass start where it stands off

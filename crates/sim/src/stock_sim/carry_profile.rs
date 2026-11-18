@@ -2,9 +2,9 @@
 //! Provenance: the existing dexel atoms and a convex cone/cylinder intersection.
 
 use super::cut::SimOp;
-use super::dexel::Dexel;
+use super::dexel::{Dexel, reach};
 use super::dexel_arc::{ArcSweep, piece_min};
-use crate::cl::Move;
+use crate::cl::{Move, MoveKind};
 use crate::geometry::Point3;
 
 #[derive(Clone, Debug)]
@@ -12,14 +12,18 @@ pub(super) struct Profile {
     pub(super) motion: Move,
     pub(super) radius: f64,
     pub(super) cone: Option<f64>,
-    ball: bool,
+    pub(super) ball: bool,
     corner: Option<f64>,
-    chord_tol: f64,
+    pub(super) chord_tol: f64,
 }
 
 impl Profile {
+    pub(super) fn flat_endmill(&self) -> bool {
+        !self.ball && self.cone.is_none() && self.corner.is_none()
+    }
+
     pub(super) fn straight_flat(&self) -> bool {
-        self.motion.arc.is_none() && !self.ball && self.cone.is_none() && self.corner.is_none()
+        self.motion.arc.is_none() && self.flat_endmill()
     }
 
     pub(super) fn flat_span(&self, p: Point3, direction: [f64; 3]) -> Option<(f64, f64)> {
@@ -45,6 +49,34 @@ impl Profile {
 
     /// Read a ray parallel to the original cutter with the original atom.
     pub(super) fn floor(&self, x: f64, y: f64) -> f64 {
+        let m = &self.motion;
+        if m.kind == MoveKind::Rapid || !m.is_finite() || !(self.radius.is_finite() && self.radius >= 0.0) {
+            return f64::INFINITY;
+        }
+        let r = self.radius;
+        match m.arc {
+            None => {
+                let (a, b) = (m.from, m.to);
+                if x < a.x.min(b.x) - r || x > a.x.max(b.x) + r || y < a.y.min(b.y) - r || y > a.y.max(b.y) + r {
+                    return f64::INFINITY;
+                }
+                if self.flat_endmill() {
+                    let Some((t0, t1)) = reach(x - a.x, y - a.y, b.x - a.x, b.y - a.y, r) else {
+                        return f64::INFINITY;
+                    };
+                    return (a.z + (b.z - a.z) * t0).min(a.z + (b.z - a.z) * t1);
+                }
+            }
+            Some(arc) if arc.plane.is_xy() => {
+                if let Some(sw) = ArcSweep::of(m, arc) {
+                    let (bx0, bx1, by0, by1) = sw.bbox();
+                    if x < bx0 - r || x > bx1 + r || y < by0 - r || y > by1 + r {
+                        return f64::INFINITY;
+                    }
+                }
+            }
+            Some(_) => {}
+        }
         let mut d = Dexel::from_grid(x - 0.5, y - 0.5, 1.0, 1, 1, f64::INFINITY, vec![f64::INFINITY]);
         match (self.cone, self.corner) {
             (Some(cot), _) => d.subtract_cone(&self.motion, self.radius, cot, self.chord_tol),

@@ -47,12 +47,15 @@ fn axis_word(a: [f64; 3]) -> String {
     format!("({:.4}, {:.4}, {:.4})", a[0], a[1], a[2])
 }
 
-/// What an offset's placement says beyond its translation (#327).
+/// What an offset's placement says beyond its translation (#327, #760).
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum OffsetFrame {
     /// Finite, and within [`ROT_TOL_RAD`] of the identity.
     Square,
-    /// Finite and turned: the angle (deg) and the axis as the user reads it.
+    /// Pure Z-axis rotation (`WCS +Z` matches machine `+Z`), signed `yaw_deg`
+    /// from setup `+X` to WCS `+X` (#760).
+    Yaw { deg: f64, yaw_deg: f64 },
+    /// Finite and tilted off machine `+Z`: the angle (deg) and axis.
     Rotated { deg: f64, axis: String },
     /// A NaN / infinite origin or rotation, or a zero-norm quaternion:
     /// no frame at all. Never "unrotated" - refused by name.
@@ -70,17 +73,131 @@ pub(crate) fn offset_frame(loc: &Location) -> OffsetFrame {
     }
     let (angle, axis) = angle_axis(q);
     if angle <= ROT_TOL_RAD {
-        OffsetFrame::Square
-    } else {
-        OffsetFrame::Rotated { deg: angle.to_degrees(), axis: axis_word(axis) }
+        return OffsetFrame::Square;
     }
+    let z = crate::geometry::transform_point(
+        crate::geometry::Point3::new(0.0, 0.0, 1.0),
+        crate::geometry::Point3::ZERO,
+        q,
+    );
+    let tilt = (z.x * z.x + z.y * z.y).sqrt().atan2(z.z);
+    if tilt <= ROT_TOL_RAD {
+        let x = crate::geometry::transform_point(
+            crate::geometry::Point3::new(1.0, 0.0, 0.0),
+            crate::geometry::Point3::ZERO,
+            q,
+        );
+        let mut yaw_deg = x.y.atan2(x.x).to_degrees();
+        if (yaw_deg + 180.0).abs() < 1e-9 {
+            yaw_deg = 180.0;
+        }
+        if yaw_deg == -0.0 {
+            yaw_deg = 0.0;
+        }
+        return OffsetFrame::Yaw { deg: yaw_deg.abs(), yaw_deg };
+    }
+    OffsetFrame::Rotated { deg: angle.to_degrees(), axis: axis_word(axis) }
 }
 
-/// One line per rotated (or non-finite, #327) work-offset entity a
-/// posted operation uses, naming the setup, the G-word, the rotation and
-/// the operations. Empty when every offset in the program is unrotated.
+fn unsupported_op_reason(
+    op: &crate::schema::Operation,
+    cache: Option<crate::schema::Toolpath>,
+) -> Option<&'static str> {
+    use crate::operation::{OpParams, Section};
+    if matches!(
+        op.params,
+        OpParams::Probe { .. }
+            | OpParams::WireContour(_)
+            | OpParams::SinkerBurn(_)
+            | OpParams::SinkerSideBurn(_)
+            | OpParams::RotaryContour { .. }
+            | OpParams::RotaryParallel { .. }
+            | OpParams::RotaryOffset { .. }
+            | OpParams::MultiAxisRough { .. }
+            | OpParams::Flow5D { .. }
+            | OpParams::MultiAxisContour { .. }
+    ) || op.params.kind().info().section == Section::Turning
+    {
+        return Some("that operation type is not supported under a rotated work offset yet");
+    }
+    if op.params.tilt().is_some() {
+        return Some("3+2 tilted toolpaths are not supported under a rotated work offset yet");
+    }
+    if let Some(c) = cache {
+        if c.path.moves.iter().any(|m| m.arc.is_some_and(|a| !a.plane.is_xy())) {
+            return Some("an XZ/YZ arc cannot rotate in XY under a rotated work offset");
+        }
+        if c.path
+            .moves
+            .iter()
+            .any(|m| m.rotary.is_some() || m.axis.is_some_and(|a| !crate::cl::is_vertical(&a)))
+        {
+            return Some("multiaxis or rotary moves are not supported under a rotated work offset yet");
+        }
+    }
+    None
+}
+
+fn control_refusal(
+    world: &World,
+    setup: Option<&str>,
+    owner: &str,
+    explicit_cps: Option<&str>,
+) -> Option<String> {
+    if crate::setup_post_options::of(world, setup).wcs_rotation != crate::schema::WcsRotationOutput::Control {
+        return None;
+    }
+    let (_, mch) = crate::machine::of_setup(world, setup);
+    match mch.as_ref() {
+        Some(m) if m.coordinate_rotation == Some(true) => {
+            if !m.inverted_axes().is_empty() {
+                return Some(format!(
+                    "{owner}: Control rotation (G68 / ROT) is not supported with inverted machine axes - choose Bake into XY"
+                ));
+            }
+        }
+        Some(m) => {
+            return Some(format!(
+                "{owner}: WcsRotation is Control (G68 / ROT), but mounted machine '{}' does not state controller.coordinate_rotation: true - choose Bake into XY or declare coordinate_rotation",
+                m.model
+            ));
+        }
+        None => {
+            return Some(format!(
+                "{owner}: WcsRotation is Control (G68 / ROT), which requires a mounted machine declaring controller.coordinate_rotation: true - choose Bake into XY"
+            ));
+        }
+    }
+    let cps_ok = match explicit_cps {
+        Some(cps) => crate::post::dialect::voices_wcs_rotation(cps),
+        None => match super::script_of(&crate::setup_mount::post_of(world, setup)) {
+            Ok((_, text)) => crate::post::dialect::voices_wcs_rotation(&text),
+            Err(_) => return None,
+        },
+    };
+    if matches!(cps_ok, Ok(false)) {
+        return Some(format!(
+            "{owner}: WcsRotation is Control (G68 / ROT), but the post script does not declare wcsRotation = true - choose Bake into XY or use Fanuc, Haas, Mazak, Doosan DNM, or Sinumerik"
+        ));
+    }
+    None
+}
+
+/// One line per blocked rotated (or non-finite, #327) work-offset entity
+/// a posted operation uses. Empty when every offset is unrotated or a
+/// supported Z-rotated milling offset (#760).
 #[must_use]
 pub(super) fn rotated_wcs_problems(world: &World) -> Vec<String> {
+    rotated_wcs_problems_with(world, None)
+}
+
+/// Explicit-script Control capability check for standalone `post_script` calls.
+#[must_use]
+pub(super) fn explicit_script_problems(world: &World, cps: &str) -> Vec<String> {
+    rotated_wcs_problems_with(world, Some(cps))
+}
+
+fn rotated_wcs_problems_with(world: &World, explicit_cps: Option<&str>) -> Vec<String> {
     // (entity name, line prefix, ops), in first-use program order.
     let mut hits: Vec<(String, String, Vec<String>)> = Vec::new();
     for (name, e) in crate::setup::operation_order(world) {
@@ -102,30 +219,41 @@ pub(super) fn rotated_wcs_problems(world: &World) -> Vec<String> {
         if frame == OffsetFrame::Square {
             continue;
         }
-        let entity = crate::setup::wcs_entity_name(world, setup);
-        let label = model::operation_label(world, &name, &e);
-        if let Some(hit) = hits.iter_mut().find(|h| h.0 == entity) {
-            hit.2.push(label);
-            continue;
-        }
         let word = crate::setup::offset_name(world, setup, u32::try_from(slot).map_or(u32::MAX, |s| s.saturating_add(1)));
         let owner = match crate::setup::effective(world, setup) {
             Some(s) => format!("setup {s}: its WCS ({word})"),
             None => format!("the WCS ({word})"),
         };
         let prefix = match frame {
-            OffsetFrame::Rotated { deg, axis } => format!(
-                "{owner} is rotated {deg:.3} deg about {axis}; posting a rotated work offset is not \
-                 supported yet - re-align it without rotation or post from an unrotated setup"
+            OffsetFrame::Square => continue,
+            OffsetFrame::Yaw { deg, .. } => {
+                if explicit_cps.is_none()
+                    && let Some(why) = unsupported_op_reason(&op, model::toolpath_of(world, &e))
+                {
+                    format!("{owner} is rotated {deg:.3} deg about Z; {why}")
+                } else if let Some(why) = control_refusal(world, setup, &owner, explicit_cps) {
+                    why
+                } else {
+                    continue;
+                }
+            }
+            OffsetFrame::Rotated { deg, axis } if explicit_cps.is_none() => format!(
+                "{owner} is rotated {deg:.3} deg about {axis}; posting a tilted work offset is not \
+                 supported - align WCS Z to machine +Z (use Part alignment on the Setup page) or post from an unrotated setup"
             ),
-            // #327: a NaN / infinite / zero-norm placement is no frame at
-            // all - refused by name, never posted as unrotated.
-            _ => format!(
+            OffsetFrame::NonFinite if explicit_cps.is_none() => format!(
                 "{owner} has a non-finite placement (origin or rotation) - re-place the \
                  offset before posting"
             ),
+            _ => continue,
         };
-        hits.push((entity, prefix, vec![label]));
+        let entity = crate::setup::wcs_entity_name(world, setup);
+        let label = model::operation_label(world, &name, &e);
+        if let Some(hit) = hits.iter_mut().find(|h| h.0 == entity && h.1 == prefix) {
+            hit.2.push(label);
+        } else {
+            hits.push((entity, prefix, vec![label]));
+        }
     }
     hits.into_iter()
         .map(|(_, prefix, ops)| format!("{prefix} (operations: {})", ops.join(", ")))

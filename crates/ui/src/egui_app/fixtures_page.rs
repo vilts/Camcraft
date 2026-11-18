@@ -38,6 +38,7 @@ pub(super) fn fixtures_section(ui: &mut Ui, state: &mut State, ctx: Option<&str>
     state.retire_plate_place_drafts();
     state.retire_mod_vise_drafts();
     state.retire_accessory_size_drafts();
+    state.retire_profile_edit_drafts();
     group(ui, "Workholding", None, |ui| holding(ui, state, fixtures, table));
     group(ui, "Add workholding", None, |ui| adds(ui, state, ctx));
 }
@@ -80,7 +81,13 @@ fn holding(
 fn adds(ui: &mut Ui, state: &mut State, ctx: Option<&str>) {
     let setup = ctx.unwrap_or_default().to_owned();
     let size = Vec2::new(ui.available_width().max(24.0), BUTTON_H);
-    let labels = ["Import fixture…", "Add built-in vise…", "Add accessory…", "Add fixture plate…"];
+    let labels = [
+        "Import fixture…",
+        "Add built-in vise…",
+        "Add accessory…",
+        "Add fixture plate…",
+        "Add DXF / profile…",
+    ];
     for (i, label) in labels.iter().enumerate() {
         // #1431: the import needs a file picker a page cannot open, so
         // the browser build greys that one row with its reason; the
@@ -105,7 +112,9 @@ fn adds(ui: &mut Ui, state: &mut State, ctx: Option<&str>) {
             // #789: parallels, blocks, strap clamps, soft jaws.
             2 => CommandKind::AccessoryDialog(setup.clone()),
             // #819: a parametric grid plate, fixtures placed on its holes.
-            _ => CommandKind::FixturePlateDialog(setup.clone()),
+            3 => CommandKind::FixturePlateDialog(setup.clone()),
+            // #744: spun turning or extruded milling profile / DXF fixture.
+            _ => CommandKind::ProfileFixtureDialog(setup.clone()),
         });
     }
     // The other way in: a model already imported - select its row in the

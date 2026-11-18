@@ -144,7 +144,7 @@ fn blended_pockets_verify_silent() {
 }
 
 fn pocket_op(blend: bool) -> OpParams {
-    OpParams::Pocket {
+    OpParams::Pocket { rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 3.0,

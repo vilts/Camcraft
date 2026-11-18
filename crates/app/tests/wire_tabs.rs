@@ -21,7 +21,7 @@ use camcraft_app::geometry::{Mesh, Point3, Triangle};
 use camcraft_app::machine::parse_mch;
 use camcraft_app::model;
 use camcraft_app::operation::{Height, OpParams, SrcRef, WireContourOp, WireSide, WireTabs};
-use camcraft_app::posting::{self, BUILTINS};
+use camcraft_app::posting;
 use camcraft_app::project;
 use camcraft_app::schema::Location;
 use camcraft_app::stock::StockShape;
@@ -91,10 +91,15 @@ fn doc(op: WireContourOp) -> World {
     let mut h = History::default();
     let m = parse_mch(&machine()).expect("the fixture parses");
     h.execute(&world, LoadMachine::new(&world, "wire-iso.mch".into(), Some(m)).expect("mount"));
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("opening", opening()));
     let stock = SetStock::new(&world, StockShape::Box { dx: 60.0, dy: 60.0, dz: 12.0 }, Location::default()).expect("stock");
     h.execute(&world, stock);
-    let c = CreateOperation::new(&world, "Die1", "", SrcRef::Entity("opening".into()), OpParams::WireContour(op)).expect("op");
+    let c = CreateOperation::new(&world, "Die1", "EDM-W025", SrcRef::Entity("opening".into()), OpParams::WireContour(op)).expect("op");
     h.execute(&world, c);
     world
 }
@@ -112,7 +117,7 @@ fn refusal(op: WireContourOp) -> String {
 }
 
 fn cps() -> &'static str {
-    BUILTINS.iter().find(|(n, _)| *n == "Generic ISO Wire EDM").map(|(_, s)| *s).expect("registered")
+    camcraft_app::posting::builtin_post_text("Generic ISO Wire EDM").expect("registered")
 }
 
 /// Done means: a die with two tabs leaves the slug held until the
@@ -211,8 +216,13 @@ fn tabs_with_a_taper_are_refused_by_name_at_every_door() {
     let m = parse_mch(&machine()).expect("the fixture parses");
     let mut h = History::default();
     h.execute(&world, LoadMachine::new(&world, "wire-iso.mch".into(), Some(m)).expect("mount"));
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("opening", opening()));
-    let err = CreateOperation::new(&world, "Die1", "", SrcRef::Entity("opening".into()), OpParams::WireContour(tapered.clone()))
+    let err = CreateOperation::new(&world, "Die1", "EDM-W025", SrcRef::Entity("opening".into()), OpParams::WireContour(tapered.clone()))
         .err()
         .expect("refused at creation")
         .to_string();

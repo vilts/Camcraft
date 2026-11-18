@@ -160,7 +160,8 @@ fn the_reported_outside_contour_enters_every_level_on_one_arc() {
     // lead-in/lead-out crossings at the two seams.
     assert_eq!(warnings, 0, "{:?}", t.notes);
     let summary = t.status_summary("C1", warnings, Default::default());
-    assert!(summary.contains("7 level(s)"), "{summary}");
+    // #2004: the stock top is Top Z 20, so the air level at Z 20 is gone.
+    assert!(summary.contains("6 level(s)"), "{summary}");
     let notes = t.notes.join(" | ");
     assert!(!notes.contains("needs bounded air"), "the arc is no longer refused on the wall: {notes}");
     // The seams: no lead-in and lead-out left crossing - the seam law
@@ -182,14 +183,14 @@ fn the_reported_outside_contour_enters_every_level_on_one_arc() {
     assert_eq!(t.notes.iter().filter(|n| *n == oblique).count(), 1, "{notes}");
     assert!(!t.moves.iter().any(|m| m.arc.is_some_and(|a| !a.plane.is_xy())), "no axis-plane entry here");
 
-    let levels = [20.0, 15.0, 10.0, 5.0, 0.0, -5.0, -7.0];
+    let levels = [15.0, 10.0, 5.0, 0.0, -5.0, -7.0];
     // The outer ring's entries stand beyond the part's R30 arc; the bore
     // ring's (inside R12.5) are counted apart.
     let outer = |m: &Move| m.to.x.hypot(m.to.y) > 30.0;
     let all = fans(&t);
     let f: Vec<_> = all.iter().copied().filter(|&(s, _)| outer(&t.moves[s])).collect();
     assert_eq!(f.len(), levels.len(), "one arc entry per level on the outer ring");
-    // The bore ring is BLIND (floor Z 0): it is walked at 20..0 and
+    // The bore ring is BLIND (floor Z 0): it is walked at 15..0 and
     // never below - the old ladder walked it at -5 and -7 too, an
     // annulus cut into the solid under the floor that the flat-region
     // verifier could not see. On the coarse mesh its five 5 mm drops
@@ -199,13 +200,13 @@ fn the_reported_outside_contour_enters_every_level_on_one_arc() {
     // bore's own levels, never below its floor, and the verifier above
     // holds every one of them silent.
     let bore: Vec<_> = all.iter().filter(|&&(s, _)| !outer(&t.moves[s])).collect();
-    // Five: one proved arc entry per bore level (20, 15, 10, 5, 0), each
+    // Four: one proved arc entry per bore level (15, 10, 5, 0), each
     // a chord fan of an arc entry - no graze, no warning (the verifier
     // silence above covers them: none is a gouge or a crossing).
-    assert_eq!(bore.len(), 5, "one arc entry per bore level: {bore:?}");
+    assert_eq!(bore.len(), 4, "one arc entry per bore level: {bore:?}");
     for &&(_, e) in &bore {
         let z = t.moves[e - 1].to.z;
-        assert!([20.0, 15.0, 10.0, 5.0, 0.0].contains(&z), "a bore entry lands on a bore level, got {z}");
+        assert!([15.0, 10.0, 5.0, 0.0].contains(&z), "a bore entry lands on a bore level, got {z}");
     }
     let ring_levels = |keep: &dyn Fn(f64) -> bool| -> Vec<f64> {
         let mut v: Vec<f64> = t
@@ -217,7 +218,7 @@ fn the_reported_outside_contour_enters_every_level_on_one_arc() {
         v.dedup();
         v
     };
-    assert_eq!(ring_levels(&|d| d < 13.0), [20.0, 15.0, 10.0, 5.0, 0.0], "the bore ring ends at its floor");
+    assert_eq!(ring_levels(&|d| d < 13.0), [15.0, 10.0, 5.0, 0.0], "the bore ring ends at its floor");
     assert_eq!(ring_levels(&|d| d > 30.0), levels, "the outer wall goes to the bottom");
     assert!(
         notes.contains("ends at its floor Z 0.000") && notes.contains("levels below skipped (-5.000, -7.000)"),
@@ -238,22 +239,30 @@ fn the_reported_outside_contour_enters_every_level_on_one_arc() {
         let walk = &t.moves[e + 1];
         assert!(dot(dir_at(lead_in, false), dir_at(walk, true)) > 0.999, "lead-in {k} joins the wall tangent");
         // The transition reads as the standard sequence: first entry
-        // from clearance; the second level drops onto the level above
-        // (the cut top); deeper levels feed the rest at plunge feed.
+        // from clearance; each deeper level feeds the rest at plunge
+        // feed onto the level above. #2004: before, the second level
+        // rapided onto the air level at the stock top Z 20 with no
+        // plunge; now the level above it is a cut level under the
+        // stock top, so it takes the plunge as the deeper levels do.
         let seq = approach(&t, s);
         let want: &[&str] = match k {
             0 => &["rapid-across", "rapid-down"],
-            1 => &["rapid-up", "rapid-across", "rapid-down"],
             _ => &["rapid-up", "rapid-across", "rapid-down", "plunge"],
         };
         assert_eq!(seq, want, "entry {k}'s approach");
+        // No rapid ends inside the stock: each rapid-down of an entry
+        // stops at or over the stock top Z 20.
+        let down = t.moves[..s].iter().rev().find(|m| m.kind == MoveKind::Rapid).expect("a rapid before the entry");
+        assert!(down.to.z >= 20.0 - 1e-9, "entry {k}'s rapid ends at Z {} in the stock", down.to.z);
     }
     // Plunges left: the outer ring's deeper approaches to the arc top
-    // (5, every level past the second), the bore ring's the same way
+    // (5, every level past the first), the bore ring's the same way
     // for its arc entries, and one graze per bore level that took no
     // arc (all five grazed on the coarse mesh before #689).
     let plunges = t.moves.iter().filter(|m| m.kind == MoveKind::Plunge).count();
-    // 5 outer + 3 bore (its levels past the second) + 0 grazes.
+    // 5 outer + 3 bore (its levels past the first) + 0 grazes. #2004:
+    // the same count as before - one level fewer on each ring, and the
+    // second level now plunges.
     assert_eq!(plunges, 8);
 }
 
@@ -354,10 +363,12 @@ fn a_single_wall_ring_retracts_and_reenters_by_default() {
     let t = contour(&r, &wall_params(Entry3D::Arc, 0)).expect("contour");
     assert_eq!(verify_wall(&t, &r), Vec::new(), "{:?}", t.notes);
     let f = fans(&t);
-    assert_eq!(f.len(), 4, "levels 20, 15, 10, 5 each enter on one arc");
+    // #2004: Top Z 20 is the material top (the verify stock top), so the
+    // ladder starts one stepdown under it.
+    assert_eq!(f.len(), 3, "levels 15, 10, 5 each enter on one arc");
     assert_eq!(approach(&t, f[0].0), ["rapid-across", "rapid-down"]);
     let tr = transitions(&t);
-    assert_eq!(tr.len(), 3);
+    assert_eq!(tr.len(), 2, "15 -> 10 -> 5 (#2004: no air level at Z 20)");
     for (above, below, between) in &tr {
         let top = between.iter().map(|m| m.to.z).fold(f64::NEG_INFINITY, f64::max);
         assert!(top >= 30.0, "{above} -> {below}: lifts to the retract plane, got {top}");
@@ -388,7 +399,7 @@ fn a_single_wall_ring_stays_down_and_ramps_when_asked() {
             .count();
         assert_eq!(off_ring, 1, "only the first level enters on the arc");
         let tr = transitions(&t);
-        assert_eq!(tr.len(), 3);
+        assert_eq!(tr.len(), 2, "15 -> 10 -> 5 (#2004: no air level at Z 20)");
         let tan = angle.to_radians().tan();
         for (above, below, between) in &tr {
             assert!(!between.is_empty(), "the ramp is between the levels");
@@ -427,7 +438,7 @@ fn the_stay_down_ramp_falls_back_to_retract_by_name() {
     assert_eq!(verify_wall(&t, &r), Vec::new(), "{:?}", t.notes);
     assert!(t.notes.iter().any(|n| n.contains("too short for a 0.0 deg ramp")), "{:?}", t.notes);
     let tr = transitions(&t);
-    assert_eq!(tr.len(), 3);
+    assert_eq!(tr.len(), 2, "15 -> 10 -> 5 (#2004: no air level at Z 20)");
     for (above, below, between) in &tr {
         let top = between.iter().map(|m| m.to.z).fold(f64::NEG_INFINITY, f64::max);
         assert!(top >= 30.0, "{above} -> {below}: the fallback retracts, got {top}");
@@ -443,8 +454,9 @@ fn the_wall_arc_stands_down_by_name_on_tabbed_levels() {
     let t = contour(&r, &wall_params(Entry3D::Arc, 3)).expect("contour");
     assert_eq!(verify_wall(&t, &r), Vec::new(), "{:?}", t.notes);
     assert!(t.notes.iter().any(|n| n.contains("the arc stands down on tabbed levels")), "{:?}", t.notes);
-    // Untabbed levels (20, 15, 10) still arc; the tabbed bottom grazes.
-    assert_eq!(fans(&t).len(), 3);
+    // Untabbed levels (15, 10) still arc; the tabbed bottom grazes
+    // (#2004: the air level at Z 20 is gone).
+    assert_eq!(fans(&t).len(), 2);
 }
 
 #[test]
@@ -485,12 +497,13 @@ fn the_users_part_links_levels_as_the_user_picks() {
     let levels: Vec<f64> = std::iter::once(tr[0].0).chain(tr.iter().map(|x| x.1)).collect();
     assert_eq!(
         levels,
-        [20.0, 15.0, 10.0, 5.0, 0.0, -5.0, -7.0, 20.0, 15.0, 10.0, 5.0, 0.0],
+        // #2004: each ring starts one stepdown under the stock top Z 20.
+        [15.0, 10.0, 5.0, 0.0, -5.0, -7.0, 15.0, 10.0, 5.0, 0.0],
         "ring by ring: the outer wall to the bottom, then the bore to its floor"
     );
     let tan = 3.0_f64.to_radians().tan();
     for (k, (above, below, between)) in tr.iter().enumerate() {
-        if k == 6 {
+        if k == 5 {
             // Outer ring's bottom -> the bore ring's top: a new ring.
             let top = between.iter().map(|m| m.to.z).fold(f64::NEG_INFINITY, f64::max);
             assert!(top >= 33.5, "ring to ring retracts, got {top}");

@@ -20,3 +20,8 @@ pub mod geo2d;
 
 pub mod boundary_chains;
 pub mod dxf;
+pub mod dxf_profile;
+pub mod profile_derive;
+pub mod profile_mesh;
+pub mod sketch_chains;
+pub mod solidcraft;

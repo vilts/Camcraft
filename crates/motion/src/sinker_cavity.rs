@@ -13,7 +13,8 @@
 //! & Schumacker, "A characterization of ten hidden-surface algorithms",
 //! ACM Computing Surveys 6(1), 1974). General die-sink EDM practice from
 //! public machine-tool handbooks: the electrode is the cavity's shape,
-//! fed down Z. No vendor material.
+//! fed down Z. No vendor material. A welded smooth wall (#1808) is read
+//! as its planar strips, each held to the same vertical-wall rule.
 //!
 //! Robustness (Prime Directive): total on any input. A non-finite or
 //! out-of-range coordinate, a face with no area, a boundary that does
@@ -207,6 +208,34 @@ fn stand_of(w: &PickedFace, ring: &[Point2], floor_z: f64) -> Result<Vec<(usize,
         ));
     }
     Ok(spans)
+}
+
+/// One welded (curved) wall face read as its planar strips (#1808): a
+/// smooth wall band - rounded corners, or flat walls tangent to them -
+/// is the walls its strips spell when every strip is a vertical plane.
+/// The strips come back as they are, for [`cavity_of`] to stand on the
+/// floor ring like any wall.
+///
+/// # Errors
+/// By `label`: a weld with no strips, and a strip that leans off
+/// vertical (a drafted or blended curved wall is not modelled), besides
+/// every refusal a strip earns on its own.
+pub fn welded_wall(label: &str, strips: Vec<PickedFace>) -> Result<Vec<PickedFace>, GenError> {
+    if strips.is_empty() {
+        return refuse(format!("{label} is a welded face with no strips - re-pick it"));
+    }
+    for s in &strips {
+        check_face(s)?;
+        let nz = s.normal.z;
+        if nz.abs() > VERTICAL {
+            return refuse(format!(
+                "{label} is a welded (curved) wall whose strip {} leans {:.3} degrees off vertical - a welded wall is read only when every strip of it is vertical (a drafted or blended curved wall is not modelled)",
+                s.label,
+                nz.abs().min(1.0).asin().to_degrees()
+            ));
+        }
+    }
+    Ok(strips)
 }
 
 /// The cavity a face set spells: exactly one level floor facing up, and

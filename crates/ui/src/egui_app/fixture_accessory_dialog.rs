@@ -1,8 +1,10 @@
 //! The "Add accessory…" dialog body (#789), drawn inside the fixture
 //! library's modal: pick a kind (parallels, 1-2-3 block, step block,
-//! strap clamp, soft jaw), edit its figures, then type where its frame
-//! goes - or, for parallels, fit them under the stock in one of the
-//! setup's built-in vises. Place queues one undoable `InsertAccessory`.
+//! strap clamp, soft jaw, rotary subplate, a lathe chuck), edit its
+//! figures, then type where its frame goes - or, for parallels, fit
+//! them under the stock in one of the setup's built-in vises, or, for
+//! a lathe chuck, fit it to the stock (#1468). Place queues one
+//! undoable `InsertAccessory`.
 //! Provenance: our own layout over our own accessory commands.
 
 use egui::{RichText, Ui};
@@ -30,27 +32,55 @@ pub(crate) fn place_command(d: &AccessoryDraft) -> CommandKind {
     }
 }
 
-/// The label parallels' height takes while a vise fit sets it (#812).
-pub(crate) const FIT_HEIGHT_LABEL: &str = "Height (set by the fit)";
-
 /// What the fit does to the vise, said before Place (#812): the stock
 /// stays put and the vise drops under it.
 pub(crate) const FIT_SINKS_HINT: &str = "The fit keeps the stock where it is and drops the vise by the parallels' height: \
      with the stock resting on the vise floor, the vise ends below the table. Raise the stock first if the vise must stay on the table.";
 
-/// The figure fields of `a` (and a step block's step count). With
-/// `fitting`, parallels' height is the fit's: shown, labelled so and
-/// not editable (#812).
-pub(crate) fn dims_grid(ui: &mut Ui, u: Unit, id: &str, a: &mut Accessory, fitting: bool) {
+/// The checkbox that fits a lathe chuck to the stock (#1468).
+pub(crate) const FIT_STOCK_LABEL: &str = "Fit to the stock";
+
+/// What the chuck fit does, said before Place.
+pub(crate) const FIT_STOCK_HINT: &str = "The chuck closes on the setup's round stock (standing on a vertical axis): \
+     its face at the stock's underside - stepped jaws take the stock on their step, a collet takes it its nose length deep.";
+
+/// Why an inside grip has no stock fit.
+pub(crate) const FIT_STOCK_INSIDE_HINT: &str =
+    "An inside grip opens into the work's bore, which the stock does not give: set the grip diameter and place the chuck by position.";
+
+/// The label of the figure a fit sets: `label` with the fit named
+/// (parallels' "Height (set by the fit)", #812).
+#[must_use]
+pub(crate) fn fit_label(label: &str) -> String {
+    format!("{label} (set by the fit)")
+}
+
+/// The figure fields of `a` (a step block's step count and a jaw
+/// chuck's grip direction too). `fitted` is the key of the figure a
+/// fit sets (parallels' height, #812; a chuck's grip diameter or collet
+/// bore, #1468): shown, labelled so and not editable.
+pub(crate) fn dims_grid(ui: &mut Ui, u: Unit, id: &str, a: &mut Accessory, fitted: Option<&str>) {
     egui::Grid::new(id).num_columns(2).show(ui, |ui| {
+        if let Some(grip) = a.grip_mut() {
+            ui.label("Grip");
+            ui.horizontal(|ui| {
+                for key in accessory::chuck::Grip::KEYS {
+                    let Some(g) = accessory::chuck::Grip::of(key) else { continue };
+                    if ui.selectable_label(*grip == g, g.label()).clicked() {
+                        *grip = g;
+                    }
+                }
+            });
+            ui.end_row();
+        }
         if let Some(steps) = a.steps_mut() {
             let l = ui.label("Steps");
             ui.add(egui::DragValue::new(steps).range(1..=accessory::MAX_STEPS)).labelled_by(l.id);
             ui.end_row();
         }
         for d in a.dims_mut() {
-            if fitting && d.key == "height" {
-                let l = ui.add_enabled(false, egui::Label::new(FIT_HEIGHT_LABEL));
+            if fitted == Some(d.key) {
+                let l = ui.add_enabled(false, egui::Label::new(fit_label(d.label)));
                 ui.add_enabled_ui(false, |ui| num_by(ui, u, d.value, l.id));
             } else {
                 let l = ui.label(d.label);
@@ -99,9 +129,24 @@ pub(crate) fn body(ui: &mut Ui, u: Unit, d: &mut AccessoryDraft) -> Option<Acces
             });
         }
     }
-    dims_grid(ui, u, "accessory-dims", &mut d.params, fitting);
+    let chuck = accessory::chuck::is_chuck(&d.params);
+    if chuck {
+        let inside = d.params.grip() == Some(accessory::chuck::Grip::Inside);
+        if inside {
+            d.on_stock = false;
+        }
+        ui.add_enabled(!inside, egui::Checkbox::new(&mut d.on_stock, FIT_STOCK_LABEL));
+        if inside {
+            ui.label(RichText::new(FIT_STOCK_INSIDE_HINT).small());
+        }
+    }
+    let on_stock = d.fits_stock();
+    let fitted = if fitting { Some("height") } else { on_stock.then(|| accessory::chuck::fitted_dim(&d.params)).flatten() };
+    dims_grid(ui, u, "accessory-dims", &mut d.params, fitted);
     if fitting {
         ui.label(RichText::new(FIT_SINKS_HINT).small());
+    } else if on_stock {
+        ui.label(RichText::new(FIT_STOCK_HINT).small());
     } else {
         egui::Grid::new("accessory-place").num_columns(2).show(ui, |ui| {
             for (k, axis) in ["Origin X", "Origin Y", "Origin Z"].iter().enumerate() {

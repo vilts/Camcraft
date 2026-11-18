@@ -66,6 +66,8 @@ jobs:
         run: scripts/package-appimage.sh
       - name: Check package contents
         run: |
+          tar -tzf dist/*.tar.gz | grep '/examples/first-part.camproj$'
+          tar -tzf dist/*.tar.gz | grep '/examples/models/first-part.obj$'
           tar -tzf dist/*.tar.gz | grep '/camcraft-ui$'
           dpkg-deb --contents dist/*.deb | grep '/usr/lib/camcraft/camcraft-ui$'
           rpm -qpl dist/*.rpm | grep '/usr/lib/camcraft/camcraft-ui$'
@@ -77,6 +79,9 @@ jobs:
           cmp target/release/camcraft-ui "$appimage_check/squashfs-root/usr/bin/camcraft-ui"
           test -x "$appimage_check/squashfs-root/AppRun"
           test -d "$appimage_check/squashfs-root/usr/bin/assets/themes"
+          dpkg-deb --contents dist/*.deb | grep '/usr/lib/camcraft/examples/first-part.camproj$'
+          rpm -qpl dist/*.rpm | grep '/usr/lib/camcraft/examples/first-part.camproj$'
+          test -f "$appimage_check/squashfs-root/usr/bin/examples/first-part.camproj"
       - uses: actions/upload-artifact@v4
         with:
           name: linux-packages
@@ -105,6 +110,7 @@ jobs:
       - name: Check macOS package contents
         run: |
           unzip -l dist/*-macos-universal.zip | grep 'CamCraft.app/Contents/MacOS/camcraft-ui'
+          unzip -l dist/*-macos-universal.zip | grep 'CamCraft.app/Contents/Resources/examples/first-part.camproj'
           hdiutil imageinfo dist/*-macos-universal.dmg >/dev/null
       - uses: actions/upload-artifact@v4
         with:
@@ -135,6 +141,7 @@ jobs:
             "$CARGO_TARGET_DIR/release/post" --version
             CAMCRAFT_BIN_DIR="$CARGO_TARGET_DIR/release" bash scripts/package-freebsd.sh
             tar -tzf dist/*-freebsd-amd64.tar.gz | grep '/camcraft-ui$'
+            tar -tzf dist/*-freebsd-amd64.tar.gz | grep '/examples/first-part.camproj$'
       - name: Check copied archive
         run: test -s dist/*-freebsd-amd64.tar.gz
       - uses: actions/upload-artifact@v4
@@ -170,6 +177,7 @@ jobs:
       - name: Check snap contents
         run: |
           unsquashfs -l dist/*.snap | grep '/camcraft-ui$'
+          unsquashfs -l dist/*.snap | grep '/examples/first-part.camproj$'
           unsquashfs -l dist/*.snap | grep '/meta/snap.yaml$'
       - uses: actions/upload-artifact@v4
         with:

@@ -34,6 +34,7 @@ fn bore_world(holes: Vec<Hole>) -> World {
     let tool = catalog().into_iter().find(|(n, _)| *n == TOOL).map(|(_, t)| t).expect("catalog entry");
     history.execute(&world, AddTool::new(&world, TOOL, tool).expect("tool"));
     let params = OpParams::Bore {
+        break_through: None,
         links: camcraft_app::links::Links::PLANAR,
         clearance_z: Height::fixed(25.0),
         retract_z: None,

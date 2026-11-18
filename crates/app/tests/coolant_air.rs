@@ -51,7 +51,7 @@ fn coolant(name: &str, code: &str) -> Coolant {
 }
 
 fn shipped_carvera() -> Machine {
-    let text = posting::MACHINES.iter().find(|(n, _)| *n == CARVERA).map(|(_, t)| *t).expect("shipped");
+    let text = posting::builtin_machine_text(CARVERA).expect("shipped");
     parse_mch(text).expect("the Carvera parses")
 }
 
@@ -89,7 +89,7 @@ fn op_coolant(world: &World) -> CoolantMode {
 }
 
 fn script(name: &str) -> &'static str {
-    posting::BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, s)| *s).expect("a built-in")
+    posting::builtin_post_text(name).expect("a built-in")
 }
 
 fn post_with(world: &World, name: &str) -> post::PostOutput {

@@ -1,4 +1,4 @@
-//! The Debug info window (#157): one plain-text report of what a bug
+//! The Debug info panel (#157, a dock tab since #2262): one plain-text report of what a bug
 //! report needs - build, platform, GPU, document and machine - with a
 //! Copy button, opened from the status strip's bug glyph.
 //!
@@ -6,7 +6,7 @@
 //! report is triaged by (version, OS/arch, adapter, the document's shape).
 //! No vendor material consulted.
 
-use egui::{Button, Context, Id, Image, Response, RichText, Ui, Vec2, Window};
+use egui::{Button, Image, Response, RichText, Ui, Vec2};
 
 use camcraft_app::{machine, model, operation, setup, units};
 
@@ -69,6 +69,7 @@ pub(crate) fn report(state: &State) -> String {
         status(operation::OpStatus::Stale),
         status(operation::OpStatus::Never),
     ));
+    lines.push(state.frame_rate.report_line(camcraft_app::clock::Instant::now()));
     lines.push(format!("Status: {}", or_none(&state.status)));
     lines.join("\n")
 }
@@ -77,38 +78,17 @@ fn or_none(s: &str) -> &str {
     if s.is_empty() { "none" } else { s }
 }
 
-/// The window: the report as selectable monospace text and a Copy
-/// button. Allocates nothing while closed.
-pub(crate) fn window(ctx: &Context, state: &mut State) {
-    if !state.debug_info_open {
-        return;
-    }
+/// The panel body (#2262), drawn inside its dock tab: the report as
+/// selectable monospace text and a Copy button. The tab and its title row
+/// belong to the dock, so it docks, tabs and floats like the other panels.
+pub(crate) fn draw(ui: &mut Ui, state: &mut State) {
     let text = report(state);
-    let mut open = true;
-    let mut copied = false;
-    // #698: our own caption row (window_chrome), so its buttons hover
-    // like the OS window's; a folded window is the row alone.
-    let id = Id::new("debug-info");
-    let folded = ctx.data(|d| d.get_temp::<bool>(id.with("collapsed"))).unwrap_or(false);
-    Window::new("Debug info")
-        .id(id)
-        .title_bar(false)
-        .resizable(!folded)
-        .default_size([480.0, 220.0])
-        .show(ctx, |ui| {
-            if super::window_chrome::title_row(ui, id, "Debug info", &mut open) {
-                return;
-            }
-            ui.separator();
-            if ui.button("Copy").clicked() {
-                ui.ctx().copy_text(text.clone());
-                copied = true;
-            }
-            ui.separator();
-            ui.add(egui::Label::new(RichText::new(text.as_str()).monospace()).selectable(true));
-        });
-    if copied {
+    if ui.button("Copy").clicked() {
+        ui.ctx().copy_text(text.clone());
         state.status = "debug info copied to the clipboard".into();
     }
-    state.debug_info_open = open;
+    ui.separator();
+    egui::ScrollArea::both().show(ui, |ui| {
+        ui.add(egui::Label::new(RichText::new(text.as_str()).monospace()).selectable(true));
+    });
 }

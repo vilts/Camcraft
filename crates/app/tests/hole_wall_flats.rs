@@ -57,6 +57,7 @@ fn drill_ahead(world: &flecs_ecs::prelude::World, h: &mut History, radius: f64) 
     h.execute(world, AddTool::new(world, "TAP-DRILL", tool).expect("tap drill"));
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius: d * 0.5, entry_z: 20.0, floor_z: TAP_FLOOR, through: false, stepped: false };
     let params = OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(25.0),
         retract_z: None,
         top_z: Height::fixed(20.0),
@@ -136,6 +137,7 @@ fn verdict(model_hole: &[P2], kind: Kind, radius: f64) -> Vec<Warning> {
     let holes = vec![hole(radius)];
     let params = match kind {
         Kind::Thread => OpParams::Thread {
+            break_through: None,
             clearance_z: Height::fixed(25.0),
             retract_z: None,
             top_z: Height::fixed(20.0),
@@ -151,6 +153,7 @@ fn verdict(model_hole: &[P2], kind: Kind, radius: f64) -> Vec<Warning> {
             passes: camcraft_app::machining2d::ThreadPasses::default(),
         },
         Kind::Bore => OpParams::Bore {
+            break_through: None,
             links: camcraft_app::links::Links::PLANAR,
             clearance_z: Height::fixed(25.0),
             retract_z: None,
@@ -165,6 +168,7 @@ fn verdict(model_hole: &[P2], kind: Kind, radius: f64) -> Vec<Warning> {
             holes,
         },
         Kind::Drill => OpParams::Drill {
+            break_through: None,
             clearance_z: Height::fixed(30.0),
             retract_z: None,
             top_z: Height::fixed(22.0),
@@ -205,6 +209,7 @@ fn ngon_at_cap(r: f64, over: bool) -> (Vec<P2>, f64) {
 /// declared hole of `minor` radius; the gouges are the solid law's.
 fn thread_solid(model_hole: &[P2], minor: f64) -> usize {
     let path = thread_mill(&ThreadParams {
+        through_run: None,
         holes: vec![ThreadHole { xy: Point2::new(0.0, 0.0), radius: minor, top_z: 20.0, floor_z: 10.0, stepped: false, through: false }],
         pitch: 1.0,
         tool_diameter: 6.0,

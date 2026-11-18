@@ -127,6 +127,10 @@ pub fn apply_hint(live: Option<&OpParams>, draft: &OpParams, unchanged: bool) ->
                 .to_owned(),
         );
     }
+    if let Some(why) = draft.named_refusal() {
+        let end = if why.ends_with('.') { "" } else { "." };
+        return Some(format!("Apply will be refused: {why}{end}"));
+    }
     if draft.is_sane() {
         return None;
     }

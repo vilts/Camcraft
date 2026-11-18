@@ -23,7 +23,7 @@ use camcraft_app::geometry::{cube, Point3, IDENTITY_Q};
 use camcraft_app::machine::validate::validate_text;
 use camcraft_app::machine::{self, check_document, kind, parse_mch, Kind, Machine};
 use camcraft_app::operation::{Height, OpParams, SrcRef};
-use camcraft_app::posting::{self, MACHINES};
+use camcraft_app::posting;
 use camcraft_app::schema::Location;
 use camcraft_app::stock::StockShape;
 use camcraft_app::tools::catalog;
@@ -123,10 +123,7 @@ fn an_unknown_kind_is_still_refused() {
 }
 
 fn shipped_1300pl() -> Machine {
-    let text = MACHINES
-        .iter()
-        .find(|(n, _)| *n == "Tormach 1300PL")
-        .map(|(_, t)| *t)
+    let text = camcraft_app::posting::builtin_machine_text("Tormach 1300PL")
         .expect("the 1300PL ships");
     parse_mch(text).expect("the 1300PL reads")
 }

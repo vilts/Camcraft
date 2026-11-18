@@ -15,7 +15,6 @@ mod common;
 use camcraft_app::cl::{CompSide, MoveKind};
 use camcraft_app::machine::parse_mch;
 use camcraft_app::post::{cnc, engine, machine};
-use camcraft_app::posting::MACHINES;
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -25,10 +24,7 @@ fn read(rel: &str) -> String {
 }
 
 fn carvera() -> Value {
-    let text = MACHINES
-        .iter()
-        .find(|(n, _)| *n == "Makera Carvera")
-        .map(|(_, t)| *t)
+    let text = camcraft_app::posting::builtin_machine_text("Makera Carvera")
         .expect("the Carvera ships");
     machine::mirror(&parse_mch(text).expect("the Carvera parses"))
 }

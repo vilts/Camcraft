@@ -1,6 +1,6 @@
 //! The setup's own Settings page, laid out like the WCS page (#1440, after
 //! #739): titled groups - which setup is active, where its stock comes
-//! from, how the part sits, its work offset, the workholding limit (a
+//! from, how the part sits, the workholding limit (a
 //! turning setup only) and the setup's two actions as equal buttons filling
 //! the pane's width - then one readout line at the foot. With no setups the
 //! page is the one "First setup" group. The groups only frame the pickers
@@ -25,7 +25,7 @@ use super::wcs_page::{cell_w, even_row};
 /// A button row's height (the WCS page's).
 const BUTTON_H: f32 = 24.0;
 /// The group titles, in page order (the structural twin reads them).
-pub(super) const GROUPS: [&str; 5] = ["Active setup", "Stock source", "Part orientation", "Work offset", "This setup"];
+pub(super) const GROUPS: [&str; 4] = ["Active setup", "Stock source", "Part orientation", "This setup"];
 /// The workholding group, drawn for a turning setup (or one that states a limit).
 pub(super) const HOLDING_GROUP: &str = "Workholding";
 /// The group of the page with no setups.
@@ -84,15 +84,12 @@ fn groups(ui: &mut Ui, state: &mut State, ctx: Option<&str>) {
         super::setup_orient_pick::section(ui, state, name);
         super::setup_relative_pick::picker(ui, state, name);
     });
-    group(ui, GROUPS[3], None, |ui| {
-        // Main's reading order: set the WCS from features, then name its slot.
-        super::wcs_pick_row::row(ui, state, name); // #701
-        super::setup_wcs_pick::picker(ui, state, name);
-    });
+    // #1648, #1926: the work offset picker and the "Set WCS from features"
+    // picks live on the WCS page; this page keeps the part orientation.
     if super::setup_workholding_row::shown(state, name) {
         group(ui, HOLDING_GROUP, None, |ui| super::setup_workholding_row::row(ui, state, name));
     }
-    group(ui, GROUPS[4], None, |ui| actions(ui, state, name));
+    group(ui, GROUPS[3], None, |ui| actions(ui, state, name));
     readout(ui, state, name);
 }
 

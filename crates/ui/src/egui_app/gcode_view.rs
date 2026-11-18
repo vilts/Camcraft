@@ -275,6 +275,8 @@ fn gcode_listing(
                             .sense(Sense::click())
                             .truncate(),
                     );
+                    code.ctx
+                        .accesskit_node_builder(code.id, |b| b.set_selected(at_cursor));
                     bg.clicked() || code.clicked()
                 },
             );

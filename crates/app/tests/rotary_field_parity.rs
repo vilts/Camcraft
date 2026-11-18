@@ -363,7 +363,7 @@ fn the_column_verdict_refuses_every_rotary_kind_by_name() {
 fn the_eye_refuses_the_laid_bars_rotated_stock_by_name() {
     let world = world_for(Kind::Parallel);
     let err = field_view(&world).expect_err("the rotated stock entity is refused");
-    assert!(err.contains("carries a rotation"), "{err}");
+    assert!(err.contains("lies on its side"), "{err}");
 }
 
 /// A playback slice turns from where the head stood (M13.1): cutting

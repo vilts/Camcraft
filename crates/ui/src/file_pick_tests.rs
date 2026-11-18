@@ -290,3 +290,43 @@ fn successful_disk_project_replaces_document_and_keeps_preferences() {
     assert_eq!(color_vision_of(&state.world), ColorVision::Deutan);
     std::fs::remove_dir_all(dir).expect("remove temp dir");
 }
+
+
+#[test]
+fn ui_step_reimport_saves_new_source_and_undo_redo_restores_each_source() {
+    use camcraft_app::fixture_library::{DatumChoice, entry_from_model};
+
+    fn saved_source(state: &State) -> String {
+        entry_from_model(&state.world, "jaw", DatumChoice::ModelOrigin, None)
+            .expect("library entry").step_source.expect("library keeps STEP")
+    }
+    fn import(state: &mut State, path: PathBuf) {
+        state.run(CommandKind::ImportFile(path));
+        while state.import_in_progress() {
+            state.drain_actions();
+            std::thread::yield_now();
+        }
+    }
+    let original = std::fs::read_to_string(testdata("box.step")).expect("STEP");
+    let updated = original.replace("ISO-10303-21;", "ISO-10303-21;\n/* updated vendor source */");
+    let dir = std::env::temp_dir().join(format!("camcraft-step-ui-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("directory");
+    let path = dir.join("jaw.step");
+    let mut state = State::new();
+    std::fs::write(&path, &original).expect("initial STEP");
+    import(&mut state, path.clone());
+    assert_eq!(saved_source(&state), original);
+    std::fs::write(&path, &updated).expect("new STEP");
+    import(&mut state, path);
+    assert_eq!(saved_source(&state), updated);
+    let saved = serde_json::to_string(&project::collect(&state.world)).expect("save project");
+    let loaded = camcraft_app::world::new_world();
+    project::open_noted(&loaded, &saved).expect("load project");
+    let entity = model::find_by_name(&loaded, "jaw").expect("loaded jaw");
+    assert_eq!(camcraft_app::step_source::of(&loaded, &entity).as_deref(), Some(updated.as_str()));
+    state.run(CommandKind::Undo);
+    assert_eq!(saved_source(&state), original);
+    state.run(CommandKind::Redo);
+    assert_eq!(saved_source(&state), updated);
+    std::fs::remove_dir_all(dir).expect("cleanup");
+}

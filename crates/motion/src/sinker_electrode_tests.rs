@@ -7,7 +7,7 @@
 
 use crate::geo2d::Point2;
 use crate::geometry::{Point3, Triangle};
-use crate::sinker_cavity::{cavity_of, Cavity, PickedFace};
+use crate::sinker_cavity::{cavity_of, welded_wall, Cavity, PickedFace};
 use crate::sinker_electrode::{derive, rect_of, standing_in, ElectrodeSpec};
 
 pub(crate) fn p(x: f64, y: f64, z: f64) -> Point3 {
@@ -286,4 +286,29 @@ fn a_body_electrodes_column_is_the_cavitys_outline_not_its_bounds() {
     let mut beside = own.clone();
     beside.push(t(p(14.0, 7.0, 0.0), p(14.0, 11.0, 0.0), p(14.0, 11.0, 5.0)));
     assert_eq!(standing_in(&e, &beside), Ok(None));
+}
+
+#[test]
+fn a_welded_wall_is_read_strip_by_strip_and_a_leaning_strip_is_refused_by_name() {
+    // #1808: wall 0 of a 20 x 12 cavity picked as one welded face of two
+    // vertical strips reads as the planar wall it spells.
+    let mut faces = rect_cavity((0.0, 0.0), (20.0, 12.0), 0.0, 6.0);
+    let strips = vec![wall("strip a", (0.0, 0.0), (8.0, 0.0), 0.0, 6.0), wall("strip b", (8.0, 0.0), (20.0, 0.0), 0.0, 6.0)];
+    faces.remove(1);
+    faces.extend(welded_wall("patch 0x1", strips.clone()).expect("two vertical strips"));
+    let c = cavity_of(&faces).expect("one cavity");
+    let planar = cavity_of(&rect_cavity((0.0, 0.0), (20.0, 12.0), 0.0, 6.0)).expect("the planar read");
+    assert_eq!(c, Cavity { walls: 5, ..planar });
+    // A strip drafted 0.5 mm out over its 6 mm rise leans: the welded
+    // face is refused by its own name and the strip's.
+    let n = 1.0_f64.hypot(0.5 / 6.0);
+    let drafted = face("strip b", p(0.0, 1.0 / n, 0.5 / 6.0 / n), vec![p(8.0, 0.0, 0.0), p(20.0, 0.0, 0.0), p(20.0, -0.5, 6.0), p(8.0, -0.5, 6.0)]);
+    let err = welded_wall("patch 0x1", vec![strips[0].clone(), drafted]).expect_err("a leaning strip").to_string();
+    assert!(err.contains("patch 0x1") && err.contains("strip b") && err.contains("leans 4.764 degrees"), "{err}");
+    // A level strip (a blend into the floor) and an empty weld, too.
+    let level = face("strip c", p(0.0, 0.0, 1.0), vec![p(0.0, 0.0, 0.0), p(1.0, 0.0, 0.0), p(1.0, 1.0, 0.0)]);
+    let err = welded_wall("patch 0x2", vec![level]).expect_err("a level strip").to_string();
+    assert!(err.contains("patch 0x2") && err.contains("strip c") && err.contains("leans 90.000 degrees"), "{err}");
+    let err = welded_wall("patch 0x3", Vec::new()).expect_err("no strips").to_string();
+    assert!(err.contains("patch 0x3") && err.contains("no strips"), "{err}");
 }

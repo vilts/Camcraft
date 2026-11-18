@@ -10,7 +10,9 @@ mod polyline;
 mod reader;
 mod types;
 mod units;
+mod writer;
 
 pub use reader::{parse, parse_with_limits};
 pub use types::*;
 pub use units::{Unit, Units};
+pub use writer::{ExportEntity, to_text};

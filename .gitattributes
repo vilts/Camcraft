@@ -3,6 +3,8 @@
 crates/app/tests/golden/** text eol=lf
 # Tester-kit programs are pinned byte for byte by their tests, like the goldens.
 docs/tester-kits/**/*.nc text eol=lf
+# The first 4-axis part's program is pinned the same way (#1904).
+examples/first-4axis-part.nc text eol=lf
 
 # Shell scripts run on macOS / Linux: a CR would break the shebang.
 *.sh text eol=lf

@@ -32,6 +32,7 @@ fn roundtrip(params: OpParams, key: Option<&str>) -> OpParams {
 #[test]
 fn links_round_trip_and_the_defaults_write_no_key() {
     let pocket2d = |links: Links| OpParams::Pocket {
+        rest: None,
         blend_radius: None,
         stepover: 3.0,
         stock_to_leave: 0.0,
@@ -51,7 +52,8 @@ fn links_round_trip_and_the_defaults_write_no_key() {
         tilt: None,
         links,
     };
-    let _ = roundtrip(pocket2d(Links::PLANAR), None);
+    let back = roundtrip(pocket2d(Links::PLANAR), None);
+    assert!(matches!(back, OpParams::Pocket { rest: None, .. }), "default pocket stays non-rest after loading");
     let picked = Links {
         transition: Some(Entry3D::Helix),
         helix_pitch: 0.75,
@@ -62,6 +64,7 @@ fn links_round_trip_and_the_defaults_write_no_key() {
     };
     let back = roundtrip(pocket2d(picked), Some("\"level\": \"keep_down\""));
     assert_eq!(back.links(), Some(&picked));
+    assert!(matches!(back, OpParams::Pocket { rest: None, .. }), "picked links preserve the non-rest pocket");
     // The 3-D ladder's default is its own (pass links keep down): no key.
     let _ = roundtrip(pocket_op(Entry3D::Plunge, Links::ROUGH3D), None);
     let p3 = Links { pass: Link::Retract, ..Links::ROUGH3D };

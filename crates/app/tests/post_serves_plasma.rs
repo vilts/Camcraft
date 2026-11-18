@@ -64,7 +64,7 @@ fn plate_world() -> flecs_ecs::prelude::World {
 }
 
 fn shipped(name: &str) -> &'static str {
-    posting::BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, t)| *t).expect("ships")
+    posting::builtin_post_text(name).expect("ships")
 }
 
 #[test]

@@ -103,3 +103,59 @@ fn align_wcs_321_places_g54_from_the_face_and_edge_picks() {
     harness.run_steps(2);
     assert!(!near(g54(&harness), p), "undo moves G54 back");
 }
+
+#[test]
+fn align_wcs_321_disables_button_for_tilted_side_face_on_mill() {
+    use camcraft_app::geometry::feature;
+    use camcraft_app::operation::{FeatureSel, GeoSel};
+    use egui_kittest::kittest::NodeT;
+
+    let mut harness = shell_harness();
+    harness.run();
+    let (side_face, top_face, side_edge) = {
+        let st = &harness.state().state;
+        let block = model::find_by_name(&st.world, "Block").expect("seed has Block");
+        let f = model::features_of(&st.world, &block).expect("features");
+        let side = f.faces.iter().find(|fa| fa.normal[0] > 0.99).expect("side face").id;
+        let top = f.faces.iter().find(|fa| fa.normal[2] > 0.99 && (fa.offset - 30.0).abs() < 1e-9).expect("top face").id;
+        let eq = |a: [f64; 3], b: [f64; 3]| (a[0] - b[0]).abs() < 1e-6 && (a[1] - b[1]).abs() < 1e-6 && (a[2] - b[2]).abs() < 1e-6;
+        let edge = feature::chains(&f)
+            .into_iter()
+            .find(|c| {
+                let p = feature::chain_points(&f, c);
+                p.len() == 2 && ((eq(p[0], [60.0, 0.0, 30.0]) && eq(p[1], [60.0, 60.0, 30.0]))
+                    || (eq(p[0], [60.0, 60.0, 30.0]) && eq(p[1], [60.0, 0.0, 30.0])))
+            })
+            .expect("side top edge")
+            .id;
+        (
+            GeoSel { entity: "Block".into(), feature: FeatureSel::Face(side) },
+            GeoSel { entity: "Block".into(), feature: FeatureSel::Face(top) },
+            GeoSel { entity: "Block".into(), feature: FeatureSel::Chain(edge) },
+        )
+    };
+    harness.state_mut().state.op_ui.geo = vec![side_face, side_edge.clone()];
+    harness.run_steps(2);
+    let btn = harness.get_by_label("Align WCS (3-2-1)");
+    assert!(
+        btn.accesskit_node().is_disabled(),
+        "tilted side face on Mill must disable Align WCS (3-2-1)"
+    );
+    let center = btn.rect().center();
+    harness.ctx.style_mut_of(harness.ctx.theme(), |s| s.interaction.tooltip_delay = 0.0);
+    harness.hover_at(center);
+    harness.run_steps(2);
+    let painted = structural::painted(&harness);
+    assert!(
+        painted.iter().any(|(t, _)| t.contains("Part alignment") && t.contains("3-2-1 WCS Z would tilt")),
+        "disabled hover tooltip must name Part alignment and tilt, got: {:?}",
+        painted.iter().map(|(t, _)| t.as_str()).collect::<Vec<_>>()
+    );
+
+    harness.state_mut().state.op_ui.geo = vec![top_face, side_edge];
+    harness.run_steps(2);
+    assert!(
+        !harness.get_by_label("Align WCS (3-2-1)").accesskit_node().is_disabled(),
+        "flat top face + edge on Mill must enable Align WCS (3-2-1)"
+    );
+}

@@ -98,7 +98,9 @@ pub fn check_row(ui: &mut Ui, label: &str, v: &mut bool) -> Response {
             .inner;
         remember(ui, &lab);
         let hit = ui.interact(lab.rect, lab.id.with("toggle"), egui::Sense::click());
-        let mut r = ui.with_layout(Layout::right_to_left(Align::Center), |ui| ui.checkbox(v, "")).inner;
+        let mut r = ui.with_layout(Layout::right_to_left(Align::Center), |ui| ui.checkbox(v, "")).inner.labelled_by(lab.id);
+        // The blank checkbox's empty name must not hide its associated caption.
+        r.ctx.accesskit_node_builder(r.id, |node| node.clear_label());
         if hit.clicked() {
             *v = !*v;
             r.mark_changed();
@@ -221,14 +223,28 @@ pub fn auto_value(
 ) -> bool {
     let before = *v;
     prop_row(ui, label, |ui| {
-        let mut auto = *v == 0.0;
-        if ui.checkbox(&mut auto, toggle).changed() {
+        // The model's 0 is the Auto sentinel, and the keys "0", "0." and
+        // "0.5" all read as 0 on the way to a value (#2178). While the
+        // user types in the edit field, a 0 therefore stays manual: the
+        // hold lasts until the field loses focus.
+        let hold = ui.make_persistent_id(("camcraft.auto_value_hold", label));
+        let held: bool = ui.data(|d| d.get_temp(hold)).unwrap_or(false);
+        let mut auto = *v == 0.0 && !held;
+        let toggle_resp = ui.checkbox(&mut auto, toggle);
+        if toggle_resp.changed() {
             *v = if auto { 0.0 } else { seed };
+            ui.data_mut(|d| d.remove_temp::<bool>(hold));
         }
         if auto {
             ui.add_enabled(false, Label::new(RichText::new(derived).weak()));
         } else {
             edit(ui, v);
+            let editing = ui.memory(|m| m.focused()).is_some_and(|f| f != toggle_resp.id);
+            if editing {
+                ui.data_mut(|d| d.insert_temp(hold, true));
+            } else {
+                ui.data_mut(|d| d.remove_temp::<bool>(hold));
+            }
         }
     });
     *v != before

@@ -8,8 +8,8 @@ use std::time::Duration;
 
 /// A frame slower than this is reported (10 fps; vsync frames are 7-17 ms).
 pub const BUDGET: Duration = Duration::from_millis(100);
-/// After one report, stay quiet this long so a stuck loop cannot flood.
-pub const QUIET: Duration = Duration::from_secs(5);
+/// After one report, stay quiet this long (the 10 s of the frame-rate line, #2262).
+pub const QUIET: Duration = super::frame_rate::LOG_EVERY;
 
 /// Per-frame phase stopwatch plus the rate-limited verdict.
 pub struct FrameWatch {

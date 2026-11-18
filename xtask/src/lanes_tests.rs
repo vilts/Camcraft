@@ -14,56 +14,98 @@ fn release_prebuilds_both_profiles_before_running_suites() {
     assert!(second.args.iter().any(|a| a == "--release"));
 }
 
-#[test]
-fn release_waves_mix_profiles_with_a_four_lane_bound_and_no_omissions() {
-    let mut steps = Vec::new();
-    for i in 0..7 {
-        steps.push(Step::new(format!("debug {i}"), &["test", "-p", "camcraft-motion"], ""));
-        steps.push(Step::new(format!("release {i}"), &["test", "--release", "-p", "camcraft-motion"], ""));
-    }
-    let waves = lanes::waves(&steps, 4);
-    assert_eq!(waves[0].len(), 4, "independent suites must run concurrently");
-    assert!(waves.iter().all(|wave| !wave.is_empty() && wave.len() <= 4));
-    assert!(waves.iter().any(|wave| {
-        wave.iter().any(|&i| steps[i].args.iter().any(|a| a == "--release"))
-            && wave.iter().any(|&i| !steps[i].args.iter().any(|a| a == "--release"))
-    }), "debug and release suites must share a wave");
-    let mut seen: Vec<_> = waves.into_iter().flatten().collect();
-    seen.sort_unstable();
-    assert_eq!(seen, (0..steps.len()).collect::<Vec<_>>());
+fn none() -> std::collections::HashMap<String, u64> {
+    std::collections::HashMap::new()
 }
 
 #[test]
-fn release_builds_and_watchdog_or_window_suites_run_alone() {
+fn release_queue_holds_every_ordinary_suite_of_both_profiles_and_loses_none() {
+    let mut steps = Vec::new();
+    for i in 0..7 {
+        steps.push(Step::new(format!("debug {i}"), &["test", "-p", "camcraft-motion", "--test", "a"], ""));
+        steps.push(Step::new(format!("release {i}"), &["test", "--release", "-p", "camcraft-motion", "--test", "a"], ""));
+    }
+    let s = lanes::schedule(&steps, &none());
+    assert!(s.builds.is_empty() && s.alone.is_empty(), "{s:?}");
+    assert_eq!(s.queue, (0..steps.len()).collect::<Vec<_>>(), "no history keeps plan order");
+}
+
+#[test]
+fn release_builds_ui_clippy_and_isolated_targets_run_alone() {
     let steps = vec![
-        Step::new("ordinary", &["test", "-p", "camcraft-motion"], ""),
+        Step::new("ordinary", &["test", "-p", "camcraft-motion", "--lib"], ""),
         Step::new("debug build", &["test", "--no-run"], ""),
-        Step::new("ui", &["test", "-p", "camcraft-ui"], ""),
-        Step::new("app", &["test", "-p", "camcraft-app"], ""),
-        Step::new("kernel", &["test", "-p", "camcraft-kernel"], ""),
+        Step::new("ui", &["test", "-p", "camcraft-ui", "--lib"], ""),
+        Step::new("app whole crate", &["test", "-p", "camcraft-app"], ""),
+        Step::new("kernel whole crate", &["test", "-p", "camcraft-kernel"], ""),
         Step::new("clippy", &["clippy"], ""),
         Step::new("release build", &["test", "--release", "--no-run"], ""),
         Step::new("ui cwd", &["test"], "ui"),
+        Step::new("app watchdog", &["test", "-p", "camcraft-app", "--test", "import_step_guard", "--", "--test-threads=6"], ""),
+        Step::new("app lib", &["test", "--release", "-p", "camcraft-app", "--lib", "--", "--ignored"], ""),
+        Step::new("kernel watchdog", &["test", "-p", "camcraft-kernel", "--test", "step_import"], ""),
+        Step::new("app ordinary", &["test", "-p", "camcraft-app", "--test", "cmds", "--", "--test-threads=6"], ""),
+        Step::new("app doc", &["test", "-p", "camcraft-app", "--doc"], ""),
+        Step::new("kernel ordinary", &["test", "--release", "-p", "camcraft-kernel", "--test", "smb_roundtrip"], ""),
     ];
-    let waves = lanes::waves(&steps, 4);
-    assert_eq!(&waves[..2], &[vec![1], vec![6]], "both builds precede every run");
-    for &i in &[1, 2, 3, 4, 5, 6, 7] {
-        assert!(waves.contains(&vec![i]), "{} must run alone", steps[i].name);
-    }
-    let mut seen: Vec<_> = waves.into_iter().flatten().collect();
-    seen.sort_unstable();
-    assert_eq!(seen, (0..steps.len()).collect::<Vec<_>>());
+    let s = lanes::schedule(&steps, &none());
+    assert_eq!(s.builds, vec![1, 6], "both builds come first, in plan order");
+    assert_eq!(s.alone, vec![2, 3, 4, 5, 7, 8, 9, 10]);
+    assert_eq!(s.queue, vec![0, 11, 12, 13], "ordinary app and kernel targets join the lanes");
 }
 
 #[test]
-fn selected_release_without_builds_still_keeps_watchdogs_alone() {
-    let steps = vec![
-        Step::new("ordinary", &["test", "-p", "camcraft-motion"], ""),
-        Step::new("selected app", &["test", "--release", "-p", "camcraft-app"], ""),
-        Step::new("selected ui", &["test"], "ui"),
-    ];
-    assert_eq!(lanes::waves(&steps, 4), vec![vec![0], vec![1], vec![2]]);
-    assert!(lanes::waves(&[], 4).is_empty());
+fn every_isolated_entry_names_a_real_target() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).parent().expect("workspace");
+    for key in lanes::ISOLATED {
+        let (dir, target) = key.split_once(':').expect("crate-dir:target");
+        assert!(matches!(dir, "app" | "kernel"), "{key}: only app and kernel suites are listed");
+        if target != "lib" {
+            let file = root.join("crates").join(dir).join("tests").join(format!("{target}.rs"));
+            assert!(file.is_file(), "{key}: no {}", file.display());
+        }
+    }
+}
+
+#[test]
+fn target_keys_name_one_target_of_one_crate() {
+    let k = |args: &[&str]| lanes::target_key(&Step::new("s", args, ""));
+    assert_eq!(k(&["test", "-p", "camcraft-app", "--test", "x", "--", "--ignored"]).as_deref(), Some("app:x"));
+    assert_eq!(k(&["test", "-p", "camcraft-kernel", "--lib"]).as_deref(), Some("kernel:lib"));
+    assert_eq!(k(&["test", "-p", "camcraft-app"]), None, "a whole crate is not one target");
+    assert_eq!(k(&["test", "-p", "camcraft-app", "-p", "camcraft-cl", "--lib"]), None);
+    assert_eq!(k(&["run", "--", "--test", "x", "-p", "camcraft-app"]), None, "child args are not cargo's");
+}
+
+#[test]
+fn queue_runs_longest_first_and_unknown_steps_early() {
+    let steps: Vec<Step> = ["short", "long", "new", "mid"]
+        .iter()
+        .map(|n| Step::new(*n, &["test", "-p", "camcraft-motion", "--test", n], ""))
+        .collect();
+    let hist = lanes::parse_timings("3\tshort\n900\tlong\n40\tmid\nnot a row\nx\tbad secs\n");
+    assert_eq!(hist.len(), 3, "unreadable rows are skipped: {hist:?}");
+    assert_eq!(lanes::schedule(&steps, &hist).queue, vec![1, 2, 3, 0], "a step with no history ranks with the longest");
+    let text = lanes::format_timings([("a b", 5), ("c", 0)]);
+    assert_eq!(lanes::parse_timings(&text).get("a b"), Some(&5));
+}
+
+#[test]
+fn history_reads_the_newest_release_timings_only() {
+    use std::fs;
+    let root = std::env::temp_dir().join(format!("xtask-history-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    assert!(lanes::history(&root).0.is_empty(), "no gate-logs: plan order");
+    for (dir, body) in [("release-20261101-000000", "1\told\n"), ("release-20261102-000000", "2\tnew\n"), ("batch-20261103-000000", "3\tbatch\n")] {
+        fs::create_dir_all(root.join("gate-logs").join(dir)).expect("log dir");
+        fs::write(root.join("gate-logs").join(dir).join(lanes::TIMINGS), body).expect("timings");
+    }
+    fs::create_dir_all(root.join("gate-logs/release-20261104-000000")).expect("a run with no timings yet");
+    let (h, from) = lanes::history(&root);
+    assert_eq!(h.get("new"), Some(&2));
+    assert!(!h.contains_key("old") && !h.contains_key("batch"), "{h:?}");
+    assert!(from.is_some_and(|f| f.to_string_lossy().contains("release-20261102")));
+    fs::remove_dir_all(root).expect("remove fixture");
 }
 
 #[test]

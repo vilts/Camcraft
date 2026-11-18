@@ -121,6 +121,7 @@ fn hole(x: f64, y: f64, radius: f64, floor_z: f64, through: bool) -> Hole {
 
 fn bore(holes: Vec<Hole>) -> OpParams {
     OpParams::Bore {
+        break_through: None,
         links: camcraft_app::links::Links::PLANAR,
         clearance_z: Height::fixed(25.0),
         retract_z: None,
@@ -138,6 +139,7 @@ fn bore(holes: Vec<Hole>) -> OpParams {
 
 fn thread(holes: Vec<Hole>) -> OpParams {
     OpParams::Thread {
+        break_through: None,
         clearance_z: Height::fixed(25.0),
         retract_z: None,
         top_z: Height::fixed(20.0),
@@ -197,14 +199,14 @@ fn bore_rides_the_cutter_center_law() {
         });
         assert!(inside, "a boring move outside every cutter-center disk: {m:?}");
     }
-    // The ladder speaks on Z: `cut_levels`' law restated - the same
-    // rungs the pocket walks from the stock top, so the boring ride
-    // starts AT the hole's entry (its first ring squares the mouth)
-    // and closes on each hole's own floor.
+    // The ladder speaks on Z: `cut_levels`' law - the same rungs the
+    // pocket walks from the stock top, the first one stepdown under the
+    // hole's entry (#2004: a ring AT the mouth cuts air), closing on
+    // each hole's own floor.
     let mut zs: Vec<_> = feeds.iter().map(|m| m.to.z).collect();
     zs.sort_by(|a, b| b.total_cmp(a));
     zs.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
-    assert_eq!(zs, vec![20.0, 15.0, 10.0, 5.0], "rungs of 5, entry plane to floor");
+    assert_eq!(zs, vec![15.0, 10.0, 5.0], "rungs of 5 under the entry plane, to the floor");
     // Two holes, so the ladder runs twice - and the ride between them
     // is never a feed through air at depth: rapids link the islands.
     let hops = path.moves.iter().filter(|m| m.kind == MoveKind::Rapid).count();
@@ -252,7 +254,7 @@ fn thread_helices_are_timed_by_the_tools_pitch() {
     let drill = Tool { diameter: 20.0, shank_d: 20.0, flute_len: 30.0, ..catalog_tool("DR-0600") };
     let OpParams::Thread { clearance_z, top_z, .. } = thread(vec![]) else { unreachable!() };
     let holes_dr = vec![hole(15.0, 15.0, big, 0.0, false)];
-    let dr = OpParams::Drill { clearance_z, retract_z: None, top_z, bottom_z: None, cycle: camcraft_app::drilling::CycleChoice::Drill,
+    let dr = OpParams::Drill { break_through: None, clearance_z, retract_z: None, top_z, bottom_z: None, cycle: camcraft_app::drilling::CycleChoice::Drill,
         peck: 0.0, dwell: 0.0, feed: 100.0, plunge_feed: 80.0, holes: holes_dr, cross: vec![] };
     let (_w, _h, path) = job_tool("THD", thread_mill(6.0, pitch), "TM-0600", thread(holes.clone()), &[("DR", ("DR-20", Some(drill)), dr)]);
     assert!(path.all_finite());

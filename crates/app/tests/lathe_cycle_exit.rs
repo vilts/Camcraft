@@ -146,6 +146,7 @@ fn both_lathe_posts_leave_a_face_drilled_hole_at_the_streams_exit() {
     let (world, mut history) = world_with(bar, stock, -20.0, &["DR-0400"], false);
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius: 2.05, entry_z: 20.0, floor_z: 10.0, through: false, stepped: false };
     let params = OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(20.0),

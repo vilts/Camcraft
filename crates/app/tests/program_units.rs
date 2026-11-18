@@ -299,11 +299,8 @@ fn rotary_angle_words_are_degrees_in_an_inch_program() {
 fn grbl_family_posts_write_the_mm_program_in_inches() {
     for (stem, machine) in [("grblhal", "grblHAL 3-axis"), ("tinyg", "TinyG 3-axis")] {
         let cps = read(&format!("assets/posts/{stem}.cps"));
-        let text = camcraft_app::posting::MACHINES
-            .iter()
-            .find(|(n, _)| *n == machine)
-            .map(|(_, t)| *t)
-            .unwrap_or_else(|| panic!("the library ships {machine}"));
+        let text = camcraft_app::posting::builtin_machine_text(machine)
+            .unwrap_or_else(|why| panic!("the library ships {machine}: {why}"));
         let mch = camcraft_app::post::machine::mirror(&camcraft_app::machine::parse_mch(text).unwrap_or_else(|e| panic!("{machine}: {e}")));
         let mut posted = 0;
         for g in GOLDENS {

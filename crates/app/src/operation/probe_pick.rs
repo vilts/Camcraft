@@ -183,7 +183,7 @@ pub fn probe_seed(world: &World, sel: &GeoSel) -> Result<ProbeSeed, String> {
     match sel.feature {
         FeatureSel::Face(id) => face_seed(&cx, id),
         FeatureSel::Chain(id) => {
-            let chain = feature::resolve_chain(&cx.features, id)
+            let chain = crate::model::resolve_chain(&cx.features, id)
                 .ok_or("the picked edge is no longer in the model - re-pick it")?;
             if chain.closed {
                 super::probe_pick_round::rim_seed(&cx, &chain)

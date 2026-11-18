@@ -13,6 +13,7 @@ const R: f64 = 5.0;
 
 fn params(external: bool, passes: ThreadPasses) -> ThreadParams {
     ThreadParams {
+        through_run: None,
         holes: vec![ThreadHole { xy: Point2::new(10.0, 20.0), radius: R, top_z: 0.0, floor_z: -6.0, stepped: false, through: false }],
         pitch: 1.5,
         tool_diameter: 6.0,

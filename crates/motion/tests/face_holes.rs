@@ -42,6 +42,7 @@ fn p(holes: FaceHoles) -> FaceParams {
         climb: true,
         blend_turns: false,
         holes,
+        stock_top: None,
     }
 }
 
@@ -167,9 +168,11 @@ fn staged_facing_lifts_over_the_hole_at_every_level() {
     staged.top_z = Some(0.0);
     staged.stepdown = Some(1.0);
     let t = face(&region, &staged).expect("staged");
-    // Three levels (0, -1, -2), each with the single level's plunges.
-    assert_eq!(plunges(&t), 3 * plunges(&single));
-    for z in [0.0, -1.0, -2.0] {
+    // Two levels (-1, -2; #2004: no air level at Top Z 0), each with
+    // the single level's plunges.
+    assert_eq!(plunges(&t), 2 * plunges(&single));
+    assert!(!t.moves.iter().any(|m| m.kind == MoveKind::Feed && m.to.z == 0.0), "no air level at Top Z");
+    for z in [-1.0, -2.0] {
         assert!(t.moves.iter().any(|m| m.kind == MoveKind::Feed && m.to.z == z), "level {z}");
     }
     for m in feeds(&t) {

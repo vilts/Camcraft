@@ -23,13 +23,18 @@ use super::fillet::Legal;
 use super::lead_ext::{axis_reseat, extend_leads};
 use super::lead_fit::reseat;
 
+/// Squared Euclidean distance between `a` and `b`.
+fn dist2(a: Point2, b: Point2) -> f64 {
+    (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y)
+}
+
 /// The closest point of segment `a`-`b` to `q`, and its squared distance.
 fn foot(a: Point2, b: Point2, q: Point2) -> (Point2, f64) {
     let (dx, dy) = (b.x - a.x, b.y - a.y);
     let dd = dx * dx + dy * dy;
     let t = if dd > 0.0 { (((q.x - a.x) * dx + (q.y - a.y) * dy) / dd).clamp(0.0, 1.0) } else { 0.0 };
     let f = Point2::new(a.x + dx * t, a.y + dy * t);
-    (f, (q.x - f.x) * (q.x - f.x) + (q.y - f.y) * (q.y - f.y))
+    (f, dist2(q, f))
 }
 
 /// The closest point to `q` on the closed ring `pts` (its last vertex
@@ -57,26 +62,44 @@ fn reach(p: &ContourParams) -> f64 {
 
 /// Which ring (index into `loops`) takes the user's start point, with the
 /// pick; `Ok(None)` when no start point is set. Refused by name: a pick
-/// farther than [`reach`] from every ring, and the cases this first slice
-/// does not certify - tabs (their windows are measured from the automatic
-/// start) and compensation in the control (its seam is the comp law's).
+/// farther than [`reach`] from every ring, and compensation in the
+/// control (its seam is the comp law's), which this slice does not
+/// certify. Tabs take the pick (#1473): [`seat`] starts the picked ring
+/// at the pick on every level, tabbed ones too, so the tab windows are
+/// measured from the picked start and the first window begins there.
 pub(super) fn pick_ring(loops: &[&Loop], p: &ContourParams) -> Result<Option<(usize, Point2)>, GenError> {
     let ap = &p.links.approach;
     let Some(q) = ap.start_point else {
         return Ok(None);
     };
     let at = format!("start point ({:.3}, {:.3})", q.x, q.y);
-    if p.tab_count > 0 {
-        return Err(GenError::Invalid(format!(
-            "{at}: a picked start is not taken with tabs yet - clear the start point or the tabs"
-        )));
-    }
     if ap.compensation.in_control() {
         return Err(GenError::Invalid(format!(
             "{at}: a picked start is not taken with {} compensation yet - its seam is the \
              compensation law's; clear the start point or compensate in the computer",
             ap.compensation.label()
         )));
+    }
+    // The part-boundary room law does not include the standing tabs.
+    // Only normal departures are certified here; tangential motion can
+    // cut the tab ending at the pick, including an extension with no lead.
+    if p.tab_count > 0 {
+        let normal = |lead| matches!(lead, Lead::None | Lead::Perpendicular { .. });
+        let unsafe_part = if !normal(p.lead) {
+            Some("lead-in")
+        } else if !normal(p.lead_out_shape()) {
+            Some("lead-out")
+        } else if ap.ext_in > 0.0 || ap.ext_out > 0.0 {
+            Some("extension")
+        } else {
+            None
+        };
+        if let Some(part) = unsafe_part {
+            return Err(GenError::Invalid(format!(
+                "{at}: the {part} is not certified with standing tabs at a picked start - \
+                 use no lead or perpendicular leads without extensions, or clear the start point"
+            )));
+        }
     }
     nearest_ring(loops, q, &at, "start", p).map(Some)
 }
@@ -144,12 +167,13 @@ pub(super) fn pick_exit(loops: &[&Loop], p: &ContourParams) -> Result<Option<(us
 pub(super) type Window = (Vec<Point2>, Vec<Seg>, Point2, Vec<Seg>, Vec<Seg>);
 
 /// The closed ring `poly` (from its seam back to it) carried on along
-/// its own polyline to the projection of the exit pick `q`, the walk
-/// extended by the same chords - the cutter-centre ring itself, so no
-/// new crossing - and the leads replanned for the new end. Refused by
-/// name, never moved: a lead-out asked for that does not fit at the
-/// exit, a lead-in the start had that the longer walk loses, and a
-/// lead-out that crosses the lead-in.
+/// its fitted walk `walk` to the projection of the exit pick `q`,
+/// re-tracing the walk's own lines and arcs (splitting a segment when
+/// the exit lands inside it so both laps share identical moves), and
+/// the leads replanned for the new end. Refused by name, never moved: a
+/// lead-out asked for that does not fit at the exit, a lead-in the
+/// start had that the longer walk loses, and a lead-out that crosses
+/// the lead-in.
 pub(super) fn exit_at(
     win: Window,
     q: Point2,
@@ -158,18 +182,11 @@ pub(super) fn exit_at(
     notes: &mut Vec<String>,
 ) -> Result<Window, GenError> {
     let (poly, walk, _, lead, _) = &win;
-    let Some((i, f)) = nearest_on_run(poly, q) else {
+    let Some(hit) = poly.first().and_then(|&start| nearest_on_walk(walk, start, q)) else {
         return Ok(win);
     };
-    let mut run: Vec<Point2> = poly.iter().skip(1).take(i).copied().collect();
-    if run.last().copied().unwrap_or(poly[0]) != f {
-        run.push(f);
-    }
-    let (mut rpoly, mut rwalk) = (poly.clone(), walk.clone());
-    if !run.is_empty() {
-        rpoly.extend_from_slice(&run);
-        rwalk.push(Seg::Line(run));
-    }
+    let f = hit.f;
+    let (rpoly, rwalk) = extend_walk(poly, walk, hit);
     let (en, li, lo) = seam_leads(&rwalk, &rpoly, p, legal, notes);
     let (en, li, lo) = extend_leads(en, li, lo, &rwalk, &rpoly, p, legal, notes);
     let at = format!("exit point ({:.3}, {:.3})", f.x, f.y);
@@ -193,18 +210,118 @@ pub(super) fn exit_at(
     Ok((rpoly, rwalk, en, li, lo))
 }
 
-/// The closest point to `q` on the open polyline `pts`: `(segment
-/// index, point)`, the first segment winning a tie (so an exit on the
-/// seam ends at the seam, adding nothing).
-fn nearest_on_run(pts: &[Point2], q: Point2) -> Option<(usize, Point2)> {
-    let mut best: Option<(usize, Point2, f64)> = None;
-    for (i, w) in pts.windows(2).enumerate() {
-        let (f, d2) = foot(w[0], w[1], q);
-        if d2.is_finite() && best.is_none_or(|b| d2 < b.2) {
-            best = Some((i, f, d2));
+/// Endpoint snap radius (mm): prevents sub-lattice slivers on split segments.
+const SNAP_EPS: f64 = 1e-5;
+
+#[derive(Clone, Copy)]
+enum HitKind { Start, End, Interior }
+
+#[derive(Clone, Copy)]
+struct WalkHit { seg_idx: usize, sub_idx: usize, f: Point2, d2: f64, kind: HitKind }
+
+fn snap_end(a: Point2, b: Point2, f: Point2) -> (Point2, HitKind) {
+    if dist2(f, a) <= SNAP_EPS * SNAP_EPS {
+        (a, HitKind::Start)
+    } else if dist2(f, b) <= SNAP_EPS * SNAP_EPS {
+        (b, HitKind::End)
+    } else {
+        (f, HitKind::Interior)
+    }
+}
+
+/// Closest point to `q` on the circular arc from `a` to `b` about `center`.
+fn arc_foot(a: Point2, b: Point2, center: Point2, ccw: bool, q: Point2) -> (Point2, f64, HitKind) {
+    let (ra, rb) = (dist2(a, center).sqrt(), dist2(b, center).sqrt());
+    let (a0, a1) = ((a.y - center.y).atan2(a.x - center.x), (b.y - center.y).atan2(b.x - center.x));
+    let sweep = if ccw { a1 - a0 } else { a0 - a1 }.rem_euclid(std::f64::consts::TAU);
+    if !(ra.is_finite() && rb.is_finite() && ra > 0.0 && rb > 0.0 && sweep.is_finite() && sweep > 0.0) {
+        let (f, kind) = snap_end(a, b, foot(a, b, q).0);
+        return (f, dist2(q, f), kind);
+    }
+    let (qx, qy) = (q.x - center.x, q.y - center.y);
+    let end = || if dist2(q, a) <= dist2(q, b) { (a, HitKind::Start) } else { (b, HitKind::End) };
+    let (f, kind) = if qx == 0.0 && qy == 0.0 {
+        end()
+    } else {
+        let aq = qy.atan2(qx);
+        let ang = if ccw { aq - a0 } else { a0 - aq }.rem_euclid(std::f64::consts::TAU);
+        if ang <= sweep {
+            let r = ra + (rb - ra) * (ang / sweep);
+            snap_end(a, b, Point2::new(center.x + r * aq.cos(), center.y + r * aq.sin()))
+        } else {
+            end()
+        }
+    };
+    (f, dist2(q, f), kind)
+}
+
+/// Closest point to `q` on the fitted walk starting at `start` (ties favour start).
+fn nearest_on_walk(walk: &[Seg], start: Point2, q: Point2) -> Option<WalkHit> {
+    let (mut at, mut best): (Point2, Option<WalkHit>) = (start, None);
+    let mut consider = |hit: WalkHit| {
+        if hit.d2.is_finite() && best.is_none_or(|b| hit.d2 < b.d2) { best = Some(hit); }
+    };
+    for (seg_idx, seg) in walk.iter().enumerate() {
+        match seg {
+            Seg::Line(qs) => {
+                for (sub_idx, &to) in qs.iter().enumerate() {
+                    if to == at { continue; }
+                    let (f, kind) = snap_end(at, to, foot(at, to, q).0);
+                    consider(WalkHit { seg_idx, sub_idx, f, d2: dist2(q, f), kind });
+                    at = to;
+                }
+            }
+            Seg::Arc { center, ccw, to } => {
+                let (f, d2, kind) = arc_foot(at, *to, *center, *ccw, q);
+                consider(WalkHit { seg_idx, sub_idx: 0, f, d2, kind });
+                at = *to;
+            }
         }
     }
-    best.map(|(i, f, _)| (i, f))
+    best
+}
+
+/// Extend `poly` and `walk` along `walk` to `hit`, splitting an interior hit
+/// on the first lap too so both laps share identical CL moves.
+fn extend_walk(poly: &[Point2], walk: &[Seg], hit: WalkHit) -> (Vec<Point2>, Vec<Seg>) {
+    let tail = match (walk.get(hit.seg_idx), hit.kind) {
+        (Some(Seg::Line(qs)), HitKind::Start) if hit.sub_idx > 0 => Some(Seg::Line(qs[..hit.sub_idx].to_vec())),
+        (Some(Seg::Line(qs)), HitKind::Interior) => Some(Seg::Line([&qs[..hit.sub_idx], &[hit.f]].concat())),
+        (Some(Seg::Line(qs)), HitKind::End) => Some(Seg::Line(qs[..=hit.sub_idx].to_vec())),
+        (Some(Seg::Arc { center, ccw, .. }), HitKind::Interior) => Some(Seg::Arc { center: *center, ccw: *ccw, to: hit.f }),
+        (Some(seg @ Seg::Arc { .. }), HitKind::End) => Some(seg.clone()),
+        _ => None,
+    };
+    let mut rwalk = walk.to_vec();
+    if matches!(hit.kind, HitKind::Interior) {
+        match rwalk.get_mut(hit.seg_idx) {
+            Some(Seg::Line(qs)) => qs.insert(hit.sub_idx, hit.f),
+            Some(&mut Seg::Arc { center, ccw, to }) => {
+                rwalk.splice(hit.seg_idx..=hit.seg_idx, [Seg::Arc { center, ccw, to: hit.f }, Seg::Arc { center, ccw, to }]);
+            }
+            None => {}
+        }
+    }
+    let mut rpoly = poly.to_vec();
+    let mut at = rpoly.last().copied().unwrap_or(hit.f);
+    for seg in walk[..hit.seg_idx].iter().chain(&tail) {
+        match seg {
+            Seg::Line(qs) => {
+                let clean: Vec<Point2> = qs.iter().copied().filter(|&q| if q != at { at = q; true } else { false }).collect();
+                if !clean.is_empty() {
+                    rpoly.extend_from_slice(&clean);
+                    rwalk.push(Seg::Line(clean));
+                }
+            }
+            Seg::Arc { center, ccw, to } if *to != at => {
+                rwalk.push(Seg::Arc { center: *center, ccw: *ccw, to: *to });
+                rpoly.push(*to);
+                at = *to;
+            }
+            Seg::Arc { .. } => {}
+        }
+    }
+    (rpoly, rwalk)
 }
 
 /// A lead shape that asks for a lead at all.

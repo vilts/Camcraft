@@ -325,3 +325,111 @@ fn script_tool_library_verbs_roundtrip() {
     assert!(out.ok, "{:?}", out.errors);
     assert_eq!(out.result["added"], json!(["EM-0400-2FL"]));
 }
+
+#[test]
+fn cam_post_with_per_op_writes_standalone_files() {
+    use camcraft_app::commands::{CreateSetup, SetPostOptions};
+    use camcraft_app::schema::PostOptions;
+
+    let world = fixture();
+    let mut history = History::default();
+    // Add Setup1 (which resolves Face1) and Setup2 with a second face op, then enable per_op.
+    history.execute(&world, CreateSetup::new(&world, None, None).expect("Setup1"));
+    history.execute(&world, CreateSetup::new(&world, None, None).expect("Setup2"));
+    let stock = SetStock::new(&world, StockShape::Box { dx: 60.0, dy: 60.0, dz: 20.0 }, Default::default());
+    history.execute(&world, stock.expect("Setup2 stock"));
+    let params = OpParams::Face {
+        holes: Default::default(),
+        blend_turns: false,
+        tilt: None,
+        stepover: 3.0,
+        clearance_z: Height::fixed(25.0),
+        cut_z: Height::fixed(19.5),
+        top_z: None,
+        stepdown: None,
+        feed: 1200.0,
+        plunge_feed: 300.0,
+        climb: true,
+    };
+    let op2 = CreateOperation::new(&world, "Face2", "EM-0400-2FL", SrcRef::Stock, params);
+    history.execute(&world, op2.expect("create Face2"));
+    history.execute(
+        &world,
+        SetPostOptions::new(&world, PostOptions { per_op: true, ..Default::default() }).expect("per_op"),
+    );
+
+    let dir = std::env::temp_dir().join(format!("camcraft-script-perop-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let camp = dir.join("job.camproj");
+    project::save(&world, &camp).expect("save fixture");
+    let nc = dir.join("perop.nc");
+
+    let out = script::run(&format!(
+        "cam.load({}); cam.generate(); cam.post({{ to: {}, cps: \"Fanuc\", program: true }})",
+        json_str(&camp),
+        json_str(&nc)
+    ));
+    assert!(out.ok, "{:?}", out.errors);
+    assert!(!nc.exists(), "must not write combined file {}", nc.display());
+    let files = out.result["files"].as_array().expect("files array");
+    assert_eq!(files.len(), 2, "{}", out.result);
+    assert_eq!(out.result["ops"], json!(2), "{}", out.result);
+    let p1 = PathBuf::from(files[0].as_str().expect("p1"));
+    let p2 = PathBuf::from(files[1].as_str().expect("p2"));
+    assert!(p1.ends_with("perop_01_Face1.nc") && p2.ends_with("perop_02_Face2.nc"), "{files:?}");
+    let t1 = std::fs::read_to_string(&p1).expect("read p1");
+    let t2 = std::fs::read_to_string(&p2).expect("read p2");
+    assert!(t1.contains("Face1") && !t1.contains("Face2") && t1.contains("M30"), "{t1}");
+    assert!(t2.contains("Face2") && !t2.contains("Face1") && t2.contains("M30"), "{t2}");
+    assert_eq!(out.result["operations"][0]["program"], json!(t1), "{}", out.result);
+    assert_eq!(out.result["operations"][1]["program"], json!(t2), "{}", out.result);
+
+    // Single-op per_op still writes <stem>_01_<op>.nc and populates files + program.
+    let single_world = fixture();
+    let mut sh = History::default();
+    sh.execute(
+        &single_world,
+        SetPostOptions::new(&single_world, PostOptions { per_op: true, ..Default::default() }).expect("per_op"),
+    );
+    let single_camp = dir.join("single.camproj");
+    project::save(&single_world, &single_camp).expect("save single");
+    let single_nc = dir.join("single.nc");
+    let single_out = script::run(&format!(
+        "cam.load({}); cam.generate(); cam.post({{ to: {}, program: true }})",
+        json_str(&single_camp),
+        json_str(&single_nc)
+    ));
+    assert!(single_out.ok, "{:?}", single_out.errors);
+    assert!(!single_nc.exists(), "single-op per_op writes numbered per-op file");
+    let sfiles = single_out.result["files"].as_array().expect("single files");
+    assert_eq!(sfiles.len(), 1, "{}", single_out.result);
+    let sp1 = PathBuf::from(sfiles[0].as_str().expect("sp1"));
+    assert!(sp1.ends_with("single_01_Face1.nc"), "{sfiles:?}");
+    assert_eq!(single_out.result["program"], json!(std::fs::read_to_string(&sp1).expect("read sp1")));
+
+    // Directory target and trailing slash write inside that folder; empty or missing parent refuses.
+    let folder = dir.join("out_folder");
+    std::fs::create_dir_all(&folder).expect("out_folder");
+    let dir_out = script::run(&format!(
+        "cam.load({}); cam.generate(); cam.post({{ to: {} }})",
+        json_str(&single_camp),
+        json_str(&folder)
+    ));
+    assert!(dir_out.ok, "{:?}", dir_out.errors);
+    assert!(folder.join("program_01_Face1.nc").exists(), "{:?}", dir_out.result);
+
+    let empty_out = script::run(&format!(
+        "cam.load({}); cam.generate(); cam.post({{ to: \"\" }})",
+        json_str(&single_camp)
+    ));
+    assert!(!empty_out.ok && empty_out.errors[0].contains("\"to\""), "{:?}", empty_out.errors);
+
+    let missing_out = script::run(&format!(
+        "cam.load({}); cam.generate(); cam.post({{ to: {} }})",
+        json_str(&single_camp),
+        json_str(&dir.join("missing_sub").join("perop.nc"))
+    ));
+    assert!(!missing_out.ok && missing_out.errors[0].contains("not a folder"), "{:?}", missing_out.errors);
+    let _ = std::fs::remove_dir_all(&dir);
+}

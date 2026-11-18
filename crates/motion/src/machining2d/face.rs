@@ -8,7 +8,7 @@ use crate::geometry::Point3;
 
 use super::blend::plan_reversals;
 use super::face_holes::{self, FaceHoles};
-use super::levels::cut_levels;
+use super::levels::cut_levels_under;
 // The enum moved to its own module (#261 part 2); every
 // `super::face::GenError` path keeps working through this re-export.
 pub use super::gen_error::GenError;
@@ -54,6 +54,11 @@ pub struct FaceParams {
     /// air, or ignored - the pre-M13.11 band serpentine. A region with
     /// no holes faces the same under every law.
     pub holes: FaceHoles,
+    /// The stock top in the facer's frame (#2004), read only when
+    /// staging: stock over `top_z` keeps a level at `top_z`, so the first
+    /// bite is never deeper than one stepdown. `None` is Top Z as the
+    /// stock top (no level there). A runtime value: never saved.
+    pub stock_top: Option<f64>,
 }
 
 impl FaceParams {
@@ -66,7 +71,7 @@ impl FaceParams {
             self.feed,
             self.plunge_feed,
         ];
-        vals.extend([self.top_z, self.stepdown].into_iter().flatten());
+        vals.extend([self.top_z, self.stepdown, self.stock_top].into_iter().flatten());
         if !vals.into_iter().all(f64::is_finite) {
             return Err(GenError::Invalid("parameters must be finite".into()));
         }
@@ -102,8 +107,8 @@ impl FaceParams {
 
 /// Serpentine face passes over `region`. One level at `p.cut_z` when
 /// `p.top_z` is `None` - the legacy facing, unchanged to the byte - or a
-/// staged descent through `cut_levels(top_z, cut_z, stepdown)` when it
-/// is set: the rows are computed once and run at every level, each level
+/// staged descent through `cut_levels_under(top_z, stock_top, cut_z,
+/// stepdown)` when it is set: the rows are computed once and run at every level, each level
 /// entered from the clearance plane the same way the single level was.
 /// A stepover wider than the tool leaves an uncut band between rows -
 /// visible in the path, never silently smoothed over, and never a crash:
@@ -153,7 +158,7 @@ pub fn face_over(
     let ys = band(lo.y, hi.y, r, p.stepover)?;
     let (x_in, x_out) = (lo.x - r, hi.x + r);
     let zs = match (p.top_z, p.stepdown) {
-        (Some(t), Some(s)) => cut_levels(t, p.cut_z, s)?,
+        (Some(t), Some(s)) => cut_levels_under(t, p.stock_top, p.cut_z, s)?,
         _ => vec![p.cut_z],
     };
 

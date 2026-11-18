@@ -21,7 +21,7 @@ mod pocket_support;
 use area_support::*;
 use camcraft_app::commands::{GenerateOperation, MoveModel, TagFixture, UntagFixture};
 use camcraft_app::geo2d::Point2;
-use camcraft_app::geometry::{quat_from_yaw, Mesh, Triangle};
+use camcraft_app::geometry::{Mesh, Triangle};
 use camcraft_app::operation::OpStatus;
 use camcraft_app::posting;
 
@@ -50,8 +50,9 @@ fn boxed(lo: Point3, hi: Point3) -> Mesh {
 }
 
 /// The tool, then `models`, in an 80 x 80 x 8 box stock on the origin,
-/// turned a quarter about Z when `turned` (the same footprint; a
-/// rotation the program sim refuses to model).
+/// turned [`OBLIQUE`] about Z when `turned` (the same footprint within
+/// 1e-4 mm; a turn the program sim refuses to model). #2177: a quarter
+/// turn is no such device - the sim judges a square-turned box.
 fn job(models: Vec<(&str, Mesh)>, turned: bool) -> (World, History) {
     let world = new_world();
     let mut h = History::default();
@@ -60,8 +61,7 @@ fn job(models: Vec<(&str, Mesh)>, turned: bool) -> (World, History) {
     for (name, mesh) in models {
         h.execute(&world, ImportModel::from_mesh(name, mesh));
     }
-    let rot = if turned { quat_from_yaw(std::f64::consts::FRAC_PI_2) } else { Location::default().rot };
-    let at = Location { pos: Point3::new(0.0, 0.0, 0.0), rot };
+    let at = Location { pos: Point3::new(0.0, 0.0, 0.0), rot: stock_turn(turned) };
     h.execute(&world, SetStock::new(&world, StockShape::Box { dx: 80.0, dy: 80.0, dz: TOP }, at).expect("stock"));
     (world, h)
 }
@@ -127,6 +127,7 @@ fn assert_refused_by_name(world: &World, tag: &str, op: &str, part: &str) {
     assert!(err.contains("post blocked"), "{tag}: {err}");
     assert!(err.contains(&format!("{op} now cuts part '{part}'")), "{tag}: refused by name: {err}");
     assert!(err.contains("regenerate"), "{tag}: {err}");
+    assert!(oblique_refused(world), "{tag}: the device holds: the program sim does not judge this stock");
     assert!(!out.exists(), "{tag}: blocked output is never written");
 }
 

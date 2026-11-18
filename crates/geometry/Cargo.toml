@@ -8,3 +8,8 @@ rust-version.workspace = true
 [dependencies]
 thiserror = { workspace = true }
 clipper2-rust = { workspace = true }
+tracing = { workspace = true }
+
+# Native Solidcraft parser and machining mesh; see docs/decisions/1456-sc-open.md.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+camcraft-kernel = { path = "../kernel" }

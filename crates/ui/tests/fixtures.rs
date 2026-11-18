@@ -58,6 +58,8 @@ fn moving_an_unmarked_model_is_refused() {
     state.pending.push_back(CommandKind::MoveFixture {
         name: "cube".into(),
         pos: [10.0, 0.0, 0.0],
+        roll_deg: 0.0,
+        pitch_deg: 0.0,
         yaw_deg: 0.0,
     });
     state.drain_actions();

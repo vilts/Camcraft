@@ -36,8 +36,14 @@ impl State {
     /// file; the status line names how many were written and where.
     pub(super) fn post_program_folder(&mut self, dir: PathBuf) {
         let program = self.program_name();
-        match posting::post_per_op(&self.world, &dir, &program) {
+        self.post_program_folder_named(dir, &program);
+    }
+
+    /// Post with the program prefix entered in the Post dialog.
+    pub(super) fn post_program_folder_named(&mut self, dir: PathBuf, program: &str) {
+        match posting::post_per_op(&self.world, &dir, program) {
             Ok(files) => {
+                self.post_last_dir = Some(dir.clone());
                 let lines: usize = files.iter().map(|f| f.posted.lines).sum();
                 self.status = format!(
                     "posted {} file(s), one per operation, {lines} lines in {} to {}",
@@ -98,25 +104,12 @@ impl State {
     /// The post's front door: a folder when the Output is one file per
     /// operation, the program file otherwise.
     pub(super) fn post_program_dialog(&mut self) {
-        // #258: both pickers open where this document last posted, else
-        // beside the saved project (`post_file::for_document`).
         if self.browser_build {
             // #1431: the browser downloads the one combined program (a
             // per-op post was refused before it got here).
             self.download_program();
             return;
         }
-        let target = crate::post_file::for_document(self);
-        if posting::post_options(&self.world).per_op {
-            let mut picker = crate::file_dialog::FileDialog::new().set_title("Post one file per operation into");
-            if let Some(dir) = &target.dir {
-                picker = picker.set_directory(dir);
-            }
-            if let Some(dir) = picker.pick_folder() {
-                self.post_program_folder(dir);
-            }
-        } else if let Some(path) = super::post_program_dialog(&target) {
-            self.post_program_path(path);
-        }
+        self.post_dialog = Some(crate::egui_app::post_dialog::PostDialogState::open(self));
     }
 }

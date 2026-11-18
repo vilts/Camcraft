@@ -100,6 +100,9 @@ pub struct Preview {
     /// law does not follow.
     pub footprint: Option<Region>,
     pub refusal: Option<String>,
+    /// #2246: the triangles of the fill (`footprint`, else `region`),
+    /// made with the preview, so a still frame never triangulates.
+    pub fill: Option<crate::boundary_viz::Fill>,
 }
 
 fn key_of(doc: u64, what: &impl std::fmt::Debug) -> u64 {
@@ -311,7 +314,7 @@ fn picks_mut(state: &mut State, at: EntryRef) -> Option<&mut Vec<GeoSel>> {
 /// Close an entry's edge picks around their face loop.
 pub fn extend(state: &mut State, at: EntryRef) -> Result<(), String> {
     let picks = picks_mut(state, at).map(|p| p.clone()).ok_or("that boundary has no picks")?;
-    let closed = operation::extend_to_loop(&state.world, &picks)?;
+    let closed = operation::extend_to_loop_in(&state.world, setup_of(state).as_deref(), &picks)?;
     if let Some(p) = picks_mut(state, at) {
         *p = closed;
     }
@@ -411,5 +414,6 @@ pub fn refresh_preview(state: &mut State) {
         (region.is_none() && !op.area.is_default())
             .then(|| "the Boundary settings leave nothing to preview - Generate names the step".to_owned())
     });
-    state.boundary_view.preview = z.map(|z| Preview { key, z, region, footprint, refusal });
+    let fill = z.and(footprint.as_ref().or(region.as_ref())).and_then(crate::boundary_viz::fill_of);
+    state.boundary_view.preview = z.map(|z| Preview { key, z, region, footprint, refusal, fill });
 }

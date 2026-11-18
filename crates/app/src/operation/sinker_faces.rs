@@ -13,12 +13,12 @@
 
 use flecs_ecs::prelude::World;
 
-use crate::geometry::feature::{FaceKind, LoopKind};
+use crate::geometry::feature::{self, FaceId, FaceKind, LoopKind};
 use crate::geometry::{transform_point, Point3};
 use crate::machine::{ConditionField, Kind};
 use crate::machining2d::GenError;
 use crate::model;
-use crate::sinker_cavity::{cavity_of, PickedFace};
+use crate::sinker_cavity::{cavity_of, welded_wall, PickedFace};
 use crate::sinker_electrode::{derive, standing_in, ElectrodeBox, ElectrodeSpec};
 
 use super::types::{FeatureSel, GeoSel};
@@ -51,21 +51,41 @@ fn model_of(world: &World, picks: &[GeoSel]) -> Result<Option<String>, String> {
     Ok(Some(name.clone()))
 }
 
-/// One pick as a world-space face. A welded smooth face comes back
-/// marked curved, a face whose rings refused to close marked open: the
-/// cavity read refuses both by name.
-fn face_of(world: &World, g: &GeoSel) -> Result<PickedFace, String> {
+/// One pick as world-space faces: a planar face as itself, a welded
+/// smooth face (#1808) as its planar strips, held by the motion crate's
+/// `welded_wall` to be vertical. A strip also picked on its own is the
+/// same wall twice, which the cavity read takes as one.
+fn faces_of(world: &World, g: &GeoSel) -> Result<Vec<PickedFace>, String> {
     let label = format!("{} of '{}'", g.feature, g.entity);
-    let blank = |curved: bool, open: bool| PickedFace { label: label.clone(), normal: Point3::new(0.0, 0.0, 1.0), curved, open, outer: Vec::new() };
-    let fid = match g.feature {
-        FeatureSel::Face(fid) => fid,
-        FeatureSel::Patch(_) => return Ok(blank(true, false)),
+    let pid = match g.feature {
+        FeatureSel::Face(fid) => return Ok(vec![face_of(world, g, fid, label)?]),
+        FeatureSel::Patch(pid) => pid,
         FeatureSel::Chain(_) | FeatureSel::Vertex(_) => {
             return Err(format!(
                 "electrode from faces: {label} is not a face - an electrode is generated from the cavity's floor and wall faces"
             ));
         }
     };
+    // #692: the one pick rule - an id is taken only if a click could land on it.
+    crate::pick::check_pickable(world, g).map_err(|why| format!("electrode from faces: {why}"))?;
+    let gone = || format!("electrode from faces: {label} is no longer in the model: re-pick it");
+    let e = model::find_by_name(world, &g.entity).ok_or_else(gone)?;
+    let features = model::features_of(world, &e).ok_or_else(gone)?;
+    let patch = feature::patches(&features).into_iter().find(|p| p.id == pid).ok_or_else(gone)?;
+    let mut strips = Vec::with_capacity(patch.faces.len());
+    for &fid in &patch.faces {
+        let s = GeoSel { entity: g.entity.clone(), feature: FeatureSel::Face(fid) };
+        let strip = format!("{} (a strip of {label})", s.feature);
+        strips.push(face_of(world, &s, fid, strip)?);
+    }
+    welded_wall(&label, strips).map_err(words)
+}
+
+/// The planar-face pick `g` (face `fid`) as a world-space face, named
+/// `label`. A face whose rings refused to close comes back marked open:
+/// the cavity read refuses it by name.
+fn face_of(world: &World, g: &GeoSel, fid: FaceId, label: String) -> Result<PickedFace, String> {
+    let blank = |open: bool| PickedFace { label: label.clone(), normal: Point3::new(0.0, 0.0, 1.0), curved: false, open, outer: Vec::new() };
     // #692: the one pick rule - an id is taken only if a click could land on it.
     crate::pick::check_pickable(world, g).map_err(|why| format!("electrode from faces: {why}"))?;
     let gone = || format!("electrode from faces: {label} is no longer in the model: re-pick it");
@@ -83,10 +103,10 @@ fn face_of(world: &World, g: &GeoSel) -> Result<PickedFace, String> {
         .map_err(|why| format!("electrode from faces: {why}"))?
         .ok_or_else(|| format!("electrode from faces: {label} has no usable plane - re-pick it"))?;
     let Some(outer) = f.loops.iter().find(|l| matches!(l.kind, LoopKind::Outer)) else {
-        return Ok(blank(false, true));
+        return Ok(blank(true));
     };
     if f.loops.iter().any(|l| matches!(l.kind, LoopKind::Open)) {
-        return Ok(blank(false, true));
+        return Ok(blank(true));
     }
     let loc = model::transform_of(world, &e).unwrap_or_default();
     let ring: Option<Vec<Point3>> = outer
@@ -94,7 +114,7 @@ fn face_of(world: &World, g: &GeoSel) -> Result<PickedFace, String> {
         .iter()
         .map(|&v| features.verts.get(v as usize).map(|p| transform_point(Point3::new(p[0], p[1], p[2]), loc.pos, loc.rot)))
         .collect();
-    let Some(ring) = ring else { return Ok(blank(false, true)) };
+    let Some(ring) = ring else { return Ok(blank(true)) };
     Ok(PickedFace { label, normal: Point3::new(n[0], n[1], n[2]), curved: false, open: false, outer: ring })
 }
 
@@ -116,7 +136,7 @@ pub fn electrode_from_faces(world: &World, picks: &[GeoSel], spec: &ElectrodeSpe
             continue;
         }
         seen.push(g);
-        faces.push(face_of(world, g)?);
+        faces.extend(faces_of(world, g)?);
     }
     let cavity = cavity_of(&faces).map_err(words)?;
     let electrode = derive(&cavity, spec).map_err(words)?;

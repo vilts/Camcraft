@@ -10,6 +10,94 @@ v0.8.1).
 
 | Commit | Date | Change | Version |
 |---|---|---|---|
+| a8bb30f0c | 2026-11-17 | Fanuc, Mazak, Doosan, grblHAL and Tormach posts write each hole's own dwell P on G82 and G89 (and G86 on grblHAL and Tormach); a back-bore with no dwell posts G85 (#2360, PR #2363) | 0.23.0 |
+| 93fe3cfd0 | 2026-11-17 | Model > Open, viewport drop and MCP import_model open a Solidcraft .sc design (its cached final body); a damaged or unsupported .sc is refused by name (#1456, PR #2150) | 0.23.0 |
+| 16d62df1e | 2026-11-17 | Carry pure Z-axis WCS rotation through milling toolpath generation and Bake or Control (G68/ROT) posting, and guard 3-2-1 mill face alignment against tilted faces (#760, PR #2136) | 0.23.0 |
+| cfcfec083 | 2026-11-17 | Haas post: G82 and G89 holes in one cycle group now each post their own dwell P (a changed dwell reissues the cycle; a zero-dwell G89 writes P0) instead of running the previous hole's modal dwell (#2350, PR #2355) | 0.23.0 |
+| 4833ac703 | 2026-11-17 | The grblHAL and Tormach PathPilot posts now refuse a G83 (deep peck) dwell by name. Before, they dropped the dwell with no message (#2348, PR #2351) | 0.23.0 |
+| b6ea9b923 | 2026-11-17 | Select LLVM ar automatically for macOS wasm builds and explain missing tools (#1569, PR #2204) | 0.23.0 |
+| 94f7d6b89 | 2026-11-17 | Refuse unsupported G83 dwell on Fanuc, Doosan and Mazak, and preserve or clear Haas G83 dwell correctly (#1820, PR #2048) | 0.23.0 |
+| 8ec4d0302 | 2026-11-17 | Release packages now include the examples directory with the example projects and model (#2042, PR #2044) | 0.23.0 |
+| 7cddd628e | 2026-11-17 | The docs search opens results from the URL query parameter (#2329, PR #2330) | 0.23.0 |
+| 1db03daa6 | 2026-11-17 | While a toolpath generates, a progress overlay over the viewport names the operation, counts the queued ones and offers Cancel; the window stays responsive (#2257, PR #2274) | 0.23.0 |
+| 7cc205c7f | 2026-11-17 | Debug info logs the frame rate when it changes (at most once each 10 s) and is a dockable panel (#2262, PR #2278) | 0.23.0 |
+| 6732be131 | 2026-11-17 | Bore contour: a Ramp entry under carried stock no longer rapids into the uncut core on the second level (#2301, PR #2328) | 0.23.0 |
+| 3a73487a3 | 2026-11-17 | 2D Chamfer now generates in a setup that holds the part turned (part alignment), instead of a refusal (#2283, PR #2334) | 0.23.0 |
+| 7903db4dc | 2026-11-17 | Simulation playback calculates the stock removal one time before it plays, then replays it, so a jump on the timeline does not lag. A line under the transport shows the progress and can cancel the calculation (#2181, PR #2192) | 0.23.0 |
+| 446a55c3a | 2026-11-17 | 2D Adaptive and Pocket now enter each separate area, and each ring in material, by the helix or ramp entry that you set. A plunge into material that stands in for that entry is named in the operation's notes (#2265, PR #2275) | 0.23.0 |
+| d3e779907 | 2026-11-17 | A document with no mounted machine is now refused when an operation exceeds the default machine's spindle speed or feed rate; the refusal names the operation and the limit (#2321, PR #2327) | 0.23.0 |
+| feabe2524 | 2026-11-17 | Depth-stepping operations no longer cut a first level at Top Z when no stock stands over Top Z; the first level is one stepdown under Top Z. Where stock stands over Top Z, the old levels stay (#2004, PR #2013) | 0.23.0 |
+| 7e21ea562 | 2026-11-17 | Add viewport picking and Clear actions for 2D Contour start and exit points (PR #2197) | 0.23.0 |
+| ce447acb9 | 2026-11-17 | fix(3d): prevent shared-depth XY crossings in 3D pocket helices, adaptive microlifts, and offset-shell floors (#2237, PR #2289) | 0.23.0 |
+| 2725efcc8 | 2026-11-17 | Boundary "Extend to loop" and Shift-click loop selection now read face normals in the setup's part-alignment frame (#2216, PR #2281) | 0.23.0 |
+| 7bf1c603a | 2026-11-17 | Property-row checkboxes expose their captions to accessibility tools, with structural coverage for Repeat each depth (#1848, PR #2258) | 0.23.0 |
+| 0a4a86ca1 | 2026-11-17 | Pocket corner arcs are back for Waterline and Offset rings; a corner whose arc would cross another feed stays sharp and the note says so (#2317, PR #2323) | 0.23.0 |
+| 149bcf46a | 2026-11-17 | A missing or malformed default machine file now refuses the post with a message that names the file. Before, the post wrote a program with no coolant words and no machine name (#2319, PR #2320) | 0.23.0 |
+| 677d48b46 | 2026-11-17 | A Deburr with the stock as its source that cuts into a part is now refused at the post and names the operation and the part; a Deburr on a from-model stock that is the part still posts (#2313, PR #2314) | 0.23.0 |
+| 3c7385fba | 2026-11-17 | Test executables and dev runs find the shipped posts and machine files with the new cargo build-dir layout (#2316, PR #2318) | 0.23.0 |
+| 9d17d594f | 2026-11-17 | The WCS page can store a flipped X, Y or Z axis (Flip X / Flip Y / Flip Z, MCP `set_wcs_flip`); a setup with a flipped axis is refused by name at post and generation until part 2 carries the flip into the program; project files are now v67 (#1720, PR #1738) | 0.23.0 |
+| 4b47296ff | 2026-11-17 | Set WCS from features (the picks that set the WCS origin and axes) moved from the Setup page to the WCS page (#1926, PR #1931) | 0.23.0 |
+| b9ce84dea | 2026-11-17 | A 2D Chamfer off the stock no longer posts when a part added after generation stands under the stock's edge, also for a cut of a few hundredths of a millimetre; the post refuses and names the operation and the part (#2308, PR #2312) | 0.23.0 |
+| e2ca9443b | 2026-11-17 | The shipped post scripts and machine files are read from the assets folder beside the program at run time, so an edit there takes effect after a restart of the program, without a rebuild; a missing file is refused by name (#2282, PR #2293) | 0.23.0 |
+| abe194386 | 2026-11-17 | The Fanuc, Haas, Mazak, Doosan and Sinumerik posts refuse a bore (G86) with a dwell by name, because their G86 has no dwell word; a drilling dwell outside 0 to 3600 s is refused when the operation is made or edited (#1445) (PR #1821) | 0.23.0 |
+| e8a12ec3c | 2026-11-17 | UI: the Work offset (G54-G59) control moves from the Setup page to the WCS page (#1648, PR #1717) | 0.23.0 |
+| d8c710f5f | 2026-11-17 | Fix 2D Adaptive feed crossings on fig8 by enforcing the crossing law on OffsetRings and Waterline passes (#2240, PR #2273) | 0.23.0 |
+| 3a6a6679e | 2026-11-17 | Add `assets/themes/theme.json.example` that lists each theme setting with its default value, and a user guide page on how to make a theme (#2025, PR #2145) | 0.23.0 |
+| e8c0eb63d | 2026-11-17 | BREAKING: Project format advances from v65 to v66 to preserve AC trunnion fields and explicit non-RTCP capability; v65 and older readers refuse v66 files. Add optional AC trunnion kinematics fields, rotary chain order, explicit sign convention, and `controller.rtcp` flag to the `.mch` schema and post mirror (#1962, PR #2162) | 0.23.0 |
+| a0f0ba4e1 | 2026-11-17 | The Tormach lathe post now clears the corners of a square-bar stock in its G30 approach and departure moves (the stream states StockTurnRadius) (#1666, PR #1681) | 0.23.0 |
+| 9f247b741 | 2026-11-17 | 2D rest Zigzag clears wall cusps with closing passes and preserves interior rows in small pockets (#1490, PR #2037) | 0.23.0 |
+| 515266e4a | 2026-11-17 | Drill, Bore, Thread, Circular, Trochoidal Slot and Slot operations now generate in a setup that holds the part turned (part alignment); picked Slot faces and edges are read in the setup frame (PR #2288) | 0.23.0 |
+| d2b8d0c6b | 2026-11-17 | A setup that holds the part turned now generates 2D Offset, Trace and Engrave operations (PR #2279) | 0.23.0 |
+| b706a5b1d | 2026-11-17 | Performance: the viewport no longer outlines the picked faces and edges again on each frame (#2250, PR #2266) | 0.23.0 |
+| 2a4b76d93 | 2026-11-17 | Performance: the Geometry tab and the Contour fields no longer walk the selection again on each frame (#2248, PR #2264) | 0.23.0 |
+| e0c7cf5ae | 2026-11-17 | The operation page with a welded-face pick no longer slows the viewport: the face grouping is computed once for each model (#2247, PR #2259) | 0.23.0 |
+| abb6194a0 | 2026-11-17 | The Boundary group's area preview no longer slows the viewport: its fill is computed once when the area changes (#2246, PR #2255) | 0.23.0 |
+| 2360d879c | 2026-11-16 | AI chat turns now undo in one grouped Ctrl+Z step, expose read-only `get_selection`, and enforce live confirmation gating (#1942, PR #2260) | 0.23.0 |
+| 0862a4444 | 2026-11-16 | Fixtures page: turn a fixture by quarter turns about X, Y or Z, or by typed roll, pitch and yaw angles; new MCP tool `turn_fixture` (#2174, PR #2187) | 0.23.0 |
+| 61dc27ddf | 2026-11-16 | The simulation now shows and judges a stock held in a vise after a locate, and a stock turned by a quarter turn; a stock turned off the machine axes is refused in plain words (#2177, PR #2182) | 0.23.0 |
+| 4bb520b75 | 2026-11-16 | Fixtures: the locate can seat the stock on a placed vise ("Place by: Stock faces"); the part follows inside the stock. MCP `locate_part` takes `"body": "stock"` (#2173, PR #2184) | 0.23.0 |
+| 0156eac94 | 2026-11-16 | Browser builds now route app tracing to the console without panicking, load dropped model files from bytes, and fall back to inline CPU stock preview when threads cannot spawn (PR #2239) | 0.23.0 |
+| 89ad8502f | 2026-11-16 | A closed 2D Contour with tabs now accepts a picked start point; the tab windows are measured from the pick, so every level enters at the pick (#1473) (PR #1822) | 0.23.0 |
+| ad2bc3aaa | 2026-11-16 | The simulation now draws a drawn tool holder with its own profile (tapers and arcs), and the shank with its stored diameter, in place of stepped cylinders (#2176, PR #2179) | 0.23.0 |
+| 2b7a8950d | 2026-11-16 | Added shared G93 inverse-time feed solver and explicit SectionMode markers (3-axis, 3+2 indexed, simultaneous 5-axis) in post streams (#1966, PR #2245) | 0.23.0 |
+| 81f24951e | 2026-11-16 | refuse out-of-range 3+2 tilt angles by name with the A0 B180 hint, keep A0 B180 plane X along machine X, and preserve saved tilt frame bases (#2133, PR #2157) | 0.23.0 |
+| 76911cfa8 | 2026-11-16 | Document thread-mill tool definitions and Thread pitch, handedness and refusals in the MCP skill (#989, PR #2229) | 0.23.0 |
+| e808c9629 | 2026-11-16 | The viewport stays fast with chains in an operation's geometry selection: the selection's chains and pocket region are computed once when the selection or the model changes, not on each frame (#2235, PR #2243) | 0.23.0 |
+| e3f7d122b | 2026-11-16 | fix(post): apply stored script options when posting a named post, and warn if a different post leaves stored options unapplied (#2190, PR #2206) | 0.23.0 |
+| c3c9f9a3a | 2026-11-16 | add spun and extruded fixture profiles with DXF import/export and raw STEP preservation (#744, PR #2101) | 0.23.0 |
+| d342066c5 | 2026-11-16 | Lathe chucks: "Fit to the stock" in the Add accessory dialog, inside grip and stepped jaws (`grip`, `step_height`, `step_depth`; also over MCP), each refused by name when the figures cannot be built (PR #2083) | 0.23.0 |
+| 9ddf157ee | 2026-11-16 | Gate: quick, batch and release plan one step for each test binary, with its own log and time (#1941, PR #1952) | 0.23.0 |
+| 5ea834569 | 2026-11-16 | 2D Adaptive, 2D Pocket, 2D Contour and Face now accept area controls (boundaries, offset, containment) in a setup that holds the part turned; before, generation refused them (#2210, PR #2214) | 0.23.0 |
+| 1b6e08182 | 2026-11-16 | Add wire tool kind (`EDM-W025`) mounted on Wire Contour operations and hide UI tool kinds whose machine kind is unavailable (#2011, PR #2140) | 0.23.0 |
+| acb6ce450 | 2026-11-16 | An edge between two curved faces (for example below a chamfer on a round wall) now picks as one full edge, not as many short pieces (#2209, PR #2215) | 0.23.0 |
+| d1dc6e852 | 2026-11-16 | Document operation coolant MCP parameters and refusals in the agent skill (#1337, PR #2231) | 0.23.0 |
+| 145e8f650 | 2026-11-16 | Document the shipped edit_tool MCP parameters, undo behaviour and refusals in the agent skill (#1343, PR #2230) | 0.23.0 |
+| 78854e160 | 2026-11-16 | Honor, note once, or refuse end_units across all posts and gate UI end-unit pickers by post capability (#2189, PR #2208) | 0.23.0 |
+| 0f4954a13 | 2026-11-16 | The viewport grid and the work envelope now stand on the lowest point of the model, the stock and the fixtures, so a model no longer shows half under the floor. Display only: posted programs do not change (#2172, PR #2175) | 0.23.0 |
+| 2083fd3d7 | 2026-11-16 | 3D Pocket and Multi-Axis Rough: a re-machining mask no longer creates a false wall along open notch edges after an outside profile cut, and ignores unreachable corners and wall stock-to-leave collars (#1749, PR #2212) | 0.23.0 |
+| da95d2e5d | 2026-11-16 | list_features` face rows give null `facing` and `normal` and an `outside_unknown` reason when the face's outside cannot be told (#2186, PR #2196) | 0.23.0 |
+| 76ea6b6bb | 2026-11-16 | Fixed: an Auto input on the operation page no longer switches back to Auto while you type a value (#2178, PR #2183) | 0.23.0 |
+| a14fa0c8d | 2026-11-16 | Split near-180° and near-360° useRadiusArcs arcs into quadrant segments and check chord <= 2abs(R) after rounding (#2191, PR #2202) | 0.23.0 |
+| 1f15f98e7 | 2026-11-16 | 2D Pocket, Adaptive, Offset, Circular and Contour with Top below the material over them now start the entry over that material and feed down through it, instead of rapiding into the stock (the op was refused); a `Carried stock:` note says so (#1559, PR #2129) | 0.23.0 |
+| 0b3fab757 | 2026-11-16 | Route MCP post and cam.post to per-operation files when per_op is enabled, and refuse combined-program posting APIs (#2188, PR #2203) | 0.23.0 |
+| 8ea68257f | 2026-11-16 | Judge the stated shank below a holder foot drawn beside it in 3D reach preflight, verification, fixture checks, and post gating (#2199, PR #2207) | 0.23.0 |
+| 97adf3b97 | 2026-11-16 | Closed 2D contours with an exit point now re-trace fitted arcs and split interior hits cleanly so verify and post accept overlaps around rounded corners (#2195, PR #2205) | 0.23.0 |
+| e3ca44fa7 | 2026-11-16 | camcraft-ui --help` now lists each start option and environment variable; `--version` added; an unknown option is refused with exit code 2 (#2082, PR #2087) | 0.23.0 |
+| 2ee745631 | 2026-11-16 | Drill, Bore and Thread state their through-hole Break-through (default 1.0 mm, one pitch for a thread; unchanged programs post identically); the op notes how far past the part bottom it runs and names a run under an unmodelled stock bottom; project file v63 (#1557, PR #2126) | 0.23.0 |
+| d4d8c543f | 2026-11-16 | Add Rest machining group to the 2D Pocket Passes tab (#1815, PR #2093) | 0.23.0 |
+| fdb8c96f8 | 2026-11-16 | Fix 2D pocket rest machining feeding across cleared floor on inner corner ring legs (#1816, PR #2154) | 0.23.0 |
+| f14201bad | 2026-11-16 | fix(sim): resolve carried side-face and step fixture contact finer than one grid pitch (#1580, PR #2144) | 0.23.0 |
+| dc762bcea | 2026-11-16 | Add five validated Haas 3-axis machine configurations to the built-in machine library (#1976, PR #2123) | 0.23.0 |
+| 3d239a9ee | 2026-11-16 | Fix 3D Finish shallow-edge, overhang-trim, and convex-chord gouges and enable full verify gate coverage on the imported sample (#1840, PR #2167) | 0.23.0 |
+| aaddb2d48 | 2026-11-16 | feat(post): add Post dialog and per-post declared script options (#258, PR #2151) | 0.23.0 |
+| e70488386 | 2026-11-16 | 2D Pocket rest machining: cut only what a larger previous tool left (previous tool entered by hand); undoable, saved in the project, set through MCP; a previous tool that is not larger is refused by name (#1489, PR #1817) | 0.23.0 |
+| 28628414c | 2026-11-16 | rest Adaptive reaches each pass back along the one before it and is held to a travel budget (out-of-cut feed at most 3x the cut, one retract per rest area plus 8), refused by name past it (#2109, PR #2116) | 0.23.0 |
+| 43aa89cac | 2026-11-16 | A wire EDM machine can state its tank (submerged / non-submerged) and flushing (high / low); the Sodick wire post writes T94 / T89 and T84 / T85 after threading (#1499, PR #2125) | 0.23.0 |
+| 1173fc912 | 2026-11-16 | Sketch chaining in camcraft-geometry: DXF lines, arcs and circles join within a tolerance into closed loops and open chains with stable ids, arcs kept analytic, outer-versus-hole nesting, and named refusals for branches, self-crossing loops and degenerate pieces (#1861, PR #2106) | 0.23.0 |
+| b61b57185 | 2026-11-16 | Give painted ribbon cells, workspace tabs, and dropdown rows AccessKit nodes and switch ribbon behaviour tests to click by label (#1988, PR #2081) | 0.23.0 |
+| 3bfbef4c5 | 2026-11-16 | Read status strip height, ribbon tab metrics, window margin, and drop hint geometry from theme tokens (#2064, PR #2091) | 0.23.0 |
+| 0d13ec53e | 2026-11-16 | Sinker EDM: "electrode from faces" accepts a rounded-corner wall picked as its welded face; a welded wall that leans is refused by name (#1808, PR #2124) | 0.23.0 |
+| 91fc9ccea | 2026-11-16 | Hide unsupported stock fit controls for From model stock and clear stale fit refusals when its shape changes (#1683, PR #1685) | 0.23.0 |
 | f90e9dc8e | 2026-11-16 | A toolpath generated before the clearance-plane rapid check now reads stale, and the post refuses it until you regenerate it; each saved operation regenerates one time after the upgrade (#2152, PR #2155) | 0.22.0 |
 | dab6498ae | 2026-11-16 | A rapid at the clearance plane is now judged against the stock: a clearance height set inside the stock is convicted by name and holds the post; MCP add/edit answer with a warning (#2121, PR #2138) | 0.22.0 |
 | 02a57646e | 2026-11-16 | The holder picker shows one Weldon entry for each taper; the bore and body come from the tool's shank, and a shank with no standard bore is refused by name (#2018, PR #2054) | 0.22.0 |

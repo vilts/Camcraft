@@ -222,11 +222,17 @@ fn unread_at(
 /// range is named in `notes`. `bodies`: the per-solid ranges of
 /// `facets` when the part is a union of touching models (empty or one
 /// range reads `facets` as one body).
+///
+/// `top` is Top Z (#2004: never a level): a ring whose first level is under
+/// its floor searches its floor up to `top`, so a blind feature shallower
+/// than one stepdown is cut at its floor, never dropped.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn ladder(
     rings: &[Vec<Point2>],
     facets: &[Triangle],
     bodies: &[Range<usize>],
     zs: &[f64],
+    top: f64,
     r: f64,
     leave: f64,
     notes: &mut Vec<String>,
@@ -255,10 +261,21 @@ pub(super) fn ladder(
             let z_bad = zs[k];
             why = unread_at(&mut sec, &pts, &heights, z_bad, above, leave, need);
             // The floor: the deepest legal vertex plane + leave strictly
-            // between the failed level and the last walked one.
-            let top = if mine.is_empty() { f64::NEG_INFINITY } else { above };
+            // between the failed level and the last walked one - or Top Z,
+            // when the first level failed and the ring is clear above Top Z
+            // (#2004: the old ladder's first level, at Top Z, in air).
+            let ceiling = if !mine.is_empty() {
+                Some(above)
+            } else if top.is_finite()
+                && top > z_bad + SAME_LEVEL
+                && legal_at(&mut sec, &pts, &heights, top, f64::INFINITY, leave, need)
+            {
+                Some(top)
+            } else {
+                None
+            };
             let mut floor: Option<f64> = None;
-            if !mine.is_empty() {
+            if let Some(top) = ceiling {
                 for &v in heights.iter().rev() {
                     let c = v + leave;
                     if c >= top - SAME_LEVEL || c <= z_bad + SAME_LEVEL {

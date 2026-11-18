@@ -33,11 +33,14 @@ pub(super) fn post(p: &PocketParams, levels: &[(f64, usize)], plans: &[(Region, 
         if !said.contains(&at) && !plan.chains.is_empty() {
             said.push(at);
             b.note(format!(
-                "rest Adaptive from Z{z:.3}: {:.1} mm2 of rest material in {} passes, worst planned load {:.1}% of D against {:.1}%",
+                "rest Adaptive from Z{z:.3}: {:.1} mm2 of rest material in {} passes, worst planned load {:.1}% of D against {:.1}%; {:.0} mm in cut, {:.0} mm out of cut, {} retract hops",
                 plan.area,
                 plan.passes,
                 plan.worst * 100.0,
-                p.optimal_load * 100.0
+                p.optimal_load * 100.0,
+                plan.cut,
+                plan.air,
+                plan.hops
             ));
         }
         if let Some((mm2, at)) = plan.held_back {

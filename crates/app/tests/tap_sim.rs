@@ -98,6 +98,7 @@ fn blocking_warnings(world: &World) -> Vec<String> {
 fn tapped_world(half_width: f64) -> (World, History) {
     let tool = catalog().into_iter().find(|(n, _)| *n == TAP).map(|(_, t)| t).expect("catalog tap");
     let params = OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(TOP + 10.0),
         retract_z: None,
         top_z: Height::fixed(TOP),
@@ -146,6 +147,7 @@ fn a_tap_wider_than_its_hole_is_still_a_gouge() {
 fn tapped_to(half_width: f64, bottom: f64) -> (World, History) {
     let tool = catalog().into_iter().find(|(n, _)| *n == TAP).map(|(_, t)| t).expect("catalog tap");
     let params = OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(TOP + 10.0),
         retract_z: None,
         top_z: Height::fixed(TOP),
@@ -213,6 +215,7 @@ fn a_tap_whose_shank_rides_into_the_hole_is_still_convicted() {
     let tap = catalog().into_iter().find(|(n, _)| *n == TAP).map(|(_, t)| t).expect("catalog tap");
     let tool = Tool { flute_len: 4.0, shank_d: 6.0, ..tap };
     let params = OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(TOP + 10.0),
         retract_z: None,
         top_z: Height::fixed(TOP),
@@ -241,6 +244,7 @@ fn a_drill_at_its_own_diameter_keeps_the_full_verdict() {
 
 fn drill_case(name: &str, tool: Tool) {
     let params = OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(TOP + 10.0),
         retract_z: None,
         top_z: Height::fixed(TOP),

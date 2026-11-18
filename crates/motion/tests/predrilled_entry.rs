@@ -76,7 +76,7 @@ fn helix_moves(t: &Toolpath) -> usize {
 fn a_proved_hole_is_plunged_at_every_level_with_no_helix() {
     for s in [PocketStrategy::Zigzag, PocketStrategy::Waterline] {
         let t = run(&pp(true, true, s), &[PreHole { at: HOLE, floor: -8.5 }]);
-        assert_eq!(plunges_at(&t, HOLE), vec![0.0, -4.0, -8.0], "{s:?}: one plunge per level (the top level included) down the hole");
+        assert_eq!(plunges_at(&t, HOLE), vec![-4.0, -8.0], "{s:?}: one plunge per level down the hole (#2004: no level at Top Z)");
         assert_eq!(helix_moves(&t), 0, "{s:?}: no helix where the hole serves");
         assert!(t.notes.iter().any(|n| n.contains("down the pre-drilled hole at (20.000, 15.000)")), "{s:?}: {:?}", t.notes);
     }
@@ -96,10 +96,10 @@ fn without_a_hole_or_the_flag_the_helix_stands() {
 
 #[test]
 fn a_shallow_hole_serves_only_the_levels_it_reaches() {
-    // Open only to Z -5: the 0 and -4 levels plunge down it, the -8 level is
+    // Open only to Z -5: the -4 level plunges down it (#2004: no level at Top Z), the -8 level is
     // below the hole's floor and keeps the helix, said with the numbers.
     let t = run(&pp(true, true, PocketStrategy::Zigzag), &[PreHole { at: HOLE, floor: -5.0 }]);
-    assert_eq!(plunges_at(&t, HOLE), vec![0.0, -4.0]);
+    assert_eq!(plunges_at(&t, HOLE), vec![-4.0]);
     assert!(helix_moves(&t) > 0, "the level below the hole helixes");
     assert!(
         t.notes.iter().any(|n| n.contains("open only to Z -5.000, above this level at Z -8.000")),

@@ -47,7 +47,7 @@ Write-Host "ISCC: $iscc"
 
 # ---- 2. The stage must be the zip's tree ---------------------------------
 if (-not (Test-Path $Stage)) { Fail "stage dir not found: $Stage (assemble the zip first)" }
-foreach ($must in @("camcraft-ui.exe", "post.exe", "assets\themes", "TESTING.md", "RELEASE_NOTES.md")) {
+foreach ($must in @("camcraft-ui.exe", "post.exe", "assets\themes", "examples\first-part.camproj", "examples\models\first-part.obj", "TESTING.md", "RELEASE_NOTES.md")) {
     if (-not (Test-Path (Join-Path $Stage $must))) { Fail "stage is missing $must" }
 }
 New-Item -ItemType Directory -Force $OutDir | Out-Null

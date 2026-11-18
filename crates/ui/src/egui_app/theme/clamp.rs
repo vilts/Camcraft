@@ -24,6 +24,17 @@ pub const HEADER_BOOST: (f32, f32) = (0.0, 12.0);
 /// Outline and insertion/bottom-rule stroke thickness (px).
 pub const STROKE: (f32, f32) = (0.5, 8.0);
 
+/// Window and menu corner radius upper bound (#2064).
+pub const RADIUS_WINDOW: u8 = 24;
+/// Floating window inner margin (px).
+pub const WINDOW_MARGIN: (f32, f32) = (0.0, 24.0);
+/// Bottom status strip height (px).
+pub const STATUS_H: (f32, f32) = (16.0, 64.0);
+/// Ribbon tab per-side horizontal padding (px).
+pub const RIBBON_TAB_PAD_X: (f32, f32) = (2.0, 32.0);
+/// Ribbon active tab underline thickness (px).
+pub const RIBBON_STROKE: (f32, f32) = (1.0, 8.0);
+
 #[must_use]
 pub fn range(v: f32, lo_hi: (f32, f32)) -> f32 {
     if v.is_finite() { v.clamp(lo_hi.0, lo_hi.1) } else { lo_hi.0 }

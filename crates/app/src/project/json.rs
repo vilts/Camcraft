@@ -30,7 +30,18 @@ pub fn params_from_json(v: &Value) -> Result<OpParams, String> {
                     one every height reads; pick it on the setup"
             .into());
     }
-    let dto: ParamsDto = serde_json::from_value(v.clone()).map_err(|e| e.to_string())?;
+    // This door creates or edits live parameters, rather than loading a file.
+    // A newly supplied tilt uses the current basis; a persisted version in
+    // an existing operation survives a partial edit unchanged.
+    let mut live = v.clone();
+    if let Some(kinds) = live.as_object_mut() {
+        for fields in kinds.values_mut() {
+            if let Some(tilt) = fields.get_mut("tilt").and_then(Value::as_object_mut) {
+                tilt.entry("basis_version").or_insert(Value::from(1));
+            }
+        }
+    }
+    let dto: ParamsDto = serde_json::from_value(live).map_err(|e| e.to_string())?;
     Ok(dto.to_params())
 }
 

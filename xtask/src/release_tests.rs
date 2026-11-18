@@ -61,6 +61,9 @@ fn repo(branch: &str, version: &str) -> Repo {
         "assets/ui/fonts/sans.ttf",
         "assets/scripts/job.js",
         "assets/themes/dark.json",
+        "examples/first-part.camproj",
+        "examples/first-router-part.camproj",
+        "examples/models/first-part.obj",
         "TESTING.md",
         "LICENSE",
         "NOTICE",
@@ -159,6 +162,9 @@ fn zip_layout_mirrors_release_yml() {
             "assets/ui/fonts/sans.ttf",
             "assets/scripts/job.js",
             "assets/themes/dark.json",
+            "examples/first-part.camproj",
+            "examples/first-router-part.camproj",
+            "examples/models/first-part.obj",
             "RELEASE_NOTES.md",
             "TESTING.md",
             "LICENSE",
@@ -173,10 +179,14 @@ fn zip_layout_mirrors_release_yml() {
         write(&bin, &format!("{e}.exe"), "exe");
     }
     let stage = r.0.join("dist").join(pack::stage_name("0.17.0"));
-    assert_eq!(pack::stage(&list, &stage), Ok(13));
+    assert_eq!(pack::stage(&list, &stage), Ok(16));
     assert!(stage.join("assets/ui/fonts/sans.ttf").is_file());
+    assert!(stage.join("examples/first-part.camproj").is_file() && stage.join("examples/models/first-part.obj").is_file());
     std::fs::remove_file(r.0.join("NOTICE")).expect("rm NOTICE");
     assert!(pack::stage_list(&r.0, &bin, Os::Windows).expect_err("no NOTICE").contains("NOTICE"));
+    std::fs::remove_dir_all(r.0.join("examples")).expect("rm examples");
+    let no_ex = pack::stage_list(&r.0, &bin, Os::Windows).expect_err("no examples");
+    assert!(no_ex.contains("examples/ missing"), "{no_ex}");
 }
 
 #[test]
@@ -285,10 +295,10 @@ fn package_dry_run_lists_the_release_yml_tree_on_any_host() {
         let mut out = Vec::new();
         let p = pkg::package(&r.0, &pkg_args(Some("0.17.0"), &r.0, true), os, &mut |l| out.push(l)).expect("dry");
         let stage = r.0.join("dist").join("camcraft-0.17.0-win-x64");
-        assert_eq!(p, Packed { version: "0.17.0".into(), stage: stage.clone(), zip: r.0.join("dist/camcraft-0.17.0-win-x64.zip"), files: 13 });
+        assert_eq!(p, Packed { version: "0.17.0".into(), stage: stage.clone(), zip: r.0.join("dist/camcraft-0.17.0-win-x64.zip"), files: 16 });
         let listed: Vec<&str> = out.iter().filter_map(|l| l.strip_prefix("[dry-run]   ")).collect();
         assert_eq!(listed[..3], ["camcraft-ui.exe", "camcraft-cli.exe", "post.exe"], "{os:?}: always the win-x64 exes");
-        assert_eq!(listed.len(), 13);
+        assert_eq!(listed.len(), 16);
         assert!(out.iter().any(|l| l.contains("Compress-Archive")));
         assert!(!r.0.join("dist").exists(), "a dry run writes nothing");
     }
@@ -313,7 +323,7 @@ fn package_reports_what_github_actions_steps_read() {
         version: "0.17.0".into(),
         stage: PathBuf::from("dist/camcraft-0.17.0-win-x64"),
         zip: PathBuf::from("dist/camcraft-0.17.0-win-x64.zip"),
-        files: 13,
+        files: 16,
     };
     let out = p.github_output();
     assert_eq!(out[0], "version=0.17.0", "release.yml's windows job output `version`");
@@ -341,7 +351,7 @@ fn package_stages_and_zips_on_windows() {
     let mut out = Vec::new();
     let p = pkg::package(&r.0, &pkg_args(Some("0.17.0"), &r.0, false), Os::Windows, &mut |l| out.push(l))
         .expect("package");
-    assert_eq!(p.files, 13);
+    assert_eq!(p.files, 16);
     assert!(p.stage.join("post.exe").is_file() && p.stage.join("assets/ui/fonts/sans.ttf").is_file());
     assert!(p.zip.is_file(), "{out:?}");
     // The release cut's zip phase is this same function: its dry run prints the same file list.
@@ -349,5 +359,5 @@ fn package_stages_and_zips_on_windows() {
     let mut cut = Cut::new(&rc.0, ReleaseArgs { skip_gate: true, skip_build: true, ..args("0.17.0") }, Os::Windows);
     assert_eq!(cut.phases(), Ok(()));
     let listed: Vec<&String> = cut.out.iter().filter(|l| l.starts_with("[dry-run]   ")).collect();
-    assert_eq!(listed.len(), 13, "{:?}", cut.out);
+    assert_eq!(listed.len(), 16, "{:?}", cut.out);
 }

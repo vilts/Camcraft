@@ -1,3 +1,221 @@
+# CamCraft 0.23.0 (clean-room implementation)
+
+Released 2026-11-17.
+
+## Breaking
+One change is breaking: **the project file format goes from version 62 to
+67**. 0.23.0 opens the files of 0.22.0 and older. 0.22.0 and older builds
+refuse a file that 0.23.0 saves. The steps that have a named cause are:
+- version 63: Drill, Bore and Thread store their through-hole break-through
+  (#1557, PR #2126);
+- version 66: a machine stores its AC trunnion fields and its non-RTCP flag
+  (#1962, PR #2162);
+- version 67: a setup stores its WCS axis flips (#1720, PR #1738).
+
+A minor release headlined by **canned-cycle dwells that are posted for each
+hole or refused by name**, **a setup that holds the part turned now generates
+the 2D and hole operations**, **2D Pocket rest machining**, **a Post dialog
+with options for each post**, **simulation playback that is calculated before
+it plays**, **a viewport that stays fast on large models**, and **Solidcraft
+.sc import**. 117 pull requests merged since 0.22.0 (21 features, 71 fixes,
+4 performance changes, 21 tests, docs and process).
+
+## Upgrade notes
+- Save a project in 0.23.0 only when each person who opens it also has
+  0.23.0. Older builds refuse format 67 (see "Breaking").
+- A program with a dwell on a deep-peck cycle (G83) can be refused now, where
+  0.22.0 posted it without the dwell (see "Changes to posted G-code"). Set
+  the dwell to 0, or use a drill cycle that has a dwell on that control.
+- The shipped post scripts and machine files are read from the `assets`
+  folder beside the program at run time (#2282, PR #2293). An edit there
+  takes effect after a restart. A missing file is refused by name.
+- The Work offset control and "Set WCS from features" are now on the WCS
+  page, not on the Setup page (#1648, #1926).
+
+## Changes to posted G-code
+These change the program that an existing project posts, or stop a post that
+went through before.
+- **Each hole gets its own dwell on G82 and G89** on the Fanuc, Mazak, Doosan
+  DNM, grblHAL, Tormach PathPilot (#2360, PR #2363) and Haas (#2350,
+  PR #2355) posts. Before, a hole with a different dwell in the same cycle
+  group ran the dwell of the hole before it. A changed dwell now ends the
+  cycle and starts it again with its own P. On grblHAL and Tormach the same
+  applies to G86. A back-bore with dwell 0 posts G85 on the first five
+  posts; on Haas it posts G89 with P0.
+- **A G83 dwell is posted or refused, never dropped.** Fanuc, Doosan DNM and
+  Mazak refuse it by name (#1820, PR #2048). grblHAL and Tormach PathPilot
+  refuse it by name (#2348, PR #2351). Haas keeps or clears it correctly
+  (#1820). Sinumerik keeps it as P in milliseconds, for a control in ISO
+  dialect mode (#2349, PR #2353).
+- **A bore with a dwell on G86 is refused by name** on the Fanuc, Haas,
+  Mazak, Doosan and Sinumerik posts, because their G86 has no dwell word
+  (#1445, PR #1821). A drilling dwell outside 0 to 3600 s is refused when the
+  operation is made or edited.
+- **A missing or malformed default machine file refuses the post** and names
+  the file (#2319, PR #2320). Before, the program had no coolant words and no
+  machine name.
+- **A document with no machine is judged against the default machine**
+  (#2321, PR #2327). An operation over its spindle speed or feed rate is
+  refused by name.
+- **A stock-source Deburr or 2D Chamfer that cuts into a part does not post**
+  (#2313, PR #2314; #2308, PR #2312). The refusal names the operation and the
+  part.
+- **A Z-rotated work offset is carried through generation and the post**
+  (#760, PR #2136), as Bake or as Control (G68 / ROT).
+- **A setup with a flipped WCS axis is refused by name** at generation and at
+  the post (#1720, PR #1738), until the flip is carried into the program.
+- **A 3+2 tilt that is out of range is refused by name** (#2133, PR #2157).
+  The A0 B180 plane keeps its X along machine X.
+- **R arcs near 180° and 360° are split** into quadrant pieces, and the chord
+  is checked after rounding (#2191, PR #2202).
+- **Unit words at the program end** are honoured, noted one time or refused
+  on each post (#2189, PR #2208).
+- **Stored script options are applied to a named post** (#2190, PR #2206).
+  A post "for each operation" from MCP and `cam.post` writes one file for
+  each operation (#2188, PR #2203).
+- **The Tormach lathe post clears the corners of square-bar stock** in its
+  G30 moves (#1666, PR #1681).
+- **The Sodick wire post writes tank and flushing words** from the machine
+  file (#1499, PR #2125).
+- Toolpath changes that show in the posted program:
+  - Depth-stepping operations start one stepdown under Top Z when no stock
+    stands over Top Z (#2004, PR #2013). Before, the first level was at
+    Top Z.
+  - 2D Adaptive and Pocket enter each separate area by the helix or ramp
+    that you set (#2265, PR #2275).
+  - 2D operations with Top below the material over them start over that
+    material and feed down through it (#1559, PR #2129).
+  - The crossing law holds on Offset rings, Waterline pockets and corner
+    arcs (#2240, #2317), and on 3D Pocket helices, Adaptive microlifts and
+    offset-shell floors (#2237).
+  - A Bore with a Ramp entry under carried stock does not rapid into the
+    uncut core (#2301, PR #2328).
+  - 3D Finish: shallow-edge, overhang and convex-chord gouges are corrected
+    (#1840, PR #2167).
+  - Closed 2D contours with an exit point trace their fitted arcs again
+    (#2195, PR #2205).
+  - Drill, Bore and Thread state their break-through (#1557). A program
+    that did not change posts the same.
+
+## Highlights
+### Posts and machines
+- A Post dialog, with the options that each post declares (#258).
+- A shared G93 inverse-time feed solver and section mode markers in the post
+  streams (#1966). AC trunnion fields in the machine file (#1962).
+- Five Haas 3-axis machines in the built-in machine library (#1976).
+- A wire EDM machine states its tank and flushing (#1499). A wire tool kind
+  is mounted on Wire Contour operations (#2011).
+
+### Operations
+- 2D Pocket rest machining: cut only what a larger tool left (#1489, #1815),
+  with Zigzag rest boundaries that leave no wall cusps (#1490) and a travel
+  budget on rest Adaptive (#2109).
+- A setup that holds the part turned now generates 2D Offset, Trace, Engrave,
+  Chamfer, the hole kinds, Circular, Slot and Trochoidal Slot, and accepts
+  area controls on 2D Adaptive, Pocket, Contour and Face (#2210, #2283).
+- 2D Contour: a picked start point with tabs on a closed contour (#1473);
+  start and exit points picked in the viewport (PR #2197).
+- Sinker EDM: "electrode from faces" accepts a rounded-corner wall (#1808).
+- 3D Pocket and Multi-Axis Rough: a re-machining mask stays clear to open
+  edges (#1749).
+
+### Gouge, collision and simulation
+- Simulation playback calculates the stock removal one time before it plays
+  (#2181). A jump on the timeline does not lag.
+- The simulation shows and judges a stock held in a vise, and a stock turned
+  by a quarter turn (#2177). A drawn holder is drawn with its own profile
+  (#2176). The stated shank is judged below a holder foot (#2199).
+- Carried side-face and step contact finer than one grid pitch is resolved
+  (#1580).
+
+### Fixtures
+- Seat the stock on a placed vise (#2173). Turn a fixture by quarter turns
+  or by typed angles (#2174).
+- Spun and extruded fixture profiles, with DXF and STEP (#744).
+- Lathe chucks fit to the stock in the dialog, with inside grip and stepped
+  jaws (PR #2083).
+
+### Importers and geometry
+- Model > Open, a viewport drop and MCP `import_model` open a Solidcraft
+  `.sc` design (#1456). A damaged file is refused by name.
+- An edge between two curved faces picks as one edge (#2209).
+- 2D sketch primitives chain into loops with stable ids (#1861). It is not on
+  a menu yet.
+
+### UI
+- The viewport stays fast with chains, welded faces, area previews and picks
+  on the screen: derived geometry is computed one time for each input, not
+  on each frame (#2235, #2246, #2247, #2248, #2250).
+- A progress overlay over the viewport while a toolpath generates, with
+  Cancel (#2257).
+- The WCS page has the Work offset control, "Set WCS from features" and the
+  axis flips (#1648, #1926, #1720).
+- The grid and the work envelope stand on the lowest point of the model, the
+  stock and the fixtures (#2172).
+- AI Chat: one Ctrl+Z step for each turn, `get_selection`, and a live
+  confirmation gate (#1942).
+- `camcraft-ui --help` lists each start option; `--version` is new (#2082).
+- `theme.json.example` lists each theme setting (#2025). More of the UI reads
+  the theme (#2064) and has accessibility labels (#1988, #1848).
+- Browser build: tracing goes to the console, and dropped model files load
+  (PR #2239).
+
+### Packages and docs
+- Each release package has the `examples` directory (#2042).
+- A "Your first 4-axis part" guide (PR #2135). The docs search opens from
+  the URL query (#2329).
+
+## Not exercised on a real control
+No real control ran the output of these changes. The test goldens are
+regression records. Check the first program on the machine before cutting.
+- The dwell for each hole on G82, G89 and G86 (#2360, #2350): no physical
+  control. The G85 in place of a G89 with dwell 0 comes from the published
+  cycle formats.
+- The G83 dwell refusals (#1820, #2348) and the G86 dwell refusal (#1445): no
+  physical control.
+- The Sinumerik G83 dwell as P in milliseconds (#2349): the maintainer
+  confirmed the word on an 840D in ISO dialect mode (G291). The post writes
+  no G291 line: the control must be in that mode.
+- The Z-rotated work offset (#760) and the 3+2 tilt changes (#2133): no cut
+  on a machine.
+- The G93 inverse-time solver (#1966): no post uses it for output yet.
+- The Tormach lathe G30 clearance (#1666) and the Sodick tank and flushing
+  words (#1499): no physical control.
+
+## Known issues
+No `P1` or `P2` issue was open at the start of the cut, and none was filed
+during it. These defects are open and have a workaround (set the dwell to 0,
+or check the posted block):
+- #2354: the Sinumerik post drops a G73 dwell without a diagnostic.
+- #2356: the Fanuc, Haas, Mazak and Doosan posts drop a G73 dwell without a
+  diagnostic.
+- #2357: the Sinumerik G84 and G85 dwell words do not agree with the ISO
+  dialects manual.
+- #2359: Bake rotation mode: the schema text and the posted coordinates do
+  not agree.
+- #2362: the grblHAL and Tormach posts write G86 with no P when the bore
+  dwell is 0.
+
+## Process changes
+`PROCESS_VERSION` went from 78 to 89 (pinned issue #681).
+- 79: the multi-pass lathe field parity test is in a heavy lane; MCP skill
+  rows for the 2D Pocket rest parameters and the post options.
+- 80, 81, 83, 84, 86, 88: MCP skill rows for `list_features`
+  `outside_unknown`, `edit_tool`, the operation coolant tool, the lathe chuck
+  tools, the thread-mill tools, the Zigzag rest behaviour and `set_wcs_flip`.
+- 82: `cargo xtask gate` runs one step for each test binary; `--only` and
+  `--failed` select one binary.
+- 85: `crates/ui/AGENTS.md` has a "Frame cost" section; MCP skill row for
+  `turn_fixture`.
+- 87: rules for named page layout tests and for behaviour tests without
+  fixed positions.
+- 89: two new gate-map pins in `xtask`.
+
+A fork syncs its process files at the start of its next session
+(`fork-sync` skill).
+
+---
+
 # CamCraft 0.22.0 (clean-room implementation)
 
 Released 2026-11-16.

@@ -21,6 +21,7 @@ fn boss(radius: f64, top: f64) -> Hole {
 
 fn external(bosses: Vec<Hole>) -> OpParams {
     OpParams::Thread {
+        break_through: None,
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(20.0),
@@ -40,6 +41,7 @@ fn external(bosses: Vec<Hole>) -> OpParams {
 /// The kernel's ride round the M8 boss with the Ø6 multi-form mill.
 fn ride() -> Toolpath {
     machining2d::thread_mill(&ThreadParams {
+        through_run: None,
         holes: vec![ThreadHole { xy: Point2::new(0.0, 0.0), radius: 4.0, top_z: 20.0, floor_z: 10.0, stepped: false, through: false }],
         pitch: 1.25,
         tool_diameter: 6.0,

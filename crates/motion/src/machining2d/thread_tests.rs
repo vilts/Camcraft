@@ -14,6 +14,7 @@ const FLOOR: f64 = -6.0;
 
 fn params(rows: u32, external: bool, hand: ThreadHand, climb: bool) -> ThreadParams {
     ThreadParams {
+        through_run: None,
         holes: vec![ThreadHole { xy: Point2::new(10.0, 20.0), radius: R, top_z: TOP, floor_z: FLOOR, stepped: false, through: false }],
         pitch: 1.5,
         tool_diameter: 6.0,
@@ -262,4 +263,24 @@ fn an_r_plane_under_a_top_or_over_the_link_plane_is_refused_by_name() {
         assert!(high.contains("stands above the 10 mm retract plane"), "{high}");
         assert!(err_of(&ThreadParams { r_z: Some(f64::NAN), ..base }).contains("finite"));
     }
+}
+
+/// #1557: a through hole's run past its floor is one pitch unless the
+/// operation states its break-through; the tip never goes past it, and a
+/// negative one is refused.
+#[test]
+fn a_through_hole_runs_one_pitch_unless_the_break_through_is_stated() {
+    let through = |run: Option<f64>| {
+        let mut p = params(1, false, ThreadHand::Right, true);
+        p.holes[0].through = true;
+        p.through_run = run;
+        p
+    };
+    let low = |p: &ThreadParams| ride_of(p).moves.iter().map(|m| m.to.z).fold(f64::INFINITY, f64::min);
+    let pitch = through(None).pitch;
+    let (by_pitch, stated) = (low(&through(None)), low(&through(Some(0.2))));
+    assert!(by_pitch >= FLOOR - pitch - 1e-9 && by_pitch < FLOOR - 0.2 - 1e-9, "one pitch: {by_pitch}");
+    assert!(stated >= FLOOR - 0.2 - 1e-9, "the stated run bounds the tip: {stated}");
+    assert!(stated > by_pitch, "{stated} vs {by_pitch}");
+    assert!(err_of(&through(Some(-0.5))).contains("break-through"));
 }

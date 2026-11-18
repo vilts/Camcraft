@@ -57,6 +57,12 @@ pub const TREE_SUFFIX_GAP: &str = "tree_suffix_gap";
 pub const TREE_HEADER_BOOST: &str = "tree_header_boost";
 pub const HIGHLIGHT_STROKE_PX: &str = "highlight_stroke_px";
 
+pub const WINDOW_MARGIN: &str = "window_margin";
+pub const STATUS_H: &str = "status_h";
+pub const RIBBON_TAB_PAD_X: &str = "ribbon_tab_pad_x";
+pub const RIBBON_TAB_GAP: &str = "ribbon_tab_gap";
+pub const RIBBON_TAB_STROKE: &str = "ribbon_tab_stroke";
+
 /// The colour vocabulary, in table order (refusals quote it).
 pub const COLOR_NAMES: &[&str] = &[
     INK, INK_ALT, WELL, TEXT, TEXT_DIM, TEXT_FAINT, BORDER, ACCENT,
@@ -76,4 +82,5 @@ pub const GEOM_NAMES: &[&str] = &[
     OP_TAB_RADIUS, FONT_OP_TAB, TREE_GLYPH_PX, TREE_INSET_X, TREE_INDENT,
     TREE_EYE_RESERVE, TREE_PAD_X, TREE_PAD_Y, TREE_SUFFIX_GAP,
     TREE_HEADER_BOOST, HIGHLIGHT_STROKE_PX,
+    WINDOW_MARGIN, STATUS_H, RIBBON_TAB_PAD_X, RIBBON_TAB_GAP, RIBBON_TAB_STROKE,
 ];

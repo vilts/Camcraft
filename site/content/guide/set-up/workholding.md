@@ -36,6 +36,19 @@ and **Open to stock** closes the moving jaw against the stock. MCP:
 clamp or a soft jaw, each generated from a few dimensions you can edit
 later. MCP: `add_accessory`, `set_accessory`.
 
+The same dialog adds a lathe chuck: a 3-jaw chuck, a 4-jaw chuck or a
+collet chuck. With **Fit to the stock** ticked, the chuck closes on the
+setup's round stock, its face at the stock's underside; the box opens
+ticked when the stock is round. A jaw chuck has two more choices:
+
+- **Grip**: **Outside** (the jaws close on the work) or **Inside (in a
+  bore)** (the jaws open into the work's bore; the grip diameter is that
+  bore and the jaws run inward from it). An inside grip is placed by
+  position, because the stock does not state its bore.
+- **Step height** and **Step depth**: stepped jaws. The work sits on the
+  step, so a fitted chuck's face stands the step height under the stock.
+  Leave both at 0 for plain jaws.
+
 ## Fixture plates and mod vises
 
 **Add fixture plate…** adds a grid (tooling) plate: size, hole pitch, first
@@ -66,7 +79,7 @@ a refusal, because a vise is often drawn closed on a nominal part.
 
 ## Turning workholding
 
-A chuck is an imported or library fixture. Leave **Fixed (does not turn
+A chuck is a built-in accessory (above) or an imported or library fixture. Leave **Fixed (does not turn
 with the part)** off for a chuck, which turns with the part. Tick it for a
 tailstock or a table, which stands still while a rotary turns the part and
 is checked in the machine frame.

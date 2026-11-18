@@ -75,9 +75,9 @@ pub(super) fn boundary_group(ui: &mut Ui, state: &mut State) {
 }
 
 fn body(ui: &mut Ui, state: &mut State, u: camcraft_app::units::Unit) {
-    boundary_draft::warm(state);
-    boundary_draft::refresh_preview(state);
-    let s = boundary_summary::summarize(state);
+    crate::frame_cost::time("ui/properties.boundary.warm", || boundary_draft::warm(state));
+    crate::frame_cost::time("ui/properties.boundary.preview", || boundary_draft::refresh_preview(state));
+    let s = crate::frame_cost::time("ui/properties.boundary.summary", || boundary_summary::summarize(state));
     let inks = text_inks(ui, &state.world);
     for (k, line) in s.lines.iter().enumerate() {
         let t = RichText::new(line);
@@ -122,7 +122,7 @@ fn body(ui: &mut Ui, state: &mut State, u: camcraft_app::units::Unit) {
 
     let mut acts: Vec<Act> = Vec::new();
     group(ui, "Boundaries", None, |ui| {
-        let entries = boundary_draft::entries(state);
+        let entries = crate::frame_cost::time("ui/properties.boundary.entries", || boundary_draft::entries(state));
         if entries.is_empty() {
             ui.label("None - the selection bounds the area.");
             hint(ui, &hints()[0]);

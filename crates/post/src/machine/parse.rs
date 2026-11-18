@@ -40,7 +40,8 @@ fn mm_factor(units: Option<&serde_json::Value>) -> Option<f64> {
 /// the part states, not a letter the reader has to stereotype.
 fn collect_axes(
     parts: Option<&serde_json::Value>,
-    out: &mut Vec<(String, serde_json::Value, bool)>,
+    parent_rotary: Option<&str>,
+    out: &mut Vec<(String, serde_json::Value, bool, Option<String>)>,
 ) {
     let Some(arr) = parts.and_then(|p| p.as_array()) else { return };
     for p in arr {
@@ -52,10 +53,15 @@ fn collect_axes(
             .or_else(|| p.get("id").and_then(|n| n.as_str()))
             .unwrap_or("")
             .to_owned();
+        let next_parent = if rotary && !name.is_empty() {
+            Some(name.as_str())
+        } else {
+            parent_rotary
+        };
         if (ty == Some("linear") || rotary) && !name.is_empty() {
-            out.push((name, p.clone(), rotary));
+            out.push((name.clone(), p.clone(), rotary, parent_rotary.map(str::to_owned)));
         }
-        collect_axes(p.get("parts"), out);
+        collect_axes(p.get("parts"), next_parent, out);
     }
 }
 
@@ -195,6 +201,17 @@ pub fn parse_mch_with(text: &str, holders: Option<super::HolderLookup>) -> Resul
     m.spindle_mount = mount;
     m.default_holder = holder;
 
+    // #760: optional controller coordinate rotation capability (`G68` / `ROT`).
+    m.coordinate_rotation = match v.pointer("/controller/coordinate_rotation") {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::Bool(b)) => Some(*b),
+        Some(x) => {
+            return Err(format!(
+                "machine file: controller.coordinate_rotation must be true or false, not {x}"
+            ));
+        }
+    };
+
     let kine = v.pointer("/kinematics/default/parts");
     let f = mm_factor(v.pointer("/kinematics/default/units")).unwrap_or(1.0);
     // #131: keep the stated unit for the posts (the numbers stay mm).
@@ -208,6 +225,9 @@ pub fn parse_mch_with(text: &str, holders: Option<super::HolderLookup>) -> Resul
     m.edm = super::edm::parse_edm(v.get("edm"), f, declared.map(|(k, _)| k))?;
     // #533: the control's own words (D5), read beside the section.
     m.edm_codes = super::edm_codes::parse_codes(v.get("edm"))?;
+    let tr_err = |(k, r): (String, String)| format!("machine file: {k}: {r}");
+    m.controller_rtcp = super::trunnion::controller_rtcp(&v).map_err(tr_err)?;
+    m.sign_convention = super::trunnion::machine_sign_convention(&v).map_err(tr_err)?;
 
     if let Some(parts) = kine {
         if let Some(head) = find_type(parts, "head") {
@@ -248,15 +268,21 @@ pub fn parse_mch_with(text: &str, holders: Option<super::HolderLookup>) -> Resul
             .map(|n| n as usize)
             .filter(|n| *n > 0);
 
-        let mut listed: Vec<(String, serde_json::Value, bool)> = Vec::new();
-        collect_axes(Some(parts), &mut listed);
+        let mut listed: Vec<(String, serde_json::Value, bool, Option<String>)> = Vec::new();
+        collect_axes(Some(parts), None, &mut listed);
 
         // Controller speeds, keyed by axis name; the kinematics list
         // decides WHICH axes exist, the controller says how fast they
         // go, and a `"travel"` object (our extension) says how far.
         let ctrl = v.pointer("/controller/synced_configuration/parts");
         let mut axes: Vec<AxisLimits> = Vec::new();
-        for (name, part, rotary) in &listed {
+        let mut rotary_seq: u32 = 0;
+        for (name, part, rotary, parent) in &listed {
+            let chain_order = rotary.then(|| {
+                let idx = rotary_seq;
+                rotary_seq += 1;
+                idx
+            });
             let c = ctrl.and_then(|c| c.get(name.as_str()));
             // Travel: a length scales with the file's units, an
             // angle is an angle (the length factor would lie). Rates
@@ -304,6 +330,7 @@ pub fn parse_mch_with(text: &str, holders: Option<super::HolderLookup>) -> Resul
             let direction = axis_direction(name, part, *rotary)?;
             let nose_to_axis = super::swing::nose_to_axis(name, part, *rotary, f)?;
             let axis_to_table = super::swing::work_length("axis_to_table", name, part, *rotary, f)?;
+            let tr = super::trunnion::parse_axis_fields(name, part, *rotary, f).map_err(tr_err)?;
             if let Some(z) = safe_retract(name, part, *rotary, f)? {
                 m.safe_retract_z = Some(z);
             }
@@ -319,6 +346,13 @@ pub fn parse_mch_with(text: &str, holders: Option<super::HolderLookup>) -> Resul
                 turns_part: rotary.then(|| super::swing::turns_part(part, true)),
                 nose_to_axis,
                 axis_to_table,
+                parent: rotary.then(|| parent.clone()).flatten(),
+                chain_order,
+                pivot: tr.pivot,
+                offset: tr.offset,
+                zero_offset: tr.zero_offset,
+                rollover: tr.rollover,
+                sign_convention: tr.sign_convention,
             });
         }
         axes.sort_by_key(|a| ctrl_coord(ctrl, &a.name));

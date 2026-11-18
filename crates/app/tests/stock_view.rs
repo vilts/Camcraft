@@ -117,7 +117,7 @@ fn the_field_view_refuses_what_it_cannot_draw_by_name() {
     model::set_transform(&world, &stock, Location { pos: Point3::ZERO, rot: quat_from_yaw(0.7) });
     history.execute(&world, GenerateOperation::new(&world, "Face1").expect("regenerate rotated"));
     let err = field_view(&world).expect_err("a rotated stock cannot be drawn on the lattice");
-    assert!(err.contains("axis-aligned"), "{err}");
+    assert!(err.contains("turned off the machine axes"), "{err}");
 }
 
 #[test]

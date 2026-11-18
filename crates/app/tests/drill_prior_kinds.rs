@@ -41,6 +41,7 @@ fn drill_tool(d: f64) -> Tool {
 fn drill(radius: f64, entry: f64, floor: f64, r: f64) -> OpParams {
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius, entry_z: entry, floor_z: floor, through: false, stepped: false };
     OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(40.0),
         retract_z: None,
         top_z: Height::fixed(r),

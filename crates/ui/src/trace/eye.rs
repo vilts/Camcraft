@@ -129,6 +129,12 @@ impl StockEye {
         self.cpu.as_ref().is_some_and(|c| c.wait_picture(timeout))
     }
 
+    /// Whether the CPU fallback currently has a march pending or ready.
+    #[must_use]
+    pub fn cpu_pending(&self) -> bool {
+        self.cpu.as_ref().is_some_and(CpuEye::is_pending)
+    }
+
     fn verdict_of(p: &crate::egui_app::colorvision::Semantic) -> [[f32; 3]; 4] {
         [p.clean, p.rest, p.gouge, p.unjudged]
     }

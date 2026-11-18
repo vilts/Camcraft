@@ -46,14 +46,13 @@ fn every_picker_item_wears_its_kind_glyph() {
     assert_eq!(picker_item_icon(None), None, "a name with no tool must not wear a glyph");
 }
 
-/// Every textured mesh the last frame painted: (texture, bounds). Image
-/// widgets paint as `Shape::Mesh` in this egui, and a widget outside its
+/// Every texture id painted in the last frame. A widget outside its
 /// clip rect paints nothing, so a row is only read once scrolled into view.
-fn painted_textures(h: &Harness<'static, ShellUi>) -> Vec<(egui::TextureId, egui::Rect)> {
-    fn walk(s: &egui::Shape, out: &mut Vec<(egui::TextureId, egui::Rect)>) {
+fn painted_textures(h: &Harness<'static, ShellUi>) -> Vec<egui::TextureId> {
+    fn walk(s: &egui::Shape, out: &mut Vec<egui::TextureId>) {
         match s {
-            egui::Shape::Mesh(m) => out.push((m.texture_id, m.calc_bounds())),
-            egui::Shape::Rect(r) if r.fill_texture_id() != egui::TextureId::default() => out.push((r.fill_texture_id(), r.rect)),
+            egui::Shape::Mesh(m) => out.push(m.texture_id),
+            egui::Shape::Rect(r) if r.fill_texture_id() != egui::TextureId::default() => out.push(r.fill_texture_id()),
             egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
             _ => {}
         }
@@ -65,19 +64,32 @@ fn painted_textures(h: &Harness<'static, ShellUi>) -> Vec<(egui::TextureId, egui
     out
 }
 
-/// The texture id of a kind's glyph in the icon set the harness loaded.
-fn kind_texture(h: &Harness<'static, ShellUi>, k: camcraft_app::tools::ToolKind) -> egui::TextureId {
+/// The texture id and accessible name of a kind's glyph in the icon set.
+fn kind_icon(h: &Harness<'static, ShellUi>, k: camcraft_app::tools::ToolKind) -> (egui::TextureId, String) {
     let set = IconSet::from_ctx(&h.ctx).expect("the icon set is up after the first frame");
-    set.texture(tool_icon(k)).expect("the kind's glyph decoded").id()
+    let tex = set.texture(tool_icon(k)).expect("the kind's glyph decoded");
+    (tex.id(), tex.name())
 }
 
-/// Whether `want` is painted level with `row` (its glyph sits in the row).
-fn glyph_in_row(h: &Harness<'static, ShellUi>, want: egui::TextureId, row: egui::Rect) -> bool {
-    painted_textures(h).iter().any(|(t, r)| *t == want && (r.center().y - row.center().y).abs() < row.height())
+/// Whether `row`'s horizontal container carries an `Image` labelled for `want`
+/// and the frame painted that texture id.
+fn glyph_in_row(
+    h: &Harness<'static, ShellUi>,
+    row: &egui_kittest::Node<'_>,
+    (want_tex, want_alt): (egui::TextureId, String),
+) -> bool {
+    use egui_kittest::kittest::NodeT;
+    let has_image = row.parent().is_some_and(|p| {
+        p.children().any(|n| {
+            let a = n.accesskit_node();
+            a.role() == egui::accesskit::Role::Image && a.label().as_deref() == Some(want_alt.as_str())
+        })
+    });
+    has_image && painted_textures(h).contains(&want_tex)
 }
 
-/// The painted twin of the pure test: each catalog row paints its kind's
-/// glyph texture level with its own label (scrolled into view first - the
+/// The painted twin of the pure test: each catalog row renders its kind's
+/// glyph inside the row's container (scrolled into view first - the
 /// catalog sits in a clipped scroll area). Deleting the `glyph(...)` call
 /// from the row fails this.
 #[test]
@@ -89,17 +101,25 @@ fn every_catalog_row_paints_its_kind_glyph() {
     h.run();
     for (name, ct) in tools::catalog() {
         let label = format!("{name}  \u{d8}");
+        if !crate::machine_modes::tool_kind_offered(&h.state().state.world, ct.kind) {
+            assert!(
+                h.query_by_label_contains(&label).is_none(),
+                "unoffered catalog entry {name} ({:?}) stays hidden",
+                ct.kind
+            );
+            continue;
+        }
         h.get_by_label_contains(&label).scroll_to_me();
         h.run();
         h.run();
-        let row = h.get_by_label_contains(&label).rect();
-        assert!(glyph_in_row(&h, kind_texture(&h, ct.kind), row), "catalog row {name} paints no {:?} glyph", ct.kind);
+        let row = h.get_by_label_contains(&label);
+        assert!(glyph_in_row(&h, &row, kind_icon(&h, ct.kind)), "catalog row {name} paints no {:?} glyph", ct.kind);
     }
 }
 
 /// The picker's dropdown: with the whole catalog on the rack, the opened
-/// list paints each document tool's kind glyph level with its item (items
-/// below the popup's fold are scrolled into view first), and every item
+/// list renders each document tool's kind glyph inside its item container
+/// (items below the popup's fold are scrolled into view first), and every item
 /// keeps its plain accessible name.
 #[test]
 fn every_picker_item_paints_its_kind_glyph() {
@@ -120,7 +140,7 @@ fn every_picker_item_paints_its_kind_glyph() {
         item.scroll_to_me();
         h.run();
         h.run();
-        let row = h.query_all_by_label(name).last().map(|n| n.rect()).expect("item stays listed");
-        assert!(glyph_in_row(&h, kind_texture(&h, ct.kind), row), "picker item {name} paints no {:?} glyph", ct.kind);
+        let row = h.query_all_by_label(name).last().expect("item stays listed");
+        assert!(glyph_in_row(&h, &row, kind_icon(&h, ct.kind)), "picker item {name} paints no {:?} glyph", ct.kind);
     }
 }

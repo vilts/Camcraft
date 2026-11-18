@@ -27,7 +27,8 @@ use super::{
 };
 use crate::machine::{check_ops, Machine, MachineCheck};
 use crate::model;
-use crate::post::{cnc, engine};
+use crate::post::{cnc, engine, options::OptionValue};
+use std::collections::BTreeMap;
 use crate::schema::PostRef;
 use crate::setup_mount::{program_mounts, Mount};
 use serde_json::Value;
@@ -68,9 +69,19 @@ pub fn machine_value_for(machine: &(String, Option<Machine>)) -> Value {
     }
 }
 
+/// [`machine_value_for`] as a post reads it (#2319): where the mount says
+/// no machine, the default machine file must read - a missing or
+/// malformed file refuses the post by its name, never posts a null machine.
+pub(super) fn posted_machine_for(machine: &(String, Option<Machine>)) -> Result<Value, String> {
+    match &machine.1 {
+        Some(m) => Ok(crate::post::machine::mirror(m)),
+        None => super::default_machine_checked().map_err(|why| format!("post blocked - {why}")),
+    }
+}
+
 /// The active setup's mount - what a program with nothing to post reads
 /// (its refusal is the post's own, "no operations to post").
-fn active(world: &World) -> Mount {
+pub(super) fn active(world: &World) -> Mount {
     Mount {
         setups: vec![crate::setup::active(world).unwrap_or_default()],
         machine: crate::machine::of(world),
@@ -78,10 +89,24 @@ fn active(world: &World) -> Mount {
     }
 }
 
+/// Refuse combined-program posting when Output is "One file per operation" (#2188):
+/// setup-change stops are suppressed for per-op files, so a combined program
+/// would cross setup boundaries without a stop.
+pub(super) fn refuse_per_op(world: &World, surface: &str) -> Result<(), String> {
+    if crate::setup_post_options::in_force(world).per_op {
+        return Err(format!(
+            "Output is set to One file per operation - {surface} cannot hold per-operation programs; \
+             post one file per operation, or switch Output to One program"
+        ));
+    }
+    Ok(())
+}
+
 /// The program's one mount, or a refusal naming every mount it spans:
 /// one file holds one post for one machine. `by_post` false groups by
 /// machine alone (a caller handing its own script).
 pub(super) fn single(world: &World, by_post: bool) -> Result<Mount, String> {
+    refuse_per_op(world, "one combined file")?;
     let mounts = program_mounts(world, by_post);
     // #1532: "One file per setup" asks a file per setup - one file
     // cannot hold two, so the single-file post refuses and says how.
@@ -108,7 +133,7 @@ pub(super) fn single(world: &World, by_post: bool) -> Result<Mount, String> {
 }
 
 /// Whether operation entity `e` belongs to a mount of `setups`.
-fn member(world: &World, e: &Entity, setups: &[String]) -> bool {
+pub(super) fn member(world: &World, e: &Entity, setups: &[String]) -> bool {
     model::operation_of(world, e)
         .map(|op| crate::setup::effective(world, op.setup.as_deref()).unwrap_or_default())
         .is_some_and(|name| setups.contains(&name))
@@ -143,7 +168,8 @@ pub fn machine_checks(world: &World) -> Vec<(Machine, Result<MachineCheck, Strin
 
 /// The limit clause of the program gate (M2.3 D): [`machine_checks`],
 /// worded as the single-machine gate always worded it, so a one-mount
-/// program reads exactly as before.
+/// program reads exactly as before. A mount with no machine is judged
+/// against the default machine's stated limits (#2321).
 pub(super) fn machine_problems(world: &World) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for (m, check) in machine_checks(world) {
@@ -161,6 +187,7 @@ pub(super) fn machine_problems(world: &World) -> Vec<String> {
             out.push(line);
         }
     }
+    out.extend(super::default_mch::default_machine_problems(world));
     out
 }
 
@@ -170,28 +197,65 @@ pub(super) fn machine_problems(world: &World) -> Vec<String> {
 /// `<stem>_<nn>_<setups>.<ext>` beside it, in program order, each in
 /// its post's own extension.
 pub fn post_mounts(world: &World, out_path: &Path) -> Result<Vec<PostedMount>, String> {
-    post_mounts_with(world, out_path, None)
+    post_mounts_with(world, out_path, None, None)
+}
+
+/// [`post_mounts`] with temporary per-run script option overrides (#258).
+pub fn post_mounts_with_script_options(
+    world: &World,
+    out_path: &Path,
+    extra: Option<&BTreeMap<String, OptionValue>>,
+) -> Result<Vec<PostedMount>, String> {
+    post_mounts_with(world, out_path, None, extra)
 }
 
 /// [`post_mounts`] with one script for every mount (a caller's own
 /// `.cps`): the mounts are then grouped by machine alone.
 pub fn post_mounts_script(world: &World, out_path: &Path, cps: &str) -> Result<Vec<PostedMount>, String> {
-    post_mounts_with(world, out_path, Some(cps))
+    post_mounts_with(world, out_path, Some((None, cps)), None)
 }
 
-fn post_mounts_with(world: &World, out_path: &Path, cps: Option<&str>) -> Result<Vec<PostedMount>, String> {
+/// [`post_mounts_script`] with temporary per-run script option overrides (#258).
+pub fn post_mounts_script_with_options(
+    world: &World,
+    out_path: &Path,
+    cps: &str,
+    extra: Option<&BTreeMap<String, OptionValue>>,
+) -> Result<Vec<PostedMount>, String> {
+    post_mounts_with(world, out_path, Some((None, cps)), extra)
+}
+
+/// [`post_mounts`] for a resolved [`PostRef`] with temporary per-run script option overrides (#258, #2190).
+pub fn post_mounts_for_post_with_options(
+    world: &World,
+    out_path: &Path,
+    post: &PostRef,
+    cps: &str,
+    extra: Option<&BTreeMap<String, OptionValue>>,
+) -> Result<Vec<PostedMount>, String> {
+    post_mounts_with(world, out_path, Some((Some(post), cps)), extra)
+}
+
+fn post_mounts_with(
+    world: &World,
+    out_path: &Path,
+    explicit: Option<(Option<&PostRef>, &str)>,
+    extra: Option<&BTreeMap<String, OptionValue>>,
+) -> Result<Vec<PostedMount>, String> {
+    refuse_per_op(world, "one file per mount")?;
     // #1532: "One file per setup" writes each setup as its own mount's file.
-    let mounts = super::setup_change::split(world, program_mounts(world, cps.is_none()));
+    let mounts = super::setup_change::split(world, program_mounts(world, explicit.is_none()));
     if mounts.len() <= 1 {
-        let posted = match cps {
-            None => super::post_setup(world, out_path)?,
-            Some(c) => super::post_script(world, out_path, c)?,
+        let posted = match explicit {
+            None => super::post_setup_with_script_options(world, out_path, extra)?,
+            Some((Some(post), c)) => super::post_script_for_post_with_options(world, out_path, post, c, extra)?,
+            Some((None, c)) => super::post_script_with_script_options(world, out_path, c, extra)?,
         };
         let mount = mounts.into_iter().next().unwrap_or_else(|| active(world));
         return Ok(vec![PostedMount { path: out_path.to_path_buf(), mount, posted }]);
     }
     let started = crate::clock::Instant::now();
-    let posted = post_each(world, out_path, cps, mounts);
+    let posted = post_each(world, out_path, explicit, mounts, extra);
     match &posted {
         Ok(files) => tracing::info!(
             files = files.len(),
@@ -203,17 +267,23 @@ fn post_mounts_with(world: &World, out_path: &Path, cps: Option<&str>) -> Result
     posted
 }
 
-fn post_each(world: &World, out_path: &Path, cps: Option<&str>, mounts: Vec<Mount>) -> Result<Vec<PostedMount>, String> {
+fn post_each(
+    world: &World,
+    out_path: &Path,
+    explicit: Option<(Option<&PostRef>, &str)>,
+    mounts: Vec<Mount>,
+    extra: Option<&BTreeMap<String, OptionValue>>,
+) -> Result<Vec<PostedMount>, String> {
     // Every script first: a post that cannot be read refuses before
     // anything is judged, as the single-file post does.
     let mut scripts: Vec<(Option<String>, String)> = Vec::with_capacity(mounts.len());
     for m in &mounts {
-        scripts.push(match cps {
-            Some(c) => (None, c.to_owned()),
+        scripts.push(match explicit {
+            Some((post, c)) => (post.map(super::post_ref_label), c.to_owned()),
             None => script_of(&m.post).map(|(label, text)| (Some(label), text))?,
         });
     }
-    let streams = super::op_streams_by(world, cps.is_none())?;
+    let streams = super::op_streams_by(world, explicit.is_none())?;
     // #1190: each mount's own script opens only what a lathe may run;
     // #1232: and writes only for a machine kind it serves.
     let mut unserved = Vec::new();
@@ -228,8 +298,8 @@ fn post_each(world: &World, out_path: &Path, cps: Option<&str>, mounts: Vec<Moun
     }
     // #1174: an explicit script is the dialect every op posts through;
     // otherwise each op's own mount's post (the scripts read above).
-    let mut report = match cps {
-        Some(c) => {
+    let mut report = match explicit {
+        Some((_, c)) => {
             let voice = crate::post::dialect::work_voice(c).map_err(|e| format!("post engine: {e}"))?;
             crate::posting::verification_report_by(world, &|_| voice)
         }
@@ -244,7 +314,7 @@ fn post_each(world: &World, out_path: &Path, cps: Option<&str>, mounts: Vec<Moun
     }
     let dir = out_path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
     let program = out_path.file_stem().and_then(|s| s.to_str()).unwrap_or("program");
-    let options = super::program_options(world);
+    let explicit_post = explicit.and_then(|(p, _)| p);
     // #258: each mount's file is a whole program of its own, numbered as
     // the single-file post numbers it (the document's number, or O0001).
     let id = super::document_program_id(world, 1)?;
@@ -256,7 +326,17 @@ fn post_each(world: &World, out_path: &Path, cps: Option<&str>, mounts: Vec<Moun
             .cloned()
             .collect();
         let records = join_streams(own);
-        let out = engine::run_program_with(&cps, &machine_value_for(&mount.machine), &cnc::serialize(&records), &options, &id)
+        let mount_post = explicit_post.or_else(|| explicit.is_none().then_some(&mount.post));
+        let mount_setup = mount.setups.first().map(String::as_str);
+        let options = super::program_options_for_script(
+            world,
+            &cps,
+            mount_post,
+            mount_setup,
+            extra,
+        )?;
+        let mch = posted_machine_for(&mount.machine).map_err(|why| format!("{}: {why}", mount.label()))?;
+        let out = engine::run_program_with(&cps, &mch, &cnc::serialize(&records), &options, &id)
             .map_err(|e| format!("{}: post engine: {e}", mount.label()))?;
         if !out.warnings.is_empty() {
             return Err(format!(

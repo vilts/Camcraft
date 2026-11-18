@@ -94,6 +94,7 @@ fn part() -> Mesh {
 fn drill() -> OpParams {
     let hole = |x: f64| Hole { xy: Point2::new(x, Y), radius: 2.0, entry_z: LOW, floor_z: 12.0, through: false, stepped: false };
     OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(40.0),
         retract_z: Some(Height::fixed(RETRACT)),
         top_z: Height::fixed(LOW),

@@ -22,7 +22,7 @@
 //!   leaves `target` empty with its reason - pixels then paint class 3,
 //!   unjudged, never clean.
 
-use crate::geometry::{transform_point, IDENTITY_Q, Point3, Triangle};
+use crate::geometry::{transform_point, Point3, Triangle};
 use crate::model;
 use std::sync::Arc;
 
@@ -246,17 +246,24 @@ pub(crate) fn build_target(part: &[Triangle], cell: f64) -> (Option<Stock>, Opti
 }
 
 /// The setup's stock entity as world triangles (the mesh the viewport
-/// already draws), refusing a rotation the axis-aligned field
-/// lattice would silently ignore.
+/// already draws) in the sim's frame (`stock_follow::sim_frame`):
+/// refusing a turn the axis-aligned field lattice cannot hold.
 fn stock_facets(world: &flecs_ecs::prelude::World, setup: Option<&str>) -> Result<Vec<Triangle>, String> {
     let name = crate::setup::stock_entity_name(world, setup);
     let e = model::find_by_name(world, &name)
         .ok_or_else(|| format!("no stock '{name}' - the eye draws material, not air"))?;
-    let loc = model::transform_of(world, &e).unwrap_or_default();
-    if loc.rot != IDENTITY_Q {
-        return Err("the field view models an axis-aligned stock; this stock carries a rotation".into());
-    }
-    let tris = model::facets_of(world, &e).ok_or("the stock entity carries no mesh")?;
+    let placed = model::transform_of(world, &e).unwrap_or_default();
+    // #2177: the sim's own law - a square-turned stock is drawn as its
+    // unturned twin (the same solid), an oblique one refused by name.
+    let (twin, loc) = match model::stock_def_of(world, &e) {
+        Some(shape) => crate::stock_follow::sim_frame(&shape, placed).map(|(s, l)| (Some(s), l))?,
+        None if placed.rot == crate::geometry::IDENTITY_Q => (None, placed),
+        None => return Err(crate::stock_follow::OBLIQUE_STOCK.into()),
+    };
+    let tris: Arc<[Triangle]> = match twin.filter(|_| loc != placed) {
+        None => model::facets_of(world, &e).ok_or("the stock entity carries no mesh")?,
+        Some(s) => crate::stock::stock_mesh(&s).ok_or("the stock cannot be meshed")?.into(),
+    };
     Ok(tris
         .iter()
         .map(|t| {

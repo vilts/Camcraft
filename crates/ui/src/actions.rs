@@ -154,7 +154,7 @@ pub(crate) fn ensure_field_view(state: &mut State) {
         return;
     }
     if let Err(err) = follow_playhead(state, judged) {
-        state.status += &format!(" | traced playback refused: {err} - the sheet stands");
+        state.say_once(&format!("simulation shows the uncut stock: {err}"));
         state.field_play = None;
         state.field_view = Some(Err(err));
     }
@@ -172,7 +172,7 @@ fn walk_whole_program(state: &mut State) {
             crate::machined::prime(state);
         }
         Err(err) => {
-            state.status += &format!(" | traced stock refused: {err} - the sheet stands");
+            state.say_once(&format!("simulation shows the uncut stock: {err}"));
             state.field_view = Some(Err(err));
         }
     }
@@ -187,7 +187,9 @@ fn follow_playhead(state: &mut State, judged: bool) -> Result<(), String> {
     use camcraft_app::stock_view::DEFAULT_TEXELS;
     if state.field_play.is_none() {
         let seed = PlaySeed::gather(&state.world, judged, DEFAULT_TEXELS)?;
-        state.field_play = Some(PlayWorker::spawn(seed)?);
+        // #2181: the removal is calculated once before playback, then
+        // replayed from keyframes (the transport row shows the progress).
+        state.field_play = Some(PlayWorker::spawn_precalc(seed, camcraft_app::stock_play::PRECALC_BUDGET)?);
     }
     let sc = crate::egui_app::shell::cached_script(state);
     let t = state.sim.as_ref().map_or(0.0, |s| s.t);
@@ -394,13 +396,22 @@ pub(crate) fn add_operation(state: &mut State, kind: usize) {
         n += 1;
     };
     let mut params = quick_params(kind);
-    // #535: a quick-add wire contour takes the machine's first stated
-    // condition (the door refuses an op naming none); with none stated
-    // the door's refusal names the table to fill.
-    if let camcraft_app::operation::OpParams::WireContour(w) = &mut params
-        && let Some(first) = camcraft_app::operation::wire_op::conditions_of(&state.world, None).into_iter().next()
-    {
-        w.condition = first;
+    // #535 / #2011: a quick-add wire contour picks the first condition compatible
+    // with its mounted wire tool (falling back to the first stated condition so the
+    // command refuses with a helpful message if none match).
+    let active_setup = camcraft_app::setup::active(&state.world);
+    if let camcraft_app::operation::OpParams::WireContour(w) = &mut params {
+        let conds = camcraft_app::operation::wire_op::conditions_of(&state.world, active_setup.as_deref());
+        w.condition = conds
+            .iter()
+            .find(|id| {
+                let mut probe = w.clone();
+                probe.condition.clone_from(id);
+                camcraft_app::operation::wire_op::condition_of(&state.world, active_setup.as_deref(), &tool, &probe).is_ok()
+            })
+            .cloned()
+            .or_else(|| conds.into_iter().next())
+            .unwrap_or_default();
     }
     // M11.3: the seed helix radius follows the op's tool (0.4 x radius).
     if let Some(t) = camcraft_app::model::find_by_name(&state.world, &tool)

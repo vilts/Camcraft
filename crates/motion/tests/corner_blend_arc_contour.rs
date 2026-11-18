@@ -104,8 +104,9 @@ fn a_d_bore_holds_the_gouge_law_with_curved_corners_on() {
     // Each level's two line-arc corners: one is the seam (the entry
     // stands there, named), the other rounds - and rides the posted
     // moves tangent at both ends (to the 1 um lattice).
-    assert_eq!(n_fillets, 3, "{:?}", blended.notes);
-    assert!(blended.notes.iter().any(|n| n.contains("3 of 6 walked corner(s) rounded")), "{:?}", blended.notes);
+    // Two levels (-2, -4; #2004: no air level at Top Z 0).
+    assert_eq!(n_fillets, 2, "{:?}", blended.notes);
+    assert!(blended.notes.iter().any(|n| n.contains("2 of 4 walked corner(s) rounded")), "{:?}", blended.notes);
     let tan = |m: &Move, end: bool| {
         let (a, b) = ((m.from.x, m.from.y), (m.to.x, m.to.y));
         let v = match m.arc {

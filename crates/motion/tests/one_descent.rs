@@ -248,3 +248,59 @@ fn the_linear_lead_bore_lands_its_one_descent_on_the_lead_start() {
         Err(e) => assert!(format!("{e:?}").contains(CENTER_CUT_REFUSAL), "{e:?}"),
     }
 }
+
+/// #2004 review: the bore side's `fresh` arm (a transition whose column no
+/// earlier descent opened) reads `entry_top()`. Under carried stock 5 mm
+/// over Top Z (#1559, `material_top`) every descent starts over that stock:
+/// verify against a stock top at Z 5 finds no rapid into stock, for each
+/// lead, entry and link (one case of `main` excepted, #2301). On `main`
+/// the case `lead none Ramp helix transition` rapids into the stock.
+#[test]
+fn the_bore_contour_under_carried_stock_never_rapids_into_it() {
+    const CARRIED: f64 = 5.0;
+    let hole = round(10.0);
+    let mut bad = Vec::new();
+    for (lname, lead) in [("none", Lead::None), ("arc", Lead::Arc { radius: 2.0 }), ("linear", Lead::Linear { length: 2.0 })] {
+        for entry in [Entry3D::Helix, Entry3D::Plunge, Entry3D::Ramp, Entry3D::Arc] {
+            for (ln, links) in [
+                ("planar", Links::PLANAR),
+                ("retract", Links { level: Link::Retract, ..Links::PLANAR }),
+                ("helix transition", Links { transition: Some(Entry3D::Helix), helix_pitch: 1.0, ..Links::PLANAR }),
+            ] {
+                let mut links = links;
+                links.approach.material_top = Some(CARRIED);
+                links.approach.stock_top = Some(CARRIED);
+                let what = format!("carried bore lead {lname} {entry:?} {ln}");
+                let t = contour(&hole, &bore(entry, lead, links)).expect("bore contour");
+                let tool = tool(3.0);
+                let cx = VerifyContext {
+                    region: &hole,
+                    stock: None,
+                    model: None,
+                    tool: &tool,
+                    cutter: None,
+                    mode: Mode::Area,
+                    stock_top_z: CARRIED,
+                    clearance_z: 25.0,
+                    stock_to_leave: 0.0,
+                    gouge_tol: 0.01,
+                    z_tol: 1e-6,
+                    finish_tol: None,
+                    fixtures: &[],
+                    spindle: None,
+                    ..Default::default()
+                };
+                let w = verify(&t, &cx);
+                if !w.is_empty() {
+                    bad.push(format!("{what}: verify {w:?}"));
+                }
+                // The stock over Top Z is cut: the first level is Top Z.
+                let first = t.moves.iter().find(|m| m.kind == MoveKind::Feed && (m.to.z - m.from.z).abs() <= 1e-9).map(|m| m.to.z);
+                if first != Some(0.0) {
+                    bad.push(format!("{what}: first level {first:?}, not Top Z 0"));
+                }
+            }
+        }
+    }
+    assert!(bad.is_empty(), "{}", bad.join("\n"));
+}

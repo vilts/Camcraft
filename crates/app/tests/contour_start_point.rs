@@ -85,7 +85,7 @@ fn nonsense_and_other_kinds_are_refused_at_the_door() {
     // A tilted contour does not take a pick yet.
     let mut tilted = contour_op(Some(Point2::new(35.0, 0.0)));
     if let OpParams::Contour { tilt, .. } = &mut tilted {
-        *tilt = Some(Tilt { a_deg: 0.0, b_deg: 90.0, origin: [0.0, 0.0, 0.0] });
+        *tilt = Some(Tilt { basis_version: 1, a_deg: 0.0, b_deg: 90.0, origin: [0.0, 0.0, 0.0] });
     }
     match CreateOperation::new(&world, "Op1", "T", SrcRef::Stock, tilted) {
         Ok(_) => panic!("a tilted contour with a pick is refused"),

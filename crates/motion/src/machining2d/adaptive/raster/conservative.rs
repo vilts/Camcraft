@@ -61,6 +61,39 @@ impl Raster {
         }
     }
 
+    /// [`Raster::cut`], counting the material cells it clears (issue
+    /// 2109: what a feed removes, walls aside, tells cut from air).
+    pub(in crate::machining2d::adaptive) fn cut_count(&mut self, a: Point2, b: Point2, r: f64) -> usize {
+        if !(a.x.is_finite() && a.y.is_finite() && b.x.is_finite() && b.y.is_finite() && r.is_finite()) {
+            return 0;
+        }
+        let h = self.h;
+        let iy0 = ((a.y.min(b.y) - r - self.y0) / h - 0.5).ceil().max(0.0) as usize;
+        let iy1 = ((a.y.max(b.y) + r - self.y0) / h - 0.5).floor();
+        if iy1 < 0.0 {
+            return 0;
+        }
+        let iy1 = (iy1 as usize).min(self.ny.saturating_sub(1));
+        let mut n = 0;
+        for iy in iy0..=iy1 {
+            let y = self.y0 + (iy as f64 + 0.5) * h;
+            let Some((xl, xr)) = super::capsule_row(a, b, r, y) else { continue };
+            let i0 = ((xl - self.x0) / h - 0.5).ceil().max(0.0) as usize;
+            let i1 = ((xr - self.x0) / h - 0.5).floor();
+            if i1 < 0.0 {
+                continue;
+            }
+            let (row, i1) = (iy * self.nx, (i1 as usize).min(self.nx.saturating_sub(1)));
+            for ix in i0..=i1 {
+                if let Some(c) = self.cells.get_mut(row + ix) {
+                    n += usize::from(*c);
+                    *c = false;
+                }
+            }
+        }
+        n
+    }
+
     /// Does the capsule of radius `rad` about `a -> b` hold no material
     /// cell (walls aside)? Off the grid nothing is proved: `false`.
     pub(in crate::machining2d::adaptive) fn air(&self, a: Point2, b: Point2, rad: f64) -> bool {

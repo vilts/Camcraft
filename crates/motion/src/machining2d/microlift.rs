@@ -105,12 +105,9 @@ pub(super) fn link(b: &mut PathBuilder, ret: &Return, z: f64, m: &Motion) {
     link_at(b, ret, z, m.hop_z, m.feed);
 }
 
-/// [`link`] on bare numbers: the hop plane a `high` return rides and
-/// the cutting feed (the 3-D ladder's per-level port, `machining3d::hsm`).
-pub(crate) fn link_at(b: &mut PathBuilder, ret: &Return, z: f64, hop_z: f64, feed: f64) {
+fn push_prof(b: &mut PathBuilder, prof: &[(Point2, f64)], z: f64, hop_z: f64, feed: f64, high: bool) {
     let at = b.at();
-    let prof = profile(Point2::new(at.x, at.y), ret);
-    if ret.high {
+    if high {
         // Up, across and down to the lift in rapid (vertical rapids in
         // the cut's own kerf and column; the lateral one over the
         // retract plane), then down the lead at feed.
@@ -119,14 +116,173 @@ pub(crate) fn link_at(b: &mut PathBuilder, ret: &Return, z: f64, hop_z: f64, fee
         b.push(MoveKind::Rapid, Point3::new(at.x, at.y, hop), None);
         b.push(MoveKind::Rapid, Point3::new(top.x, top.y, hop), None);
         b.push(MoveKind::Rapid, Point3::new(top.x, top.y, lattice(z + hz)), None);
-        for (p, dz) in prof.into_iter().skip(1) {
-            let zz = if dz > 0.0 { lattice(z + dz) } else { z };
-            b.push(MoveKind::Feed, Point3::new(p.x, p.y, zz), Some(feed));
-        }
-        return;
     }
-    for (p, dz) in prof.into_iter().skip(1) {
+    for &(p, dz) in prof.iter().skip(1) {
         let zz = if dz > 0.0 { lattice(z + dz) } else { z };
         b.push(MoveKind::Feed, Point3::new(p.x, p.y, zz), Some(feed));
+    }
+}
+
+fn try_prof(b: &mut PathBuilder, prof: &[(Point2, f64)], z: f64, hop_z: f64, feed: f64, high: bool) -> bool {
+    if high && prof.len() < 2 {
+        return false;
+    }
+    let mut probe = PathBuilder::new(b.at());
+    push_prof(&mut probe, prof, z, hop_z, feed, high);
+    if super::arc_cross::moves_cross_prior(probe.moves(), b.moves()) {
+        return false;
+    }
+    push_prof(b, prof, z, hop_z, feed, high);
+    true
+}
+
+/// [`link`] on bare numbers: the hop plane a `high` return rides and
+/// the cutting feed (the 3-D ladder's per-level port, `machining3d::hsm`).
+pub(crate) fn link_at(b: &mut PathBuilder, ret: &Return, z: f64, hop_z: f64, feed: f64) {
+    let at = b.at();
+    let Some(end) = ret.down.last().or(ret.via.last()).or(ret.up.last()).copied() else {
+        return;
+    };
+    let prior = b.moves();
+    // Nearest earlier horizontal cut plane strictly above `z` (scanned
+    // before this level's own moves so same-level plateaus never ratchet).
+    let first_at_z = prior.iter().position(|m| m.kind != MoveKind::Rapid && (m.to.z - z).abs() <= 1e-6).unwrap_or(prior.len());
+    let gap = prior[..first_at_z]
+        .iter()
+        .filter(|m| m.kind == MoveKind::Feed && (m.from.z - m.to.z).abs() <= 1e-6 && m.from.z > z + 1e-6)
+        .map(|m| m.from.z - z)
+        .reduce(f64::min);
+    if let Some(g) = gap
+        && g <= 0.02
+    {
+        let hop = hop_z.max(z + 0.1);
+        b.push(MoveKind::Rapid, Point3::new(at.x, at.y, hop), None);
+        b.push(MoveKind::Rapid, Point3::new(end.x, end.y, hop), None);
+        b.push(MoveKind::Plunge, Point3::new(end.x, end.y, z), Some(feed));
+        return;
+    }
+    let lift = match gap {
+        Some(g) if g <= 1.5 + 1e-2 || ret.lift >= g - 1e-2 => {
+            let ceil = g - 0.01;
+            let denom = ret.lift.max(1.5);
+            lattice((ret.lift * ceil / denom).max(0.005)).min(lattice(ceil))
+        }
+        _ => ret.lift,
+    };
+    let adjusted = Return { lift, ..ret.clone() };
+    let prof = profile(Point2::new(at.x, at.y), &adjusted);
+    if try_prof(b, &prof, z, hop_z, feed, adjusted.high) {
+        return;
+    }
+    if !adjusted.high {
+        // A low return proves feeds over cleared stock, not a rapid's
+        // whole landing disc. Only the planner's `LinkLaw::high` has
+        // that proof; changing the flag here would bypass it. Neither
+        // a rapid onto the lead nor an axial fallback is proved here.
+        b.note_once(crate::approach::MICROLIFT_REFUSAL);
+        return;
+    }
+    let hop = hop_z.max(z + lift);
+    b.push(MoveKind::Rapid, Point3::new(at.x, at.y, hop), None);
+    b.push(MoveKind::Rapid, Point3::new(end.x, end.y, hop), None);
+    b.push(MoveKind::Plunge, Point3::new(end.x, end.y, z), Some(feed));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::link_at;
+    use crate::cl::{MoveKind, PathBuilder};
+    use crate::geo2d::Point2;
+    use crate::geometry::Point3;
+    use crate::machining2d::adaptive::Return;
+    use crate::verify::crossed_pairs;
+
+    #[test]
+    fn microlift_link_stays_below_prior_level_and_avoids_entry_crossings() {
+        let run_case = |prior_from: f64, prior_to: f64, z_lvl: f64, lift: f64| {
+            let mut b = PathBuilder::new(Point3::new(-10.0, 0.0, 5.0));
+            b.push(MoveKind::Rapid, Point3::new(-10.0, 0.0, prior_from), None);
+            b.push(MoveKind::Feed, Point3::new(10.0, 0.0, prior_to), Some(500.0));
+            if (z_lvl - prior_to).abs() > 1e-9 {
+                b.push(MoveKind::Rapid, Point3::new(0.0, -10.0, 5.0), None);
+                b.push(MoveKind::Plunge, Point3::new(0.0, -10.0, z_lvl), Some(150.0));
+            }
+            b.push(MoveKind::Feed, Point3::new(0.0, -5.0, z_lvl), Some(500.0));
+            let ret = Return {
+                lift,
+                high: false,
+                up: vec![Point2::new(0.0, -3.0)],
+                via: vec![Point2::new(0.0, 3.0)],
+                down: vec![Point2::new(0.0, 5.0)],
+            };
+            link_at(&mut b, &ret, z_lvl, 5.0, 500.0);
+            b.push(MoveKind::Feed, Point3::new(0.0, 10.0, z_lvl), Some(500.0));
+            let path = b.finish();
+            crossed_pairs(&path, 0.01)
+        };
+
+        // Case 1: stepdown=0.30, lift=0.30 reaches exact prior plane z=0.0
+        assert!(run_case(0.0, 0.0, -0.30, 0.30).is_empty(), "stepdown=0.30");
+        // Case 2: stepdown=0.50 with escalated lift=0.60 over prior ramp/level
+        // [0.0, 0.30] and planar cut at -0.15 must scale strictly below -0.15.
+        {
+            let mut b = PathBuilder::new(Point3::new(-10.0, 0.0, 5.0));
+            b.push(MoveKind::Rapid, Point3::new(-10.0, 0.0, 0.0), None);
+            b.push(MoveKind::Feed, Point3::new(10.0, 0.0, 0.0), Some(500.0));
+            b.push(MoveKind::Feed, Point3::new(10.0, 0.0, 0.30), Some(500.0));
+            b.push(MoveKind::Feed, Point3::new(-10.0, 0.0, 0.0), Some(500.0));
+            b.push(MoveKind::Rapid, Point3::new(-10.0, -4.0, 5.0), None);
+            b.push(MoveKind::Plunge, Point3::new(-10.0, -4.0, -0.15), Some(150.0));
+            b.push(MoveKind::Feed, Point3::new(10.0, -4.0, -0.15), Some(500.0));
+            b.push(MoveKind::Rapid, Point3::new(0.0, -10.0, 5.0), None);
+            b.push(MoveKind::Plunge, Point3::new(0.0, -10.0, -0.50), Some(150.0));
+            b.push(MoveKind::Feed, Point3::new(0.0, -5.0, -0.50), Some(500.0));
+            let ret = Return {
+                lift: 0.60,
+                high: false,
+                up: vec![Point2::new(0.0, -3.0)],
+                via: vec![Point2::new(0.0, 3.0)],
+                down: vec![Point2::new(0.0, 5.0)],
+            };
+            let before = b.moves_len();
+            link_at(&mut b, &ret, -0.50, 5.0, 500.0);
+            let path = b.finish();
+            let c = crossed_pairs(&path, 0.01);
+            assert!(c.is_empty(), "escalated lift 0.60 at z=-0.50 vs prior z=0.0/-0.15: {c:?}");
+            let link_feeds: Vec<_> = path.moves[before..].iter().filter(|m| m.kind == MoveKind::Feed).collect();
+            assert!(
+                link_feeds.iter().any(|m| m.to.z > -0.45) && link_feeds.iter().all(|m| m.to.z < -0.15 - 1e-6),
+                "scaled lift stayed strictly between -0.50 and prior -0.15: {link_feeds:?}"
+            );
+        }
+        // Case 3: A crossing low return has no proved rapid landing.
+        // Refuse it rather than promoting it or substituting a plunge.
+        {
+            let ramp_crossing_y = |y: f64| {
+                let mut b = PathBuilder::new(Point3::new(-10.0, y, 5.0));
+                b.push(MoveKind::Rapid, Point3::new(-10.0, y, 0.50), None);
+                b.push(MoveKind::Feed, Point3::new(10.0, y, 0.0), Some(500.0));
+                b.push(MoveKind::Rapid, Point3::new(0.0, -10.0, 5.0), None);
+                b.push(MoveKind::Plunge, Point3::new(0.0, -10.0, 0.0), Some(150.0));
+                b.push(MoveKind::Feed, Point3::new(0.0, -5.0, 0.0), Some(500.0));
+                let ret = Return {
+                    lift: 0.30,
+                    high: false,
+                    up: vec![Point2::new(0.0, -3.0)],
+                    via: vec![Point2::new(0.0, 3.0)],
+                    down: vec![Point2::new(0.0, 5.0)],
+                };
+                let before = b.moves_len();
+                link_at(&mut b, &ret, 0.0, 5.0, 500.0);
+                let path = b.finish();
+                assert!(crate::approach::refusal(&path).is_some(), "the crossing return refuses the operation");
+                assert_eq!(path.moves.len(), before, "the refused return posts no unproved entry");
+                crossed_pairs(&path, 0.01)
+            };
+            assert!(ramp_crossing_y(-10.0 / 3.0).is_empty(), "same-level ramp crossing up leg");
+            assert!(ramp_crossing_y(4.25).is_empty(), "same-level ramp crossing down leg");
+        }
+        // Case 4: Tiny gap (0.01 mm) too thin for safe low lift -> must retract cleanly
+        assert!(run_case(0.0, 0.0, -0.01, 0.30).is_empty(), "tiny gap 0.01");
     }
 }

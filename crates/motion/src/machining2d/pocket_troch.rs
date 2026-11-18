@@ -65,7 +65,7 @@ pub(super) fn trochoid_passes(center: &Region, p: &PocketParams) -> Result<Troch
     if let Some(x) = first_crossing(&pl.passes) {
         return Ok(Err(format!("would cross itself at ({:.2}, {:.2})", x.x, x.y)));
     }
-    let levels = super::levels::cut_levels(p.top_z, p.bottom_z, p.stepdown)?.len();
+    let levels = super::levels::cut_levels_under(p.top_z, p.links.approach.stock_top, p.bottom_z, p.stepdown)?.len();
     if let Some(why) = over_budget(&pl.travel, levels) {
         return Ok(Err(why));
     }

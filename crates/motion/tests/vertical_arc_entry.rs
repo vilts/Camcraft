@@ -107,7 +107,8 @@ fn assert_true_entries(t: &Toolpath, plane: ArcPlane) {
     assert_eq!(chords(t), 0, "no chord fan is left");
     let arcs = vertical_arcs(t);
     let ends: Vec<f64> = arcs.iter().map(|(_, m)| m.to.z).collect();
-    assert_eq!(ends, [0.0, -2.0, -4.0], "one unsplit arc per level");
+    // Top Z 0 is the material top, not a level (#2004).
+    assert_eq!(ends, [-2.0, -4.0], "one unsplit arc per level");
     for (i, m) in arcs {
         let a = m.arc.expect("arc");
         assert_eq!(a.plane, plane);

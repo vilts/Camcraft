@@ -1,4 +1,5 @@
-//! The Setups page's "Set WCS from features" row (#701): arming it
+//! The WCS page's "Set WCS from features" row (#701, moved from the Setups
+//! page by #1926): arming it
 //! makes every viewport feature pick land in the role draft
 //! (`crate::wcs_pick`) instead of in the open operation; the role box
 //! says what the next pick sets - the origin or an axis. Picked rows
@@ -20,6 +21,9 @@ use camcraft_app::setup;
 use crate::state::{CommandKind, State};
 use crate::wcs_pick::role_label;
 
+/// The group title the WCS page draws the row under (#1926).
+pub(super) const GROUP: &str = "Set WCS from features";
+
 const ROLES: [Role; 4] = [Role::Origin, Role::X, Role::Y, Role::Z];
 
 /// One setup row's control.
@@ -29,7 +33,8 @@ pub(super) fn row(ui: &mut Ui, state: &mut State, setup: &str) {
     }
     let mine = state.wcs_pick.as_ref().is_some_and(|p| p.setup == setup);
     let armed = mine && crate::wcs_pick::collecting(state);
-    ui.horizontal(|ui| {
+    // Wrapped (#1926): the narrow WCS pane pushed "Pick for WCS" off its edge.
+    ui.horizontal_wrapped(|ui| {
         ui.label("    Set WCS from features - each pick sets a role");
         let pick_text = if armed { "Stop picking" } else { "Pick for WCS" };
         if super::pick_button::pick_button(ui, armed, pick_text)

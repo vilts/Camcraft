@@ -132,7 +132,10 @@ fn a_seeded_facing_faces_the_allowance_not_the_part() {
         .filter(|l| l.starts_with("G01") && l.contains(" X-"))
         .map(|l| z_of(l).expect("a pass names its Z"))
         .collect();
-    assert_eq!(passes, vec![50.0, 49.5, 49.0, 48.5, 48.0], "five passes Z50 down to Z48:\n{text}");
+    // #2004: the stock end is Z50, so a pass with its nose tip at Z50
+    // cuts air (decision 2004 item 5). Four passes take the 2 mm
+    // allowance, each bite one stepdown, the last on the part at Z48.
+    assert_eq!(passes, vec![49.5, 49.0, 48.5, 48.0], "four passes Z49.5 down to Z48:\n{text}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -59,6 +59,42 @@ pub fn for_document(state: &crate::state::State) -> PostTarget {
     )
 }
 
+/// The active post's preferred file extension without a leading dot (#258).
+#[must_use]
+pub fn post_extension(state: &crate::state::State) -> String {
+    camcraft_app::posting::script_source(&state.world)
+        .ok()
+        .and_then(|(_, cps)| camcraft_app::post::engine::extension_of(&cps).ok())
+        .map(|ext| ext.trim_start_matches('.').to_owned())
+        .filter(|ext| !ext.is_empty() && ext.chars().all(|c| c.is_ascii_alphanumeric()))
+        .unwrap_or_else(|| String::from("nc"))
+}
+
+/// Initial folder and file name for the in-app Post dialog (#258):
+/// prefers remembered dialog folder/name, then `for_document` dir and project/dialect extension.
+#[must_use]
+pub fn dialog_target(state: &crate::state::State) -> PostTarget {
+    let base = for_document(state);
+    let ext = post_extension(state);
+    let dir = state.post_last_dir.clone().or(base.dir);
+    let file_name = if let Some(name) = state.post_last_name.clone().filter(|n| !n.trim().is_empty()) {
+        name
+    } else if state.post_view.is_some() {
+        base.file_name
+    } else if let Some(stem) = state
+        .project_path
+        .as_deref()
+        .and_then(Path::file_stem)
+        .and_then(|s| s.to_str())
+        .filter(|s| !s.is_empty())
+    {
+        format!("{stem}.{ext}")
+    } else {
+        format!("program.{ext}")
+    };
+    PostTarget { dir, file_name }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

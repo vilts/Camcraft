@@ -219,6 +219,10 @@ pub struct Script {
     /// section is refused by name - a cutting post would write a wire
     /// path with no condition, threading or wire words.
     wire_edm: bool,
+    /// The `wcsRotation = true` manifest flag (#760): the script writes
+    /// controller coordinate rotation (`G68 X0. Y0. R` / `G69` or
+    /// `ROT RPL=` / `ROT`) when requested in `Control` mode.
+    wcs_rotation: bool,
 }
 
 impl Script {
@@ -246,6 +250,7 @@ impl Script {
             thread_hands: false,
             mill_spindle_reverse: false,
             wire_edm: false,
+            wcs_rotation: false,
         };
         let mut present = Vec::new();
         for h in HOOKS {
@@ -290,6 +295,10 @@ impl Script {
             .unwrap_or(false);
         s.wire_edm = s
             .eval("typeof wireEdm !== \"undefined\" && wireEdm === true")
+            .map(|v| is_true(&v))
+            .unwrap_or(false);
+        s.wcs_rotation = s
+            .eval("typeof wcsRotation !== \"undefined\" && wcsRotation === true")
             .map(|v| is_true(&v))
             .unwrap_or(false);
         Ok(s)
@@ -463,6 +472,13 @@ impl Script {
     /// probing blocks are verified on the mirrored stream (#392).
     pub fn translates_inverted_probing(&self) -> bool {
         self.probe_axis_inversion
+    }
+
+    /// True when the script declares `wcsRotation = true` - it writes
+    /// controller coordinate rotation (`G68` / `ROT`) in `Control` mode (#760).
+    #[must_use]
+    pub fn voices_wcs_rotation(&self) -> bool {
+        self.wcs_rotation
     }
 
     /// Lines flushed so far (the driver's section boundary marker).

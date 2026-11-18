@@ -18,7 +18,7 @@
 
 use camcraft_app::machine::Kind;
 use camcraft_app::post::engine;
-use camcraft_app::posting::{self, BUILTINS, LATHE_POSTS, PLASMA_POSTS};
+use camcraft_app::posting::{self, LATHE_POSTS, PLASMA_POSTS};
 use camcraft_app::schema::PostRef;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -34,7 +34,7 @@ fn read(rel: &str) -> String {
 }
 
 fn script(name: &str) -> &'static str {
-    BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, s)| *s).expect("registered")
+    camcraft_app::posting::builtin_post_text(name).expect("registered")
 }
 
 fn pl1300() -> Value {
@@ -186,7 +186,7 @@ fn a_small_hole_factor_out_of_range_names_the_factor_range() {
 #[test]
 fn the_mills_posts_decline_a_plasma_stream_and_the_1300pl() {
     let stream = read("crates/app/tests/golden/plasma_plate_with_holes.cl");
-    for (n, cps) in BUILTINS.iter().filter(|(n, _)| *n != PLASMA) {
+    for (n, cps) in camcraft_app::posting::shipped_posts().expect("the shipped posts read").iter().filter(|(n, _)| *n != PLASMA) {
         // #542: the sinker post refuses any machine not declared a
         // sinker by name (the app's serves door, #1232, refuses first).
         if posting::SINKER_POSTS.contains(n) {
@@ -204,7 +204,7 @@ fn the_mills_posts_decline_a_plasma_stream_and_the_1300pl() {
 #[test]
 fn the_registry_offers_the_plasma_post_for_the_1300pl_only() {
     assert_eq!(PLASMA_POSTS, &[PLASMA]);
-    assert!(BUILTINS.iter().any(|(n, _)| *n == PLASMA));
+    assert!(camcraft_app::posting::shipped_posts().expect("the shipped posts read").iter().any(|(n, _)| *n == PLASMA));
     assert!(posting::post_serves(PLASMA, Kind::Plasma));
     for k in [Kind::Mill, Kind::Lathe, Kind::MillTurn] {
         assert!(!posting::post_serves(PLASMA, k), "{k:?}");

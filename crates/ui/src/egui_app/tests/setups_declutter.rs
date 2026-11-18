@@ -53,7 +53,18 @@ fn two_setups_and_a_plate() -> Harness<'static, ShellUi> {
 fn the_setups_page_lists_setups_only_and_each_setup_page_keeps_its_settings() {
     let mut h = two_setups_and_a_plate();
     open(&mut h, UiTarget::Setups);
-    assert_eq!(h.get_all_by_label("Delete").count(), 2, "a Delete per setup row");
+    let pane = h
+        .state()
+        .dock
+        .iter_leaves()
+        .find(|(_, l)| l.tabs.contains(&Tab::Properties))
+        .map(|(_, l)| l.viewport)
+        .expect("the properties leaf");
+    assert_eq!(
+        h.get_all_by_label("Delete").filter(|n| pane.contains(n.rect().center())).count(),
+        2,
+        "a Delete per setup row"
+    );
     assert_eq!(h.get_all_by_label("Open page").count(), 2, "a way to each setup's page");
     h.get_by_label("New setup");
     h.get_by_label("Carry stock and WCS over");

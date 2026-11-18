@@ -116,3 +116,30 @@ fn edit_machine_needs_a_machine_and_a_known_setup() {
     let tools = c.request("tools/list", json!({}))["result"]["tools"].to_string();
     assert!(tools.contains("edit_machine"));
 }
+
+/// #1499: a wire's tank and flushing are edited by the same undoable
+/// mount; an unknown word is refused by name and changes nothing, and a
+/// sinker does not take them.
+#[test]
+fn a_wire_tank_and_flushing_edit_is_one_undo_step_and_an_unknown_word_is_refused() {
+    let wire = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/edm/wire-iso-fixture.mch");
+    let mut c = Client::new();
+    c.ok("load_machine", json!({ "path": wire.display().to_string() }));
+    c.ok("edit_machine", json!({ "patch": { "edm": { "tank": "submerged", "flushing": "high" } } }));
+    let e = edm(&mut c);
+    assert_eq!((e["tank"].clone(), e["flushing"].clone()), (json!("submerged"), json!("high")), "{e}");
+    let before = c.ok("get_job", json!({}))["machine"].clone();
+    let bad = c.refused("edit_machine", json!({ "patch": { "edm": { "flushing": "medium" } } }));
+    assert!(bad.contains("patch refused") && bad.contains("medium"), "{bad}");
+    let bad = c.refused("edit_machine", json!({ "patch": { "edm": { "tank": "flooded" } } }));
+    assert!(bad.contains("patch refused") && bad.contains("flooded"), "{bad}");
+    assert_eq!(c.ok("get_job", json!({}))["machine"], before, "nothing changed");
+    c.ok("undo", json!({}));
+    let e = edm(&mut c);
+    assert!(e.get("tank").is_none() && e.get("flushing").is_none(), "undo takes both back: {e}");
+
+    let mut s = Client::new();
+    s.ok("load_machine", json!({ "path": sinker().display().to_string() }));
+    let k = s.refused("edit_machine", json!({ "patch": { "edm": { "tank": "submerged" } } }));
+    assert!(k.contains("edm: states a key this machine kind"), "a wire key on a sinker: {k}");
+}

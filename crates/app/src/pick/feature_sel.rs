@@ -110,7 +110,7 @@ pub fn check_pickable(world: &World, g: &GeoSel) -> Result<(), String> {
                 g.feature, g.entity
             ))
         }
-        FeatureSel::Chain(id) => match feature::resolve_chain(&graph.features, id) {
+        FeatureSel::Chain(id) => match crate::model::resolve_chain(&graph.features, id) {
             Some(c) if !is_feature_chain(&graph, &c) => Err(format!(
                 "{} of '{}' runs along the mesh's own triangles, not a model edge - pick an edge where two \
                  faces meet",

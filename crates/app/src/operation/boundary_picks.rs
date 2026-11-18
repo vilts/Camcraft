@@ -253,7 +253,7 @@ pub fn toggle_run(world: &World, picks: &[GeoSel], hit: &GeoSel) -> (Vec<GeoSel>
     let (Some(f), FeatureSel::Chain(hid)) = (found, hit.feature) else {
         return (with(picks, hit), false);
     };
-    let Some(hit_edges) = feature::resolve_chain(&f, hid).map(|c| c.edges) else {
+    let Some(hit_edges) = crate::model::resolve_chain(&f, hid).map(|c| c.edges) else {
         return (with(picks, hit), false);
     };
     let runs = feature::edge_runs(&f);
@@ -287,11 +287,19 @@ fn with(picks: &[GeoSel], hit: &GeoSel) -> Vec<GeoSel> {
     out
 }
 
-/// Close an entry's edge picks around the face loop through them: the
-/// most horizontal planar face whose boundary ring holds every picked
-/// edge, smallest first on a tie. Face picks ride along unchanged; the
-/// loop comes back as its runs, so a later Ctrl-click can open it again.
+/// Close an entry's edge picks around the face loop through them in the
+/// active setup's frame (or document frame when none exists): the most
+/// horizontal planar face whose boundary ring holds every picked edge,
+/// smallest first on a tie. Face picks ride along unchanged; the loop
+/// comes back as its runs, so a later Ctrl-click can open it again.
 pub fn extend_to_loop(world: &World, picks: &[GeoSel]) -> Result<Vec<GeoSel>, String> {
+    extend_to_loop_in(world, crate::setup::active(world).as_deref(), picks)
+}
+
+/// [`extend_to_loop`] in `setup`'s part-alignment frame (`None` resolves
+/// to the first setup, or the document frame when none exists - the
+/// same transform the generators read for picks).
+pub fn extend_to_loop_in(world: &World, setup: Option<&str>, picks: &[GeoSel]) -> Result<Vec<GeoSel>, String> {
     let chains: Vec<&GeoSel> = picks.iter().filter(|g| matches!(g.feature, FeatureSel::Chain(_))).collect();
     let Some(first) = chains.first() else {
         return Err("pick an edge first - Extend to loop closes picked edges around their face".into());
@@ -302,11 +310,11 @@ pub fn extend_to_loop(world: &World, picks: &[GeoSel]) -> Result<Vec<GeoSel>, St
     }
     let e = model::find_by_name(world, &entity).ok_or_else(|| format!("'{entity}' is gone"))?;
     let f = model::features_of(world, &e).ok_or_else(|| format!("'{entity}' has no edges"))?;
-    let loc = model::transform_of(world, &e).unwrap_or_default();
+    let loc = crate::setup_align::pose_in(world, &e, setup).unwrap_or_default();
     let mut want: Vec<u32> = Vec::new();
     for g in &chains {
         let FeatureSel::Chain(id) = g.feature else { continue };
-        let c = feature::resolve_chain(&f, id).ok_or_else(|| format!("{} is no longer in the model - re-pick it", g.feature))?;
+        let c = crate::model::resolve_chain(&f, id).ok_or_else(|| format!("{} is no longer in the model - re-pick it", g.feature))?;
         want.extend(c.edges);
     }
     let map = edge_map(&f);

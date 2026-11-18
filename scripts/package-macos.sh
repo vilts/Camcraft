@@ -46,6 +46,7 @@ done
 for asset in posts machines ui scripts themes; do
     cp -R "assets/$asset" "$resources/assets/$asset"
 done
+cp -R examples "$resources/examples"
 install -m 644 RELEASE_NOTES.md TESTING.md LICENSE NOTICE README.md "$resources/"
 iconset="$work/CamCraft.iconset"
 mkdir -p "$iconset"

@@ -62,14 +62,9 @@ impl LoadMachine {
     /// mounting a different machine than the pane advertised. The
     /// mount path records the library, not a file that exists.
     pub fn builtin(world: &World, name: &str) -> Result<Self, CommandError> {
-        let m = match crate::posting::MACHINES.iter().find(|(n, _)| *n == name) {
-            Some((_, text)) => crate::machine::parse_mch(text).map_err(CommandError::Invalid)?,
-            None => {
-                return Err(CommandError::Invalid(format!(
-                    "machine {name} is not in the built-in library"
-                )));
-            }
-        };
+        // #2282: the shipped file is read from disk; a missing one refuses by name.
+        let text = crate::posting::builtin_machine_text(name).map_err(CommandError::Invalid)?;
+        let m = crate::machine::parse_mch(text).map_err(CommandError::Invalid)?;
         Self::new(world, crate::posting::builtin_path(name), Some(m))
     }
 

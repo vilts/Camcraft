@@ -12,6 +12,7 @@ use super::direction::AxisDirection;
 // #669: the kind moved to its own seam; re-exported so `def::*` (and
 // every `machine::Kind` path) reads as before.
 pub use super::kind::{can_tilt, kind, Kind};
+pub use super::trunnion::RotarySignConvention;
 use serde::{Deserialize, Serialize};
 
 /// One axis as the machine file describes it - prismatic or, since
@@ -83,6 +84,27 @@ pub struct AxisLimits {
     /// = unstated: the work-vs-table swing is named not judged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub axis_to_table: Option<f64>,
+    /// Nearest enclosing rotary ancestor in `kinematics.default.parts` (#1962).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+    /// Zero-based rotary order in `kinematics.default.parts` (#1962).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chain_order: Option<u32>,
+    /// Rotary pivot position in machine coordinates, mm (#1962).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pivot: Option<[f64; 3]>,
+    /// Child rotary offset from parent rotary reference, mm (#1962).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub offset: Option<[f64; 3]>,
+    /// Kinematic zero offset from machine home, degrees (#1962).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zero_offset: Option<f64>,
+    /// Whether controller wraps this rotary 0..360 deg (#1962).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollover: Option<bool>,
+    /// Explicit rotary sign convention (`tool_rh` vs `table_rh`, #1962).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sign_convention: Option<RotarySignConvention>,
 }
 
 fn is_false(b: &bool) -> bool {
@@ -221,6 +243,18 @@ pub struct Machine {
     /// tool with no holder body, as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_holder: Option<String>,
+    /// #760: whether the controller supports work-plane / coordinate
+    /// rotation (`G68 X0 Y0 R` / `ROT RPL`) via `controller.coordinate_rotation`.
+    /// Absent or false (the unstated-limit law) keeps `Control` mode refused
+    /// by name; `Bake` works on every machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coordinate_rotation: Option<bool>,
+    /// Explicit `controller.rtcp` capability flag (#1962); `None` infers from tilt.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_rtcp: Option<bool>,
+    /// Machine-level rotary sign convention (`tool_rh` vs `table_rh`, #1962).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sign_convention: Option<RotarySignConvention>,
 }
 
 /// The words a control needs around C-axis live-tool work (issue
@@ -288,6 +322,7 @@ impl Machine {
             }
             && self.edm.as_ref().is_none_or(super::edm::Edm::is_sane)
             && super::edm_codes::codes_sane(&self.edm_codes)
+            && self.trunnion_sane()
     }
 
     /// The one-line identity for the Setup pane and the stage E sheet.

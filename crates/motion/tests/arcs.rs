@@ -95,8 +95,8 @@ fn arc_lead_emits_one_arc_move() {
     let plain = contour(&r, &contour_params(Lead::None)).unwrap();
     assert_eq!(
         plain.arc_count(),
-        8,
-        "four r = 3 corner rounds, two levels - recovered, not invented"
+        4,
+        "four r = 3 corner rounds, one level (-2; #2004: no air level at Top Z 0) - recovered, not invented"
     );
     let led = contour(&r, &contour_params(Lead::Arc { radius: 3.0 })).unwrap();
     assert!(led.arc_count() >= 2, "each pass lands and leaves on an arc");
@@ -117,14 +117,14 @@ fn arc_lead_emits_one_arc_move() {
 
 #[test]
 fn tangential_leads_post_as_half_sweeps() {
-    // Same baseline as the arc lead test: 8 recovered corner arcs for
-    // the two levels. A tangential lead adds exactly one posted arc
+    // Same baseline as the arc lead test: 4 recovered corner arcs for
+    // the one level (#2004: no air level at Top Z 0). A tangential lead adds exactly one posted arc
     // move per entry and exit - and each of those is a half circle,
     // endpoints antipodal about the center (which no corner round
     // ever is), so the sweep law is counted, not assumed.
     let r = rect(0.0, 0.0, 40.0, 20.0);
     let led = contour(&r, &contour_params(Lead::Tangential { radius: 3.0 })).unwrap();
-    assert_eq!(led.arc_count(), 8 + 4, "four lead joins, two levels");
+    assert_eq!(led.arc_count(), 4 + 2, "two lead joins, one level");
     let halves = led.moves.iter().filter(|m| {
         m.arc.is_some_and(|c| {
             (m.from.x + m.to.x - 2.0 * c.center.x).abs() < 1e-6
@@ -137,14 +137,14 @@ fn tangential_leads_post_as_half_sweeps() {
     // (the seam law - two half arcs tangent to two tangents otherwise
     // cross out in the air): tangent at the wall, ending where the
     // level entered, a hair off a half sweep.
-    assert_eq!(halves, 2, "the lead-ins are the only antipodal arcs");
+    assert_eq!(halves, 1, "the lead-in is the only antipodal arc");
     let plunges: Vec<_> = led.moves.iter().filter(|m| m.kind == MoveKind::Plunge).map(|m| (m.to.x, m.to.y)).collect();
     let closing = led
         .moves
         .iter()
         .filter(|m| m.arc.is_some() && plunges.iter().any(|&(x, y)| m.to.x == x && m.to.y == y))
         .count();
-    assert_eq!(closing, 2, "each lead-out ends on the plunge point it entered at");
+    assert_eq!(closing, 1, "the lead-out ends on the plunge point it entered at");
     assert!(led.is_chained() && led.all_finite());
 }
 

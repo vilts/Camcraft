@@ -104,7 +104,7 @@ fn stop(w: &World) -> Mate {
 }
 
 fn spec(mates: Vec<Mate>, offset: LocateOffset) -> LocateSpec {
-    LocateSpec { part: "part".into(), fixture: "vise".into(), mates, offset }
+    LocateSpec { part: "part".into(), fixture: "vise".into(), body: Default::default(), mates, offset }
 }
 
 /// The world box of an entity: (min, max).

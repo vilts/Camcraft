@@ -22,7 +22,7 @@
 
 use flecs_ecs::prelude::World;
 
-use camcraft_app::commands::{CreateOperation, EditOperationParams, GenerateOperation, History, ImportModel, LoadMachine};
+use camcraft_app::commands::{AddTool, CreateOperation, EditOperationParams, GenerateOperation, History, ImportModel, LoadMachine};
 use camcraft_app::geometry::{Mesh, Point3, Triangle};
 use camcraft_app::machine::parse_mch;
 use camcraft_app::model;
@@ -30,7 +30,7 @@ use camcraft_app::operation::{
     self, FeatureSel, GeoSel, Height, OpParams, OpStatus, SrcRef, WireContourOp, WireFourAxis, WirePairingRule, WireSide,
     WireSyncPair, WireWidening, VERIFY_TOLERANCE_MAX,
 };
-use camcraft_app::posting::{self, BUILTINS};
+use camcraft_app::posting;
 use camcraft_app::project;
 use camcraft_app::world::new_world;
 
@@ -150,11 +150,12 @@ fn punch(four: WireFourAxis) -> (World, History, f64) {
     let world = new_world();
     let mut h = History::default();
     h.execute(&world, LoadMachine::new(&world, "wire-iso.mch".into(), Some(parse_mch(FIXTURE).expect("parses"))).expect("mount"));
+    h.execute(&world, AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25)).expect("wire tool"));
     let (lo, up) = profiles();
     let (mesh, chord) = bulging_loft(&lo, &up);
     h.execute(&world, ImportModel::from_mesh("part", mesh));
     let src = SrcRef::Selection(vec![face_at(&world, H), face_at(&world, 0.0)]);
-    h.execute(&world, CreateOperation::new(&world, "Punch1", "", src, OpParams::WireContour(wire_op(four))).expect("op"));
+    h.execute(&world, CreateOperation::new(&world, "Punch1", "EDM-W025", src, OpParams::WireContour(wire_op(four))).expect("op"));
     h.execute(&world, GenerateOperation::new(&world, "Punch1").expect("generates"));
     (world, h, chord)
 }
@@ -172,7 +173,7 @@ fn state(world: &World, h: &mut History, four: WireFourAxis) {
 }
 
 fn post(world: &World, tag: &str) -> Result<String, String> {
-    let cps = BUILTINS.iter().find(|(n, _)| *n == WIRE).map(|(_, s)| *s).expect("registered");
+    let cps = camcraft_app::posting::builtin_post_text(WIRE).expect("registered");
     let out = std::env::temp_dir().join(format!("camcraft-wire-tol-{tag}-{}.nc", std::process::id()));
     let posted = posting::post_script(world, &out, cps);
     let wrote = out.exists();

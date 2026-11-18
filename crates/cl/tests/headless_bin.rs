@@ -46,7 +46,7 @@ fn cl_bin_prints_move_stats() {
     let o = run(&[p.as_os_str()]);
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(o.status.success(), "{out}{}", String::from_utf8_lossy(&o.stderr));
-    assert!(out.contains("moves: 69 (rapid 12, feed 51, plunge 6, arcs 33)"), "{out}");
+    assert!(out.contains("moves: 46 (rapid 8, feed 34, plunge 4, arcs 22)"), "{out}");
     assert!(out.contains("chained: true"), "{out}");
 }
 

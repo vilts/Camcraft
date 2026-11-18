@@ -248,7 +248,7 @@ pub fn circular(_region: &Region, p: &CircularParams) -> Result<Toolpath, GenErr
             .with_entry(p.entry, p.helix_radius)
             .with_arc_radius(p.tool_diameter);
     }
-    let motion = motion.with_arc_radius(p.tool_diameter).with_links(p.links, p.helix_radius).with_top(p.top_z).with_ring_zig();
+    let motion = motion.with_arc_radius(p.tool_diameter).with_links(p.links, p.helix_radius).with_top(p.links.approach.entry_top(p.top_z)).with_ring_zig();
     let cert = center_region.as_ref().map(Cert::Region);
 
     let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
@@ -265,22 +265,41 @@ pub fn circular(_region: &Region, p: &CircularParams) -> Result<Toolpath, GenErr
         let ring = ring_loop(p.center, rho, p.climb);
         let runs = vec![ring_walk(p.center, &ring, p.climb)];
         let pass = vec![ring];
+        // #2004 review: stock over Top Z makes the plane at Top Z a cut
+        // on the vault too - the rim keeps it as its first level and no
+        // plane at Top Z is dropped (the pre-#2004 vault ladder).
+        let over = super::levels::stock_over(p.top_z, p.links.approach.stock_top, 1e-9 * p.top_z.abs().max(1.0));
         let zs = if p.vault {
             // This ring's floor: the bowl at the band's outer edge.
             // The ladder starts where the previous ring settled (the
             // rim's first cut opens at the top plane itself).
             let floor = p.bowl_z((rho + r).min(p.radius));
-            let prev = if k == 0 {
-                p.top_z
+            if k == 0 {
+                // The rim ring: Top Z is the material top, never a
+                // level of its own (#2004), unless stock stands over it.
+                super::levels::cut_levels_under(p.top_z, p.links.approach.stock_top, floor, p.stepdown)
             } else {
-                p.bowl_z((rho + p.stepover + r).min(p.radius))
-            };
-            cut_levels(prev, floor, p.stepdown)
+                // An inner ring: the previous ring's floor is a real
+                // cut for this one - the strip inside the previous
+                // ring's band still stands at the stock top, and it
+                // opens at that plane. Keep it as the first level.
+                let prev = p.bowl_z((rho + p.stepover + r).min(p.radius));
+                levels_from(prev, floor, p.stepdown)
+            }
         } else {
-            cut_levels(p.top_z, p.bottom_z, p.stepdown)
+            super::levels::cut_levels_under(p.top_z, p.links.approach.stock_top, p.bottom_z, p.stepdown)
         }
         // #871: a part-way refusal hands back the rings cut so far.
         .map_err(|e| e.with_ghost_moves(b.moves()))?;
+        // #2004: a vault plane at Top Z cuts air - the rim ring's floor
+        // (the bowl meets the top at the radius) and an inner ring's
+        // opening plane under a rim that cut nothing. A ring with no
+        // plane under Top Z is not walked. Stock over Top Z keeps them.
+        let zs = if p.vault && !over { under_top(zs, p.top_z) } else { zs };
+        if zs.is_empty() {
+            k += 1;
+            continue;
+        }
         run_level_walks(&mut b, &pass, &zs, &motion, Some(&runs), cert.as_ref(), cert.as_ref());
         k += 1;
     }
@@ -298,9 +317,44 @@ pub fn circular(_region: &Region, p: &CircularParams) -> Result<Toolpath, GenErr
     Ok(path)
 }
 
+/// An inner vault ring's ladder: the plane `top` (the previous ring's
+/// floor, where this ring's new strip opens) and then the shared
+/// [`cut_levels`] below it - the ladder this ring has always cut. A span
+/// of zero or less is the one plane at `bottom`, as `cut_levels` says.
+fn levels_from(top: f64, bottom: f64, stepdown: f64) -> Result<Vec<f64>, GenError> {
+    let below = cut_levels(top, bottom, stepdown)?;
+    if top - bottom <= 0.0 {
+        return Ok(below);
+    }
+    Ok(std::iter::once(top).chain(below).collect())
+}
+
+/// The vault planes strictly under Top Z (a plane at Top Z removes
+/// nothing, #2004); `1e-9` of the span absorbs the bowl's float noise.
+fn under_top(zs: Vec<f64>, top: f64) -> Vec<f64> {
+    let tol = 1e-9 * top.abs().max(1.0);
+    zs.into_iter().filter(|&z| z < top - tol).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #2004: the rim ring and a flat disk start a stepdown under Top Z;
+    /// an inner vault ring keeps the previous ring's floor as its first
+    /// level (its new strip opens there), the same ladder as before.
+    #[test]
+    fn an_inner_vault_ring_keeps_its_opening_plane() {
+        assert_eq!(levels_from(8.0, 0.0, 5.0).ok(), Some(vec![8.0, 3.0, 0.0]));
+        assert_eq!(levels_from(8.0, 0.0, 50.0).ok(), Some(vec![8.0, 0.0]));
+        assert_eq!(levels_from(2.0, 2.0, 5.0).ok(), Some(vec![2.0]));
+        assert!(levels_from(8.0, 0.0, 0.0).is_err());
+        assert_eq!(cut_levels(8.0, 0.0, 5.0).ok(), Some(vec![3.0, 0.0]));
+        // The rim ring's floor at Top Z and an opening plane at Top Z go.
+        assert_eq!(under_top(vec![13.0], 13.0), Vec::<f64>::new());
+        assert_eq!(under_top(vec![13.0, 8.32], 13.0), vec![8.32]);
+        assert_eq!(under_top(vec![8.0, 3.0], 13.0), vec![8.0, 3.0]);
+    }
 
     /// #1558: the polygon's chord count comes from the tolerance, not a
     /// fixed 512 - its sagitta stays within it, and it is the fewest

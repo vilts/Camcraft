@@ -15,6 +15,10 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
         )));
     }
     super::program_entry_dto::validate(dto, kind)?; // #155
+    // #1720: a flip rides a WCS row and nothing else.
+    if dto.flip.is_some() && !matches!(kind, EntityKind::Wcs) {
+        return Err(corrupt(format!("'{}' records a flipped axis but is not a WCS", dto.name)));
+    }
     // #1054: a recorded STEP facet budget rides a model row only, inside
     // the bounds an import would accept.
     if let Some(b) = dto.facet_budget {
@@ -22,6 +26,9 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
             return Err(corrupt(format!("'{}' records a STEP facet budget but is not a model", dto.name)));
         }
         crate::geometry::import::step_budget::check(b).map_err(|e| corrupt(format!("'{}': {e}", dto.name)))?;
+    }
+    if dto.step_source.is_some() && !matches!(kind, EntityKind::Model) {
+        return Err(corrupt(format!("'{}' records STEP source but is not a model", dto.name)));
     }
     // #1056: the unknown-fidelity mark rides a mesh row only, and never
     // beside a recorded chord - one entity cannot both know and not know.
@@ -201,16 +208,10 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
             let Some(op) = &dto.operation else {
                 return Err(corrupt("operation entity without a definition"));
             };
-            // #532: a wire EDM kind mounts no library tool (the wire is
-            // the machine's condition) - it must name none; every other
-            // kind must name one.
-            let wire = matches!(op.params, ParamsDto::WireContour(_));
-            if op.tool.is_empty() != wire {
-                return Err(corrupt(if wire {
-                    format!("'{}' is a wire EDM operation and names a tool - it mounts none", dto.name)
-                } else {
-                    format!("'{}' names no tool", dto.name)
-                }));
+            // Legacy Wire Contours stored no tool. Keep that recoverable state;
+            // generation and posting still require an explicit wire tool.
+            if op.tool.is_empty() && !matches!(op.params.to_params(), OpParams::WireContour(_)) {
+                return Err(corrupt(format!("'{}' names no tool", dto.name)));
             }
             if op.label.as_deref().is_some_and(|s| s.trim().is_empty() || s.len() > 120 || s.chars().any(char::is_control)) {
                 return Err(corrupt(format!("'{}' has an invalid operation label", dto.name)));

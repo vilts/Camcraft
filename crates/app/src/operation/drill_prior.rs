@@ -31,11 +31,23 @@ pub(crate) fn reads_prior(params: &super::OpParams) -> bool {
 pub struct PriorCell {
     plan: Option<PriorPlan>,
     dex: Option<Dexel>,
+    yaw: Option<(Point2, f64)>,
+    rot_dex: Option<Dexel>,
 }
 
 impl PriorCell {
     pub(super) fn new(plan: Option<PriorPlan>) -> Self {
-        Self { plan, dex: None }
+        Self { plan, dex: None, yaw: None, rot_dex: None }
+    }
+
+    pub(super) fn set_yaw(&mut self, origin: [f64; 2], angle_rad: f64) {
+        self.yaw = Some((Point2::new(origin[0], origin[1]), angle_rad));
+        self.rot_dex = None;
+    }
+
+    pub(super) fn clear_yaw(&mut self) {
+        self.yaw = None;
+        self.rot_dex = None;
     }
 
     /// The grid the program ahead leaves standing, or `None` when
@@ -46,6 +58,17 @@ impl PriorCell {
                 Ok(d) => self.dex = Some(d),
                 Err(e) => tracing::warn!("the program ahead could not be cut, the raw stock stands: {e}"),
             }
+        }
+        if let Some((origin, angle_rad)) = self.yaw {
+            if self.rot_dex.is_none()
+                && let Some(d) = &self.dex
+            {
+                match d.rotated_z_conservative(origin, angle_rad) {
+                    Ok(r) => self.rot_dex = Some(r),
+                    Err(e) => tracing::warn!("the rotated prior stock could not be built, the raw stock stands: {e}"),
+                }
+            }
+            return self.rot_dex.as_ref();
         }
         self.dex.as_ref()
     }

@@ -64,3 +64,22 @@ pub fn setup_problem(world: &World, declared: Option<&str>) -> Option<String> {
          part with the setup's Part alignment instead and keep the WCS Z pointing up"
     ))
 }
+
+/// #760 / #1542: refuse a 3-2-1 alignment on a milling setup when the
+/// resulting WCS +Z axis tilts off the machine's +Z, steering the user
+/// to Part alignment on the Setup page instead.
+#[must_use]
+pub fn align_321_tilt_problem(world: &World, declared: Option<&str>, axis_z: [f64; 3]) -> Option<String> {
+    if crate::machine::kind_of_setup(world, declared) != crate::machine::Kind::Mill {
+        return None;
+    }
+    let angle = (axis_z[0] * axis_z[0] + axis_z[1] * axis_z[1]).sqrt().atan2(axis_z[2]);
+    if !(angle.is_finite() && angle > TILT_TOL_RAD) {
+        return None;
+    }
+    Some(format!(
+        "3-2-1 WCS Z would tilt {:.1} deg off the machine's Z - on a mill the tool always cuts along \
+         machine +Z; turn the part with Part alignment on the Setup page instead",
+        angle.to_degrees()
+    ))
+}

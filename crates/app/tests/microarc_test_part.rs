@@ -157,8 +157,8 @@ fn build() -> World {
     h.execute(&world, ok(AddTool::new(&world, "EM 1/4 3FL", tool("EM-0600-4FL", 0.25, 6000.0, 15.0 * IN)), "T1"));
     h.execute(&world, ok(AddTool::new(&world, "EM 1/8 2FL", tool("EM-0300-2FL", 0.125, 8000.0, 8.0 * IN)), "T2"));
     let ops: [(&str, &str, OpParams); 3] = [
-        ("FLAT A-90", "EM 1/4 3FL", flat(Some(Tilt { a_deg: -90.0, b_deg: 0.0, origin: [0.0; 3] }))),
-        ("FLAT A90", "EM 1/4 3FL", flat(Some(Tilt { a_deg: 90.0, b_deg: 0.0, origin: [0.0; 3] }))),
+        ("FLAT A-90", "EM 1/4 3FL", flat(Some(Tilt { basis_version: 1, a_deg: -90.0, b_deg: 0.0, origin: [0.0; 3] }))),
+        ("FLAT A90", "EM 1/4 3FL", flat(Some(Tilt { basis_version: 1, a_deg: 90.0, b_deg: 0.0, origin: [0.0; 3] }))),
         ("CROSS SLOT A0", "EM 1/8 2FL", cross()),
     ];
     for (name, t, p) in ops {
@@ -259,10 +259,7 @@ fn a_wrapped_op_on_the_test_part_is_refused_by_name() {
     let records = camcraft_app::posting::stream_records(&world).expect("the stream");
     let mch = camcraft_app::post::machine::mirror(
         &camcraft_app::machine::parse_mch(
-            camcraft_app::posting::MACHINES
-                .iter()
-                .find(|(n, _)| *n == "Tormach 770MX + microARC 4")
-                .map(|(_, t)| *t)
+            camcraft_app::posting::builtin_machine_text("Tormach 770MX + microARC 4")
                 .expect("shipped"),
         )
         .expect("parses"),

@@ -74,7 +74,7 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 
 [Files]
 ; The whole staged dist tree, as the zip ships it: the three exes, assets\
-; (posts, machines, ui, scripts, themes), RELEASE_NOTES.md and TESTING.md.
+; (posts, machines, ui, scripts, themes), examples\, RELEASE_NOTES.md and TESTING.md.
 ; ignoreversion: our exes carry no VERSIONINFO, so compare by content.
 Source: "{#StageDir}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 

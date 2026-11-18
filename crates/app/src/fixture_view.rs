@@ -28,6 +28,8 @@ pub enum BoxReason {
     /// Another fixture of the same setup has the identical world box:
     /// a box hit cannot be pinned on either mesh, so both keep the box.
     SharedBox,
+    /// The visual profile mesh approximates curved steel with chords.
+    ProfileChord,
 }
 
 /// A fixture's collision truth.
@@ -51,6 +53,7 @@ impl BoxReason {
             Self::Refused(MeshError::TooLarge) => "over the facet cap",
             Self::Refused(MeshError::Open) => "open mesh",
             Self::SharedBox => "shared box",
+            Self::ProfileChord => "curved profile",
         }
     }
 }
@@ -71,6 +74,9 @@ impl MeshState {
         match self {
             Self::Mesh => "judged by its closed mesh - a path through its gaps is clear".to_owned(),
             Self::BoxOnly(BoxReason::Refused(e)) => format!("judged by its bounding box: {e}"),
+            Self::BoxOnly(BoxReason::ProfileChord) => {
+                "judged by its bounding box: the profile mesh approximates curved surfaces".to_owned()
+            }
             Self::BoxOnly(BoxReason::SharedBox) => {
                 "judged by its bounding box: another fixture of this setup has the identical box".to_owned()
             }
@@ -96,20 +102,22 @@ pub fn judge(tris: &[crate::geometry::Triangle], aabb: Option<FixtureBox>, other
 /// mesh state. A tagged model with no facets has no box and no mesh.
 #[must_use]
 pub fn mesh_states(world: &World, declared: Option<&str>) -> Vec<(String, MeshState)> {
-    let rows: Vec<(String, Vec<crate::geometry::Triangle>, Option<FixtureBox>)> = fixture::tagged(world, declared)
+    let rows: Vec<(String, Vec<crate::geometry::Triangle>, Option<FixtureBox>, bool)> = fixture::tagged(world, declared)
         .into_iter()
         .map(|(name, e)| {
             let tris = model::world_facets(world, &e).unwrap_or_default();
             let aabb = model::entity_world_aabb(world, &e).map(|b| FixtureBox { min: b.min, max: b.max });
-            (name, tris, aabb)
+            let curved = fixture::profile_collision_chord_error(world, &e) > 0.0;
+            (name, tris, aabb, curved)
         })
         .collect();
     rows.iter()
         .enumerate()
-        .map(|(i, (name, tris, aabb))| {
+        .map(|(i, (name, tris, aabb, curved))| {
             let others: Vec<FixtureBox> =
                 rows.iter().enumerate().filter(|(j, _)| *j != i).filter_map(|(_, r)| r.2).collect();
-            (name.clone(), judge(tris, *aabb, &others))
+            let state = if *curved { MeshState::BoxOnly(BoxReason::ProfileChord) } else { judge(tris, *aabb, &others) };
+            (name.clone(), state)
         })
         .collect()
 }

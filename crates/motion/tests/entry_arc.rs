@@ -300,9 +300,9 @@ fn the_bore_contour_enters_each_level_on_a_tangent_arc() {
     assert!(t.notes.is_empty(), "the bore holds the lead: {:?}", t.notes);
     assert!(!t.moves.iter().any(|m| m.kind == MoveKind::Plunge), "no axial dive anywhere");
     let fans = descents(&t);
-    // Levels 0, -1, -2: the first from clearance, the rest from the
-    // plane above - one arc each.
-    assert_eq!(fans.len(), 3, "one arc per level: {fans:?}");
+    // Levels -1, -2 (#2004: no air level at Top Z 0): the first from
+    // clearance, the rest from the plane above - one arc each.
+    assert_eq!(fans.len(), 2, "one arc per level: {fans:?}");
     for f in &fans {
         assert!(f.len() >= 3, "a fan, not one straight ramp chord: {f:?}");
         assert_fan_is_a_tangent_arc(f);
@@ -353,7 +353,7 @@ fn the_wall_side_enters_on_a_tangent_arc_in_the_air_beside_the_wall() {
     assert!(t.is_chained() && t.all_finite());
     assert!(!t.notes.iter().any(|n| n.contains("bounded air")), "{:?}", t.notes);
     let f = descents(&t);
-    assert_eq!(f.len(), 3, "levels 0, -1, -2 each enter on one arc");
+    assert_eq!(f.len(), 2, "levels -1, -2 each enter on one arc (#2004)");
     for fan in &f {
         assert_fan_is_a_tangent_arc(fan);
         for q in fan {

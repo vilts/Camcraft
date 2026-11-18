@@ -13,7 +13,9 @@ use super::*;
 use crate::state::SetupPage;
 
 const FIXED: &str = "Fixed (does not turn with the part)";
-const PLACE_FIELDS: [&str; 4] = ["Place X", "Place Y", "Place Z", "Place yaw"];
+const PLACE_FIELDS: [&str; 6] =
+    ["Place X", "Place Y", "Place Z", "Tilt about X (roll)", "Tilt about Y (pitch)", "Turn about Z (yaw)"];
+const TURN_BUTTONS: [&str; 6] = ["Turn X+", "Turn X-", "Turn Y+", "Turn Y-", "Turn Z+", "Turn Z-"];
 
 fn cube_path() -> std::path::PathBuf {
     std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/cube.stl")
@@ -201,4 +203,39 @@ fn a_built_in_accessory_row_fits_the_default_pane() {
         assert_inside(&h, rect, label);
     }
     assert!(h.state().state.pending.is_empty(), "{:?}", h.state().state.pending);
+}
+
+/// #2174: the place draft offers the Model page's three angles and six
+/// quarter-turn buttons; each is an enabled button inside the pane, and a
+/// click queues one `TurnFixture` that lands an exact quarter turn.
+#[test]
+fn the_place_draft_turns_a_fixture_by_a_quarter_about_each_axis() {
+    let mut h = fixtures_page();
+    h.get_by_label("Place…").click();
+    h.run_steps(2);
+    let rect = pane(&h);
+    assert_inside(&h, rect, "Quarter-turns about world axes");
+    for label in TURN_BUTTONS {
+        let node = h.get_by_label(label);
+        assert_eq!(node.accesskit_node().role(), egui::accesskit::Role::Button, "{label} is a button");
+        assert!(!node.accesskit_node().is_disabled(), "{label} is enabled");
+        assert_inside(&h, rect, label);
+    }
+    h.get_by_label("Turn Z+").click();
+    h.run_steps(1);
+    assert!(
+        matches!(h.state().state.pending.front(), Some(CommandKind::TurnFixture { name, axis: 2, degrees }) if name == "cube" && *degrees == 90.0),
+        "{:?}",
+        h.state().state.pending
+    );
+    h.state_mut().state.drain_actions();
+    h.run_steps(2);
+    let st = &h.state().state;
+    let loc = camcraft_app::model::find_by_name(&st.world, "cube")
+        .and_then(|e| camcraft_app::model::transform_of(&st.world, &e))
+        .expect("the cube stands");
+    let q = std::f64::consts::FRAC_1_SQRT_2;
+    assert_eq!(loc.rot, [0.0, 0.0, q, q], "an exact quarter turn about Z");
+    assert!((st.fixture_ui.yaw_deg - 90.0).abs() < 1e-9, "the draft re-reads the turn: {}", st.fixture_ui.yaw_deg);
+    assert!(st.status.contains("turned fixture cube 90 degrees about Z"), "{}", st.status);
 }

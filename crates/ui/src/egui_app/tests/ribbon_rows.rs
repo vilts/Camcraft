@@ -90,6 +90,197 @@ fn ribbon_text_rows_stack_top_to_bottom() {
     assert!(caption.y - new.y >= line_h(pal.font_label) + 2.0, "caption touches the button label");
 }
 
+
+mod issue_2064_pins {
+    use std::path::PathBuf;
+    use camcraft_app::commands::theme_set;
+    use camcraft_app::schema::ThemeRef;
+
+    struct TempTheme(PathBuf);
+
+    impl TempTheme {
+        fn write(tag: &str, geom: &str) -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "camcraft_issue2064_{}_{}_{}.json",
+                std::process::id(),
+                tag,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_nanos())
+            ));
+            let json = format!(
+                r#"{{
+  "format": "camcraft-theme/1",
+  "descriptor": {{
+    "name": "Pin {tag}",
+    "creator": "test",
+    "description": "issue 2064 pin"
+  }},
+  "base": "dark",
+  "geometry": {{ {geom} }}
+}}"#
+            );
+            std::fs::write(&path, json).expect("write temp theme");
+            Self(path)
+        }
+    }
+
+    impl Drop for TempTheme {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    fn apply_geom(h: &mut egui_kittest::Harness<'static, super::super::ShellUi>, tag: &str, geom: &str) -> TempTheme {
+        let f = TempTheme::write(tag, geom);
+        let p = f.0.to_string_lossy().into_owned();
+        theme_set(&h.state_mut().state.world, &ThemeRef::File(p));
+        h.run_steps(3);
+        f
+    }
+
+    fn find_text_x(h: &egui_kittest::Harness<'static, super::super::ShellUi>, needle: &str) -> f32 {
+        super::super::structural::painted(h)
+            .into_iter()
+            .find(|(text, _)| text == needle)
+            .unwrap_or_else(|| panic!("missing painted text {needle:?}"))
+            .1
+            .x
+    }
+
+    fn walk_accent_lines(shape: &egui::Shape, accent: egui::Color32, out: &mut Vec<f32>) {
+        match shape {
+            egui::Shape::LineSegment { points, stroke }
+                if stroke.color == accent && points[0].y < 60.0 && (points[0].y - points[1].y).abs() < 1.0 =>
+            {
+                out.push(stroke.width);
+            }
+            egui::Shape::Vec(v) => {
+                for s in v {
+                    walk_accent_lines(s, accent, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn walk_status_rects(
+        shape: &egui::Shape,
+        center_y: f32,
+        width: f32,
+        strip_fill: egui::Color32,
+        out: &mut Vec<f32>,
+    ) {
+        match shape {
+            egui::Shape::Rect(r)
+                if r.fill == strip_fill
+                    && r.rect.top() > center_y
+                    && r.rect.width() >= width * 0.5
+                    && r.rect.height() >= 8.0
+                    && r.rect.height() <= 120.0 =>
+            {
+                out.push(r.rect.height());
+            }
+            egui::Shape::Vec(v) => {
+                for s in v {
+                    walk_status_rects(s, center_y, width, strip_fill, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn bottom_strip_height(h: &egui_kittest::Harness<'static, super::super::ShellUi>) -> f32 {
+        let cr = h.ctx.content_rect();
+        let strip_fill: egui::Color32 = super::super::theme::current().strip_fill();
+        let mut heights = Vec::new();
+        for c in &h.output().shapes {
+            walk_status_rects(&c.shape, cr.center().y, cr.width(), strip_fill, &mut heights);
+        }
+        heights.into_iter().next().expect("status strip background rect must paint")
+    }
+
+    #[test]
+    fn status_strip_height_tracks_theme_controls_and_status_h() {
+        let _g = super::super::snapshot_guard();
+        let mut h = super::super::shell_harness();
+        h.run_steps(3);
+        let base_strip = bottom_strip_height(&h);
+
+        let _t1 = apply_geom(&mut h, "status_controls", r#""control_height": 34.0"#);
+        let control_strip = bottom_strip_height(&h);
+        assert!(
+            control_strip >= base_strip + 12.0,
+            "increasing control_height to 34 must grow the status bar (strip stayed {control_strip} vs {base_strip})"
+        );
+
+        let _t2 = apply_geom(&mut h, "status_font", r#""font_row": 26.0"#);
+        let font_strip = bottom_strip_height(&h);
+        assert!(
+            font_strip >= base_strip + 10.0,
+            "increasing font_row to 26 must grow the status bar (strip stayed {font_strip} vs {base_strip})"
+        );
+
+        let _t3 = apply_geom(&mut h, "status_h_direct", r#""status_h": 42.0"#);
+        let explicit_strip = bottom_strip_height(&h);
+        assert!(
+            (explicit_strip - base_strip - 20.0).abs() <= 1.5,
+            "status_h=42 should grow status bar by 20px from 22 (delta = {})",
+            explicit_strip - base_strip
+        );
+
+        theme_set(&h.state_mut().state.world, &ThemeRef::Dark);
+        h.run_steps(2);
+    }
+
+    #[test]
+    fn ribbon_tabs_follow_theme_spacing_pad_gap_and_stroke() {
+        let _g = super::super::snapshot_guard();
+        let mut h = super::super::shell_harness();
+        h.run_steps(3);
+        let base_milling = find_text_x(&h, "MILLING");
+        let base_turning = find_text_x(&h, "TURNING");
+
+        let _t1 = apply_geom(&mut h, "tab_inset", r#""item_spacing_x": 20.0"#);
+        let inset_milling = find_text_x(&h, "MILLING");
+        assert!(
+            (inset_milling - base_milling - 12.0).abs() <= 1.5,
+            "increasing item_spacing_x from 8 to 20 must shift first tab right by 12px (got {})",
+            inset_milling - base_milling
+        );
+
+        let _t2 = apply_geom(
+            &mut h,
+            "tab_metrics",
+            r#""ribbon_tab_pad_x": 22.0, "ribbon_tab_gap": 10.0, "ribbon_tab_stroke": 5.0"#,
+        );
+        let pad_milling = find_text_x(&h, "MILLING");
+        let pad_turning = find_text_x(&h, "TURNING");
+        let pitch_delta = (pad_turning - pad_milling) - (base_turning - base_milling);
+        assert!(
+            (pad_milling - base_milling - 10.0).abs() <= 1.5,
+            "increasing ribbon_tab_pad_x from 12 to 22 must shift centered MILLING right by 10px (got {})",
+            pad_milling - base_milling
+        );
+        assert!(
+            (pitch_delta - 28.0).abs() <= 1.5,
+            "pad_x +10/side and gap +8 must widen tab pitch by 28px (got {pitch_delta})"
+        );
+
+        let accent = super::super::theme::Tokens::DARK.accent;
+        let mut widths = Vec::new();
+        for c in &h.output().shapes {
+            walk_accent_lines(&c.shape, accent, &mut widths);
+        }
+        assert!(
+            widths.iter().any(|w| (*w - 5.0).abs() <= 0.1),
+            "active tab underline stroke must read ribbon_tab_stroke=5.0, got {widths:?}"
+        );
+
+        theme_set(&h.state_mut().state.world, &ThemeRef::Dark);
+        h.run_steps(2);
+    }
+}
 #[derive(Clone, Copy)]
 struct CaptionProbe {
     font_caption: f32,

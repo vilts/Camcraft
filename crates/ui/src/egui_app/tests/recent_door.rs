@@ -14,16 +14,9 @@ use std::path::PathBuf;
 
 use camcraft_app::recent::{RecentFiles, RecentKind};
 
-use super::super::recent_drop::{self, BROWSE, CLEAR, RecentRow};
+use super::super::recent_drop::{BROWSE, CLEAR};
 use super::*;
 use crate::unsaved::UnsavedChoice;
-
-fn click(h: &mut Harness<'static, ShellUi>, at: egui::Pos2) {
-    set_pos(h, at);
-    button_at(h, egui::PointerButton::Primary, at, true);
-    button_at(h, egui::PointerButton::Primary, at, false);
-    h.run_steps(2);
-}
 
 /// A fresh folder for one test, canonical (macOS temp is a symlink).
 fn temp_dir(tag: &str) -> PathBuf {
@@ -46,28 +39,9 @@ fn saved_project(path: &std::path::Path) {
     assert!(path.is_file(), "fixture project saved: {}", other.status);
 }
 
-fn button(cmd: Cmd) -> egui::Rect {
-    let (cells, _) = mill_plan_at(1280.0);
-    cells.iter().find(|c| c.cmd == cmd).expect("the File cell stands on the bar").rect
-}
-
-fn rows(state: &State, kind: RecentKind) -> Vec<(RecentRow, egui::Rect)> {
-    let cmd = if kind == RecentKind::Project { Cmd::Project } else { Cmd::Model };
-    let strip =
-        egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, super::super::shell::RIBBON_H));
-    recent_drop::rows_of(state, kind, button(cmd), strip, &theme::current())
-}
-
-fn row_rect(state: &State, kind: RecentKind, label: &str) -> egui::Rect {
-    rows(state, kind)
-        .into_iter()
-        .find(|(r, _)| r.label() == label)
-        .unwrap_or_else(|| panic!("the list has a '{label}' row"))
-        .1
-}
-
 #[test]
 fn the_door_lists_entries_then_clear_and_browse_with_accesskit_labels() {
+    use egui_kittest::kittest::NodeT;
     let d = temp_dir("structural");
     let (a, b) = (d.join("a.camproj"), d.join("b.camproj"));
     saved_project(&a);
@@ -81,12 +55,16 @@ fn the_door_lists_entries_then_clear_and_browse_with_accesskit_labels() {
     }
     h.run();
     assert!(h.query_by_label(CLEAR).is_none(), "the list is closed until pressed");
-    click(&mut h, button(Cmd::Project).center());
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Open").click();
+    h.run_steps(2);
     assert_eq!(h.state().state.ribbon_recent_open, Some(RecentKind::Project));
-    let labels: Vec<String> = rows(&h.state().state, RecentKind::Project).iter().map(|(r, _)| r.label()).collect();
+    let labels: Vec<String> = h
+        .query_all_by_role(egui::accesskit::Role::MenuItem)
+        .filter_map(|n| n.accesskit_node().label())
+        .collect();
     assert_eq!(labels, ["gone.camproj (missing)", "b.camproj", "a.camproj", CLEAR, BROWSE], "newest first");
     for label in &labels {
-        h.get_by_label(label);
+        h.get_by_role_and_label(egui::accesskit::Role::MenuItem, label);
     }
     // The Model list is its own, and empty.
     assert!(h.state().state.recent.list(RecentKind::Model).is_empty());
@@ -105,9 +83,9 @@ fn a_click_on_an_entry_opens_it_through_open() {
     h.state_mut().state.pending.push_back(CommandKind::NewDocument);
     h.run_steps(2);
     assert_eq!(h.state().state.project_path, None);
-    click(&mut h, button(Cmd::Project).center());
-    let at = row_rect(&h.state().state, RecentKind::Project, "job.camproj").center();
-    click(&mut h, at);
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Open").click();
+    h.run_steps(2);
+    h.get_by_role_and_label(egui::accesskit::Role::MenuItem, "job.camproj").click();
     h.run_steps(2);
     let st = &h.state().state;
     assert_eq!(st.ribbon_recent_open, None, "a choice closes the list");
@@ -124,9 +102,11 @@ fn a_recent_project_over_unsaved_changes_takes_opens_prompt() {
     let mut h = shell_harness();
     assert!(h.state().state.history.is_dirty(), "the seed is unsaved work");
     h.state_mut().state.recent.add(RecentKind::Project, &path);
-    click(&mut h, button(Cmd::Project).center());
-    let at = row_rect(&h.state().state, RecentKind::Project, "other.camproj").center();
-    click(&mut h, at);
+    h.run();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Open").click();
+    h.run_steps(2);
+    h.get_by_role_and_label(egui::accesskit::Role::MenuItem, "other.camproj").click();
+    h.run_steps(2);
     assert!(h.state().state.unsaved_prompt.is_some(), "the open is held for the prompt");
     h.get_by_label("Unsaved changes");
     crate::actions::resolve_unsaved(&mut h.state_mut().state, UnsavedChoice::DontSave);
@@ -136,15 +116,18 @@ fn a_recent_project_over_unsaved_changes_takes_opens_prompt() {
 
 #[test]
 fn a_missing_entry_is_refused_by_name() {
+    use egui_kittest::kittest::NodeT;
     let d = temp_dir("missing");
     let gone = d.join("gone.camproj");
     let mut h = shell_harness();
     h.state_mut().state.recent.add(RecentKind::Project, &gone);
     let dirty = h.state().state.history.is_dirty();
-    click(&mut h, button(Cmd::Project).center());
-    h.get_by_label("gone.camproj (missing)");
-    let at = row_rect(&h.state().state, RecentKind::Project, "gone.camproj (missing)").center();
-    click(&mut h, at);
+    h.run();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Open").click();
+    h.run_steps(2);
+    let missing = h.get_by_role_and_label(egui::accesskit::Role::MenuItem, "gone.camproj (missing)");
+    assert!(missing.accesskit_node().is_disabled());
+    missing.click();
     h.run_steps(2);
     let st = &h.state().state;
     assert!(st.status.contains("gone.camproj is missing"), "refused by name: {}", st.status);
@@ -163,10 +146,11 @@ fn a_missing_entry_is_refused_by_name() {
 fn clear_recent_empties_the_list() {
     let mut h = shell_harness();
     h.state_mut().state.recent.add(RecentKind::Model, &cube_path());
-    click(&mut h, button(Cmd::Model).center());
+    h.run();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Model").click();
+    h.run_steps(2);
     assert_eq!(h.state().state.ribbon_recent_open, Some(RecentKind::Model));
-    let at = row_rect(&h.state().state, RecentKind::Model, CLEAR).center();
-    click(&mut h, at);
+    h.get_by_role_and_label(egui::accesskit::Role::MenuItem, CLEAR).click();
     h.run_steps(2);
     let st = &h.state().state;
     assert!(st.recent.list(RecentKind::Model).is_empty(), "Clear recent empties it");
@@ -182,9 +166,11 @@ fn a_recent_model_imports_through_the_worker_and_is_noted() {
     let mut h = shell_harness();
     h.state_mut().state.recent.add(RecentKind::Model, &copy);
     h.state_mut().state.recent.add(RecentKind::Model, &cube_path());
-    click(&mut h, button(Cmd::Model).center());
-    let at = row_rect(&h.state().state, RecentKind::Model, "bracket.stl").center();
-    click(&mut h, at);
+    h.run();
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Model").click();
+    h.run_steps(2);
+    h.get_by_role_and_label(egui::accesskit::Role::MenuItem, "bracket.stl").click();
+    h.run_steps(2);
     h.state_mut().state.settle();
     h.run_steps(2);
     let st = &h.state().state;
@@ -198,7 +184,8 @@ fn an_empty_list_and_browse_open_todays_dialog() {
         .with_size(Vec2::new(1280.0, 720.0))
         .build_ui_state(frame_undrained, ShellUi::seeded());
     h.run();
-    click(&mut h, button(Cmd::Project).center());
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Open").click();
+    h.run_steps(2);
     let queued = |h: &Harness<'static, ShellUi>| {
         h.state().state.pending.iter().any(|c| matches!(c, CommandKind::OpenProjectDialog))
     };
@@ -206,10 +193,11 @@ fn an_empty_list_and_browse_open_todays_dialog() {
     assert_eq!(h.state().state.ribbon_recent_open, None);
     h.state_mut().state.pending.clear();
     h.state_mut().state.recent.add(RecentKind::Project, &cube_path());
-    click(&mut h, button(Cmd::Project).center());
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Open").click();
+    h.run_steps(2);
     assert!(!queued(&h), "with recents the button opens its list");
-    let at = row_rect(&h.state().state, RecentKind::Project, BROWSE).center();
-    click(&mut h, at);
+    h.get_by_role_and_label(egui::accesskit::Role::MenuItem, BROWSE).click();
+    h.run_steps(2);
     assert!(queued(&h), "Browse… opens the dialog");
     h.state_mut().state.pending.clear();
 }

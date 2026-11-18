@@ -10,6 +10,14 @@
 //! fresh chord a few microns off an earlier one would be. A closed run
 //! is reached on the chord most nearly tangent to it.
 //!
+//! Cheaper than both, where it holds (issue 2109): the tool goes back
+//! along the pass it has just cut - the very chords, reversed, so no
+//! crossing - to the next run's start where it went over it, else to
+//! where that pass met the wall and on along the wall. That costs one pass's length of air where the stretch
+//! costs two wall rides and a return, and it reaches a half loop in a
+//! neck without the retract a crossing return used to need. Every way
+//! of reaching a run is offered stay-down first, least air first.
+//!
 //! Provenance: tangential lead-in of peripheral milling (machining
 //! handbooks; the roll-in of M. Otkur and I. Lazoglu, "Trochoidal
 //! milling", Int. J. Machine Tools and Manufacture 47, 2007, read as
@@ -19,7 +27,7 @@
 use crate::geo2d::Point2;
 use crate::machining2d::chord_clears;
 
-use super::super::front::{dist, unit};
+use super::super::front::{dist, len, unit};
 use super::canon::{Vtx, WallAt};
 use super::peel::Peel;
 use super::runs::Run;
@@ -40,6 +48,10 @@ const ANCHOR_PER_D: f64 = 3.0;
 /// Proved positions tried for one run.
 const SPOTS: usize = 6;
 
+/// A retrace (back along the last pass, on along the wall) is at most
+/// this many tool diameters long; past it a retract is cheaper.
+const RETRACE_PER_D: f64 = 8.0;
+
 /// One way to reach and cut a run.
 pub(super) struct Lead {
     /// The feed, from where the tool stands or plunges.
@@ -52,6 +64,11 @@ pub(super) struct Lead {
     /// The wall vertices the feed lands on and leaves from, if any.
     pub start: Option<WallAt>,
     pub end: Option<WallAt>,
+    /// Where in `pts` the run itself starts, and the wall vertex it
+    /// starts on (`None`: off the wall, or a closed ring) - what the next
+    /// pass may retrace back to.
+    pub run_at: usize,
+    pub run_wall: Option<WallAt>,
 }
 
 /// Where an earlier pass of the depth landed on a wall, and the proved
@@ -72,7 +89,15 @@ impl Peel<'_> {
         if run.closed {
             let body: Vec<Point2> = run.v.iter().map(|v| v.p).collect();
             let ring = |from: Point2| seat(&body, from, |q| chord_clears(center, from, q));
-            let lead = |from: Point2, hop: bool| Lead { pts: std::iter::once(from).chain(ring(from)).collect(), hop, own: 1, start: None, end: None };
+            let lead = |from: Point2, hop: bool| Lead {
+                pts: std::iter::once(from).chain(ring(from)).collect(),
+                hop,
+                own: 1,
+                start: None,
+                end: None,
+                run_at: 1,
+                run_wall: None,
+            };
             if let Some(cur) = self.cur
                 && ring(cur).first().is_some_and(|&s| dist(cur, s) <= stay && chord_clears(center, cur, s))
             {
@@ -89,6 +114,7 @@ impl Peel<'_> {
         // Stretched along the walls to where the area was entered and
         // left before.
         let (pre, anchor) = self.back_to_anchor(first);
+        let pre_len = pre.len();
         let mut v: Vec<Vtx> = pre;
         v.extend(run.v.iter().copied());
         if let Some(&last) = run.v.last() {
@@ -98,6 +124,8 @@ impl Peel<'_> {
         let (Some(&head), end) = (v.first(), v.last().and_then(|q| q.at)) else { return out };
         let with = |lead: Vec<Point2>, hop: bool, start: Option<WallAt>| Lead {
             own: lead.len(),
+            run_at: lead.len().saturating_sub(1) + pre_len,
+            run_wall: first.at,
             pts: lead.into_iter().chain(body.iter().skip(1).copied()).collect(),
             hop,
             start,
@@ -141,7 +169,61 @@ impl Peel<'_> {
                 out.push(with(vec![e, head.p], true, head.at));
             }
         }
+        out.extend(self.retrace(run));
+        // Stay-down first, the least air first; the retracts in the
+        // order above (a stable sort).
+        let run_len = len(&run.v.iter().map(|q| q.p).collect::<Vec<_>>());
+        let air = |l: &Lead| if l.hop { 0.0 } else { len(&l.pts) - run_len };
+        out.sort_by(|a, b| a.hop.cmp(&b.hop).then(air(a).total_cmp(&air(b))));
         out
+    }
+
+    /// Back along the pass just cut to the start of `run`, or to where
+    /// that pass met the wall and on along the wall to it (an open run
+    /// starting on the same wall loop); `None` where that does not hold
+    /// or is too long.
+    fn retrace(&self, run: &Run) -> Option<Lead> {
+        let (cur, (done, from)) = (self.cur?, self.back.as_ref()?);
+        let first = *run.v.first()?;
+        let to = first.at?;
+        if run.closed || done.last() != Some(&cur) || to.0 != from.0 {
+            return None;
+        }
+        let mut pts: Vec<Point2> = done.iter().rev().copied().collect();
+        // Back only as far as the run's own start where the last pass
+        // went over it; else to that pass's start and along the wall.
+        match pts.iter().position(|&q| q == first.p) {
+            Some(i) => pts.truncate(i + 1),
+            None => pts.extend(self.wall_between(*from, to)?.into_iter().skip(1)),
+        }
+        let run_at = pts.len() - 1;
+        if len(&pts) > RETRACE_PER_D * 2.0 * self.lv.r {
+            return None;
+        }
+        pts.extend(run.v.iter().skip(1).map(|q| q.p));
+        Some(Lead { pts, hop: false, own: run_at + 1, start: None, end: None, run_at, run_wall: Some(to) })
+    }
+
+    /// The wall vertices from `from` to `to` along one loop, both
+    /// included: against the travel first (`to` is ahead of `from`, the
+    /// usual case), else along it; `None` past the anchor reach.
+    fn wall_between(&self, from: WallAt, to: WallAt) -> Option<Vec<Point2>> {
+        let max = ANCHOR_PER_D * 2.0 * self.lv.r;
+        for step in [self.back_step(), -self.back_step()] {
+            let (mut at, mut out) = (to, vec![self.canon.point(to)]);
+            let mut gone = 0.0;
+            while at != from && gone <= max && out.len() < 4096 {
+                at = self.canon.next(at, step);
+                let q = self.canon.point(at);
+                gone += dist(q, out[out.len() - 1]);
+                out.push(q);
+            }
+            if at == from {
+                out.reverse();
+                return Some(out);
+            }
+        }
+        None
     }
 
     /// The wall step that runs AGAINST the travel of a run.

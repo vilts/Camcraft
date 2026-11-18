@@ -87,7 +87,7 @@ fn spec(world: &World) -> LocateSpec {
         Mate { part: face(world, "part", [10.0, 0.0, 4.0]), fixture: face(world, "vise", [50.0, -1.0, 20.25]) },
         Mate { part: face(world, "part", [0.0, 5.0, 4.0]), fixture: face(world, "vise", [-1.0, 30.0, 15.25]) },
     ];
-    LocateSpec { part: "part".into(), fixture: "vise".into(), mates, offset: LocateOffset::default() }
+    LocateSpec { part: "part".into(), fixture: "vise".into(), body: Default::default(), mates, offset: LocateOffset::default() }
 }
 
 fn bounds(world: &World, name: &str) -> ([f64; 3], [f64; 3]) {

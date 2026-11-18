@@ -50,9 +50,12 @@ fn judge(body: &Body, tris: &[Triangle], budget: u64) -> (Option<f64>, Option<f6
 
 #[test]
 fn an_unread_column_line_keeps_the_box_depth() {
-    // One column (centre 0.5, 0.5), material Z 0..10; two blocks either
-    // side of its line, Z 2..8: the mesh clears it, the box does not.
-    let b = body(1.0, 0.0, 10.0);
+    // One column (centre 0.5, 0.5), material restricted to x 0.4..0.6, Z 0..10;
+    // two blocks either side of it, Z 2..8: the mesh clears it, the box does not.
+    let b = Body::on_mesh(
+        Dexel::block(0.0, 0.0, 1.0, 1.0, 10.0, 1.0).expect("grid"),
+        &cube(p(0.4, 0.0, 0.0), p(0.6, 1.0, 10.0)).facets,
+    );
     let t = facets(&[(p(0.0, 0.0, 2.0), p(0.3, 1.0, 8.0)), (p(0.7, 0.0, 2.0), p(1.0, 1.0, 8.0))], &[]);
     let (mesh, boxed) = judge(&b, &t, MESH_VISIT_BUDGET);
     assert_eq!((mesh, boxed), (None, Some(6.0)), "read, the line is clear");
@@ -99,12 +102,12 @@ fn a_fixture_narrower_than_a_cell_off_the_lines_keeps_the_box_depth() {
 
 #[test]
 fn a_face_on_a_column_centre_where_the_material_ends_is_contact() {
-    // Material only under x < 2 (columns 0.5 and 1.5; 2.5 is air). A
+    // Material only under x <= 1.5 (columns 0.5 and 1.5; 2.5 is air). A
     // jaw from x 1.5 outward, Z 2..8, and a plate under all of it: the
-    // jaw's face lies on the 1.5 column centres - contact, not steel in
-    // the rectangle 0.5..1.5 (whose edge it lies on).
+    // jaw's face lies on the 1.5 column centres and the material's face
+    // - contact, not steel in the material.
     let dex = Dexel::block(0.0, 0.0, 3.0, 3.0, 10.0, 1.0).expect("grid");
-    let b = Body::on_mesh(dex, &cube(p(0.0, 0.0, 0.0), p(2.0, 3.0, 10.0)).facets);
+    let b = Body::on_mesh(dex, &cube(p(0.0, 0.0, 0.0), p(1.5, 3.0, 10.0)).facets);
     let jaw = (p(1.5, -0.5, 2.0), p(3.2, 3.5, 8.0));
     let plate = (p(-1.0, -1.0, -3.0), p(4.0, 4.0, -1.0));
     let (mesh, boxed) = judge(&b, &facets(&[jaw, plate], &[]), MESH_VISIT_BUDGET);

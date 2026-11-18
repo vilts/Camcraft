@@ -12,7 +12,7 @@ use camcraft_app::operation::{
     self, FeatureSel, GeoSel, Height, OpParams, SrcRef, WireContourOp, WireFourAxis,
     WirePairingRule, WireSide, WireSyncPair,
 };
-use camcraft_app::posting::{self, BUILTINS};
+use camcraft_app::posting;
 use camcraft_app::world::new_world;
 use flecs_ecs::prelude::World;
 
@@ -122,6 +122,11 @@ fn world(mesh: Mesh) -> (World, History) {
         &world,
         LoadMachine::new(&world, "wire-iso.mch".into(), Some(machine)).expect("mount"),
     );
+    history.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     history.execute(&world, ImportModel::from_mesh("part", mesh));
     (world, history)
 }
@@ -156,7 +161,7 @@ fn generate(
     let command = CreateOperation::new(
         world,
         "Fan",
-        "",
+        "EDM-W025",
         SrcRef::Selection(picks),
         OpParams::WireContour(wire),
     )
@@ -205,7 +210,7 @@ fn square_corner_fans_generate_verify_and_post() {
     );
     let clause = posting::wire_clause(&world);
     assert!(clause.problems.is_empty(), "{:?}", clause.problems);
-    let script = BUILTINS
+    let script = camcraft_app::posting::shipped_posts().expect("the shipped posts read")
         .iter()
         .find(|(name, _)| *name == "Generic ISO Wire EDM")
         .map(|(_, text)| *text)

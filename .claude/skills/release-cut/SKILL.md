@@ -1,6 +1,6 @@
 ---
 name: release-cut
-description: Cut a CamCraft minor or major release, step by step - the start condition (no open P1/P2), review and merge of the waiting feat PRs, the release branch with decisions, release notes and changelog rows, the release gate on the cut runner (`cut.yml` stage gate), the release PR, the tag (`cut.yml` stage tag), `release.yml`, the `shipped in` comments and the documentation site check. Use when the maintainer asks for a cut, a release, a tag or "ship X.Y.0", or when you must know what a late P1/P2 does to a cut in progress.
+description: Cut a CamCraft minor or major release, step by step - the cut list and the cut line (the maintainer names what the cut includes; an open P1/P2 that is not listed goes under Known issues), review and merge of the waiting feat PRs, the release branch with decisions, release notes and changelog rows, the release gate on the cut runner (`cut.yml` stage gate), the release PR, the tag (`cut.yml` stage tag), `release.yml`, the `shipped in` comments and the documentation site check. Use when the maintainer asks for a cut, a release, a tag or "ship X.Y.0", or when you must know what an issue or PR that is not on the cut list does to a cut.
 ---
 
 # release-cut - PR review, merge to main, tag
@@ -15,24 +15,38 @@ instruction. Only minor and major versions are cut: there are no patch cuts.
 
 From step 1 to the tag, nothing else merges to `main`.
 
-## Step 1 - Start condition, then review and merge the issue PRs
+## Step 1 - The cut list and the cut line, then review and merge
 
-Start condition (#1424):
+The cut list (AGENTS.md "The cut list", "The cut line"; replaces the start
+condition of #1424):
 
-1. Check that no `P1` or `P2` issue is open. If one is open, the cut does
-   not start. A `P3` or lower does not hold a cut.
-2. Record the UTC start time and that list (none) in the release PR body.
-3. A `P1` or `P2` issue filed after that moment does not restart the cut and
-   does not enter it. The cut completes on the tree that passed the release
-   gate.
-4. Name each such issue under "Known issues" (step 2 and step 3). Its fix
-   merges after the tag and ships in the next minor.
-5. Only the maintainer can stop a cut for it. No agent stops or restarts a
-   cut for a late issue.
-6. An agent that finds a late `P1` (unsafe or wrong output) tells the
-   maintainer in one line and continues.
-7. A failure of the cut's own release gate is not a late issue. Fix it in
-   the cut.
+1. A cut does not clear all `P1` and `P2` issues. The maintainer decides
+   what the cut includes.
+2. List the candidates one time:
+   - each open `P1` and `P2` issue
+     (`gh issue list --state open --search 'label:P1,P2' --limit 200`);
+   - each open `feat` or breaking PR that waits for the cut.
+3. Ask the maintainer one time, in the question dialog (`AskUserQuestion`):
+   each candidate with "in" or "out" recommended and one line of reason.
+   Recommend "in" only for an item that has a PR open or a fix that takes
+   less than about one hour. His answer is the cut list.
+4. The cut line: the list is now closed. Record the UTC time and the list
+   in the release PR body.
+5. Nothing is added after the cut line. This includes a new `P1`, a defect
+   that the review of a listed PR finds in other code, and a PR that became
+   `merge-ready` later. File the issue. Tell the maintainer in one line if
+   it is a `P1`. Continue. Do not ask to add it.
+6. Only the maintainer adds an item, in his own words. No agent holds,
+   delays or restarts a cut for an item that is not on the list.
+7. Name each open `P1` or `P2` that is not on the list under "Known issues"
+   (step 2 and step 3). Its fix merges after the tag and ships in the next
+   minor.
+8. A listed item that is not ready when the others are merged: ask the
+   maintainer one time (wait for it, or remove it from the list).
+9. Always in the cut, without a list entry: a fix for a main that does not
+   build or whose gate is red, and a fix for a failure of the cut's own
+   release gate.
+10. From the cut line, only listed items merge to `main`.
 
 Review and merge:
 
@@ -63,8 +77,8 @@ Review and merge:
 3. Write `RELEASE_NOTES.md`.
    - While the major is 0, a breaking change bumps MINOR. The notes then say
      "breaking" first.
-   - Add a "Known issues" section: each `P1` or `P2` filed after the start,
-     by number and title.
+   - Add a "Known issues" section: each open `P1` or `P2` that is not on
+     the cut list, by number and title.
    - Add a "Process changes" section: each `PROCESS_VERSION` since the
      previous tag, from the pinned issue #681.
 4. Write the `CHANGELOG.md` rows for each PR merged since the previous tag:
@@ -108,9 +122,9 @@ Review and merge:
    only the red steps locally before the next full gate.
 4. While the gate runs: `gh pr create --base main --title "chore(release):
    X.Y.Z"`. It is reviewed as each PR is.
-   - The body has the start-condition record (step 1).
-   - A comment names each `P1` / `P2` filed after the start, as "Known
-     issues".
+   - The body has the cut list and the UTC time of the cut line (step 1).
+   - A comment names each open `P1` / `P2` that is not on the cut list, as
+     "Known issues".
 5. When the gate is green and the PR is reviewed: `gh pr merge --merge
    --delete-branch`.
 6. Do not push to the branch after the green gate. The tag stage refuses a

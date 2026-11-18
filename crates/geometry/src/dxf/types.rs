@@ -62,6 +62,13 @@ pub struct Layer {
     pub line_type: String,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextAnnotation {
+    pub layer: String,
+    pub text: String,
+    pub pos: Point2,
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ImportSummary {
     /// Includes POLYLINE's VERTEX and SEQEND records, and skipped entities.
@@ -75,6 +82,8 @@ pub struct Document {
     pub units: Units,
     pub layers: Vec<Layer>,
     pub primitives: Vec<LayeredPrimitive>,
+    /// Text entities (`TEXT` / `MTEXT`) in drawing units (#744).
+    pub annotations: Vec<TextAnnotation>,
     /// Common Z of the extracted geometry, in drawing units.
     pub elevation: Option<f64>,
     pub summary: ImportSummary,

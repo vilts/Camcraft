@@ -113,7 +113,7 @@ fn hole(world: &World) -> SrcRef {
 }
 
 fn pocket(strategy: PocketStrategy, climb: bool) -> OpParams {
-    OpParams::Pocket {
+    OpParams::Pocket { rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 4.0,

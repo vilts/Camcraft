@@ -259,13 +259,15 @@ fn the_rapids_stand_clear_of_the_whirl() {
 #[test]
 fn the_seam_closes_into_a_full_ring() {
     let got = rotary_offset(&lathe_bar(16), &params(28.0, 0.0), &control(0.0, 0.0, None)).unwrap();
-    // The skim runs at the wrap top: its positions must cover every
+    // #2004: the wrap top (rho 2.5) is the material top and takes no
+    // level now; the first ring is one stepdown under it (rho 1.5), round
+    // the barrel. Its positions must cover every
     // azimuth. An open seam would leave a rest ridge there and show
     // as an angular gap far wider than the 16-turn chord step.
     let mut ths: Vec<f64> = got
         .moves
         .iter()
-        .filter(|m| m.kind != MoveKind::Rapid && (tangent(m.to) - 2.5).abs() < 1e-6)
+        .filter(|m| m.kind != MoveKind::Rapid && (tangent(m.to) - 1.5).abs() < 1e-6)
         .map(|m| m.to.y.atan2(m.to.x))
         .collect();
     ths.sort_by(|a, b| a.partial_cmp(b).unwrap());
@@ -319,10 +321,16 @@ fn the_height_window_names_the_stations_and_refuses_an_empty_one() {
     let e = rotary_offset(&lathe_bar(16), &params(48.0, 38.0), &control(0.0, 0.0, None))
         .expect_err("heights that cover nothing refuse");
     assert!(e.to_string().contains("no station"), "{e}");
-    // A lower-half window: the rect's v range ends AT station 8 (no
-    // pad in v - the stations are the contract), so no cut may run
-    // where the barrel stands.
-    let got = rotary_offset(&lathe_bar(16), &params(8.0, 0.0), &control(0.0, 0.0, None))
+    // #2004: the window v 0..8 holds only the foot (rho 2.0) under the
+    // wrap top (rho 2.5). Its one open level was the air plane AT the
+    // wrap top; with that level gone the ladder refuses by name.
+    let air = rotary_offset(&lathe_bar(16), &params(8.0, 0.0), &control(0.0, 0.0, None))
+        .expect_err("a window whose only open level is the wrap top is air");
+    assert!(air.to_string().contains("nothing to cut"), "{air}");
+    // A lower window with material: the rect's v range ends AT station
+    // 12 (no pad in v - the stations are the contract), over the thin
+    // barrel (rho 1.2), so no cut may run past it.
+    let got = rotary_offset(&lathe_bar(16), &params(12.0, 0.0), &control(0.0, 0.0, None))
         .expect("the lower bar roughs alone");
     let cuts = got
         .moves
@@ -332,16 +340,24 @@ fn the_height_window_names_the_stations_and_refuses_an_empty_one() {
     assert!(cuts > 20, "half a bar is still a bar: {cuts} cuts");
     for m in got.moves.iter().filter(|m| m.kind != MoveKind::Rapid) {
         assert!(
-            m.to.z <= 8.0 + 1e-6,
+            m.to.z <= 12.0 + 1e-6,
             "a cut ran past the window station: {:?}",
             m.to
         );
     }
-    // And the upper half, for the mirror.
-    let up = rotary_offset(&lathe_bar(16), &params(28.0, 19.0), &control(0.0, 0.0, None)).unwrap();
+    // And the upper half, for the mirror. #2004: v 19..28 holds only the
+    // cone top and the r2.5 barrel; its one open level was the air plane
+    // on the wrap top, so it refuses by name. The window v 10..28 holds
+    // the thin barrel (rho 1.2) and must stay at or above station 10.
+    let air = rotary_offset(&lathe_bar(16), &params(28.0, 19.0), &control(0.0, 0.0, None))
+        .expect_err("the upper window's only open level is the wrap top");
+    assert!(air.to_string().contains("nothing to cut"), "{air}");
+    let up = rotary_offset(&lathe_bar(16), &params(28.0, 10.0), &control(0.0, 0.0, None)).unwrap();
+    let up_cuts = up.moves.iter().filter(|m| m.kind != MoveKind::Rapid).count();
+    assert!(up_cuts > 20, "the upper window still roughs the barrel: {up_cuts} cuts");
     for m in up.moves.iter().filter(|m| m.kind != MoveKind::Rapid) {
         assert!(
-            m.to.z >= 19.0 - 1e-6,
+            m.to.z >= 10.0 - 1e-6,
             "a cut ran past the upper window: {:?}",
             m.to
         );

@@ -122,7 +122,8 @@ impl Peel<'_> {
 
     pub(super) fn commit(&mut self, t: Trial) -> Result<(), GenError> {
         let h = self.ras.h;
-        let Lead { pts, hop, start, end, .. } = t.lead;
+        let Lead { pts, hop, start, end, run_at, run_wall, .. } = t.lead;
+        self.back = run_wall.map(|at| (pts[run_at.min(pts.len())..].to_vec(), at));
         let sw = Region::sweep(std::slice::from_ref(&pts), self.lv.r)?;
         self.mat = tidy::tidy(&self.mat.difference(&sw)?, 0.25 * h, 0.1 * h, 4.0 * h * h)?;
         self.ras = t.ras;

@@ -56,6 +56,9 @@ pub(crate) fn paint(
         }
     };
     stroke(selected_segments(state, aspect), SELECTED_PX, overlay(Overlay::Pick));
+    let (start_marks, exit_marks) = crate::start_exit_pick::marks(state, aspect);
+    stroke(start_marks, SELECTED_PX, overlay(Overlay::Pick));
+    stroke(exit_marks, SELECTED_PX, overlay(Overlay::Region));
     stroke(crate::interact::hover_features(state, aspect), HOVER_PX, overlay(Overlay::Hover));
 }
 

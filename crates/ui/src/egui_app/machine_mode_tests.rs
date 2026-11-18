@@ -54,6 +54,22 @@ fn the_sinker_template_has_its_own_mode_row() {
 }
 
 #[test]
+fn waterjet_without_a_mode_keeps_the_specific_door_caption() {
+    assert!(!MACHINE_MODES.iter().any(|(kind, _, _)| *kind == Kind::Waterjet));
+    assert_eq!(machine_modes::caption(Kind::Waterjet), "Machine");
+    assert_eq!(machine_modes::short_caption(Kind::Waterjet), "Waterjet");
+    let draft = machine::draft::MachineDraft::blank(Kind::Waterjet);
+    let machine = machine::parse_mch(&draft.value.to_string()).expect("waterjet draft parses");
+    let mut state = State::new();
+    let load = camcraft_app::commands::LoadMachine::new(
+        &state.world, "waterjet.mch".into(), Some(machine),
+    ).expect("waterjet mounts");
+    state.history.execute(&state.world, load);
+    assert_eq!(machine::kind_of(&state.world), Kind::Waterjet);
+    assert_eq!(panes::text_of(Cmd::Machine, &state), "Waterjet");
+}
+
+#[test]
 fn a_menu_row_adds_only_the_sections_its_caption_does_not_name() {
     assert_eq!(machine_modes::mode_label(Kind::Mill), "Milling");
     assert_eq!(machine_modes::mode_label(Kind::Lathe), "Turning", "the caption names its section");

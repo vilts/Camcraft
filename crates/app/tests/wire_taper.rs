@@ -20,7 +20,7 @@ use camcraft_app::geometry::{Mesh, Point3, Triangle};
 use camcraft_app::machine::parse_mch;
 use camcraft_app::model;
 use camcraft_app::operation::{Height, OpParams, SrcRef, WireContourOp, WireSide};
-use camcraft_app::posting::{self, BUILTINS};
+use camcraft_app::posting;
 use camcraft_app::world::new_world;
 
 const FIXTURE: &str = include_str!("edm/wire-iso-fixture.mch");
@@ -30,7 +30,7 @@ const NC: &str = "tests/golden/nc/wire-iso/wire_taper_punch.nc";
 const CL: &str = "tests/golden/wire_taper_punch.cl";
 
 fn cps() -> &'static str {
-    BUILTINS.iter().find(|(n, _)| *n == WIRE).map(|(_, s)| *s).expect("registered")
+    camcraft_app::posting::builtin_post_text(WIRE).expect("registered")
 }
 
 /// A sharp 40 x 20 block from z = 0 to 12, centred on the origin.
@@ -60,6 +60,11 @@ fn punch_with(text: &str, taper: f64, burnout: Option<f64>) -> (World, Result<()
     let mut h = History::default();
     let m = parse_mch(text).expect("the fixture parses");
     h.execute(&world, LoadMachine::new(&world, "wire-iso.mch".into(), Some(m)).expect("mount"));
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("block", block()));
     let op = WireContourOp {
         top_z: Height::fixed(12.0),
@@ -77,7 +82,7 @@ fn punch_with(text: &str, taper: f64, burnout: Option<f64>) -> (World, Result<()
         skims: Vec::new(),
     };
     // #1800: the taper door refuses at the command, so its words come back as `made`.
-    let c = match CreateOperation::new(&world, "Punch1", "", SrcRef::Entity("block".into()), OpParams::WireContour(op)) {
+    let c = match CreateOperation::new(&world, "Punch1", "EDM-W025", SrcRef::Entity("block".into()), OpParams::WireContour(op)) {
         Ok(c) => c,
         Err(e) => return (world, Err(e.to_string())),
     };

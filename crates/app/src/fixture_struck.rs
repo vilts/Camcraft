@@ -41,9 +41,12 @@ pub fn op_hits(
     // #368: the body's enclosing cylinder and band stack; a body that no
     // longer fits its tool is itself the problem, by name.
     // #852: the drawn neck, judged against the stored record.
+    // #2199: and any holder band reaching down beside the shank.
+    let stored = tool.geom();
     let neck = crate::tool_cutter::neck_of(world, &tool_entity, &tool);
     let (tool, body) =
         crate::tool_body::judged(world, &tool_entity, tool).map_err(|e| format!("tool {}: {e}", op.tool))?;
+    let neck = camcraft_tools::neck::shank_with_body(&stored, body.as_ref(), neck);
     // `boxes_for` already folds in the machine-derived table, so empty
     // lists mean no steel this op could strike at all.
     if turning.is_empty() && fixed.is_empty() {

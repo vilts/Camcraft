@@ -177,3 +177,19 @@ fn a_budget_refusal_names_the_limit_that_fired_at_warn() {
     assert!(refusal.contains("WARN"), "a refusal is a warning:\n{text}");
     assert!(refusal.contains("passes"), "names the limit that fired:\n{text}");
 }
+
+#[test]
+fn browser_subscriber_omits_timestamps_and_ansi_escapes() {
+    let out = Captured::default();
+    let dispatch = camcraft_app::logging::dispatch(out.clone(), true);
+    tracing::dispatcher::with_default(&dispatch, || {
+        tracing::warn!("browser tracing check");
+    });
+    let text = out.text();
+    assert!(text.contains("WARN") && text.contains("browser tracing check"), "{text}");
+    assert!(!text.contains('\x1b'), "browser console lines must omit ANSI escapes: {text:?}");
+    assert!(
+        text.trim_start().starts_with("WARN "),
+        "browser subscriber must omit SystemTime timestamps (which panic on wasm32): {text:?}"
+    );
+}

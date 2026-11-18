@@ -33,6 +33,7 @@ fn opened() -> State {
     let mill = catalog().into_iter().find(|(n, _)| *n == MILL).map(|(_, t)| t).expect("catalog thread mill");
     state.history.execute(&state.world, AddTool::new(&state.world, MILL, mill).expect("tool"));
     let params = OpParams::Thread {
+        break_through: None,
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(20.0),

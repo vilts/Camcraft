@@ -13,7 +13,7 @@ use crate::common::solid_part::{circle, plate, rect};
 pub use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, ImportModel, SetStock};
 pub use camcraft_app::drilling::{CycleChoice, Hole};
 pub use camcraft_app::geo2d::Point2;
-pub use camcraft_app::geometry::{quat_from_yaw, Mesh, Point3};
+pub use camcraft_app::geometry::{Mesh, Point3};
 pub use camcraft_app::machining2d::Side;
 pub use camcraft_app::mcp::Server;
 pub use camcraft_app::model;
@@ -118,14 +118,15 @@ fn tools(world: &World, h: &mut History) {
 }
 
 fn stock(world: &World, h: &mut History, half: f64, rotated: bool) {
-    let rot = if rotated { quat_from_yaw(std::f64::consts::FRAC_PI_2) } else { Location::default().rot };
-    let at = Location { pos: Point3::new(0.0, 0.0, 0.0), rot };
+    let at = Location { pos: Point3::new(0.0, 0.0, 0.0), rot: crate::pocket_support::stock_turn(rotated) };
     h.execute(world, SetStock::new(world, StockShape::Box { dx: 2.0 * half, dy: 2.0 * half, dz: TOP }, at).expect("stock"));
 }
 
 /// The plate as "part" with `model`'s hole in a `2 half` square stock
-/// over [0, TOP], aligned or turned a quarter about Z (the same
-/// footprint, a rotation the program sim refuses to model).
+/// over [0, TOP], aligned or turned `pocket_support::OBLIQUE` about Z
+/// (the same footprint within 1e-4 mm, a turn the program sim refuses to
+/// model). #2177: a quarter turn is no such device - the sim judges a
+/// square-turned box.
 pub fn job(model: Model, half: f64, rotated: bool) -> (World, History) {
     let world = new_world();
     let mut h = History::default();
@@ -146,11 +147,11 @@ pub fn tap_through_a_lid(rotated: bool) -> Vec<Warning> {
     h.execute(&world, ImportModel::from_mesh("part", Model::hole(2.5, 8.0).mesh()));
     let lid = camcraft_app::geometry::cube(Point3::new(-10.0, -10.0, TOP), Point3::new(10.0, 10.0, TOP + 4.0));
     h.execute(&world, ImportModel::from_mesh("lid", Mesh::from_facets(lid.facets.to_vec())));
-    let rot = if rotated { quat_from_yaw(std::f64::consts::FRAC_PI_2) } else { Location::default().rot };
-    let at = Location { pos: Point3::new(0.0, 0.0, 0.0), rot };
+    let at = Location { pos: Point3::new(0.0, 0.0, 0.0), rot: crate::pocket_support::stock_turn(rotated) };
     h.execute(&world, SetStock::new(&world, StockShape::Box { dx: 2.0 * HALF, dy: 2.0 * HALF, dz: TOP + 4.0 }, at).expect("stock"));
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius: 2.5, entry_z: TOP + 4.0, floor_z: 10.0, through: false, stepped: false };
     let params = OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(TOP + 14.0),
         retract_z: None,
         top_z: Height::fixed(TOP + 4.0),
@@ -180,6 +181,7 @@ pub fn job_without_part(half: f64) -> (World, History) {
 
 fn drill(cut: Cut, cycle: CycleChoice) -> OpParams {
     OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(TOP),
@@ -196,6 +198,7 @@ fn drill(cut: Cut, cycle: CycleChoice) -> OpParams {
 
 fn bore(cut: Cut) -> OpParams {
     OpParams::Bore {
+        break_through: None,
         links: camcraft_app::links::Links::PLANAR,
         clearance_z: Height::fixed(25.0),
         retract_z: None,
@@ -213,6 +216,7 @@ fn bore(cut: Cut) -> OpParams {
 
 fn thread(cut: Cut) -> OpParams {
     OpParams::Thread {
+        break_through: None,
         clearance_z: Height::fixed(25.0),
         retract_z: None,
         top_z: Height::fixed(TOP),
@@ -297,7 +301,7 @@ pub fn thread_refused_on_a_turned_stock(world: &World, h: &mut History, cut: Cut
 }
 
 pub fn gouges(w: &[Warning]) -> usize {
-    w.iter().filter(|w| matches!(w, Warning::Gouge { .. } | Warning::StockChamferGouge { .. })).count()
+    w.iter().filter(|w| matches!(w, Warning::Gouge { .. } | Warning::StockChamferGouge { .. } | Warning::StockDeburrGouge { .. })).count()
 }
 
 fn nc(tag: &str) -> std::path::PathBuf {
@@ -314,6 +318,7 @@ pub fn assert_post_refused(world: &World, tag: &str, by_op: bool) {
     assert!(err.contains("post blocked"), "{tag}: {err}");
     if by_op {
         assert!(err.contains("S1: move") && err.contains("cuts past the finish surface"), "{tag}: {err}");
+        assert!(crate::pocket_support::oblique_refused(world), "{tag}: the device holds: the program sim does not judge this stock");
     }
     assert!(!out.exists(), "{tag}: blocked output is never written");
 }

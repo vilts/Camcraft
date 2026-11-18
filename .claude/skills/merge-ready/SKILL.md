@@ -48,6 +48,9 @@ plans compare those.
 - **No release cut in progress.** An open PR from a `release/*` branch
   (`gh pr list --state open --search "head:release/"`) means nothing merges
   to main until the tag (AGENTS.md "A cut goes PR review -> merge to main -> tag").
+- **No cut line set.** When the maintainer has set a cut list (AGENTS.md
+  "The cut list", "The cut line"), offer only the PRs on that list. Each
+  other PR waits for the tag, `merge-ready` or not. Do not ask to add one.
 - **Repo rules win.** Read AGENTS.md's merge rules (merge commits only,
   `--delete-branch` for our own branches, feat-at-cut, stacked PRs, the draft
   rules) and follow them where they differ from this skill.

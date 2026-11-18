@@ -8,6 +8,8 @@
 //! a refused draft never offers Apply in its hint, the turn names its
 //! mate and sense, and a fixture hit while a part face is wanted says
 //! how to reach a part face hidden in the steel.
+//! #2173: with a stock set, the draft holds the stock by default; the
+//! part follows the located stock, and "Part faces" holds the part again.
 //! Provenance: our own page law; no vendor material consulted.
 
 use egui::accesskit::Role;
@@ -270,4 +272,71 @@ fn a_model_page_move_into_the_fixture_warns_on_the_status_line() {
     st.pending.push_back(into(0.0));
     st.drain_actions();
     assert_eq!(st.status, "moved part", "resting on the floor is not inside it");
+}
+
+/// `with_vise` plus a box stock round the part: 3 mm under it, 1 mm on
+/// every other side.
+fn with_vise_and_stock() -> State {
+    use camcraft_app::commands::SetStock;
+    let mut state = with_vise();
+    let w = &state.world;
+    let b = model::find_by_name(w, "part").and_then(|e| model::entity_world_aabb(w, &e)).expect("part bounds");
+    let (shape, pos) = camcraft_app::stock::fit_box_sides(&b, [1.0, 1.0, 1.0, 1.0, 3.0, 1.0]).expect("fits");
+    let set = SetStock::new(&state.world, shape, Location { pos, ..Location::default() }).expect("stock");
+    state.history.execute(&state.world, set);
+    state
+}
+
+/// The stock face facing `n`, read where the locate reads it.
+fn stock_face(state: &State, n: [f64; 3]) -> GeoSel {
+    let name = camcraft_app::fixture_locate::stock_of(&state.world, "vise").expect("a stock");
+    let e = model::find_by_name(&state.world, &name).expect("stock entity");
+    let f = model::features_of(&state.world, &e).expect("stock features");
+    f.faces
+        .iter()
+        .map(|f| GeoSel { entity: name.clone(), feature: FeatureSel::Face(f.id) })
+        .find(|g| {
+            matches!(camcraft_app::fixture_locate::read_pick(&state.world, "vise", g),
+                Ok(camcraft_app::pick::MateDatum::Plane { normal, .. }) if (0..3).all(|k| (normal[k] - n[k]).abs() < 1e-9))
+        })
+        .expect("a stock face there")
+}
+
+/// #2173: with a stock set, the locate holds the stock by default - a
+/// part face is refused by name, the stock's bottom goes on the floor,
+/// the part follows inside it, and "Part faces" goes back to the part.
+#[test]
+fn the_fixtures_page_locates_the_stock_on_the_vise() {
+    use camcraft_app::fixture_locate::LocateBody;
+    let mut h = Harness::builder().with_size(Vec2::new(700.0, 700.0)).build_ui_state(fixtures_frame, with_vise_and_stock());
+    h.run();
+    h.get_by_label("Locate part…").click();
+    h.run();
+    assert_eq!(h.state().locate_pick.as_ref().map(|d| d.body), Some(LocateBody::Stock), "a vise holds the stock");
+    assert!(h.query_by_label_contains("Locate the stock of part in vise").is_some(), "the title names the stock");
+    assert!(h.query_by_label("Stock faces").is_some() && h.query_by_label("Part faces").is_some(), "the body choice is drawn");
+    let part_bottom = face(h.state(), "part", [10.0, 5.0, 0.0]);
+    crate::locate_pick::take(h.state_mut(), part_bottom);
+    assert!(h.state().status.contains("is neither the stock"), "{}", h.state().status);
+    let top = face(h.state(), "vise", [50.0, 30.0, 0.0]);
+    let bottom = stock_face(h.state(), [0.0, 0.0, -1.0]);
+    crate::locate_pick::take(h.state_mut(), bottom);
+    crate::locate_pick::take(h.state_mut(), top);
+    h.run();
+    assert!(apply_enabled(&h), "the stock floor mate solves");
+    h.get_by_label("Apply locate").click();
+    h.run();
+    let stock = camcraft_app::fixture_locate::stock_of(&h.state().world, "vise").expect("a stock");
+    let sb = model::find_by_name(&h.state().world, &stock)
+        .and_then(|e| model::entity_world_aabb(&h.state().world, &e))
+        .expect("stock bounds");
+    assert!(sb.min.z.abs() < 1e-9, "the stock bottom sits on the floor: {:?}", sb.min);
+    assert!((loc(h.state(), "part").pos.z - 3.0).abs() < 1e-9, "the part keeps 3 mm of stock under it");
+    key(&mut h, Key::Z);
+    assert!((loc(h.state(), "part").pos.z - 30.0).abs() < 1e-9, "one undo puts both back");
+    h.get_by_label("Part faces").click();
+    h.run();
+    let d = h.state().locate_pick.clone().expect("still armed");
+    assert_eq!(d.body, LocateBody::Part, "the part is held again");
+    assert!(d.mates.is_empty(), "the stock mates are dropped with the body change");
 }

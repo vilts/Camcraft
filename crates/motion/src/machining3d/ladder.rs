@@ -17,6 +17,25 @@ use crate::links::{Link, LinkTally, NOT_PROVED, TOO_LONG};
 use crate::machining2d::{chord_clears, GenError};
 use crate::plunge_law;
 use crate::stock_sim::Columns;
+
+/// Half the width, in lattice cells, of the narrowest standing strip
+/// the re-machining mask still sends the cutter to (#1749): a strip
+/// one cell wide along a wall is the lattice's sampling, not stock.
+const MASK_RESIDUE: f64 = 1.0;
+
+/// Narrow `center` (already eroded from the unmasked `target`) to centers
+/// whose tool disc meets still-standing material in `mask` above `z`.
+/// Intersecting `mask` with `center.offset(r)` ignores unreachable corners
+/// and any `stock_to_leave` collar left by an earlier pass.
+fn mask_center(center: Region, mask: &Columns<'_>, z: f64, r: f64) -> Result<Region, GenError> {
+    let s = center.offset(r)?.intersect(&mask.above(z)?)?;
+    let k = MASK_RESIDUE * mask.cell();
+    let standing = if k.is_finite() && k > 0.0 && !s.is_empty() { s.offset_sharp(-k)?.offset_sharp(k)? } else { s };
+    if standing.is_empty() {
+        return Ok(Region::empty());
+    }
+    Ok(center.intersect(&standing.offset(r)?)?)
+}
 /// One ladder run: the level loop shared by both entry points. `zs` is
 /// the plane list, `rest` the post-coarse state whose still-standing
 /// columns the pass is aimed at (None: the pure level law), `mask` the
@@ -94,6 +113,7 @@ pub(super) fn ladder(
     // that plane, which the Crossing law reads like any pass.)
     let mut lifted = LinkTally::default();
     let mut too_narrow = false;
+    let mut masked_empty = false;
     for &z in zs {
         // The level law, in two region ops: the footprint minus the part
         // material standing above the plane - its cross-section and the
@@ -113,29 +133,28 @@ pub(super) fn ladder(
             None => target,
             Some(dex) => target.intersect(&dex.above(z)?)?,
         };
-        let target = match mask {
-            // The same intersection for what EARLIER operations left
-            // standing (M3.1 D): a column they machined to at or below
-            // this plane must not be tiled again. Pure subtraction -
-            // the masked target is a subset of the unmasked one, and
-            // skipping a column with nothing standing above the plane
-            // cannot cut anything.
-            None => target,
-            Some(dex) => target.intersect(&dex.above(z)?)?,
-        };
         if target.is_empty() {
             continue; // nothing above this plane: model material across
                       // the whole footprint, or nothing standing at all
         }
-        // The center's erosion: the XY law, both rungs of the ladder -
-        // the shell lifts the legs' tips, never this region (the dive
-        // superset law reads exactly this set at exactly this plane).
+        // The center's erosion: erodes the UNMASKED target so only part
+        // islands act as walls (#1749); a mask boundary is air an
+        // earlier op cut, never a wall. `mask_center` then keeps only
+        // centers whose disc meets material still standing in `mask`.
         let center = target.offset(-(r + p.stock_to_leave))?;
         if center.is_empty() {
             too_narrow = true;
             continue; // narrower than the tool at this level: the
                       // staircase (or a wall this tool cannot enter) -
                       // rest material's later problem, never a lie now
+        }
+        let center = match mask {
+            None => center,
+            Some(dex) => mask_center(center, dex, z, r)?,
+        };
+        if center.is_empty() {
+            masked_empty = true;
+            continue;
         }
         // The level's plan: the strategy's tiling, or the HSM plan
         // (M11.4, `hsm`) - whose entry bore the level's params carry.
@@ -353,7 +372,7 @@ pub(super) fn ladder(
         return Err(GenError::Invalid(why).with_ghost(&path));
     }
     if path.moves.is_empty() {
-        let why = if too_narrow {
+        let why = if too_narrow && !masked_empty {
             format!(
                 "nothing to cut: the open area is too narrow for the {} mm tool and {} mm stock to leave at every level",
                 p.tool_diameter, p.stock_to_leave,

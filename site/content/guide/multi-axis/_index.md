@@ -41,6 +41,9 @@ state the rotary part with its `axis` direction, its `travel` in degrees, and
 
 ## Related pages
 
+- A complete indexed job on the Tormach 770MX and the microARC 4, from
+  the model to the posted program, is in
+  [Your first 4-axis part](@/guide/getting-started/first-4axis-part.md).
 - The per-operation reference for the multi-axis operations is in
   [Multi-axis operations](@/guide/multi-axis/operations-multiaxis.md).
 - What each machine type means for setups and operations is in

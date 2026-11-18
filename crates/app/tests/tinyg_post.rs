@@ -18,7 +18,6 @@ mod common;
 
 use camcraft_app::machine::parse_mch;
 use camcraft_app::post::{engine, machine};
-use camcraft_app::posting::{BUILTINS, MACHINES};
 use serde_json::{Value, json};
 use common::legacy_program::as_program;
 use std::path::Path;
@@ -48,10 +47,7 @@ fn cps() -> String {
 
 /// The shipped generic machine, mounted the way the app hands it on.
 fn generic() -> Value {
-    let text = MACHINES
-        .iter()
-        .find(|(n, _)| *n == "TinyG 3-axis")
-        .map(|(_, t)| *t)
+    let text = camcraft_app::posting::builtin_machine_text("TinyG 3-axis")
         .expect("the library ships the TinyG machine");
     machine::mirror(&parse_mch(text).unwrap_or_else(|e| panic!("parses: {e}")))
 }
@@ -92,7 +88,7 @@ fn assert_tinyg_words(nc: &str) {
 
 #[test]
 fn the_registry_and_the_library_ship_it() {
-    assert!(BUILTINS.iter().any(|(n, s)| *n == "TinyG" && *s == cps()), "the post is built in");
+    assert!(camcraft_app::posting::shipped_posts().expect("the shipped posts read").iter().any(|(n, s)| *n == "TinyG" && *s == cps()), "the post is built in");
     let m = generic();
     assert!(m.get("safeRetractZ").is_none_or(Value::is_null), "the generic file assumes no homing: {m}");
 }

@@ -111,7 +111,10 @@ pub(super) fn narrow_noted(
 /// (`Section`), Engrave and Trace (`Mark`), the hole kinds (`Contain`,
 /// [`is_hole_kind`]) - and the 2D Chamfer (#1631: on a part source its
 /// break is the part's own edge; off the stock, the solid law) - and
-/// the cross drill (#1635, [`is_cross_drill`]: `cross_part`).
+/// the cross drill (#1635, [`is_cross_drill`]: `cross_part`) - and the
+/// Deburr (#2313: off the stock it breaks the stock's edges, the solid
+/// law; on a stock that IS a part, `stock_sim::breaks::stock_part_of`,
+/// that part's edges are its own and only the other parts are kept).
 #[must_use]
 pub fn is_stock_kept_kind(params: &OpParams) -> bool {
     is_keep_kind(params)
@@ -126,6 +129,7 @@ pub fn is_stock_kept_kind(params: &OpParams) -> bool {
                 | OpParams::Contour { .. }
                 | OpParams::Face { .. }
                 | OpParams::Chamfer2D { .. }
+                | OpParams::Deburr { .. }
         )
 }
 
@@ -172,7 +176,25 @@ pub(super) fn parts_in_stock(
     if part_solid || !is_stock_kept_kind(params) {
         return Vec::new();
     }
+    if spared_stock_part(world, setup, params).is_some() {
+        // #2313: every part but the one the stock is.
+        return kept_models(world, setup, params, &SrcRef::Stock, false)
+            .into_iter()
+            .filter_map(|(_, e)| crate::setup_align::facets_in(world, &e, setup))
+            .flatten()
+            .collect();
+    }
     crate::setup_align::parts_facets_in(world, setup)
+}
+
+/// #2313: the part a stock-source Deburr breaks the edges OF - the part
+/// its from-model stock is (`stock_sim::breaks::stock_part_of`) - which
+/// its stock part law spares, as a part source spares its own part.
+/// `None` for any other kind and any other stock.
+fn spared_stock_part(world: &flecs_ecs::prelude::World, setup: Option<&str>, params: &OpParams) -> Option<String> {
+    matches!(params, OpParams::Deburr { .. })
+        .then(|| crate::stock_sim::breaks::stock_part_of(world, setup))
+        .flatten()
 }
 
 /// The parts a part-source operation must keep beside its own (#1621):
@@ -194,7 +216,7 @@ pub(super) fn neighbour_parts(
     if !part_solid {
         return Vec::new();
     }
-    kept_models(world, params, src, true)
+    kept_models(world, setup, params, src, true)
         .into_iter()
         .filter_map(|(_, e)| crate::setup_align::facets_in(world, &e, setup))
         .flatten()
@@ -216,16 +238,19 @@ pub(super) fn is_part_kept_kind(params: &OpParams, src: &SrcRef) -> bool {
 /// kind that carries no such law.
 fn kept_models(
     world: &flecs_ecs::prelude::World,
+    setup: Option<&str>,
     params: &OpParams,
     src: &SrcRef,
     part_solid: bool,
 ) -> Vec<(String, flecs_ecs::prelude::Entity)> {
+    let spared;
     let own: Vec<&str> = match src {
         _ if !part_solid => {
             if !is_stock_kept_kind(params) {
                 return Vec::new();
             }
-            Vec::new()
+            spared = spared_stock_part(world, setup, params);
+            spared.as_deref().into_iter().collect()
         }
         // #1641: a cross drill carries its radial part law
         // (`cross_part`) though its `DepthLaw` reads `None`. #1749: so
@@ -257,7 +282,7 @@ pub(super) fn kept_parts_named(
     src: &SrcRef,
     part_solid: bool,
 ) -> Vec<(String, Vec<Triangle>)> {
-    kept_models(world, params, src, part_solid)
+    kept_models(world, setup, params, src, part_solid)
         .into_iter()
         .filter_map(|(name, e)| crate::setup_align::facets_in(world, &e, setup).map(|f| (name, f)))
         .collect()
@@ -266,18 +291,23 @@ pub(super) fn kept_parts_named(
 /// #1637: a stock-source 2D Chamfer whose solid-law check hits a part
 /// breaks an edge belonging to the part rather than stock-only material.
 /// Rewrite `Warning::Gouge` into `Warning::StockChamferGouge` so every
-/// channel names the cause and the part-source workaround.
+/// channel names the cause and the part-source workaround. #2313: a
+/// stock-source Deburr the same, as `Warning::StockDeburrGouge`.
 pub(super) fn note_stock_chamfer_gouges(
     params: &OpParams,
     part_solid: bool,
     warns: &mut [crate::verify::Warning],
 ) {
-    if part_solid || !matches!(params, OpParams::Chamfer2D { .. }) {
-        return;
-    }
+    use crate::verify::Warning;
+    let named: fn(usize) -> Warning = match params {
+        _ if part_solid => return,
+        OpParams::Chamfer2D { .. } => |at| Warning::StockChamferGouge { at },
+        OpParams::Deburr { .. } => |at| Warning::StockDeburrGouge { at },
+        _ => return,
+    };
     for w in warns {
-        if let crate::verify::Warning::Gouge { at } = *w {
-            *w = crate::verify::Warning::StockChamferGouge { at };
+        if let Warning::Gouge { at } = *w {
+            *w = named(at);
         }
     }
 }

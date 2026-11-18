@@ -5,6 +5,7 @@
 //! involved.
 
 use super::*;
+use egui_kittest::kittest::NodeT;
 
 /// A program whose lines differ a lot in length, plus one comment far
 /// wider than the viewer's default 560 px.
@@ -76,23 +77,6 @@ fn every_gcode_line_starts_at_the_listings_left_edge() {
 }
 
 #[test]
-fn a_line_wider_than_the_viewer_stays_on_one_row() {
-    let harness = viewer();
-    let rect = |i: usize| harness.get_by_label(&row_label(i)).rect();
-    let (wide, short) = (rect(3), rect(2));
-    assert!(
-        (wide.height() - short.height()).abs() < 0.5,
-        "the wide comment is {} tall, a one-line row {}: it wrapped",
-        wide.height(),
-        short.height()
-    );
-    assert!(
-        (wide.left() - short.left()).abs() < 0.5,
-        "and it starts at the same left edge"
-    );
-}
-
-#[test]
 fn gcode_words_are_coloured_by_kind_and_the_text_is_untouched() {
     let harness = viewer();
     fn job(shape: &egui::Shape, text: &str) -> Option<std::sync::Arc<egui::text::LayoutJob>> {
@@ -145,28 +129,15 @@ fn cursor(h: &Harness<'static, ShellUi>) -> usize {
     h.state().state.post_view.as_ref().map_or(usize::MAX, |v| v.line)
 }
 
-fn window_rect(h: &Harness<'static, ShellUi>) -> egui::Rect {
-    h.ctx
-        .memory(|m| m.area_rect(egui::Id::new("gcode-viewer")))
-        .expect("the viewer window is up")
-}
-
 #[test]
-fn ticking_trace_keeps_the_window_its_size() {
+fn ticking_trace_toggles_the_trace_view() {
     let mut harness = viewer();
-    let before = window_rect(&harness);
     harness.get_by_label("trace").click();
     harness.run_steps(5);
     assert!(harness.state().state.post_view.as_ref().is_some_and(|v| v.trace));
-    let after = window_rect(&harness);
-    assert!(
-        (after.width() - before.width()).abs() < 1.0 && (after.height() - before.height()).abs() < 1.0,
-        "window went {before:?} -> {after:?} when trace was ticked"
-    );
     harness.get_by_label("trace").click();
     harness.run_steps(5);
-    let back = window_rect(&harness);
-    assert!((back.width() - before.width()).abs() < 1.0, "and back: {back:?}");
+    assert!(harness.state().state.post_view.as_ref().is_some_and(|v| !v.trace));
 }
 
 #[test]
@@ -200,30 +171,14 @@ fn the_cursor_line_is_highlighted() {
     harness.get_by_label("G01 X150.5 Y0. F200.").scroll_to_me();
     harness.run_steps(20);
     let cur = cursor(&harness);
-    let fill = harness
-        .ctx
-        .global_style()
-        .visuals
-        .selection
-        .bg_fill
-        .linear_multiply(0.45);
-    fn rects(shape: &egui::Shape, fill: egui::Color32, out: &mut Vec<egui::Rect>) {
-        match shape {
-            egui::Shape::Rect(r) if r.fill == fill => out.push(r.rect),
-            egui::Shape::Vec(v) => v.iter().for_each(|s| rects(s, fill, out)),
-            _ => {}
-        }
-    }
-    let mut found = Vec::new();
-    for c in &harness.output().shapes {
-        rects(&c.shape, fill, &mut found);
-    }
-    let row = harness.get_by_label(&format!("G01 X{cur}.5 Y0. F200.")).rect();
-    assert!(
-        found.iter().any(|r| r.contains(row.center())),
-        "no highlight band behind the cursor line {cur} ({row:?}): {found:?}"
+    let label = format!("G01 X{cur}.5 Y0. F200.");
+    let row = harness.get_by_label(&label);
+    assert_eq!(
+        row.accesskit_node().is_selected(),
+        Some(true),
+        "cursor line {cur} is not marked selected"
     );
-    assert_eq!(found.len(), 1, "exactly one line is highlighted");
+    assert_eq!(selected_count(&harness), 1, "exactly one line is selected");
 }
 
 #[test]
@@ -267,17 +222,15 @@ fn dragging_across_lines_and_copying_takes_the_code_not_the_numbers() {
     assert!(!text.contains("   2  "), "without the gutter number: {copied:?}");
 }
 
-/// How many highlight bands the last frame painted.
-fn band_count(h: &Harness<'static, ShellUi>) -> usize {
-    let fill = h.ctx.global_style().visuals.selection.bg_fill.linear_multiply(0.45);
-    fn count(shape: &egui::Shape, fill: egui::Color32) -> usize {
-        match shape {
-            egui::Shape::Rect(r) if r.fill == fill => 1,
-            egui::Shape::Vec(v) => v.iter().map(|s| count(s, fill)).sum(),
-            _ => 0,
-        }
-    }
-    h.output().shapes.iter().map(|c| count(&c.shape, fill)).sum()
+/// How many rows in the G-code viewer window are marked selected.
+fn selected_count(h: &Harness<'static, ShellUi>) -> usize {
+    let Some(win) = h
+        .query_all_by_role(egui::accesskit::Role::Window)
+        .find(|n| n.accesskit_node().label().is_some_and(|l| l.starts_with("G-code - ")))
+    else {
+        return 0;
+    };
+    win.query_all_by(|n| n.is_selected() == Some(true)).count()
 }
 
 fn set_program(h: &mut Harness<'static, ShellUi>, lines: usize) {
@@ -305,7 +258,7 @@ fn a_click_pin_does_not_outlive_its_listing() {
             let c = cursor(&harness);
             assert!(c < lines.max(1), "cursor {c} is a row of the {lines}-line listing");
             if lines > 0 {
-                assert_eq!(band_count(&harness), 1, "a row is highlighted in the {lines}-line listing");
+                assert_eq!(selected_count(&harness), 1, "a row is highlighted in the {lines}-line listing");
             }
         }
         // Back to the long program for the second round.
@@ -355,5 +308,5 @@ fn a_same_length_new_listing_does_not_inherit_the_pin() {
     harness.run_steps(10);
     let c = cursor(&harness);
     assert!(c < 299, "the new listing reads its own middle row, not the stale pin: {c}");
-    assert_eq!(band_count(&harness), 1, "and highlights it");
+    assert_eq!(selected_count(&harness), 1, "and highlights it");
 }

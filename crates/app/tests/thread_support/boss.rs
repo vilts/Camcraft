@@ -66,6 +66,7 @@ pub fn boss(radius: f64) -> Hole {
 
 pub fn external(bosses: Vec<Hole>, pitch: Option<f64>, hand: ThreadHand, climb: bool) -> OpParams {
     OpParams::Thread {
+        break_through: None,
         clearance_z: Height::fixed(TOP + 10.0),
         retract_z: None,
         top_z: Height::fixed(TOP),

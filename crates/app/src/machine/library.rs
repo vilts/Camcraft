@@ -162,11 +162,7 @@ impl MachineEntry {
 /// the ui's routed mount share it.
 pub fn read_for_assign(source: &MachineSource) -> Result<(String, super::Machine), String> {
     let text: String = match source {
-        MachineSource::Builtin(name) => posting::MACHINES
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, t)| (*t).to_owned())
-            .ok_or_else(|| format!("machine {name} is not in the built-in library"))?,
+        MachineSource::Builtin(name) => posting::builtin_machine_text(name)?.to_owned(),
         MachineSource::File(path) => {
             std::fs::read_to_string(path).map_err(|e| format!("machine file {}: {e}", path.display()))?
         }
@@ -183,7 +179,15 @@ pub fn read_for_assign(source: &MachineSource) -> Result<(String, super::Machine
 pub fn builtins() -> Vec<MachineEntry> {
     posting::MACHINES
         .iter()
-        .map(|(name, text)| MachineEntry::from_text(name, MachineSource::Builtin(name), text))
+        .map(|(name, _)| match posting::builtin_machine_text(name) {
+            Ok(text) => MachineEntry::from_text(name, MachineSource::Builtin(name), text),
+            // #2282: a shipped file missing on disk is listed with its refusal.
+            Err(why) => {
+                let mut entry = MachineEntry::from_text(name, MachineSource::Builtin(name), "{}");
+                entry.refusals = vec![Refusal { key: "file".to_owned(), rule: why }];
+                entry
+            }
+        })
         .collect()
 }
 
@@ -206,11 +210,7 @@ pub fn scan_dir(dir: &Path) -> Vec<MachineEntry> {
 /// text read fresh from disk. The editor copies and opens from this.
 pub fn text_of(source: &MachineSource) -> Result<String, String> {
     match source {
-        MachineSource::Builtin(name) => posting::MACHINES
-            .iter()
-            .find(|(n, _)| n == name)
-            .map(|(_, t)| (*t).to_owned())
-            .ok_or_else(|| format!("no built-in machine named {name}")),
+        MachineSource::Builtin(name) => posting::builtin_machine_text(name).map(str::to_owned),
         MachineSource::File(p) => {
             std::fs::read_to_string(p).map_err(|e| format!("{} cannot be read ({e})", p.display()))
         }

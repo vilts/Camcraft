@@ -51,7 +51,8 @@ fn hovering_a_selection_row_or_its_remove_button_sets_the_hovered_selection() {
         assert!(!segs.is_empty(), "row {i} reaches the draw list");
 
         // Away from the list: cleared.
-        harness.hover_at(egui::pos2(1.0, 1.0));
+        let away = super::anchors::chrome_point(&harness, &[]);
+        harness.hover_at(away);
         harness.run_steps(2);
         assert!(hovered(&harness).is_none(), "leaving clears row {i}");
         assert!(
@@ -68,7 +69,8 @@ fn hovering_a_selection_row_or_its_remove_button_sets_the_hovered_selection() {
         harness.hover_at(r.center());
         harness.run_steps(2);
         assert_eq!(hovered(&harness), Some(chips[i].sel.clone()), "remove button of row {i}");
-        harness.hover_at(egui::pos2(1.0, 1.0));
+        let away = super::anchors::chrome_point(&harness, &[]);
+        harness.hover_at(away);
         harness.run_steps(2);
         assert!(hovered(&harness).is_none());
     }
@@ -116,7 +118,8 @@ fn viewport_hover_over_a_picked_face_marks_its_row() {
     assert_eq!(harness.state().state.geo_row_marked, vec![face], "only the face's row is marked");
     assert!(harness.state().state.pending.is_empty(), "marking files no command");
 
-    set_pos(&mut harness, egui::pos2(1.0, 1.0));
+    let away = super::anchors::chrome_point(&harness, &[]);
+    set_pos(&mut harness, away);
     harness.run_steps(2);
     assert!(harness.state().state.geo_row_marked.is_empty(), "leaving the face clears the mark");
 }

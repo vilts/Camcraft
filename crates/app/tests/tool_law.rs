@@ -34,6 +34,7 @@ fn every_tool_kind() -> Vec<ToolKind> {
         ToolKind::ThreadMill,
         ToolKind::ThreadMillSingle,
         ToolKind::Waterjet,
+        ToolKind::Wire,
     ];
     for k in &all {
         match k {
@@ -53,7 +54,8 @@ fn every_tool_kind() -> Vec<ToolKind> {
             | ToolKind::Electrode
             | ToolKind::ThreadMill
             | ToolKind::ThreadMillSingle
-            | ToolKind::Waterjet => {}
+            | ToolKind::Waterjet
+            | ToolKind::Wire => {}
         }
     }
     all
@@ -62,12 +64,6 @@ fn every_tool_kind() -> Vec<ToolKind> {
 #[test]
 fn every_kind_names_a_tool_set() {
     for row in KindInfo::ALL {
-        // #532: a wire EDM kind mounts no library tool - its wire is the
-        // machine's condition - and is the one family with an empty set.
-        if row.family() == camcraft_app::operation::Family::WireEdm {
-            assert!(row.tool_kinds.is_empty() && !row.mounts_tool(), "{:?} mounts a tool", row.ty);
-            continue;
-        }
         assert!(row.mounts_tool(), "{:?} names no tool kind", row.ty);
         assert!(!row.tool_kinds.is_empty(), "{:?} names no tool kind", row.ty);
         for (i, k) in row.tool_kinds.iter().enumerate() {
@@ -148,4 +144,5 @@ fn family_edges_spot_checks() {
     assert_eq!(OpType::FormTurning.info().tool_kinds, &[ToolKind::Form]);
     assert_eq!(OpType::BoringTurning.info().tool_kinds, &[ToolKind::Bore]);
     assert_eq!(OpType::Facing.info().tool_kinds, &[ToolKind::Turning]);
+    assert_eq!(OpType::WireContour.info().tool_kinds, tool_law::WIRE);
 }

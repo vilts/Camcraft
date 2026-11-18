@@ -18,7 +18,8 @@ pub(super) fn options_ownership(ui: &mut Ui, state: &mut State, ctx: Option<&str
         return;
     };
     ui.label(RichText::new("Post options").strong());
-    let owns = setup_post_options::own(&state.world, Some(name)).is_some();
+    let owns = setup_post_options::own(&state.world, Some(name)).is_some()
+        || setup_post_options::script_own(&state.world, Some(name)).is_some();
     let mut pick = owns;
     ui.radio_value(&mut pick, false, "Use the document's post options");
     ui.radio_value(&mut pick, true, "This setup has its own post options");

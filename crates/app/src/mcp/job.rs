@@ -56,6 +56,8 @@ fn setups_view(env: &Env) -> Vec<Value> {
                 "entity": setup::wcs_entity_name(w, d),
                 "origin": wcs.as_ref().map(|(_, loc)| vec![fnum(loc.pos.x), fnum(loc.pos.y), fnum(loc.pos.z)]),
                 "rotation": wcs.as_ref().map(|(_, loc)| loc.rot.iter().map(|v| fnum(*v)).collect::<Vec<_>>()),
+                // #1720: the reversed axes (all false: no flip).
+                "flip": super::wcs_flip_tools::flip_view(crate::setup_wcs_flip::of_setup(w, d)),
             });
             json!({
                 "name": s,
@@ -195,7 +197,7 @@ pub(super) fn list_operation_types(_env: &mut Env, _a: &Map<String, Value>) -> R
                 "fields": fields,
             });
             if !k.mounts_tool() {
-                kind["note"] = json!("mounts no library tool: add_operation takes no \"tool\" for this kind (the wire is the machine's EDM condition, named in params.condition)");
+                kind["note"] = json!("mounts no library tool: add_operation takes no \"tool\" for this kind");
             }
             kind
         })
@@ -219,7 +221,7 @@ pub(super) fn list_tool_catalog(_env: &mut Env, _a: &Map<String, Value>) -> Resu
 pub(super) fn finding(op: &str, w: &Warning) -> Value {
     let (kind, at) = match w {
         Warning::Crossing { moves } => ("crossing", moves[0]),
-        Warning::Gouge { at } | Warning::StockChamferGouge { at } => ("gouge", *at),
+        Warning::Gouge { at } | Warning::StockChamferGouge { at } | Warning::StockDeburrGouge { at } => ("gouge", *at),
         Warning::ShankHit { at, .. } => ("shank_hit", *at),
         Warning::HolderHit { at, .. } => ("holder_hit", *at),
         Warning::SweepHit { at, .. } => ("sweep_hit", *at),

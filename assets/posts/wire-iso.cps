@@ -158,6 +158,12 @@ function onOpen() {
   writeln("%");
   note(clean(machineName()));
   note("WIRE NOT THREADED AT START");
+  // #1499: a tank or flushing the machine file states is the Sodick
+  // post's to write; this post has no edm.codes word for either, so it
+  // says so rather than drop the ask silently.
+  var e = (typeof machine !== "undefined" && machine && machine.edm) || {};
+  if (e.tank) note("TANK " + clean(e.tank).toUpperCase() + " IS STATED BUT NOT PROGRAMMED - SET IT AT THE CONTROL");
+  if (e.flushing) note("FLUSHING " + clean(e.flushing).toUpperCase() + " IS STATED BUT NOT PROGRAMMED - SET IT AT THE CONTROL");
   block([inch ? "G20" : "G21", "G90", "G17"]);
 }
 

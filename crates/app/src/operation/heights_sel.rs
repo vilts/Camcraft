@@ -105,7 +105,7 @@ fn picks_z_range(world: &World, setup: Option<&str>, items: &[GeoSel]) -> Result
                 take(feature::resolve_vertex(&features, vid).ok_or(gone)?);
             }
             FeatureSel::Chain(cid) => {
-                let c = feature::resolve_chain(&features, cid).ok_or(gone)?;
+                let c = crate::model::resolve_chain(&features, cid).ok_or(gone)?;
                 for p in feature::chain_points(&features, &c) {
                     let w = transform_point(Point3::new(p[0], p[1], p[2]), loc.pos, loc.rot);
                     lo = lo.min(w.z);

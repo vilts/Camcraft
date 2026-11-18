@@ -271,7 +271,7 @@ fn a_facing_pass_to_centre_fits_the_built_in_lathe_x_band() {
 
 /// The built-in Lathe with its X band rewritten to `lo..hi`, mounted.
 fn lathe_with_x(lo: f64, hi: f64, clearance: f64) -> World {
-    let text = posting::MACHINES.iter().find(|(n, _)| *n == "Lathe").map(|(_, t)| *t).expect("built-in Lathe");
+    let text = posting::builtin_machine_text("Lathe").expect("built-in Lathe");
     let edited = text.replacen("\"min\": -2.5, \"max\": 320.0", &format!("\"min\": {lo:?}, \"max\": {hi:?}"), 1);
     assert_ne!(edited, text, "fixture: the X band was rewritten");
     let m = machine::parse_mch(&edited).expect("the edited lathe parses");

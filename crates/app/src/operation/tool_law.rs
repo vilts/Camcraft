@@ -138,3 +138,7 @@ pub fn cutting_radius(tool: &crate::tools::Tool) -> Result<f64, String> {
 /// The sinker electrode (#541): the sinker operations mount nothing
 /// else, and no cutting kind mounts an electrode.
 pub const ELECTRODE: &[ToolKind] = &[ToolKind::Electrode];
+
+/// The wire EDM wire (#2011): the wire operations mount nothing else,
+/// and no cutting kind mounts a wire.
+pub const WIRE: &[ToolKind] = &[ToolKind::Wire];

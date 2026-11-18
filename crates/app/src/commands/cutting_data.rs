@@ -23,10 +23,12 @@ use crate::model;
 use crate::tools::{TurningData, WorkMaterial};
 
 /// State the document's workpiece material - and (#890) seed it: every
-/// tool whose per-material table names the new material runs that row
-/// (`ChangeTool`), and every operation on such a tool takes the row's
-/// milling feed (`EditOperationParams`), all in this one undo step.
-/// Tools with no row for it, and their operations, keep their numbers.
+/// tool runs its row in force for the new material (the row naming it,
+/// else, #2015, its `Unknown` row) (`ChangeTool`), and every operation
+/// takes its tool's seeds for the material in force on its setup -
+/// the feed of a row naming it, the row's stepdown / stepover
+/// (`EditOperationParams`), all in this one undo step. Numbers no row
+/// speaks for stay as they are.
 pub struct SetWorkMaterial {
     prev: Option<WorkMaterial>,
     next: Option<WorkMaterial>,
@@ -47,7 +49,7 @@ impl SetWorkMaterial {
             if let Some(t) = model::tool_of(world, e)
                 && let Some(seeded) = cutting_rows::seeded_for(&t, next)
             {
-                tools.push(ChangeTool::new(world, name, seeded)?);
+                tools.push(ChangeTool::seeding(world, name, seeded)?);
             }
         }
         for (name, e) in &named {
@@ -55,7 +57,10 @@ impl SetWorkMaterial {
             let Some(tool) = model::find_by_name(world, &op.tool).and_then(|t| model::tool_of(world, &t)) else {
                 continue;
             };
-            if let Some(params) = cutting_rows::reseeded_params(&op.params, &tool, next) {
+            // #2015: a setup whose stock states its own material keeps
+            // that material's row; the rest take the new document one.
+            let material = crate::stock_material::of_setup(world, op.setup.as_deref()).or(next);
+            if let Some(params) = cutting_rows::reseeded_params(&op.params, &tool, material) {
                 ops.push(EditOperationParams::new(world, name, params)?);
             }
         }

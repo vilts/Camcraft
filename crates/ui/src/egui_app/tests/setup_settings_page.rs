@@ -24,7 +24,8 @@ const TURN_PREV: &str = "      Turn from previous";
 const PLANE: &str = "    Lay on a plane - pick a face";
 const POINTS: &str = "    Lay on a plane - pick three points";
 const AXES: &str = "    Part axes - pick an edge or two points for +Y and +X; +Z follows by the right-hand rule";
-const OFFSET: &str = "    Work offset";
+/// The work offset row label (#1648: it left this page; no indent now).
+const OFFSET: &str = "Work offset";
 const FEATURES: &str = "    Set WCS from features - each pick sets a role";
 const FIRST_STOCK_NOTE: &str = "The first setup has no setup before it to take stock from.";
 
@@ -141,10 +142,12 @@ fn the_setup_page_is_laid_out_in_groups_like_the_wcs_page() {
     plane_method(&mut h, "Points", "Manual");
     assert_group(&h, GROUPS[2], GROUPS[3], &["Plane orientation", ALIGN, TURN, ABOUT, RELATIVE]);
     plane_method(&mut h, "Manual", "Axes");
-    assert_group(&h, GROUPS[3], GROUPS[4], &[FEATURES, "Pick for WCS", OFFSET]);
-    // The page's old reading order holds: "Set WCS from features" above the G54-G59 picker.
-    assert!(top(&h, FEATURES) < top(&h, OFFSET), "features row before the work offset picker");
-    assert_between(&h, GROUPS[4], foot(&h), &["Delete Setup2", "Open Setup2 fixtures"]);
+    // #1648, #1926: the work offset picker and the feature picks live on the WCS page, not here.
+    gone(&h, OFFSET);
+    gone(&h, FEATURES);
+    gone(&h, "Pick for WCS");
+    gone(&h, "Set WCS from features");
+    assert_between(&h, GROUPS[3], foot(&h), &["Delete Setup2", "Open Setup2 fixtures"]);
     // Stock follows its source: a fresh setup's own stock entity, stated at the foot.
     assert!(foot(&h) > top(&h, "Open Setup2 fixtures"), "the readout is under the groups");
     // The relative Apply is drawn; the alignment one waits behind Manual (#771).
@@ -176,7 +179,7 @@ fn the_first_setups_page_has_no_previous_setup_rows() {
     plane_method(&mut h, "Axes", "Manual");
     assert_eq!(h.query_all_by_label("Apply").count(), 1, "only the alignment Apply");
     plane_method(&mut h, "Manual", "Axes");
-    assert_between(&h, GROUPS[4], foot(&h), &["Delete Setup1", "Open Setup1 fixtures"]);
+    assert_between(&h, GROUPS[3], foot(&h), &["Delete Setup1", "Open Setup1 fixtures"]);
 }
 
 /// A setup that is not the active one: the radio is unchecked, the page
@@ -233,16 +236,15 @@ fn a_lathe_setup_draws_the_workholding_group() {
     }
     h.run_steps(3);
     let row = ROW_LABEL.trim_end();
-    assert!(top(&h, GROUPS[3]) < top(&h, HOLDING_GROUP) && top(&h, HOLDING_GROUP) < top(&h, GROUPS[4]), "between offset and actions");
-    assert_group(&h, HOLDING_GROUP, GROUPS[4], &[row, "Apply rpm", "      No workholding limit stated"]);
+    assert!(top(&h, GROUPS[2]) < top(&h, HOLDING_GROUP) && top(&h, HOLDING_GROUP) < top(&h, GROUPS[3]), "between orientation and actions");
+    assert_group(&h, HOLDING_GROUP, GROUPS[3], &[row, "Apply rpm", "      No workholding limit stated"]);
     gone(&h, "Clear rpm");
     h.get_by_label("Apply rpm").click();
     h.run_steps(3);
-    assert_group(&h, HOLDING_GROUP, GROUPS[4], &[row, "Apply rpm", "Clear rpm", "      Stated: 2000 rpm"]);
+    assert_group(&h, HOLDING_GROUP, GROUPS[3], &[row, "Apply rpm", "Clear rpm", "      Stated: 2000 rpm"]);
 }
 
-/// Arming each pick draws its extra controls inside "Part orientation" /
-/// "Work offset" - the rows that appear only once armed.
+/// Arming each pick draws its extra controls inside "Part orientation" - the rows that appear only once armed.
 #[test]
 fn the_armed_pick_rows_stay_inside_their_groups() {
     let mut h = setups(2, "Setup2");
@@ -263,16 +265,8 @@ fn the_armed_pick_rows_stay_inside_their_groups() {
     );
     h.get_by_label("Stop picking points").click(); // one armed pick at a time
     h.run_steps(3);
-    h.get_by_label("Pick for WCS").click();
-    h.run_steps(3);
-    assert_group(&h, GROUPS[3], GROUPS[4], &[FEATURES, "Stop picking", "      Picked: nothing picked yet"]);
-    // Apply is drawn twice (relative, WCS; the alignment one waits behind
-    // the Manual entry, #771); the WCS one is the lowest, inside "Work
-    // offset", under its picked line.
-    let applies: Vec<f32> = h.query_all_by_label("Apply").map(|n| n.rect().top()).collect();
-    assert_eq!(applies.len(), 2, "{applies:?}");
-    let wcs = applies.iter().copied().fold(f32::MIN, f32::max);
-    assert!(wcs > top(&h, "      Picked: nothing picked yet") - 4.0 && wcs < top(&h, GROUPS[4]), "WCS Apply in its group");
+    // One Apply is drawn (relative); the WCS pick row is not on this page (#1926).
+    assert_eq!(h.query_all_by_label("Apply").count(), 1, "relative Apply only");
 }
 
 /// The two action buttons keep their commands: Delete is one undoable

@@ -15,10 +15,15 @@
 //! undoable `SetSetupNoseToAxis`.
 //! Provenance: our own routing law (issues #389, #1526); no vendor material consulted.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use camcraft_app::commands::{CommandError, SetPostOptions, SetSetupNoseToAxis, SetSetupPostOptions};
-use camcraft_app::schema::PostOptions;
+use camcraft_app::commands::{
+    CommandError, PostSettingsEdit, SetPostOptions, SetPostScriptOptions, SetPostSettings,
+    SetSetupNoseToAxis, SetSetupPostOptions, SetSetupPostScriptOptions,
+};
+use camcraft_app::post::options::OptionValue;
+use camcraft_app::schema::{PostOptions, PostRef};
 use camcraft_app::{setup, setup_post_options, tool_list_export};
 
 use super::{ErrorScope, State};
@@ -29,7 +34,9 @@ impl State {
     #[must_use]
     pub fn post_options_owner(&self) -> Option<String> {
         let active = setup::active(&self.world)?;
-        setup_post_options::own(&self.world, Some(&active)).map(|_| active)
+        let owns = setup_post_options::own(&self.world, Some(&active)).is_some()
+            || setup_post_options::script_own(&self.world, Some(&active)).is_some();
+        owns.then_some(active)
     }
 
     /// The setup an option edit writes: the active setup when it owns its
@@ -61,12 +68,117 @@ impl State {
         }
     }
 
+    /// Route per-post script overrides to the chosen setup or the document (#258).
+    pub(super) fn route_post_script_options(
+        &mut self,
+        setup: Option<&str>,
+        post: &PostRef,
+        overrides: BTreeMap<String, OptionValue>,
+    ) {
+        let owner = setup.map(str::to_owned).or_else(|| self.post_options_target());
+        let executed: Result<(), CommandError> = match &owner {
+            Some(s) => SetSetupPostScriptOptions::for_setup_post(&self.world, s, post, overrides)
+                .map(|c| self.history.execute(&self.world, c)),
+            None => SetPostScriptOptions::for_post(&self.world, post, overrides)
+                .map(|c| self.history.execute(&self.world, c)),
+        };
+        match executed {
+            Ok(()) => {
+                self.doc_version += 1;
+                if self.feedback.as_ref().is_some_and(|(s, _)| *s == ErrorScope::Setup) {
+                    self.feedback = None;
+                }
+                self.status = match owner {
+                    Some(s) => format!("post script options set ({s})"),
+                    None => String::from("post script options set"),
+                };
+            }
+            Err(err) => self.refuse(
+                ErrorScope::Setup,
+                format!("post script options not set: {err}"),
+            ),
+        }
+    }
+
+    /// Apply combined Post dialog edits as one undo unit, optionally posting afterwards (#258).
+    pub(super) fn apply_post_dialog(
+        &mut self,
+        edit: PostSettingsEdit,
+        post_path: Option<PathBuf>,
+        per_op_dir: Option<PathBuf>,
+        program_prefix: Option<String>,
+    ) {
+        match SetPostSettings::new(&self.world, edit) {
+            Ok(cmd) => {
+                if !cmd.is_empty() {
+                    self.history.execute(&self.world, cmd);
+                    self.doc_version += 1;
+                    self.status = String::from("post settings applied");
+                }
+                if self.feedback.as_ref().is_some_and(|(s, _)| *s == ErrorScope::Setup) {
+                    self.feedback = None;
+                }
+                if let Some(dir) = per_op_dir {
+                    let program = program_prefix.unwrap_or_else(|| self.program_name());
+                    self.post_program_folder_named(dir, &program);
+                    if self.status.starts_with("post refused:") {
+                        if let Some(d) = self.post_dialog.as_mut() {
+                            d.error = Some(self.status.clone());
+                        }
+                    } else {
+                        self.post_dialog = None;
+                    }
+                } else if let Some(path) = post_path {
+                    self.post_program_path(path);
+                    if let Some(refusal) = &self.post_refusal {
+                        if let Some(d) = self.post_dialog.as_mut() {
+                            d.error = Some(refusal.reason.clone());
+                        }
+                    } else {
+                        self.post_dialog = None;
+                    }
+                } else {
+                    self.post_dialog = None;
+                }
+            }
+            Err(err) => {
+                let msg = format!("post settings not applied: {err}");
+                if let Some(d) = self.post_dialog.as_mut() {
+                    d.error = Some(msg.clone());
+                }
+                self.refuse(ErrorScope::Setup, msg);
+            }
+        }
+    }
+
     /// A setup takes its own post options (a copy of the ones it posts
     /// with now, so nothing it posts changes) or follows the document's.
     pub(super) fn own_post_options(&mut self, setup: &str, own: bool) {
-        let next = own.then(|| setup_post_options::of(&self.world, Some(setup)));
-        match SetSetupPostOptions::new(&self.world, setup, next) {
+        let edit = if own {
+            PostSettingsEdit {
+                setup: Some(setup.to_owned()),
+                post_options: Some(setup_post_options::of(&self.world, Some(setup))),
+                script_replace: Some(setup_post_options::script_of(&self.world, Some(setup))),
+                ..Default::default()
+            }
+        } else {
+            PostSettingsEdit {
+                setup: Some(setup.to_owned()),
+                follow_document: true,
+                ..Default::default()
+            }
+        };
+        match SetPostSettings::new(&self.world, edit) {
             Ok(c) => {
+                if c.is_empty() {
+                    let msg = if own {
+                        format!("setup '{setup}' already has its own post options")
+                    } else {
+                        format!("setup '{setup}' already follows the document's post options")
+                    };
+                    self.refuse(ErrorScope::Setup, format!("post options not changed: {msg}"));
+                    return;
+                }
                 self.history.execute(&self.world, c);
                 self.doc_version += 1;
                 self.status = if own {

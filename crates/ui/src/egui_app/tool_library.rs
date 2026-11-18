@@ -56,13 +56,19 @@ pub(crate) fn draw(ui: &mut Ui, state: &mut State) {
     ui.separator();
     ui.heading("Catalog");
     let catalog = tools::catalog();
+    if state
+        .tool_catalog_kind
+        .is_some_and(|kind| !crate::machine_modes::tool_kind_offered(&state.world, kind))
+    {
+        state.tool_catalog_kind = None;
+    }
     egui::ComboBox::from_id_salt("catalog_tool_type")
         .selected_text(state.tool_catalog_kind.map(kind_name).unwrap_or("All types"))
         .show_ui(ui, |ui| {
             ui.selectable_value(&mut state.tool_catalog_kind, None, "All types");
             let mut kinds = Vec::new();
             for (_, tool) in &catalog {
-                if !kinds.contains(&tool.kind) {
+                if !kinds.contains(&tool.kind) && crate::machine_modes::tool_kind_offered(&state.world, tool.kind) {
                     kinds.push(tool.kind);
                     ui.selectable_value(&mut state.tool_catalog_kind, Some(tool.kind), kind_name(tool.kind));
                 }
@@ -75,7 +81,8 @@ pub(crate) fn draw(ui: &mut Ui, state: &mut State) {
     let name_filter = state.tool_catalog_name.to_lowercase();
     let mut matches = 0;
     for (cname, ct) in catalog {
-        if state.tool_catalog_kind.is_some_and(|kind| ct.kind != kind)
+        if !crate::machine_modes::tool_kind_offered(&state.world, ct.kind)
+            || state.tool_catalog_kind.is_some_and(|kind| ct.kind != kind)
             || !cname.to_lowercase().contains(&name_filter)
         {
             continue;

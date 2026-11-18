@@ -113,6 +113,10 @@ pub enum ToolKind {
     /// helical turn per thread. `diameter` and `tip_angle` read as on
     /// the multi-form; `flute_len` is the tooth's own axial height.
     ThreadMillSingle,
+    /// Wire EDM wire (#2011): diameter is the wire diameter in mm
+    /// (`[0.02, 1.0]`), `material_group` the wire material (e.g. `"brass"`).
+    /// Turns no spindle (`rpm` must be 0) and has no corner radius.
+    Wire,
 }
 
 impl core::fmt::Display for ToolKind {
@@ -135,6 +139,7 @@ impl core::fmt::Display for ToolKind {
             ToolKind::Electrode => "sinker electrode",
             ToolKind::ThreadMill => "thread mill",
             ToolKind::ThreadMillSingle => "single-form thread mill",
+            ToolKind::Wire => "wire",
         };
         f.write_str(s)
     }
@@ -303,7 +308,7 @@ impl Tool {
             // A torch turns no spindle (#670): its rpm is 0 by law, and
             // every spinning kind states a positive one.
             // A sinker electrode turns none either (#541).
-            && (if matches!(self.kind, ToolKind::Torch | ToolKind::Electrode | ToolKind::Waterjet) {
+            && (if matches!(self.kind, ToolKind::Torch | ToolKind::Electrode | ToolKind::Waterjet | ToolKind::Wire) {
                 self.rpm == 0.0
             } else {
                 self.rpm > 0.0
@@ -379,6 +384,7 @@ impl Tool {
                 // corner radius rides it (#670).
                 ToolKind::Torch => self.corner_r == 0.0,
                 ToolKind::Waterjet => crate::waterjet::refusal(self).is_none(),
+                ToolKind::Wire => crate::wire::refusal(self).is_none(),
                 // A sinker electrode (#541): a rectangular face with a
                 // stated Y size, sharp-cornered (no corner rides it).
                 ToolKind::Electrode => crate::electrode::is_sane(self),
@@ -398,6 +404,9 @@ impl Tool {
         // AddTool / ChangeTool / library refusals already call this.
         if self.kind == ToolKind::Waterjet {
             return crate::waterjet::refusal(self);
+        }
+        if self.kind == ToolKind::Wire {
+            return crate::wire::refusal(self);
         }
         if self.kind == ToolKind::Electrode {
             return crate::electrode::refusal(self);
@@ -506,7 +515,7 @@ impl Tool {
             // not off this cylinder.
             ToolKind::EndMill | ToolKind::Tap | ToolKind::Bore | ToolKind::Turning
             | ToolKind::Groove | ToolKind::Thread | ToolKind::Form | ToolKind::Torch
-            | ToolKind::Electrode | ToolKind::Waterjet
+            | ToolKind::Electrode | ToolKind::Waterjet | ToolKind::Wire
             // A thread mill draws as the cylinder its tooth crests
             // sweep (#894) - the envelope the reach laws read.
             | ToolKind::ThreadMill | ToolKind::ThreadMillSingle => add_pt(&mut p, 0.0, r),

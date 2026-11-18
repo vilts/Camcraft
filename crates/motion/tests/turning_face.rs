@@ -91,8 +91,9 @@ fn station(q: Point3) -> f64 {
 
 #[test]
 fn the_ladder_walks_the_wall_at_every_rung() {
-    // Facing 2 mm off the drum's top: five rungs, stations 8.0
-    // through 10.0 by 0.5. The rung at 8.0 has no vertex inside its
+    // Facing 2 mm off the drum's top: four rungs, stations 8.0
+    // through 9.5 by 0.5 (#2004: no rung AT the top 10.0 - its ball
+    // band stands wholly above the work, a pass through air). The rung at 8.0 has no vertex inside its
     // window [8.0, 9.6] - only the wall's triangles lean through
     // it - so THIS is the case the old vertex filter stubbled: its
     // pass would start at nose off the axis and cut nothing beyond
@@ -110,9 +111,9 @@ fn the_ladder_walks_the_wall_at_every_rung() {
             }
         }
     }
-    assert_eq!(rungs.len(), 5, "five passes end on the axis: {rungs:?}");
+    assert_eq!(rungs.len(), 4, "four passes end on the axis: {rungs:?}");
     for (k, (got, start)) in rungs.iter().enumerate() {
-        let want = FACE_Z + (4 - k) as f64 * STEP; // top rung first
+        let want = FACE_Z + (3 - k) as f64 * STEP; // top rung first
         assert!(
             (got - want).abs() < 1e-9,
             "rung {k}: pass at station {got}, ladder order broke: {rungs:?}"
@@ -206,8 +207,8 @@ fn corrupt_numbers_die_at_the_door() {
 fn a_stock_allowance_above_the_finished_part_is_faced_off() {
     // #122: the part sits at its finished length (top Z 10) and the
     // setup's bar is longer (to Z 12) and wider (r 7). Facing to the
-    // part's end must climb the stock's allowance - five rungs, 10.0
-    // through 12.0 - with every pass starting outside the BAR's skin
+    // part's end must climb the stock's allowance - four rungs, 10.0
+    // through 11.5 (#2004: none at the bar's end 12.0) - with every pass starting outside the BAR's skin
     // and every rapid outside it too; without the stock the same plane
     // is honestly empty.
     let part = drum();
@@ -221,9 +222,9 @@ fn a_stock_allowance_above_the_finished_part_is_faced_off() {
             rungs.push((station(m.to) - NOSE, rho(m.from)));
         }
     }
-    assert_eq!(rungs.len(), 5, "five passes across the 2 mm allowance: {rungs:?}");
+    assert_eq!(rungs.len(), 4, "four passes across the 2 mm allowance: {rungs:?}");
     for (k, (s, start)) in rungs.iter().enumerate() {
-        let want = 10.0 + (4 - k) as f64 * STEP;
+        let want = 10.0 + (3 - k) as f64 * STEP;
         assert!((s - want).abs() < 1e-9, "rung {k} at {s}, want {want}: {rungs:?}");
         assert!(*start > 7.0 + NOSE - 1e-9, "rung at {s} started inside the bar (rho {start})");
     }
@@ -302,4 +303,34 @@ fn every_pass_lifts_off_its_face_before_it_rapids_out() {
             }
         }
     }
+}
+
+/// The ladder's passes, top first: the station of every pass that ends
+/// on the axis.
+fn pass_stations(t: &camcraft_motion::cl::Toolpath) -> Vec<f64> {
+    let mut out: Vec<f64> = Vec::new();
+    for m in &t.moves {
+        if m.kind == MoveKind::Feed && rho(m.to) < 1e-9 {
+            let s = station(m.to) - NOSE;
+            if !out.iter().any(|q| (q - s).abs() < 1e-9) {
+                out.push(s);
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn no_rung_faces_air_at_the_top_of_the_work_but_a_low_top_z_keeps_its_rung() {
+    // #2004: the drum's top is 10. A span that is no exact multiple of
+    // the stepdown keeps every rung (8.0 .. 9.5 under a top of 9.7);
+    // an exact multiple drops only the rung AT the top.
+    let t = facing(&drum(), None, &params(FACE_Z, STEP, NOSE)).expect("faces");
+    assert_eq!(pass_stations(&t), vec![9.5, 9.0, 8.5, 8.0]);
+    let odd = FacingParams { top_z: 9.7, ..params(FACE_Z, STEP, NOSE) };
+    assert_eq!(pass_stations(&facing(&drum(), None, &odd).expect("faces")), vec![9.5, 9.0, 8.5, 8.0]);
+    // A Top Z of 9 BELOW the work's top: material stands over the rung
+    // at 9, so it is a real cut and stays.
+    let low = FacingParams { top_z: 9.0, ..params(FACE_Z, STEP, NOSE) };
+    assert_eq!(pass_stations(&facing(&drum(), None, &low).expect("faces")), vec![9.0, 8.5, 8.0]);
 }

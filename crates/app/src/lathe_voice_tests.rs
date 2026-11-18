@@ -248,7 +248,7 @@ fn the_door_refuses_on_every_turning_dialect_and_passes_every_milling_one() {
         op_entity(&world, &format!("m-{}", info.tag), info.ty, meridian());
         op_entity(&world, &format!("c-{}", info.tag), info.ty, stating_c(meridian()));
     }
-    for (post, cps) in crate::posting::BUILTINS {
+    for (post, cps) in crate::posting::shipped_posts().expect("the shipped posts read") {
         let lathe = crate::posting::LATHE_POSTS.contains(post);
         assert_eq!(crate::post::dialect::speaks_turning(cps).ok(), Some(lathe), "{post}: manifest and registry agree");
         for info in KindInfo::ALL {

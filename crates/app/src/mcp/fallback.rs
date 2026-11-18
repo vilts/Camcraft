@@ -63,6 +63,23 @@ struct Proposal {
     arguments: Value,
 }
 
+/// Explicit read-only tool allowlist: a new tool is never trusted by name prefix.
+#[must_use]
+pub fn is_read_only_tool(name: &str) -> bool {
+    matches!(
+        name,
+        "get_job"
+            | "get_selection"
+            | "list_operation_types"
+            | "list_tool_catalog"
+            | "list_holder_library"
+            | "list_features"
+            | "get_operation_geometry"
+            | "get_tool_cutter_profile"
+            | "suggest_cutting_data"
+    )
+}
+
 /// Accept exactly one object, optionally enclosed in one JSON code fence.
 /// Reject surrounding prose or more than one proposal instead of guessing intent.
 pub fn parse_prompt(text: &str) -> Result<PendingCall, String> {
@@ -77,18 +94,7 @@ pub fn parse_prompt(text: &str) -> Result<PendingCall, String> {
     };
     let proposal: Proposal = serde_json::from_str(json).map_err(|e| format!("prompt JSON: {e}"))?;
     schema_validation::arguments(&proposal.tool, &proposal.arguments)?;
-    // An explicit read-only allowlist: a new tool is never trusted by its name prefix.
-    let read_only = matches!(
-        proposal.tool.as_str(),
-        "get_job"
-            | "list_operation_types"
-            | "list_tool_catalog"
-            | "list_holder_library"
-            | "list_features"
-            | "get_operation_geometry"
-            | "get_tool_cutter_profile"
-            | "suggest_cutting_data"
-    );
+    let read_only = is_read_only_tool(&proposal.tool);
     Ok(PendingCall {
         call: ToolCall {
             id: String::new(),

@@ -69,7 +69,7 @@ fn a_setups_own_options_carry_explain() {
 #[test]
 fn every_builtin_explains_or_is_refused_by_name() {
     let on = posting::options_value(PostOptions { explain: true, ..PostOptions::default() });
-    for (name, cps) in posting::BUILTINS {
+    for (name, cps) in camcraft_app::posting::shipped_posts().expect("the shipped posts read") {
         let declares = cps.lines().any(|l| l.trim_start().starts_with("explains ="));
         match engine::run_with(cps, &Value::Null, "", &on) {
             Err(PostError::Refused(why)) if !declares => {

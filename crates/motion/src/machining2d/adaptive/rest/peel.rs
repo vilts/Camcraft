@@ -31,6 +31,7 @@ use crate::machining2d::pocket_hsm::{PLAN_TOL, components};
 use super::super::front::dist;
 use super::super::raster::Raster;
 use super::super::{BITE_LOAD, GRID_PER_D, STEPS};
+use super::budget;
 use super::canon::Canon;
 use super::entry::Entries;
 use super::leads::Anchor;
@@ -54,6 +55,14 @@ pub(super) const COVER_MAX: f64 = 0.02;
 /// A plunge is proved clear this far (mm) past the cutter, or four grid
 /// cells where that is more.
 pub(super) const ENTRY_MARGIN: f64 = 0.1;
+
+/// An area is planned in cells at most this many tool diameters wide
+/// (issue 2109): the uniform-grid partition of a plane region (M. de
+/// Berg et al., "Computational Geometry", 3rd ed., Springer 2008). A
+/// neck's two mouths are then cut phase by phase each in turn, not
+/// alternately with a retract between (the two bays' 10 mm neck: 23
+/// plunges a depth down to 10).
+const TILE_PER_D: f64 = 4.0;
 
 /// One cut depth to plan.
 pub(super) struct Level<'a> {
@@ -85,6 +94,11 @@ pub(super) struct LevelPlan {
     /// Worst load a kept pass read (ae/D).
     pub worst: f64,
     pub passes: usize,
+    /// Feed in cut and out of cut (mm), and the retract hops
+    /// (`budget`).
+    pub cut: f64,
+    pub air: f64,
+    pub hops: usize,
     /// Rest material left (mm^2, within the coverage bound) where no
     /// step held the load, and where: said on the path, never cut over
     /// the load.
@@ -111,6 +125,9 @@ pub(super) struct Peel<'a> {
     seg: f64,
     /// Where the last kept pass started (the same front, one step on).
     pub(super) anchor: Option<Point2>,
+    /// The last kept pass from where its run starts on, and that wall
+    /// vertex: what the next pass may retrace (`leads`).
+    pub(super) back: Option<(Vec<Point2>, super::canon::WallAt)>,
     pub(super) plan: LevelPlan,
     pub(super) worst_deg: f64,
     pub(super) work: f64,
@@ -159,6 +176,9 @@ pub(super) fn plan(lv: &Level<'_>) -> Result<LevelPlan, GenError> {
     let rim = crate::quality::rim_for(d, h);
     let margin = ENTRY_MARGIN.max(4.0 * h);
     let entries = Entries::new(lv.center, &bound, ras.clone(), (lv.r, grow, margin, seg), lv.guards.entry)?;
+    // What the passes are planned to cut, as it stands before them: the
+    // yardstick of the travel budget.
+    let goal0 = goal.clone();
     if !entries.any() {
         return Err(GenError::Invalid(format!(
             "rest Adaptive has no entry with proved clearance at Z{:.3}: the remaining stock proves no position clear for the cutter's whole footprint",
@@ -180,6 +200,7 @@ pub(super) fn plan(lv: &Level<'_>) -> Result<LevelPlan, GenError> {
         bound: deg_at_rim(lv.load * (1.0 + PLAN_TOL), d, rim),
         seg,
         anchor: None,
+        back: None,
         plan: LevelPlan { area: initial as f64 * h * h, ..LevelPlan::default() },
         worst_deg: 0.0,
         work: 0.0,
@@ -193,7 +214,19 @@ pub(super) fn plan(lv: &Level<'_>) -> Result<LevelPlan, GenError> {
     for a in &areas {
         let Some((lo, hi)) = a.bounds() else { continue };
         let free = a.offset(2.0 * h)?.difference(lv.reach)?.is_empty();
-        todo.push((Point2::new(lo.x - d, lo.y - d), Point2::new(hi.x + d, hi.y + d), free));
+        let (lo, hi) = (Point2::new(lo.x - d, lo.y - d), Point2::new(hi.x + d, hi.y + d));
+        // In cells no wider than `TILE_PER_D` diameters: a long area's
+        // phases are run near where the tool stands, not alternated
+        // between its far ends by a retract each (issue 2109).
+        let tile = TILE_PER_D * d;
+        let (nx, ny) = (((hi.x - lo.x) / tile).ceil().clamp(1.0, 64.0), ((hi.y - lo.y) / tile).ceil().clamp(1.0, 64.0));
+        let (w, ht) = ((hi.x - lo.x) / nx, (hi.y - lo.y) / ny);
+        for i in 0..nx as usize {
+            for j in 0..ny as usize {
+                let (x, y) = (lo.x + w * i as f64, lo.y + ht * j as f64);
+                todo.push((Point2::new(x, y), Point2::new(x + w, y + ht), free));
+            }
+        }
     }
     while !todo.is_empty() {
         let from = p.cur.or_else(|| lv.center.bounds().map(|b| b.0)).unwrap_or_default();
@@ -214,6 +247,9 @@ pub(super) fn plan(lv: &Level<'_>) -> Result<LevelPlan, GenError> {
             ))
         }));
     }
+    let t = budget::travel(goal0, &p.plan.chains, lv.r, 2.0 * lv.r * BITE_LOAD);
+    budget::check(&t, areas.len(), lv.z)?;
+    (p.plan.cut, p.plan.air, p.plan.hops) = (t.cut, t.air, t.hops);
     if let Some(Fail::Load(_, at)) = p.unheld {
         p.plan.held_back = Some((p.goal.standing() as f64 * h * h, at));
     }

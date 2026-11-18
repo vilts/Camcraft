@@ -950,7 +950,7 @@ mod preview_tests {
         state.drain_actions();
         let lines = selection_feature_lines(&state);
         assert_eq!(lines.len(), 10, "four-sided top ring plus one rim edge");
-        for v in &lines {
+        for v in lines.iter() {
             assert!(
                 (v[3] - 0.72).abs() < 0.01
                     && (v[4] - 0.44).abs() < 0.01
@@ -1444,7 +1444,7 @@ mod height_plane_tests {
     }
 
     fn pocket() -> OpParams {
-        OpParams::Pocket { tilt: None, blend_radius: None,
+        OpParams::Pocket { rest: None, tilt: None, blend_radius: None,
             links: camcraft_app::links::Links::PLANAR,
             stepover: 3.0,
             stock_to_leave: 0.0,

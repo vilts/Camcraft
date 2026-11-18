@@ -300,9 +300,10 @@ fn run_turn_steps(
                 },
             );
 
-            let needs_confirm = pending_call
-                .as_ref()
-                .map_or_else(|| requires_confirmation(&call.name, effective_mode), PendingCall::requires_confirmation);
+            let needs_confirm = pending_call.as_ref().map_or_else(
+                || requires_confirmation(&call.name, &call.arguments, effective_mode),
+                PendingCall::requires_confirmation,
+            );
             if needs_confirm {
                 match wait_confirmation(input, &card_id, &call, cancel, tx)? {
                     ConfirmOutcome::Cancelled => return Ok(true),

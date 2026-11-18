@@ -298,7 +298,8 @@ fn no_3d_pocket_kind_carries_a_tilt() {
 }
 
 /// A cached 3D cut must be checked against parts added after generation,
-/// even when the rotated stock prevents the program simulation from running.
+/// even when the stock turned off the axes prevents the program
+/// simulation from running (#2177: a quarter turn no longer does).
 fn added_part_blocks_live_post(world: World, params: OpParams, tool_name: &str, tag: &str, inner: impl FnOnce(&Toolpath) -> Mesh) {
     use camcraft_app::commands::GenerateOperation;
     use camcraft_app::operation::OpStatus;
@@ -342,6 +343,7 @@ fn added_part_blocks_live_post(world: World, params: OpParams, tool_name: &str, 
         "refuse by operation and part name: {err}"
     );
     assert!(err.contains("regenerate"), "{err}");
+    assert!(oblique_refused(&world), "the device holds: the program sim does not judge this stock");
     assert!(!wrote, "the refused post writes no NC file");
 }
 
@@ -349,10 +351,7 @@ fn added_part_blocks_live_post(world: World, params: OpParams, tool_name: &str, 
 fn pocket3d_post_refuses_a_part_added_after_clean_generation_on_rotated_stock() {
     let world = world(None);
     let mut h = History::default();
-    let at = Location {
-        rot: camcraft_app::geometry::quat_from_yaw(std::f64::consts::FRAC_PI_2),
-        ..Location::default()
-    };
+    let at = Location { rot: stock_turn(true), ..Location::default() };
     h.execute(
         &world,
         SetStock::new(
@@ -379,7 +378,7 @@ fn multiaxis_rough_post_refuses_a_part_added_after_clean_generation_on_rotated_s
     h.execute(&world, ImportModel::from_mesh("part", Mesh::from_facets(facets)));
     let at = Location {
         pos: Point3::new(0.0, 0.0, -20.0),
-        rot: camcraft_app::geometry::quat_from_yaw(std::f64::consts::FRAC_PI_2),
+        rot: stock_turn(true),
     };
     h.execute(
         &world,

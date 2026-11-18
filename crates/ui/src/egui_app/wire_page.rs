@@ -234,7 +234,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
         // states stays visible, named as such, until another is picked.
         let ids = operation::wire_op::conditions_of(world, op_ctx.as_deref());
         condition_field(ui, "Condition", condition, &ids);
-        hint(ui, "the machine's EDM condition states the wire diameter and the spark gap; the path stands wire radius + gap off the profile");
+        hint(ui, "the machine's EDM condition states the spark gap, and the mounted wire tool states the wire diameter; the path stands wire radius + gap off the profile");
         skim_fields(ui, &mut p.skims, &ids);
         check_row(ui, "Freed piece captured", &mut p.capture);
         hint(ui, "state that the freed piece is caught by a slug catcher, magnet or the machine's slug retention before allowing it to drop");

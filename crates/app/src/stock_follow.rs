@@ -119,10 +119,95 @@ pub fn keep_square(
     Ok(Some((next, Location { pos: transform_point(origin, loc.pos, loc.rot), rot: loc.rot })))
 }
 
+/// The refusal for a stock turned off the machine axes (#2177).
+pub const OBLIQUE_STOCK: &str =
+    "the stock stands turned off the machine axes - the simulation cuts only a stock square to them; set the stock again";
+/// The refusal for a cylinder stock whose axis is not vertical (#2177).
+pub const LAID_CYLINDER: &str =
+    "the cylinder stock lies on its side - the simulation cuts only an upright cylinder; set the stock again";
+
+/// #2177: the stock as the simulation models it - one law for the
+/// program sim, the carried body and the viewport's traced stock. An
+/// unturned stock is returned as it is (bytes for bytes). A box turned
+/// by a quarter-turn multiple (within [`SQUARE_TOL`]: a locate's float
+/// noise included) is the same solid as an unturned box with its sides
+/// swapped; an upright cylinder (axis up or down) is an unturned one
+/// with its floor at its lower end. A stock made from the model is read
+/// from its placed mesh, so any turn stands. Anything else is refused
+/// by name.
+///
+/// # Errors
+/// [`OBLIQUE_STOCK`] or [`LAID_CYLINDER`].
+pub fn sim_frame(shape: &StockShape, loc: Location) -> Result<(StockShape, Location), String> {
+    if loc.rot == crate::geometry::IDENTITY_Q || matches!(shape, StockShape::FromModel { .. }) {
+        return Ok((shape.clone(), loc));
+    }
+    if !is_square(loc.rot) {
+        return Err(OBLIQUE_STOCK.into());
+    }
+    let axis = |e: Point3| transform_point(e, Point3::ZERO, loc.rot);
+    // The world axis (0, 1, 2) a local axis lands on, and its sign.
+    let lands = |v: Point3| {
+        let c = [v.x, v.y, v.z];
+        let i = (0..3).fold(0, |b, k| if c[k].abs() > c[b].abs() { k } else { b });
+        (i, c[i] > 0.0)
+    };
+    let up = lands(axis(Point3::new(0.0, 0.0, 1.0)));
+    match shape {
+        StockShape::Box { dx, dy, dz } => {
+            let mut d = [0.0; 3];
+            for (e, len) in [(Point3::new(1.0, 0.0, 0.0), *dx), (Point3::new(0.0, 1.0, 0.0), *dy), (Point3::new(0.0, 0.0, 1.0), *dz)] {
+                d[lands(axis(e)).0] = len;
+            }
+            let c = transform_point(Point3::new(0.0, 0.0, 0.5 * dz), loc.pos, loc.rot);
+            let pos = Point3::new(c.x, c.y, c.z - 0.5 * d[2]);
+            Ok((StockShape::Box { dx: d[0], dy: d[1], dz: d[2] }, Location { pos, rot: crate::geometry::IDENTITY_Q }))
+        }
+        StockShape::Cylinder { height, .. } if up.0 == 2 => {
+            let z = if up.1 { loc.pos.z } else { loc.pos.z - height };
+            let pos = Point3::new(loc.pos.x, loc.pos.y, z);
+            Ok((shape.clone(), Location { pos, rot: crate::geometry::IDENTITY_Q }))
+        }
+        StockShape::Cylinder { .. } => Err(LAID_CYLINDER.into()),
+        StockShape::FromModel { .. } => Ok((shape.clone(), loc)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::geometry::quat_from_euler;
+
+    #[test]
+    fn the_sim_frame_keeps_square_stock_and_refuses_oblique_stock() {
+        let b = StockShape::Box { dx: 22.0, dy: 12.0, dz: 10.0 };
+        let at = Location { pos: Point3::new(5.0, 6.0, 7.0), ..Location::default() };
+        assert_eq!(sim_frame(&b, at), Ok((b.clone(), at)), "unturned: unchanged");
+        // Locate noise (#2177): the same box, the turn dropped.
+        let noisy = Location { rot: [0.0, 0.0, -5e-14, 1.0], ..at };
+        let (s, l) = sim_frame(&b, noisy).expect("noise is square");
+        assert_eq!(s, b);
+        assert!(l.rot == crate::geometry::IDENTITY_Q && (l.pos.x - 5.0).abs() < 1e-9 && (l.pos.z - 7.0).abs() < 1e-9);
+        // A quarter turn about Z swaps the sides round the same centre.
+        let quarter = Location { rot: quat_from_euler(0.0, 0.0, std::f64::consts::FRAC_PI_2), ..at };
+        let (s, l) = sim_frame(&b, quarter).expect("quarter turn");
+        assert_eq!(s, StockShape::Box { dx: 12.0, dy: 22.0, dz: 10.0 });
+        assert!((l.pos.x - 5.0).abs() < 1e-9 && (l.pos.y - 6.0).abs() < 1e-9 && (l.pos.z - 7.0).abs() < 1e-9, "{l:?}");
+        // Stood on its side about X: dz becomes the depth, the floor drops.
+        let side = Location { rot: quat_from_euler(std::f64::consts::FRAC_PI_2, 0.0, 0.0), ..at };
+        let (s, l) = sim_frame(&b, side).expect("on its side");
+        assert_eq!(s, StockShape::Box { dx: 22.0, dy: 10.0, dz: 12.0 });
+        assert!((l.pos.z - 1.0).abs() < 1e-9 && l.rot == crate::geometry::IDENTITY_Q, "{l:?}");
+        let oblique = Location { rot: quat_from_euler(0.0, 0.0, 0.7), ..at };
+        assert_eq!(sim_frame(&b, oblique), Err(OBLIQUE_STOCK.into()));
+        let c = StockShape::Cylinder { diameter: 10.0, height: 20.0 };
+        let flipped = Location { rot: quat_from_euler(std::f64::consts::PI, 0.0, 0.0), ..at };
+        let (_, l) = sim_frame(&c, flipped).expect("upside down is upright");
+        assert!((l.pos.z + 13.0).abs() < 1e-9, "{l:?}");
+        assert_eq!(sim_frame(&c, side), Err(LAID_CYLINDER.into()));
+        let m = StockShape::FromModel { source: "part".into() };
+        assert_eq!(sim_frame(&m, oblique), Ok((m.clone(), oblique)), "the placed mesh stands");
+    }
 
     fn corners(lo: [f64; 3], hi: [f64; 3]) -> Vec<Point3> {
         (0..8)

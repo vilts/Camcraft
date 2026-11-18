@@ -63,6 +63,11 @@ fn doc(dz: f64) -> (World, History) {
     v["edm"]["conditions"] = serde_json::from_str(TABLE).expect("conditions json");
     let m = parse_mch(&v.to_string()).expect("parses");
     h.execute(&world, LoadMachine::new(&world, "wire.mch".into(), Some(m)).expect("mount"));
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("part", prism(&outline())));
     let stock = SetStock::new(&world, StockShape::Box { dx: 60.0, dy: 60.0, dz }, Location::default()).expect("stock");
     h.execute(&world, stock);
@@ -71,7 +76,7 @@ fn doc(dz: f64) -> (World, History) {
 
 fn cut(world: &World, h: &mut History, name: &str, side: WireSide, start: Option<[f64; 2]>) {
     let op = WireContourOp { top_z: Height::fixed(12.0), bottom_z: Height::fixed(0.0), condition: "C110".into(), side, start, tabs: None, capture: true, burnout: None, taper_deg: 0.0, clearance: camcraft_app::operation::DEFAULT_CLEARANCE, four_axis: None, skims: Vec::new() };
-    let c = CreateOperation::new(world, name, "", SrcRef::Entity("part".into()), OpParams::WireContour(op)).expect("op");
+    let c = CreateOperation::new(world, name, "EDM-W025", SrcRef::Entity("part".into()), OpParams::WireContour(op)).expect("op");
     h.execute(world, c);
     if start.is_some() {
         h.execute(world, GenerateOperation::new(world, name).expect("generates"));

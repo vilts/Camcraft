@@ -159,7 +159,7 @@ impl ArcSweep {
 
     /// The XY box the arc's path covers: its ends and every axis
     /// extreme the sweep passes.
-    fn bbox(&self) -> (f64, f64, f64, f64) {
+    pub(super) fn bbox(&self) -> (f64, f64, f64, f64) {
         let (mut x0, mut x1) = (self.from.x.min(self.to.x), self.from.x.max(self.to.x));
         let (mut y0, mut y1) = (self.from.y.min(self.to.y), self.from.y.max(self.to.y));
         for (k, ang) in [0.0, FRAC_PI_2, PI, 3.0 * FRAC_PI_2].into_iter().enumerate() {

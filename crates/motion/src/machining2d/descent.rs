@@ -34,7 +34,7 @@ use super::levels::{Cert, Motion};
 
 use super::descent_dive::{along_pass, axial_why, links_to};
 use super::descent_xy::{XyArc, push_xy, with_arc};
-pub(super) use super::descent_dive::{dive_link, dive_point, feed_down, restart, substituted_dive};
+pub(super) use super::descent_dive::{dive_link, dive_point, entry_restart, feed_down, restart, substituted_dive};
 
 /// One helix: the near-side start (the pass start where it fits there),
 /// the orbit's center, the turns, the radius, the plane it starts on.

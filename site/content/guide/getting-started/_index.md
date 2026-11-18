@@ -9,6 +9,8 @@ weight = 1
 [First run](@/guide/getting-started/first-run.md) from model import to a
 checked program, or walk through a sheet-goods CNC router job in
 [Your first router part](@/guide/getting-started/first-router-part.md).
+[Your first 4-axis part](@/guide/getting-started/first-4axis-part.md) cuts
+four faces of a bar on a Tormach 770MX with a microARC 4 rotary table.
 [Keyboard and mouse](@/guide/getting-started/keyboard-and-mouse.md)
 lists the controls for Windows, Linux and macOS.
 

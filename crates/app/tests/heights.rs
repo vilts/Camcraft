@@ -68,7 +68,7 @@ fn stock_and_block() -> (World, History) {
 /// nothing else varied - (enum variants take no functional-update syntax,
 /// so the three heights are the only knobs this literal exposes).
 fn pocket(clearance_z: Height, top_z: Height, bottom_z: Height) -> OpParams {
-    OpParams::Pocket { blend_radius: None, tilt: None,
+    OpParams::Pocket { rest: None, blend_radius: None, tilt: None,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 3.0,
         stock_to_leave: 0.0,

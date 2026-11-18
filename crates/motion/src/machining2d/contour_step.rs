@@ -32,6 +32,11 @@ pub(super) struct Step {
     /// The plane the descent starts from (clearance on the first level).
     pub prev_z: f64,
     pub first: bool,
+    /// Did an earlier descent of the same arm open this descent's column
+    /// down to `prev_z` (#2004)? The bore side's rings do not clear the
+    /// core, so the first transition of a new arm meets material from the
+    /// top of the cut down to `prev_z` there.
+    pub opened: bool,
     pub inside: bool,
     pub tabbed: bool,
     /// Where an axial dive at the lead-in's start stops: the cut plane,
@@ -102,7 +107,7 @@ pub(super) fn engage_level(b: &mut PathBuilder, eng: &Engage, s: &Step, lead: &[
         // never dwells on the finished wall. A transition's helix pitch
         // rides along; the first entry keeps the entry's own law.
         let pitch = if s.first { 0.0 } else { p.links.helix_pitch };
-        let bs = BoreStep { arm: s.arm, pitch, e2, z, prev_z: s.prev_z, tz, first: s.first };
+        let bs = BoreStep { arm: s.arm, pitch, e2, z, prev_z: s.prev_z, tz, first: s.first, opened: s.opened };
         bore_entry(b, eng, &bs, lead, walk)
     } else {
         // The wall side (explicit Outside, and every direct Auto): the
@@ -141,5 +146,5 @@ fn graze(b: &mut PathBuilder, eng: &Engage, e2: Point2, z: f64) {
             e2.x, e2.y
         ));
     }
-    feed_down(b, e2, z, p.top_z, eng.m, a.plunge(p.plunge_feed));
+    feed_down(b, e2, z, p.entry_top(), eng.m, a.plunge(p.plunge_feed));
 }

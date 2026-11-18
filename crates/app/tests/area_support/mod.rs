@@ -21,12 +21,29 @@ pub use camcraft_app::tools::catalog;
 pub use camcraft_app::world::new_world;
 pub use flecs_ecs::prelude::World;
 
+/// A turn about Z off the machine axes (rad). The program sim refuses
+/// such a stock by name ([`camcraft_app::stock_follow::OBLIQUE_STOCK`]),
+/// so the operation's own verdict is the only judge of the post; at
+/// 40 mm from the turn's centre a point moves 4e-5 mm. #2177: a quarter
+/// turn is no such device - the sim judges a square-turned box.
+pub const OBLIQUE: f64 = 1e-6;
+
+/// The stock's turn: [`OBLIQUE`] about Z when `rotated`, else none.
+pub fn stock_turn(rotated: bool) -> [f64; 4] {
+    if rotated { camcraft_app::geometry::quat_from_yaw(OBLIQUE) } else { Location::default().rot }
+}
+
+/// The device holds: the program sim refuses this stock by name.
+pub fn oblique_refused(world: &World) -> bool {
+    camcraft_app::stock_sim::simulate_document(world).is_err_and(|e| e.contains(camcraft_app::stock_follow::OBLIQUE_STOCK))
+}
+
 pub const TOOL: &str = "EM-1000-4FL";
 pub const R: f64 = 5.0;
 pub const EPS: f64 = 1e-3;
 
 pub fn pocket(top: f64, bottom: f64) -> OpParams {
-    OpParams::Pocket {
+    OpParams::Pocket { rest: None,
         blend_radius: None,
         stepover: 4.0,
         stock_to_leave: 0.0,

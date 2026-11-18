@@ -293,22 +293,24 @@ fn a_boss_in_the_cavity_is_in_the_electrodes_way() {
 }
 
 #[test]
-fn a_rounded_pockets_corner_picked_as_its_welded_face_is_refused_by_name() {
+fn a_rounded_pockets_corner_picked_as_its_welded_face_reads_as_its_strips() {
     // A 20 x 12 pocket with 2 mm corner radii, 6 deep. Its planar faces
     // yield a body electrode (#1152, `sinker_electrode_body`).
     let mesh = block_with_pocket(30.0, 30.0, &rounded_rect(10.0, 6.0, 2.0, 4), FLOOR, TOP);
     let (world, _h) = doc(mesh);
     let picks = faces_in(&world, "part", (-10.0, -6.0), (10.0, 6.0), FLOOR);
     assert!(picks.len() > 5, "the floor, four flat walls and the corner strips: {}", picks.len());
-    assert!(ElectrodeFromFaces::new(&world, "E", &picks, &spec(0.1)).is_ok_and(|c| c.electrode().body));
-    // A corner picked as its welded (curved) face: a non-planar wall.
+    let planar = ElectrodeFromFaces::new(&world, "E", &picks, &spec(0.1)).expect("the strips' electrode");
+    assert!(planar.electrode().body);
+    // A corner picked as its welded (curved) face as well (#1808): its
+    // vertical strips are walls already picked, so nothing changes.
     let e = model::find_by_name(&world, "part").expect("part");
     let f = model::features_of(&world, &e).expect("features");
     let patch = feature::patches(&f).into_iter().next().expect("a rounded corner welds into a patch");
     let mut curved = picks.clone();
     curved.push(GeoSel { entity: "part".into(), feature: FeatureSel::Patch(patch.id) });
-    let why = refusal(&world, &curved, &spec(0.1));
-    assert!(why.contains("curved wall") && why.contains("non-planar"), "{why}");
+    let welded = ElectrodeFromFaces::new(&world, "E", &curved, &spec(0.1)).expect("the welded pick's electrode");
+    assert_eq!(welded.electrode(), planar.electrode());
 }
 
 #[test]

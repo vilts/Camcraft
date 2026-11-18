@@ -133,6 +133,7 @@ mod tests {
             .map(|(_, t)| t)
             .expect("the catalog's single-form thread mill");
         let op = |r: f64| crate::operation::OpParams::Thread {
+            break_through: None,
             clearance_z: Height::fixed(30.0),
             retract_z: None,
             top_z: Height::fixed(r),

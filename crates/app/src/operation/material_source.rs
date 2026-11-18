@@ -23,7 +23,7 @@ pub(super) fn region_for(
 ) -> Result<Region, GenError> {
     // #1504: a picked Slot that leaves its picks draws nothing - the
     // preview never outlines a slot across a wall; generation names it.
-    super::slot_pick::confine_slot(world, src, params)?;
+    super::slot_pick::confine_slot(world, setup, src, params)?;
     let z = section_z_of(world, setup, src, params).unwrap_or(Ok(0.0));
     region_core(material, params, frame, z)
 }

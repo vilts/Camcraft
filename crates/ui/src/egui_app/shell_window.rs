@@ -147,6 +147,8 @@ impl Shell {
         // queue the shared command kinds, rfd picks the path, State::run
         // does the work - the machinery was never egui's to rebuild.
         let mut state = State::new();
+        // #2257: generate on a worker so the viewport shows its progress.
+        state.gen_jobs.background = true;
         // #662: the user's recent projects and models, read once.
         state.load_recent();
         // #645: the user's view preferences (the #727 name toggle), read once.

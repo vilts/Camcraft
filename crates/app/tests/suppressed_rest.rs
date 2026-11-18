@@ -92,7 +92,7 @@ fn rough_then_rest() -> (World, History) {
 }
 
 fn fanuc() -> &'static str {
-    posting::BUILTINS.iter().find(|(n, _)| *n == "Fanuc").map(|(_, s)| *s).expect("the Fanuc built-in")
+    posting::builtin_post_text("Fanuc").expect("the Fanuc built-in")
 }
 
 fn scratch(tag: &str) -> std::path::PathBuf {

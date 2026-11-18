@@ -1,12 +1,12 @@
 //! #319: verification in a later setup judges the carried body. A 10x10x5
 //! part sits in a block Setup1 faces; Setup2 holds the body Setup1 left
 //! ("Same as", or flipped) but declares a stock whose top is the part's.
-//! Setup2's contour dives from its retract plane beside the part: where
+//! Setup2's slot dives from its retract plane beside the part: where
 //! Setup1 left material standing above the declared top the dive is
 //! refused, where Setup1 faced it away it is allowed, a declared stock
 //! larger than the carried block is judged present, the mismatch is said
 //! by name, and the post agrees.
-//! Provenance: our own fixtures (vertical_rapid_stock.rs's contour over a
+//! Provenance: our own fixtures (a slot beside the part over a
 //! box, setup_carry.rs's faced block) over plain re-clamp practice; no
 //! vendor material consulted.
 //!
@@ -24,7 +24,6 @@ use camcraft_app::commands::{
     SetSetupRelative, SetStock,
 };
 use camcraft_app::geometry::{Point3, cube};
-use camcraft_app::machining2d::{Lead, Side};
 use camcraft_app::model;
 use camcraft_app::operation::{self, CARRIED_OUTSIDE_DECLARED, CARRIED_OUTSIDE_NOTED, Height, OpParams, OpStatus, SrcRef, Tilt};
 use camcraft_app::posting;
@@ -38,8 +37,38 @@ use camcraft_app::world::new_world;
 
 const TOOL: &str = "EM-0600-4FL";
 
-/// A contour of the part: top 5, clearance 12, retract 8 - its dive from
-/// the retract plane lands below Z 8, beside the part.
+/// A slot beside the part (y -8..-2, x -6..16): top 5, clearance 12,
+/// retract 8 - its dive from the retract plane lands below Z 8. A slot,
+/// not the contour round the part this suite first used: since #1559 a
+/// contour enters over the stock standing above its top, so it no longer
+/// dives into the carried body these laws judge; a slot still does.
+fn slot() -> OpParams {
+    OpParams::Slot {
+        links: camcraft_app::links::Links::PLANAR,
+        a: camcraft_app::geo2d::Point2::new(-6.0, -5.0),
+        b: camcraft_app::geo2d::Point2::new(16.0, -5.0),
+        width: 6.0,
+        stock_to_leave: 0.0,
+        clearance_z: Height::fixed(12.0),
+        retract_z: Some(Height::fixed(8.0)),
+        top_z: Height::fixed(5.0),
+        bottom_z: Height::fixed(0.0),
+        stepdown: 2.5,
+        stepover: 4.0,
+        feed: 800.0,
+        plunge_feed: 200.0,
+        climb: true,
+        entry: camcraft_app::machining3d::Entry3D::Plunge,
+        helix_radius: 1.0,
+        tilt: None,
+        extend_start: 0.0,
+        extend_end: 0.0,
+    }
+}
+
+/// The contour round the part (top 5, clearance 12, retract 8) - the
+/// kind an aligned setup machines; since #1559 it enters over the stock
+/// standing above its top instead of diving into it.
 fn contour() -> OpParams {
     OpParams::Contour {
         tilt: None,
@@ -52,8 +81,8 @@ fn contour() -> OpParams {
         feed: 800.0,
         plunge_feed: 200.0,
         climb: true,
-        side: Side::Auto,
-        lead: Lead::None,
+        side: camcraft_app::machining2d::Side::Auto,
+        lead: camcraft_app::machining2d::Lead::None,
         tolerance: 0.01,
         tab_count: 0,
         tab_width: 0.0,
@@ -98,8 +127,13 @@ enum Hold {
 
 /// The part (0..10)^2 x [0, 5] in Setup1's `w1`-wide block Z -5..10,
 /// faced to `cut1`; Setup2 held as `hold`, declaring a `w2`-wide block
-/// Z -5..5 (top at the part's), and Contour2 round the part.
+/// Z -5..5 (top at the part's), and Op2 round the part.
 fn program(w1: f64, cut1: f64, hold: Hold, w2: f64) -> (World, History) {
+    program_op(w1, cut1, hold, w2, hold == Hold::FlipX)
+}
+
+/// [`program`] with Op2 the contour (`contour_op`) or the slot.
+fn program_op(w1: f64, cut1: f64, hold: Hold, w2: f64, contour_op: bool) -> (World, History) {
     let world = new_world();
     let mut h = History::default();
     h.execute(&world, ImportModel::from_mesh("part", cube(Point3::ZERO, Point3::new(10.0, 10.0, 5.0))));
@@ -117,9 +151,17 @@ fn program(w1: f64, cut1: f64, hold: Hold, w2: f64) -> (World, History) {
         Hold::Clip => {}
     }
     h.execute(&world, block(&world, w2, -5.0, 10.0));
-    let op = CreateOperation::new(&world, "Contour2", TOOL, SrcRef::Entity("part".into()), contour()).expect("create");
+    // A slot dives beside the part; an aligned (flipped) setup machines
+    // no slot, so there the contour stands in (#1559: it enters over the
+    // carried body, read from the program ahead).
+    let op = if contour_op {
+        CreateOperation::new(&world, "Op2", TOOL, SrcRef::Entity("part".into()), contour())
+    } else {
+        CreateOperation::new(&world, "Op2", TOOL, SrcRef::Stock, slot())
+    }
+    .expect("create");
     h.execute(&world, op);
-    h.execute(&world, GenerateOperation::new(&world, "Contour2").expect("generate"));
+    h.execute(&world, GenerateOperation::new(&world, "Op2").expect("generate"));
     (world, h)
 }
 
@@ -127,9 +169,9 @@ fn cached(world: &World, name: &str) -> camcraft_app::schema::Toolpath {
     model::find_by_name(world, name).and_then(|e| model::toolpath_of(world, &e)).expect("cached")
 }
 
-/// Contour2's vertical rapid dives below Z 8 (the retract plane).
+/// Op2's vertical rapid dives below Z 8 (the retract plane).
 fn dives(world: &World) -> Vec<usize> {
-    let moves = cached(world, "Contour2").path.moves;
+    let moves = cached(world, "Op2").path.moves;
     let out: Vec<usize> = moves
         .iter()
         .enumerate()
@@ -146,7 +188,7 @@ fn dives(world: &World) -> Vec<usize> {
 }
 
 fn convicted(world: &World) -> Vec<usize> {
-    cached(world, "Contour2")
+    cached(world, "Op2")
         .warnings
         .iter()
         .filter_map(|w| match w {
@@ -157,7 +199,7 @@ fn convicted(world: &World) -> Vec<usize> {
 }
 
 fn noted(world: &World) -> bool {
-    let notes = cached(world, "Contour2").path.notes;
+    let notes = cached(world, "Op2").path.notes;
     notes.iter().any(|n| n.starts_with(CARRIED_OUTSIDE_DECLARED) && n.contains("'Setup1'") && n.contains("'Setup2'"))
 }
 
@@ -169,7 +211,7 @@ fn a_dive_clear_of_the_declared_block_into_carried_material_is_refused() {
     let (world, _h) = program(100.0, 9.0, Hold::SameAs, 100.0);
     let (d, c) = (dives(&world), convicted(&world));
     assert!(c.contains(&d[0]), "dives {d:?}, convicted {c:?}");
-    assert!(noted(&world), "{:?}", cached(&world, "Contour2").path.notes);
+    assert!(noted(&world), "{:?}", cached(&world, "Op2").path.notes);
     let dir = std::env::temp_dir().join(format!("cc-319-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&dir);
     let out = dir.join("refused.nc");
@@ -178,7 +220,7 @@ fn a_dive_clear_of_the_declared_block_into_carried_material_is_refused() {
     match posted {
         Ok(_) => panic!("the carried-stock dive posted"),
         Err(e) => assert!(
-            e.contains("post blocked") && e.contains("operation Contour2: ") && e.contains(CARRIED_OUTSIDE_DECLARED),
+            e.contains("post blocked") && e.contains("operation Op2: ") && e.contains(CARRIED_OUTSIDE_DECLARED),
             "{e}"
         ),
     }
@@ -190,17 +232,25 @@ fn a_dive_into_material_setup1_removed_is_allowed() {
     // as the declared stock says too - no note, no conviction.
     let (world, _h) = program(100.0, 5.0, Hold::SameAs, 100.0);
     dives(&world);
-    assert!(convicted(&world).is_empty(), "{:?}", cached(&world, "Contour2").warnings);
+    assert!(convicted(&world).is_empty(), "{:?}", cached(&world, "Op2").warnings);
     assert!(!noted(&world));
 }
 
 #[test]
-fn a_flipped_carry_judges_the_dive_against_the_flipped_body() {
+fn a_flipped_carry_judges_the_entry_against_the_flipped_body() {
     // Flipped about the part's centre (Z 2.5): Setup1's unfaced bottom
-    // (-5) stands on top at Z 10 - the dive meets it.
+    // (-5) stands on top at Z 10. The contour reads it as the material
+    // over its top (#1559): its entry rapid stops over Z 10 and feeds
+    // down, so nothing dives into the flipped body - and the mismatch
+    // with the declared block is still said.
     let (world, _h) = program(100.0, 9.0, Hold::FlipX, 100.0);
-    let (d, c) = (dives(&world), convicted(&world));
-    assert!(c.contains(&d[0]), "dives {d:?}, convicted {c:?}");
+    let moves = cached(&world, "Op2").path.moves;
+    let entry = moves
+        .iter()
+        .find(|m| m.kind == MoveKind::Rapid && m.to.z < m.from.z && (m.to.x - m.from.x).hypot(m.to.y - m.from.y) < 1e-6)
+        .map(|m| m.to.z);
+    assert!(entry.is_none_or(|z| z >= 10.0 - 1e-6), "the entry dove into the flipped body: {moves:?}");
+    assert!(convicted(&world).is_empty(), "{:?}", cached(&world, "Op2").warnings);
     assert!(noted(&world));
 }
 
@@ -212,23 +262,24 @@ fn declared_stock_beyond_the_carried_block_is_judged_present() {
     // carried grid does not cover: it is never read as air.
     let (world, mut h) = program(12.0, 5.0, Hold::SameAs, 100.0);
     h.execute(&world, block(&world, 100.0, -5.0, 15.0));
-    h.execute(&world, GenerateOperation::new(&world, "Contour2").expect("regenerate"));
+    h.execute(&world, GenerateOperation::new(&world, "Op2").expect("regenerate"));
     let (d, c) = (dives(&world), convicted(&world));
     assert!(c.contains(&d[0]), "dives {d:?}, convicted {c:?}");
 }
 
 #[test]
 fn a_turn_off_the_quarter_with_only_a_non_rest_op_after_it_is_refused_by_name() {
-    // Contour2 (no rest reading) was generated while Setup2 held the part
+    // Op2 (no rest reading) was generated while Setup2 held the part
     // like Setup1; the part is then turned 30 degrees in Setup2. Its
     // regeneration is refused by name, never cut against the declared
     // block, and the program sim never judges the turned program.
-    let (world, mut h) = program(100.0, 5.0, Hold::SameAs, 100.0);
+    // An aligned setup machines no slot: the contour stands in for Op2.
+    let (world, mut h) = program_op(100.0, 5.0, Hold::SameAs, 100.0, true);
     h.execute(&world, SetSetupRelative::unlink(&world, "Setup2").expect("unlink"));
     h.execute(&world, AlignPartToSetup::angles(&world, "Setup2", [0.0, 0.0, 30.0]).expect("30 degrees"));
-    let generated = GenerateOperation::new(&world, "Contour2").err().expect("refused").to_string();
+    let generated = GenerateOperation::new(&world, "Op2").err().expect("refused").to_string();
     assert!(
-        generated.contains("Contour2")
+        generated.contains("Op2")
             && generated.contains(CARRY_TURN_REFUSAL)
             && generated.contains("from setup 'Setup1' into setup 'Setup2'"),
         "{generated}"
@@ -241,9 +292,9 @@ fn a_turn_off_the_quarter_with_only_a_non_rest_op_after_it_is_refused_by_name() 
 fn an_overhang_no_feed_move_reaches_is_noted_and_posts() {
     // Setup1 holds a 140 mm block faced to the part's top; Setup2 declares
     // 100 mm. The carried rim stands 20 mm beside the declared stock, far
-    // from the contour round the part: noted by name, never refused.
+    // from the slot beside the part: noted by name, never refused.
     let (world, _h) = program(140.0, 5.0, Hold::SameAs, 100.0);
-    let notes = cached(&world, "Contour2").path.notes;
+    let notes = cached(&world, "Op2").path.notes;
     assert!(!noted(&world), "{notes:?}");
     assert!(notes.iter().any(|n| n.starts_with(CARRIED_OUTSIDE_NOTED) && n.contains("'Setup2'")), "{notes:?}");
     let problems = posting::verification_report(&world).problems;
@@ -255,7 +306,7 @@ fn an_overhang_no_feed_move_reaches_is_noted_and_posts() {
 fn posed(world: &World, h: &mut History, name: &str) {
     let mut p = face(5.0);
     if let OpParams::Face { tilt, .. } = &mut p {
-        *tilt = Some(Tilt { a_deg: 0.0, b_deg: 0.0, origin: [0.0; 3] });
+        *tilt = Some(Tilt { basis_version: 1, a_deg: 0.0, b_deg: 0.0, origin: [0.0; 3] });
     }
     h.execute(world, CreateOperation::new(world, name, TOOL, SrcRef::Stock, p).expect("create posed"));
 }
@@ -279,12 +330,12 @@ fn a_setup1_change_restamps_the_carried_setups_ops_whose_stock_grew() {
     let (world, mut h) = program(100.0, 9.0, Hold::SameAs, 100.0);
     posed(&world, &mut h, "Posed2");
     assert!(camcraft_app::rest::carried_digest(&world, "Posed2", Some("Setup2")).is_some());
-    let before = (stamp(&world, "Contour2"), stamp(&world, "Posed2"));
+    let before = (stamp(&world, "Op2"), stamp(&world, "Posed2"));
     reface(&world, &mut h);
-    let after = (stamp(&world, "Contour2"), stamp(&world, "Posed2"));
+    let after = (stamp(&world, "Op2"), stamp(&world, "Posed2"));
     assert_ne!(before.0, after.0, "the non-rest op reads the carried body");
     assert_ne!(before.1, after.1, "the posed op judges the stock the carried body spans");
-    assert_eq!(operation::status_of(&world, &model::find_by_name(&world, "Contour2").expect("op")), OpStatus::Stale);
+    assert_eq!(operation::status_of(&world, &model::find_by_name(&world, "Op2").expect("op")), OpStatus::Stale);
 }
 
 #[test]
@@ -293,12 +344,12 @@ fn single_setup_and_clip_entered_stamps_do_not_read_the_carry() {
     // neither Setup2 stamp, and no carried term exists.
     let (world, mut h) = program(100.0, 9.0, Hold::Clip, 100.0);
     posed(&world, &mut h, "Posed2");
-    assert!(camcraft_app::rest::carried_digest(&world, "Contour2", Some("Setup2")).is_none());
+    assert!(camcraft_app::rest::carried_digest(&world, "Op2", Some("Setup2")).is_none());
     assert!(camcraft_app::rest::carried_digest(&world, "Posed2", Some("Setup2")).is_none());
-    let before = (stamp(&world, "Contour2"), stamp(&world, "Posed2"));
+    let before = (stamp(&world, "Op2"), stamp(&world, "Posed2"));
     reface(&world, &mut h);
-    assert_eq!(before, (stamp(&world, "Contour2"), stamp(&world, "Posed2")));
-    assert_eq!(operation::status_of(&world, &model::find_by_name(&world, "Contour2").expect("op")), OpStatus::Ok);
+    assert_eq!(before, (stamp(&world, "Op2"), stamp(&world, "Posed2")));
+    assert_eq!(operation::status_of(&world, &model::find_by_name(&world, "Op2").expect("op")), OpStatus::Ok);
     // One setup: a posed op after Face1 never digests the program ahead,
     // so its stamp is the pre-#319 one whatever Face1 cuts.
     let (one, mut h1) = program(100.0, 9.0, Hold::Clip, 100.0);

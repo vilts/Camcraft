@@ -92,6 +92,11 @@ fn doc() -> (World, History) {
     let mut h = History::default();
     let m = parse_mch(FIXTURE).expect("the fixture parses");
     h.execute(&world, LoadMachine::new(&world, "wire-iso.mch".into(), Some(m)).expect("mount"));
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("part", prism(&[(0.0, 0.0), (60.0, 0.0), (60.0, 50.0), (0.0, 50.0)])));
     let loc = Location { pos: Point3::new(50.0, 25.0, 0.0), ..Location::default() };
     h.execute(&world, SetStock::new(&world, StockShape::Box { dx: 100.0, dy: 50.0, dz: 12.0 }, loc).expect("stock"));
@@ -109,18 +114,18 @@ fn doc() -> (World, History) {
     // Travelling +Y the offcut (x > 60) is on the right.
     let side = if up { WireSide::Right } else { WireSide::Left };
     let src = SrcRef::Selection(vec![GeoSel { entity: "part".into(), feature: FeatureSel::Chain(chain) }]);
-    let c = CreateOperation::new(&world, "Cutoff1", "", src, OpParams::WireContour(wire_op(side, None))).expect("open op");
+    let c = CreateOperation::new(&world, "Cutoff1", "EDM-W025", src, OpParams::WireContour(wire_op(side, None))).expect("open op");
     h.execute(&world, c);
     h.execute(&world, GenerateOperation::new(&world, "Cutoff1").expect("the open run generates"));
     let punch = OpParams::WireContour(wire_op(WireSide::Punch, Some([-10.0, 25.0])));
-    let c = CreateOperation::new(&world, "Punch1", "", SrcRef::Entity("part".into()), punch).expect("punch op");
+    let c = CreateOperation::new(&world, "Punch1", "EDM-W025", SrcRef::Entity("part".into()), punch).expect("punch op");
     h.execute(&world, c);
     h.execute(&world, GenerateOperation::new(&world, "Punch1").expect("the punch generates"));
     (world, h)
 }
 
 fn stamp_of(world: &World, op: WireContourOp) -> Option<GenStamp> {
-    operation::current_stamp(world, "", &SrcRef::Entity("part".into()), &OpParams::WireContour(op), "", None)
+    operation::current_stamp(world, "EDM-W025", &SrcRef::Entity("part".into()), &OpParams::WireContour(op), "", None)
 }
 
 /// Rewrites every wire contour in `v` whose side is one of `sides`.
@@ -241,13 +246,13 @@ fn four(pairing: WirePairingRule, sync: &[(Pt, Pt)], tolerance: f64) -> WireCont
     WireContourOp { four_axis: Some(WireFourAxis { pairing, sync, tolerance, ..WireFourAxis::default() }), ..wire_op(WireSide::Punch, Some([-10.0, 25.0])) }
 }
 
-/// The punch's stamp with no 4-axis block, as main's wire arm (before
-/// #537) computes it for this document. Every byte the 4-axis cut adds
+/// The punch's stamp with no 4-axis block, as main's wire arm + wire tool
+/// stamp (#2011) computes it for this document. Every byte the 4-axis cut adds
 /// is written only when the block is stated, so this value does not
 /// move; if a toolchain changes `DefaultHasher`, re-pin it only after
 /// checking the arm still writes nothing for `four_axis: None`.
-/// (#2152: re-pinned for the stamp salt v3; the salt is the only change.)
-const ONE_PROFILE_STAMP: u64 = 8_981_019_231_957_264_890;
+/// Re-pinned for the v3 stamp salt and the mounted wire tool digest.
+const ONE_PROFILE_STAMP: u64 = 10_941_136_346_482_132_007;
 
 /// Done means (M3, PR #1181 item 2): the pairing rule, each sync point
 /// on each side of each pair, and the tolerance each move the stamp, so
@@ -307,6 +312,11 @@ fn tabbed_world(wire: f64, gap: f64) -> World {
     let mut h = History::default();
     let m = parse_mch(&v.to_string()).expect("the fixture parses");
     h.execute(&world, LoadMachine::new(&world, "wire-iso.mch".into(), Some(m)).expect("mount"));
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("part", prism(&[(0.0, 0.0), (60.0, 0.0), (60.0, 50.0), (0.0, 50.0)])));
     world
 }
@@ -364,6 +374,11 @@ fn world_with_max_taper(max: f64) -> World {
     let mut h = History::default();
     let m = parse_mch(&v.to_string()).expect("the fixture parses");
     h.execute(&world, LoadMachine::new(&world, "wire-iso.mch".into(), Some(m)).expect("mount"));
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("part", prism(&[(0.0, 0.0), (60.0, 0.0), (60.0, 50.0), (0.0, 50.0)])));
     world
 }

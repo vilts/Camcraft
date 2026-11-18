@@ -278,9 +278,12 @@ fn a_wall_inside_the_crest_rings_sweep_is_a_gouge_that_blocks_the_post() {
 fn a_part_wall_the_roughing_left_standing_in_the_sweep_is_refused() {
     // The same rib under a roughing that respects it: the contour stops above the rib, so stock stands
     // where the mill would feed down - the air law refuses the thread before a move is cached.
-    let (world, mut history) = stud_world(stud(4.0, rib(-12.0, -9.0, 2.0, 16.0)));
+    // #2004: the roughing levels are [15, 10] (no air level at Top Z 20). A rib top over 15 makes the
+    // roughing itself refuse its first level, so the rib stands at z 12: the level 15 is walked, the
+    // level 10 stops above the rib, and the thread still meets the standing wall.
+    let (world, mut history) = stud_world(stud(4.0, rib(-12.0, -9.0, 2.0, 12.0)));
     let msg = try_thread(&world, &mut history, MULTI, external(vec![boss(4.0)], None, ThreadHand::Right, true));
-    assert!(msg.contains("the boss at (0.000, 0.000) is not cleared") && msg.contains("stands at z 16.000"), "{msg}");
+    assert!(msg.contains("the boss at (0.000, 0.000) is not cleared") && msg.contains("stands at z 12.000"), "{msg}");
 }
 
 #[test]

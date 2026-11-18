@@ -65,6 +65,7 @@ fn hole(x: f64, radius: f64) -> Hole {
 
 fn drill(x: f64, radius: f64, bottom: f64) -> OpParams {
     OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(22.0),
@@ -81,6 +82,7 @@ fn drill(x: f64, radius: f64, bottom: f64) -> OpParams {
 
 fn bore(x: f64, radius: f64) -> OpParams {
     OpParams::Bore {
+        break_through: None,
         links: camcraft_app::links::Links::PLANAR,
         clearance_z: Height::fixed(30.0),
         retract_z: None,
@@ -98,6 +100,7 @@ fn bore(x: f64, radius: f64) -> OpParams {
 
 fn thread(radius: f64) -> OpParams {
     OpParams::Thread {
+        break_through: None,
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(20.0),

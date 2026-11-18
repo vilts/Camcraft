@@ -41,13 +41,9 @@ pub fn current_stamp(
     // Bump this salt again whenever a verify law a cache records changes.
     h.write(b"camcraft-op-stamp-v3");
     let w = |h: &mut std::hash::DefaultHasher, v: f64| h.write(&v.to_bits().to_le_bytes());
-    // #532: a kind that mounts no library tool (the wire EDM's)
-    // digests what stands in the tool's place - the machine
-    // condition's wire and gap - so an edit of the machine's table
-    // re-marks the operation Stale.
-    match params {
-        OpParams::WireContour(op) => super::wire_op::stamp_condition(world, setup, op, &mut h),
-        _ => super::stamp_tool::write(world, tool_name, params, &mut h)?,
+    super::stamp_tool::write(world, tool_name, params, &mut h)?;
+    if let OpParams::WireContour(op) = params {
+        super::wire_op::stamp_condition(world, setup, tool_name, op, &mut h);
     }
     // #541: the sinker burn places its tip one spark gap above the floor,
     // read from the setup machine's condition - a re-stated gap (or a
@@ -121,6 +117,15 @@ pub fn current_stamp(
                 w(&mut h, v);
             }
         }
+    }
+    if super::wcs_yaw::op_applies(crate::machine::kind_of_setup(world, setup), params)
+        && let Some(deg) = crate::posting::wcs_yaw(world, setup)
+    {
+        let (_, o) = crate::posting::wcs_context(world, setup);
+        h.write(b"wcs-yaw");
+        w(&mut h, deg);
+        w(&mut h, o[0]);
+        w(&mut h, o[1]);
     }
     match src {
         SrcRef::Stock => {
@@ -275,20 +280,17 @@ pub fn stale_reason(
         return None;
     }
     let op = model::operation_of(world, entity)?;
-    // #532: a wire EDM kind names no tool - its condition is the
-    // machine's, and a condition the machine no longer states is why.
-    if let OpParams::WireContour(w) = &op.params {
-        if let Err(why) = super::wire_op::condition_of(world, op.setup.as_deref(), w) {
-            return Some(why);
+    match model::find_by_name(world, &op.tool) {
+        None => return Some(format!("its tool '{}' no longer exists", op.tool)),
+        Some(t) if !model::is_tool(world, &t) => {
+            return Some(format!("'{}' is no longer a tool", op.tool));
         }
-    } else {
-        match model::find_by_name(world, &op.tool) {
-            None => return Some(format!("its tool '{}' no longer exists", op.tool)),
-            Some(t) if !model::is_tool(world, &t) => {
-                return Some(format!("'{}' is no longer a tool", op.tool));
-            }
-            _ => {}
-        }
+        _ => {}
+    }
+    if let OpParams::WireContour(w) = &op.params
+        && let Err(why) = super::wire_op::condition_of(world, op.setup.as_deref(), &op.tool, w)
+    {
+        return Some(why);
     }
     match &op.src {
         SrcRef::Stock => {

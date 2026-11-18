@@ -59,6 +59,16 @@ fn tab_windows_leave_even_keeps_and_merge_across_the_seam() {
     assert_eq!(r.tab_keeps(4, 1.0 + 1e-9), Vec::new());
 }
 
+#[test]
+fn picked_start_tab_windows_begin_at_the_start_and_never_cross_the_seam() {
+    let r = ring(0);
+    // #1473: two tabs (width 1) on the 4-long ring, each ending on a
+    // spacing mark - the last on the seam - so the first keep begins at 0.
+    assert_eq!(r.tab_keeps_from_start(2, 1.0), vec![(0.0, 1.0), (2.0, 3.0)]);
+    assert_eq!(r.tab_keeps_from_start(0, 1.0), vec![(0.0, 4.0)]);
+    assert_eq!(r.tab_keeps_from_start(4, 1.0), Vec::new());
+}
+
 fn sq(x0: f64, y0: f64, x1: f64, y1: f64) -> Loop {
     Loop::new(vec![
         Point2::new(x0, y0),

@@ -293,6 +293,7 @@ mod tests {
     /// (0, c, s) — hand math, pinned against the frame the seam builds.
     fn t45x() -> Tilt {
         Tilt {
+            basis_version: 1,
             a_deg: 45.0,
             b_deg: 0.0,
             origin: [0.0, 0.0, 0.0],
@@ -388,6 +389,7 @@ mod tests {
         let f = OpFrame::new(
             None,
             Some(Tilt {
+                basis_version: 1,
                 a_deg: 30.0,
                 b_deg: 0.0,
                 origin: [5.0, -1.0, 2.0],
@@ -416,6 +418,7 @@ mod tests {
         let f = OpFrame::new(
             None,
             Some(Tilt {
+                basis_version: 1,
                 a_deg: f64::NAN,
                 b_deg: 0.0,
                 origin: [0.0; 3],
@@ -434,6 +437,7 @@ mod tests {
         let f = OpFrame::new(
             None,
             Some(Tilt {
+                basis_version: 1,
                 a_deg: 0.0,
                 b_deg: 0.0,
                 origin: [0.0; 3],

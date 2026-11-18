@@ -74,34 +74,21 @@ pub(super) fn valid_src(world: &World, setup: Option<&str>, src: &SrcRef) -> Res
     }
 }
 
-/// The tool door for a kind (#532): a kind that mounts a library tool
-/// must name one that exists ([`check_tool`]); a wire EDM kind mounts
-/// none - its wire is the machine's condition - and must name none, so
-/// no second source for the wire's diameter can ride an operation.
-pub(super) fn tool_door(world: &World, params: &OpParams, tool: &str) -> Result<(), CommandError> {
-    if params.kind().info().mounts_tool() {
-        return check_tool(world, tool);
-    }
-    if tool.is_empty() {
-        return Ok(());
-    }
-    Err(CommandError::Invalid(format!(
-        "a {} operation mounts no library tool - the wire is the machine's EDM condition; leave the tool empty (it names '{tool}')",
-        params.kind()
-    )))
+/// The tool door: every operation kind names an existing library tool.
+pub(super) fn tool_door(world: &World, _params: &OpParams, tool: &str) -> Result<(), CommandError> {
+    check_tool(world, tool)
 }
 
-/// The wire door (#531, #532): a wire EDM kind's condition must be
-/// stated by the machine its setup mounts, with its wire diameter and
-/// spark gap - refused by name here, at command creation, never first
-/// in the generator.
-pub(super) fn wire_gate(world: &World, setup: Option<&str>, params: &OpParams) -> Result<(), CommandError> {
+/// The wire door (#531, #532, #2011): a wire EDM kind's mounted wire tool and
+/// setup condition must agree and state a valid spark gap - refused by name here,
+/// at command creation, never first in the generator.
+pub(super) fn wire_gate(world: &World, setup: Option<&str>, tool: &str, params: &OpParams) -> Result<(), CommandError> {
     match params {
         OpParams::WireContour(w) => {
             if let Some(why) = operation::wire_op::tabs_taper_refusal(w) {
                 return Err(CommandError::Invalid(why));
             }
-            operation::wire_op::condition_of(world, setup, w).map_err(CommandError::Invalid)?;
+            operation::wire_op::condition_of(world, setup, tool, w).map_err(CommandError::Invalid)?;
             // #1800: a taper the mounted machine cannot post is refused
             // here, by the machine check's own words, not first at the post.
             if let Some(m) = crate::machine::of_setup(world, setup).1 {
@@ -220,7 +207,26 @@ pub(super) fn tool_gate(world: &World, params: &OpParams, tool: &str) -> Result<
     if let Some(msg) = operation::tool_gate::tool_refusal(world, params.kind().info(), tool) {
         return Err(CommandError::Invalid(msg));
     }
-    thread_gate(world, params, tool)
+    thread_gate(world, params, tool)?;
+    rest_gate(world, params, tool)
+}
+
+/// The rest machining door (#1489): a 2D Pocket's previous tool must be
+/// larger than the tool it mounts - refused by name when the operation
+/// is made, edited or re-tooled, in the rest generator's words. Open for
+/// every other kind, for rest machining off, and for a tool name that
+/// does not resolve (the tool door names that one).
+pub(super) fn rest_gate(world: &World, params: &OpParams, tool: &str) -> Result<(), CommandError> {
+    if operation::rest_op::rest_of(params).is_none() {
+        return Ok(());
+    }
+    match model::find_by_name(world, tool).and_then(|e| model::tool_of(world, &e)) {
+        Some(def) => match operation::rest_op::rest_tool_refusal(params, def.diameter) {
+            Some(msg) => Err(CommandError::Invalid(msg)),
+            None => Ok(()),
+        },
+        None => Ok(()),
+    }
 }
 
 /// The thread door (#894): a thread mill against the thread the

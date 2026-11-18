@@ -12,7 +12,7 @@
 //! material consulted.
 
 use crate::approach::{CENTER_CUT_REFUSAL, NOT_CENTER_CUTTING};
-use crate::cl::{MoveKind, PathBuilder, lattice};
+use crate::cl::{Move, MoveKind, PathBuilder, lattice};
 use crate::entry::{Entry3D, disc_clears, dive_room, helix_about};
 use crate::entry_arc::{arc_lead_swept, push_arc_lead, seg_dir};
 use crate::geo2d::Point2;
@@ -22,7 +22,7 @@ use crate::links::{helix_turns, plan_zig_capped, push_zig};
 use super::arcs::Seg;
 use super::contour_entry::{Engage, flatten};
 use super::descent::{Lvl, dive_link, feed_down, substituted_dive};
-use super::descent_dive::{along_pass, links_to};
+use super::descent_dive::{along_pass, dive_point, links_to};
 use super::slots::chord_clears;
 
 /// One bore-side descent's level facts.
@@ -38,6 +38,9 @@ pub(super) struct BoreStep {
     /// Is this the path's first engagement (its descent starts over the
     /// top of the cut)?
     pub first: bool,
+    /// Did an earlier descent of the same arm open this column down to
+    /// `prev_z` (#2004)? Else the core stands at the top of the cut there.
+    pub opened: bool,
 }
 
 /// The bore side (`Side::Inside`, untabbed): the eroded region states
@@ -51,8 +54,27 @@ pub(super) fn bore_entry(b: &mut PathBuilder, eng: &Engage, s: &BoreStep, lead: 
     // The material's top over this level: the plane above, or the top
     // of the cut on the first engagement; descents start that high plus
     // the plunge height (above it: rapid).
-    let mat_top = if s.first || prev_z >= p.clearance_z { p.top_z.min(prev_z) } else { prev_z };
-    let from = if s.first || prev_z >= p.clearance_z { (mat_top + a.plunge_height).min(prev_z) } else { prev_z };
+    // #2004: a transition whose column no earlier descent opened meets the
+    // core at the top of the cut - the bore side's rings sweep only their
+    // band - so it starts over the top, never at the plane above.
+    // #1559: on the first engagement and in an unopened column, the top is
+    // the carried stock's where the application stated one (`entry_top`;
+    // the top of the cut otherwise, as before).
+    let fresh = !s.first && !s.opened && prev_z < p.clearance_z && tz > prev_z;
+    let mat_top = if s.first || prev_z >= p.clearance_z {
+        p.entry_top().min(prev_z)
+    } else if fresh {
+        p.entry_top().max(prev_z)
+    } else {
+        prev_z
+    };
+    let from = if s.first || prev_z >= p.clearance_z {
+        (mat_top + a.plunge_height).min(prev_z)
+    } else if fresh {
+        (mat_top + a.plunge_height).min(tz)
+    } else {
+        prev_z
+    };
     // The level's first cut, as the pocket ladders read theirs: the
     // lead-in and the ring from the lead-in's start - where an entry that
     // cannot close on the start lands a little along it and links back
@@ -64,11 +86,18 @@ pub(super) fn bore_entry(b: &mut PathBuilder, eng: &Engage, s: &BoreStep, lead: 
     let pf = a.plunge(p.plunge_feed);
     let cur = b.at();
     let leg = Point2::new(cur.x, cur.y);
+    // #2301: the material's top over an axial dive at `d` (the plane
+    // above only where that column was opened, else the uncut core's).
+    let top_at = |b: &PathBuilder, d: Point2| {
+        if s.first || prev_z >= p.clearance_z { mat_top } else { column_top(b.moves(), &path, d, prev_z, p.entry_top()) }
+    };
     let sub = |b: &mut PathBuilder, why: &str| {
         if !a.center_cutting {
             b.note_once(&format!("{CENTER_CUT_REFUSAL} - {why}, on the bore side at ({:.3}, {:.3})", e2.x, e2.y));
         }
-        substituted_dive(b, &lvl, e2, z, m, why, tz)
+        let d = dive_point(&lvl, e2, m).unwrap_or(e2);
+        let at_d = Lvl { mat_top: top_at(b, d), ..lvl };
+        substituted_dive(b, &at_d, e2, z, m, why, tz)
     };
     if !a.center_cutting && arm == Entry3D::Plunge {
         b.note_once(&format!("{NOT_CENTER_CUTTING} - the bore side's plunge entry"));
@@ -86,7 +115,7 @@ pub(super) fn bore_entry(b: &mut PathBuilder, eng: &Engage, s: &BoreStep, lead: 
                     if leg.x != d.x || leg.y != d.y {
                         b.push(MoveKind::Rapid, Point3::new(d.x, d.y, tz), None);
                     }
-                    feed_down(b, d, z, mat_top, m, pf);
+                    feed_down(b, d, z, top_at(b, d), m, pf);
                     dive_link(b, &lvl, d, e2, z, m)
                 }
                 None => sub(b, "the disc fits nowhere here"),
@@ -95,7 +124,7 @@ pub(super) fn bore_entry(b: &mut PathBuilder, eng: &Engage, s: &BoreStep, lead: 
         Entry3D::Ramp if a.ramp_zigs() => {
             // M11.3 B: zig-zag at the angle along the lead-in and the
             // ring - every point on a path the room law proved.
-            let zf = if a.ramp_to_depth { (p.top_z + a.plunge_height).min(prev_z) } else { from };
+            let zf = if a.ramp_to_depth { (p.entry_top() + a.plunge_height).min(prev_z) } else { from };
             if zig_onto(b, &path, leg, tz, zf, z, a.ramp_angle, a.ramp_max_len, fd) {
                 None
             } else {
@@ -113,7 +142,7 @@ pub(super) fn bore_entry(b: &mut PathBuilder, eng: &Engage, s: &BoreStep, lead: 
             // angle instead, and where they are too short the dive is
             // named and flown at the plunge feed - never a straight-down
             // feed at the cutting feed.
-            let zf = if a.ramp_to_depth { (p.top_z + a.plunge_height).min(prev_z) } else { from };
+            let zf = if a.ramp_to_depth { (p.entry_top() + a.plunge_height).min(prev_z) } else { from };
             let angle = if !s.first && p.links.transition == Some(Entry3D::Ramp) {
                 level_angle(p.links.ramp_angle)
             } else {
@@ -205,6 +234,37 @@ pub(super) fn bore_entry(b: &mut PathBuilder, eng: &Engage, s: &BoreStep, lead: 
             sub(b, why)
         }
     }
+}
+
+/// The material's top over an axial dive at `d` on a later level
+/// (#2301). The bore side cuts only its ring and never the core inside
+/// it, so the plane above `prev_z` is the top only where the column at
+/// `d` was opened: `d` on the level's path (the lead-in and the ring,
+/// cut on every level above), or an earlier plunge at `d` down to the
+/// plane above. Elsewhere the dive's footprint meets the core, which
+/// stands at the top of the material `top` (carried stock included).
+fn column_top(done: &[Move], path: &[Point2], d: Point2, prev_z: f64, top: f64) -> f64 {
+    /// How far off the path a dive still counts as on it (mm): a sliver
+    /// this thin is far under verify's footprint tolerance.
+    const ON_PATH: f64 = 1e-4;
+    let on_path = (path.len() == 1 && dist(path[0], d) <= ON_PATH)
+        || path.windows(2).any(|w| seg_dist(w[0], w[1], d) <= ON_PATH);
+    let dived = done.iter().any(|mv| {
+        mv.kind == MoveKind::Plunge && mv.to.x == d.x && mv.to.y == d.y && mv.to.z <= prev_z + 1e-9
+    });
+    if on_path || dived { prev_z } else { top.max(prev_z) }
+}
+
+fn dist(a: Point2, b: Point2) -> f64 {
+    (a.x - b.x).hypot(a.y - b.y)
+}
+
+/// The distance from `q` to the segment `a -> b`.
+fn seg_dist(a: Point2, b: Point2, q: Point2) -> f64 {
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let l2 = dx * dx + dy * dy;
+    let t = if l2 > 0.0 && l2.is_finite() { (((q.x - a.x) * dx + (q.y - a.y) * dy) / l2).clamp(0.0, 1.0) } else { 0.0 };
+    dist(Point2::new(a.x + dx * t, a.y + dy * t), q)
 }
 
 /// The level ramp's angle (degrees): the links' own where it is a real

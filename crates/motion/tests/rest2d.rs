@@ -11,7 +11,7 @@ use camcraft_motion::cl::{Move, MoveKind, Toolpath};
 use camcraft_motion::entry::Entry3D;
 use camcraft_motion::geo2d::{Loop, Point2, Region};
 use camcraft_motion::machining2d::{
-    pocket, rest_plan, rest_pocket, GenError, PocketParams, PocketStrategy, RestParams, REST_FILM,
+    pocket, rest_plan, rest_pocket, GenError, PocketParams, PocketStrategy, RestParams, REST_FILM, REST_REACH,
 };
 use camcraft_motion::verify::{verify, Mode, ToolGeom, VerifyContext, Warning};
 
@@ -260,6 +260,7 @@ fn bad_rest_parameters_are_refused_by_name() {
         (RestParams { allowance: -0.1, ..prev() }, "rest allowance"),
         (RestParams { allowance: f64::NAN, ..prev() }, "must be finite"),
         (RestParams { previous_tool_diameter: f64::INFINITY, ..prev() }, "must be finite"),
+        (RestParams { previous_tool_diameter: 0.0, ..prev() }, "previous tool diameter must be positive"),
     ];
     for (rest, word) in cases {
         let msg = invalid(rest_pocket(&region, &p, &rest));
@@ -267,8 +268,8 @@ fn bad_rest_parameters_are_refused_by_name() {
     }
     let adaptive = invalid(rest_pocket(&region, &pp(PocketStrategy::Adaptive), &prev()));
     assert!(adaptive.contains("not available with the Adaptive strategy yet"), "{adaptive}");
-    let zigzag = invalid(rest_pocket(&region, &pp(PocketStrategy::Zigzag), &prev()));
-    assert!(zigzag.contains("not available with the Zigzag strategy"), "{zigzag}");
+    let zigzag = rest_pocket(&region, &pp(PocketStrategy::Zigzag), &prev());
+    assert!(zigzag.is_ok(), "Zigzag rest machining is supported: {zigzag:?}");
     assert!(rest_plan(&region, 0.0, 0.0, &prev()).is_err());
     assert!(rest_plan(&region, f64::NAN, 0.0, &prev()).is_err());
     assert!(rest_plan(&region, TOOL_D, -1.0, &prev()).is_err());
@@ -378,4 +379,134 @@ fn degenerate_pockets_error_and_never_panic() {
     }
     let bad = PocketParams { stepover: 0.0, ..p };
     assert!(rest_pocket(&rounded(W, H, CORNER), &bad, &prev()).is_err());
+}
+
+/// Measure total XY length of flat feed moves below `top_z` whose
+/// sub-segments (sampled every 0.05 mm) lie outside `zone`.
+fn cleared_floor_feed_len(path: &Toolpath, top_z: f64, zone: &Region) -> f64 {
+    let mut air = 0.0;
+    for m in &path.moves {
+        if m.kind != MoveKind::Feed || (m.from.z - m.to.z).abs() >= 1e-9 || m.from.z >= top_z - 1e-9 {
+            continue;
+        }
+        for (a, b) in m.chords(0.005) {
+            let len = (b.x - a.x).hypot(b.y - a.y);
+            if len <= 1e-9 {
+                continue;
+            }
+            let steps = (len / 0.05).ceil().max(1.0) as usize;
+            let step = len / steps as f64;
+            for k in 0..steps {
+                let t = (k as f64 + 0.5) / steps as f64;
+                let mid = Point2::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
+                if !zone.contains(mid) {
+                    air += step;
+                }
+            }
+        }
+    }
+    air
+}
+
+#[test]
+fn rest_rings_do_not_feed_over_cleared_floor() {
+    let region = rounded(W, H, CORNER);
+    let plan = rest_plan(&region, TOOL_D, 0.0, &prev()).unwrap();
+    let allowed = plan.rest.offset(TOOL_D * 0.5 + REST_REACH * 0.5 + 0.005).unwrap();
+    for strategy in [PocketStrategy::Waterline, PocketStrategy::OffsetRings, PocketStrategy::Auto] {
+        for climb in [true, false] {
+            for entry in [Entry3D::Plunge, Entry3D::Helix, Entry3D::Ramp] {
+                let p = PocketParams { strategy, climb, entry, ..pp(strategy) };
+                let path = rest_pocket(&region, &p, &prev()).unwrap();
+                assert_eq!(check(&path, &region, TOOL_D * 0.5), Vec::new(), "{strategy:?} climb={climb} entry={entry:?}");
+                let air = cleared_floor_feed_len(&path, p.top_z, &allowed);
+                assert!(air < 0.05, "{strategy:?} climb={climb} entry={entry:?}: {air:.2} mm cleared-floor feed");
+                let cuts = cuts_at(&path, p.bottom_z);
+                let reach = TOOL_D * 0.5 + 0.02;
+                let uncut = grid()
+                    .filter(|&q| certain_residue(q))
+                    .filter(|&q| !cuts.iter().any(|&(a, b)| seg_dist(q, a, b) <= reach))
+                    .count();
+                assert_eq!(uncut, 0, "{strategy:?} climb={climb} entry={entry:?}: residue left uncut");
+            }
+        }
+    }
+}
+
+#[test]
+fn deep_corner_and_filleted_turns_clear_residue_without_cleared_floor_laps() {
+    for (cr, prev_d) in [(2.2, 20.0), (0.25, 16.0)] {
+        let region = rounded(40.0, 30.0, cr);
+        let rest = RestParams { previous_tool_diameter: prev_d, ..prev() };
+        let plan = rest_plan(&region, TOOL_D, 0.0, &rest).unwrap();
+        let allowed = plan.rest.offset(TOOL_D * 0.5 + REST_REACH * 0.5 + 0.005).unwrap();
+        let own_center = region.offset(-(TOOL_D * 0.5)).unwrap();
+        let reachable = own_center.offset(TOOL_D * 0.5).unwrap();
+        let check_area = plan.rest.intersect(&reachable).unwrap().offset(-0.02).unwrap();
+        for blend_turns in [false, true] {
+            for climb in [true, false] {
+                for links in [camcraft_motion::links::Links::PLANAR, camcraft_motion::links::Links::ROUGH3D] {
+                    let p = PocketParams { blend_turns, climb, links, ..pp(PocketStrategy::Waterline) };
+                    let path = rest_pocket(&region, &p, &rest).unwrap();
+                    assert_eq!(check(&path, &region, TOOL_D * 0.5), Vec::new(), "cr={cr} blend={blend_turns} climb={climb} keep_down={}", links.pass == camcraft_motion::links::Link::KeepDown);
+                    let air = cleared_floor_feed_len(&path, p.top_z, &allowed);
+                    assert!(air < 0.05, "cr={cr} blend={blend_turns} climb={climb}: {air:.2} mm cleared-floor feed");
+                    if !blend_turns || cr > TOOL_D * 0.5 {
+                        let cuts = cuts_at(&path, p.bottom_z);
+                        let reach = TOOL_D * 0.5 + 0.02;
+                        for i in 0..=400 {
+                            for j in 0..=300 {
+                                let q = Point2::new(f64::from(i) * 0.1, f64::from(j) * 0.1);
+                                if check_area.contains(q) {
+                                    assert!(
+                                        cuts.iter().any(|&(a, b)| seg_dist(q, a, b) <= reach),
+                                        "cr={cr} blend={blend_turns} climb={climb}: uncut deep residue at ({:.1}, {:.1})",
+                                        q.x,
+                                        q.y
+                                    );
+                                }
+                            }
+                        }
+                    } else {
+                        assert!(
+                            path.notes.iter().any(|n| n.contains("blend")),
+                            "cr={cr} blend=true climb={climb}: expected corner blend note: {:?}",
+                            path.notes
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn previous_stock_to_leave_drops_cleared_floor_hole_lap() {
+    let region = rounded(W, H, CORNER);
+    for leave in [0.3, 5.8] {
+        let rest = RestParams { previous_stock_to_leave: leave, ..prev() };
+        let plan = rest_plan(&region, TOOL_D, 0.0, &rest).unwrap();
+        let allowed = plan.rest.offset(TOOL_D * 0.5 + REST_REACH * 0.5 + 0.005).unwrap();
+        let p = pp(PocketStrategy::Waterline);
+        let path = rest_pocket(&region, &p, &rest).unwrap();
+        assert_eq!(check(&path, &region, TOOL_D * 0.5), Vec::new(), "leave={leave}");
+        let air = cleared_floor_feed_len(&path, p.top_z, &allowed);
+        assert!(air < 0.05, "leave={leave}: {air:.2} mm cleared-floor feed");
+        let cuts = cuts_at(&path, p.bottom_z);
+        let reach = TOOL_D * 0.5 + 0.02;
+        let core = plan.rest.offset(-0.02).unwrap();
+        for i in 0..=300 {
+            for j in 0..=200 {
+                let q = Point2::new(f64::from(i) * 0.2, f64::from(j) * 0.2);
+                if core.contains(q) {
+                    assert!(
+                        cuts.iter().any(|&(a, b)| seg_dist(q, a, b) <= reach),
+                        "leave={leave}: uncut wall stock at ({:.1}, {:.1})",
+                        q.x,
+                        q.y
+                    );
+                }
+            }
+        }
+    }
 }

@@ -141,6 +141,7 @@ fn a_located_plates_riders_are_clash_checked() {
     let spec = LocateSpec {
         part: "Part".into(),
         fixture: p.clone(),
+        body: Default::default(),
         mates: vec![Mate { part: bottom_face(&world, "Part"), fixture: top_face(&world, &p) }],
         offset: LocateOffset { dz: -5.0, ..LocateOffset::default() },
     };

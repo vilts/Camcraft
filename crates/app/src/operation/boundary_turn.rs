@@ -227,6 +227,7 @@ mod law {
             climb: true,
             blend_turns: false,
             holes: machining2d::FaceHoles::Lift,
+            stock_top: None,
         }
     }
 

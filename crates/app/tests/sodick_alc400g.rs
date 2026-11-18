@@ -13,14 +13,14 @@ use camcraft_app::commands::{CreateOperation, GenerateOperation, History, Import
 use camcraft_app::geometry::{Mesh, Point3, Triangle};
 use camcraft_app::machine::{library, parse_mch, Kind};
 use camcraft_app::operation::{self, Height, OpParams, SrcRef, WireContourOp, WireSide};
-use camcraft_app::posting::{self, BUILTINS, MACHINES};
+use camcraft_app::posting;
 use camcraft_app::world::new_world;
 
 const NAME: &str = "Sodick ALC400G";
 const SODICK: &str = "Sodick Wire EDM (Mark 21)";
 
 fn text() -> &'static str {
-    MACHINES.iter().find(|(n, _)| *n == NAME).map(|(_, t)| *t).expect("the ALC400G is shipped")
+    camcraft_app::posting::builtin_machine_text(NAME).expect("the ALC400G is shipped")
 }
 
 #[test]
@@ -82,6 +82,11 @@ fn punch_world(machine_text: &str, condition: &str, taper_deg: f64) -> Result<fl
     let mut h = History::default();
     let m = parse_mch(machine_text).expect("parses");
     h.execute(&world, LoadMachine::new(&world, "alc400g.mch".into(), Some(m)).expect("mount"));
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("slug", slug()));
     let op = WireContourOp {
         top_z: Height::fixed(12.0),
@@ -97,7 +102,7 @@ fn punch_world(machine_text: &str, condition: &str, taper_deg: f64) -> Result<fl
         clearance: operation::DEFAULT_CLEARANCE,
         skims: Vec::new(),
     };
-    let c = CreateOperation::new(&world, "Punch1", "", SrcRef::Entity("slug".into()), OpParams::WireContour(op)).map_err(|e| format!("{e:?}"))?;
+    let c = CreateOperation::new(&world, "Punch1", "EDM-W025", SrcRef::Entity("slug".into()), OpParams::WireContour(op)).map_err(|e| format!("{e:?}"))?;
     h.execute(&world, c);
     h.execute(&world, GenerateOperation::new(&world, "Punch1").expect("generates"));
     Ok(world)
@@ -120,7 +125,7 @@ fn a_punch_posts_through_the_sodick_post_on_it() {
         { "id": "C110", "name": "test row", "gap": 0.04, "wire_diameter": 0.25, "role": "rough", "notes": "TEST ONLY - not a Sodick figure" }
     ]);
     let world = punch_world(&raw.to_string(), "C110", 0.0).expect("the user's condition lets the punch generate");
-    let cps = BUILTINS.iter().find(|(n, _)| *n == SODICK).map(|(_, s)| *s).expect("registered");
+    let cps = camcraft_app::posting::builtin_post_text(SODICK).expect("registered");
     let out = std::env::temp_dir().join(format!("camcraft-alc400g-{}.nc", std::process::id()));
     let posted = posting::post_script(&world, &out, cps);
     let _ = std::fs::remove_file(&out);
@@ -157,7 +162,7 @@ fn a_tapered_punch_is_refused_at_post_while_the_file_states_no_guide_heights() {
     let mut h = History::default();
     let m = parse_mch(&shipped).expect("parses");
     h.execute(&world, LoadMachine::new(&world, "alc400g.mch".into(), Some(m)).expect("remount"));
-    let cps = BUILTINS.iter().find(|(n, _)| *n == SODICK).map(|(_, s)| *s).expect("registered");
+    let cps = camcraft_app::posting::builtin_post_text(SODICK).expect("registered");
     let out = std::env::temp_dir().join(format!("camcraft-alc400g-taper-{}.nc", std::process::id()));
     let posted = posting::post_script(&world, &out, cps);
     let _ = std::fs::remove_file(&out);

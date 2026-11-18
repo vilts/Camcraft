@@ -54,6 +54,7 @@ pub(super) fn page(ui: &mut Ui, state: &mut State, name: &str, page: SetupPage) 
                 pages::post_section(ui, state);
                 ui.separator();
                 super::setup_post_page::options_ownership(ui, state, ctx);
+                super::post_script_options::section(ui, state);
             }
         }
         SetupPage::Fixtures => {

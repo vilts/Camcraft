@@ -64,6 +64,7 @@ fn wire_doc() -> (World, History) {
     h.execute(&world, ImportModel::from_mesh("slug", slug()));
     let stock = SetStock::new(&world, StockShape::Box { dx: 50.0, dy: 30.0, dz: 12.0 }, Location::default());
     h.execute(&world, stock.expect("stock"));
+    h.execute(&world, AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25)).expect("wire"));
     let op = WireContourOp {
         top_z: Height::fixed(12.0),
         bottom_z: Height::fixed(0.0),
@@ -78,7 +79,7 @@ fn wire_doc() -> (World, History) {
         skims: Vec::new(),
         four_axis: None,
     };
-    let create = CreateOperation::new(&world, "Die1", "", SrcRef::Entity("slug".into()), OpParams::WireContour(op));
+    let create = CreateOperation::new(&world, "Die1", "EDM-W025", SrcRef::Entity("slug".into()), OpParams::WireContour(op));
     h.execute(&world, create.expect("die"));
     h.execute(&world, GenerateOperation::new(&world, "Die1").expect("generates"));
     (world, h)
@@ -142,7 +143,7 @@ fn the_setup_sheet_shows_the_wire_condition_and_no_missing_tool() {
     let (world, _h) = wire_doc();
     let sheet = setup_sheet::render(&world, None).expect("sheet");
     let row = sheet.lines().find(|l| l.contains("Die1")).expect("the op row");
-    assert!(row.contains("cond C110"), "the TOOL cell names the condition: {row}");
+    assert!(row.contains("EDM-W025"), "the TOOL cell names the wire tool: {row}");
     assert!(sheet.contains("CONDITION C110  WIRE D 0.250  GAP 0.040"), "{sheet}");
     assert!(!sheet.contains("no longer in the document"), "{sheet}");
     assert!(!sheet.contains("tool ''"), "{sheet}");
@@ -157,13 +158,16 @@ fn the_setup_sheet_still_says_a_milling_tool_is_gone() {
 }
 
 #[test]
-fn the_tool_list_and_its_export_hold_no_row_for_a_wire_cut() {
+fn the_tool_list_and_its_export_hold_the_mounted_wire_tool() {
     let (world, _h) = wire_doc();
-    assert!(tool_list::for_setup(&world, None).is_empty(), "a wire EDM has no tool table");
-    assert!(tool_list::program(&world).is_empty());
-    assert!(tool_list_export::rows(&world, None).is_empty());
+    let rows = tool_list::for_setup(&world, None);
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].tool, "EDM-W025");
+    assert_eq!(tool_list::program(&world).len(), 1);
+    let export = tool_list_export::rows(&world, None);
+    assert_eq!((export[0].name.as_str(), export[0].kind.as_str(), export[0].size.as_str()), ("EDM-W025", "wire", "0.250"));
     let csv = tool_list_export::csv(&world, None);
-    assert_eq!(csv.lines().count(), 1, "the header alone: {csv}");
+    assert_eq!(csv.lines().count(), 2, "{csv}");
 }
 
 #[test]
@@ -179,8 +183,8 @@ fn the_tool_list_keeps_a_row_for_a_lost_milling_tool() {
 #[test]
 fn the_cutting_data_table_says_why_it_cannot_speak_for_a_wire_cut() {
     let (world, _h) = wire_doc();
-    let err = cutting::suggest(&world, "Die1").expect_err("no tool to tabulate");
-    assert!(err.contains("mounts no library tool") && err.contains("EDM condition"), "{err}");
+    let err = cutting::suggest(&world, "Die1").expect_err("wire is not tabulated");
+    assert!(err.contains("wire") && err.contains("EDM condition"), "{err}");
     assert!(!err.contains(MISSING), "{err}");
     let world = milling_doc_with_a_lost_tool();
     let err = cutting::suggest(&world, "Face1").expect_err("a lost tool");

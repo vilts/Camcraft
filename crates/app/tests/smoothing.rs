@@ -14,11 +14,10 @@ use camcraft_app::cl::{Move, MoveKind, Toolpath};
 use camcraft_app::geometry::Point3;
 use camcraft_app::operation::{self, Height, OpParams, OpType};
 use camcraft_app::post::{self, cnc, Dump, Smoothing};
-use camcraft_app::posting::BUILTINS;
 use camcraft_app::smoothing::{self, FINISH_SHARE, ROUGH_MAX_MM};
 
 fn script(name: &str) -> &'static str {
-    BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, s)| *s).unwrap_or_else(|| panic!("{name} is built in"))
+    camcraft_app::posting::builtin_post_text(name).unwrap_or_else(|why| panic!("{name} is built in: {why}"))
 }
 
 /// A one-feed section, with or without a smoothing ask.
@@ -58,7 +57,7 @@ const ROUGH: Option<Smoothing> = Some(Smoothing { tol_mm: 0.1, finish: false });
 fn off_is_byte_identical_and_writes_no_smoothing_word() {
     // #542: a sinker post serves sinker EDMs only (no smoothing words).
     let sinker = camcraft_app::posting::SINKER_POSTS;
-    for (name, _) in BUILTINS.iter().filter(|(n, _)| *n != "Fanuc Lathe" && !sinker.contains(n)) {
+    for (name, _) in camcraft_app::posting::shipped_posts().expect("the shipped posts read").iter().filter(|(n, _)| *n != "Fanuc Lathe" && !sinker.contains(n)) {
         let off = program(name, None);
         for w in ["G5.1", "G187", "CYCLE832", "G62 ", "SMOOTHING"] {
             assert!(!off.contains(w), "{name} wrote {w} with smoothing off:\n{off}");

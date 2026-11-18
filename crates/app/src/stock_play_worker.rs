@@ -35,6 +35,9 @@
 //!   the worker cuts whole moves as above, and on landing cuts the
 //!   travelled part on a copy (`FieldPlay::seek_to`). A fraction-only
 //!   change costs one stock copy and one partial sweep - no re-cut.
+//! - **The removal is calculated before playback (#2181).** See
+//!   `stock_play_worker_precalc`: keyframes first, then a far target
+//!   restores the one at or before it and cuts at most one stride.
 //! - **Refuse, never crash.** A build or cut failure is published as
 //!   `Err` and the worker ends; a poisoned lock reads as a lost worker
 //!   by name. Dropping the handle stops and joins the thread: no
@@ -47,7 +50,12 @@ use std::thread::JoinHandle;
 use crate::clock::Instant;
 use std::time::Duration;
 
-use crate::stock_play::{settle_frac, FieldPlay, PlayIndex, PlaySeed};
+use crate::stock_play::{settle_frac, FieldPlay, PlayIndex, PlaySeed, Precalc};
+
+#[path = "stock_play_worker_precalc.rs"]
+mod precalc;
+use precalc::{precalc, refuse};
+use camcraft_sim::play_precalc_mailbox::Mailbox;
 use crate::stock_view::{CutLayer, FieldView, Packed, PackedBase};
 use crate::stock_sim::preview::{pack_cut, pack_cut_patch, LatticeMeta};
 
@@ -98,6 +106,9 @@ struct Shared {
     wake: Condvar,
     out: Mutex<Slot>,
     published: Condvar,
+    /// The calculation before playback (#2181) and the UI's cancel
+    /// (`camcraft_sim::play_precalc_mailbox`).
+    precalc: Mailbox,
 }
 
 /// The playback worker's handle (see the module law).
@@ -120,12 +131,19 @@ impl PlayWorker {
     /// Start a worker over `seed` (the fields are built on the worker,
     /// so the call returns at once). `Err` only when no thread spawns.
     pub fn spawn(seed: PlaySeed) -> Result<Self, String> {
+        Self::start(seed, None)
+    }
+
+    fn start(seed: PlaySeed, budget: Option<usize>) -> Result<Self, String> {
         let index = seed.index();
         let shared = Arc::new(Shared::default());
+        if budget.is_some() {
+            shared.precalc.set(Precalc::Running { done: 0, total: index.total() });
+        }
         let inner = Arc::clone(&shared);
         let handle = std::thread::Builder::new()
             .name("camcraft-playback".into())
-            .spawn(move || run(&inner, seed))
+            .spawn(move || run(&inner, seed, budget))
             .map_err(|e| format!("playback worker would not start: {e}"))?;
         Ok(PlayWorker { shared, index, handle: Some(handle), shown: AtomicUsize::new(usize::MAX), shown_frac: AtomicU64::new(0) })
     }
@@ -198,6 +216,9 @@ impl PlayWorker {
     /// A paused playhead at its displayed target needs no redraw timer.
     #[must_use]
     pub fn needs_poll(&self) -> bool {
+        if matches!(self.precalc(), Precalc::Running { .. }) {
+            return true;
+        }
         let total = self.index.total();
         let target = lock(&self.shared.req).map(|g| {
             let k = g.target.min(total);
@@ -317,11 +338,16 @@ fn snapshot(shared: &Shared, play: &mut FieldPlay, base: Option<&Arc<PackedBase>
     PlayFrame { at: play.at(), frac: play.frac(), view: Arc::new(view) }
 }
 
-fn run(shared: &Shared, seed: PlaySeed) {
+fn run(shared: &Shared, seed: PlaySeed, budget: Option<usize>) {
     let mut play = match FieldPlay::from_seed(seed) {
         Ok(p) => p,
-        Err(e) => return publish(shared, Err(e)),
+        Err(e) => return refuse(shared, budget, e),
     };
+    if let Some(budget) = budget
+        && !precalc(shared, &mut play, budget)
+    {
+        return;
+    }
     let base = {
         let v = play.view();
         PackedBase::of(&v.stock, v.target.as_deref()).map(|(b, _)| Arc::new(b))
@@ -334,9 +360,10 @@ fn run(shared: &Shared, seed: PlaySeed) {
         // is not a play step); a play step cuts a frame's worth of moves.
         let jump = k > play.at() && (play.batched() || k > play.at().saturating_add(JUMP_MOVES));
         play.set_batched(jump);
-        // A backward target restores its checkpoint first (no cutting),
-        // then walks forward in chunks like any other.
-        let step = if k < play.at() {
+        // A backward target, or a keyframe more than a stride ahead
+        // (#2181), restores its checkpoint first (no cutting), then
+        // walks forward in chunks like any other (the sim crate's law).
+        let step = if play.keyframes().restores(play.at(), k) {
             play.floor_checkpoint(k)
         } else if jump {
             k.min(play.next_boundary())

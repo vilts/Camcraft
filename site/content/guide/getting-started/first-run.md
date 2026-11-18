@@ -115,6 +115,12 @@ reader or an automated test can name them.
 
 More tasks: [Common workflows](@/guide/getting-started/workflows.md).
 
+Complete first parts on one machine each:
+[Your first router part](@/guide/getting-started/first-router-part.md) (a
+sheet-goods router job) and
+[Your first 4-axis part](@/guide/getting-started/first-4axis-part.md)
+(indexed 3+1 work on a Tormach 770MX with a microARC 4).
+
 ## Undo
 
 Every change to the document is a command, so Ctrl+Z and Ctrl+Y (Cmd+Z and Cmd+Y on

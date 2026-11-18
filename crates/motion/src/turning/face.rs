@@ -150,7 +150,16 @@ pub fn facing(
                 .into(),
         ));
     }
-    let rungs = ((hi - s_face) / p.stepdown).floor() + 1.0;
+    let mut rungs = ((hi - s_face) / p.stepdown).floor() + 1.0;
+    // #2004: a rung AT the top of the work (a span an exact multiple of
+    // the stepdown) has its whole ball band [s, s + 2r] above the work -
+    // a full facing pass through air. It is dropped; the rung under it
+    // already reaches the top (`stepdown <= 2r`). A rung at a Top Z that
+    // stands BELOW the work's top still has material over it, and stays.
+    let tol = (hi - s_face) * 1e-9;
+    if rungs > 1.0 && s_face + (rungs - 1.0) * p.stepdown >= z_top - tol {
+        rungs -= 1.0;
+    }
     if rungs > MAX_RUNGS {
         return Err(GenError::Invalid(format!(
             "the facing ladder would run {:.0} stations - the stepdown is far too fine \

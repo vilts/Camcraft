@@ -169,6 +169,7 @@ fn build_demo_world() -> flecs_ecs::prelude::World {
     let top_clr = Height::of(HeightReference::TopOfStock, 15.0);
     let top_ret = Height::of(HeightReference::TopOfStock, 5.0);
     let drill_base = OpParams::Drill {
+        break_through: None,
         clearance_z: top_clr, retract_z: Some(top_ret), top_z: Height::of(HeightReference::TopOfStock, 0.0), bottom_z: None,
         cycle: CycleChoice::Auto, peck: 4.0, dwell: 0.0, feed: 150.0, plunge_feed: 150.0, holes: Vec::new(), cross: Vec::new(),
     };
@@ -180,6 +181,7 @@ fn build_demo_world() -> flecs_ecs::prelude::World {
     let pocket = recognize::pockets_of(&world, "router-part").expect("pockets").into_iter().next().expect("pocket");
     let pocket_src = SrcRef::Selection(vec![GeoSel { entity: "router-part".into(), feature: FeatureSel::Face(pocket.floor) }]);
     let pocket_params = OpParams::Pocket {
+        rest: None,
         stepover: 3.0, stock_to_leave: 0.0, clearance_z: top_clr, retract_z: Some(top_ret),
         top_z: Height::of(HeightReference::TopOfModel, 0.0), bottom_z: Height::of(HeightReference::TopOfModel, -4.0),
         stepdown: 2.0, feed: 1800.0, plunge_feed: 400.0, climb: true, strategy: PocketStrategy::Waterline,
@@ -208,6 +210,11 @@ fn build_demo_world() -> flecs_ecs::prelude::World {
 #[test]
 fn first_router_part_project_loads_verifies_and_posts_to_grblhal() {
     let demo_path = repo("examples/first-router-part.camproj");
+    if std::env::var_os("WRITE_GOLDEN").is_some() {
+        // The demo is the command build below, saved (#1917's decision):
+        // a generator change regenerates it, as for every golden.
+        project::save(&build_demo_world(), &demo_path).expect("write the demo project");
+    }
     assert!(demo_path.exists(), "expected committed router demo project at {}", demo_path.display());
 
     let world = new_world();

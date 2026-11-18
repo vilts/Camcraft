@@ -127,7 +127,7 @@ pub fn contour_along_chain(
         // The stock beside the run is not proved cleared: the one plunge
         // law refuses a tool that is not centre-cutting by name.
         let cc = p.links.approach.center_cutting;
-        plunge_law::guard(&mut b, cc, p.tool_diameter * 0.5, entry, z, p.top_z, "the dive at the lead-in");
+        plunge_law::guard(&mut b, cc, p.tool_diameter * 0.5, entry, z, p.entry_top(), "the dive at the lead-in");
         b.push(MoveKind::Plunge, Point3::new(entry.x, entry.y, z), Some(p.plunge_feed));
         push_segs(&mut b, &lead, z, p.feed);
         push_segs(&mut b, &walk, z, p.feed);

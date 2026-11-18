@@ -4,7 +4,7 @@ use crate::drilling::{CycleChoice, Hole};
 use crate::finishing3d;
 use crate::geo2d::Point2;
 use crate::links::Links;
-use crate::machining2d::{FaceHoles, Lead, PocketStrategy, Side};
+use crate::machining2d::{FaceHoles, Lead, PocketStrategy, RestParams, Side};
 use crate::machining3d::Entry3D;
 
 use super::height::Height;
@@ -19,23 +19,60 @@ use super::sel::OpType;
 /// parameter field is no index - the ordinary prismatic op.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Tilt {
+    /// 0 preserves the pre-#2133 frame; 1 ignores trigonometric dust.
+    pub basis_version: u8,
     pub a_deg: f64,
     pub b_deg: f64,
     pub origin: [f64; 3],
 }
 
 impl Tilt {
-    /// The frame this index commands: None only when the angles state
-    /// no direction at all (a non-finite letter - refused at the
-    /// parameter door long before generation, but the frame's law is
-    /// Option, not panic).
+    /// The frame this index commands under its persisted basis version.
+    /// Non-finite angles or an unsupported version return None; the
+    /// parameter door refuses these before generation.
     #[must_use]
     pub fn frame(&self) -> Option<crate::cl::TiltedFrame> {
-        crate::cl::TiltedFrame::from_angles(
+        crate::cl::TiltedFrame::from_angles_versioned(
             crate::geometry::Point3::new(self.origin[0], self.origin[1], self.origin[2]),
             self.a_deg,
             self.b_deg,
+            self.basis_version,
         )
+    }
+
+    /// By-name refusal behind [`Tilt::is_sane`] (#2133): names the out-of-range
+    /// field, gives the canonical bounds (A in -90..90, B in -180..180), and
+    /// explains that the face opposite the top is A 0 B 180.
+    #[must_use]
+    pub fn refusal(&self) -> Option<String> {
+        if self.basis_version > 1 {
+            return Some("Tilted plane: unsupported frame basis version".into());
+        }
+        if !self.a_deg.is_finite() || !self.b_deg.is_finite() {
+            return Some(
+                "Tilted plane (3+2): Tool axis A and Tool axis B must be finite numbers (A -90..90 deg, B -180..180 deg)"
+                    .into(),
+            );
+        }
+        if !(-90.0..=90.0).contains(&self.a_deg) {
+            return Some(format!(
+                "Tilted plane (3+2): Tool axis A ({} deg) must be in -90..90 deg (Tool axis B -180..180 deg) - for the face opposite the top, use Tool axis A 0 and Tool axis B 180",
+                self.a_deg
+            ));
+        }
+        if !(-180.0..=180.0).contains(&self.b_deg) {
+            return Some(format!(
+                "Tilted plane (3+2): Tool axis B ({} deg) must be in -180..180 deg (Tool axis A -90..90 deg) - for the face opposite the top, use Tool axis A 0 and Tool axis B 180",
+                self.b_deg
+            ));
+        }
+        if !self.origin.iter().all(|v| v.is_finite() && v.abs() < 1e9) {
+            return Some(
+                "Tilted plane (3+2): Plane origin X, Y and Z must be finite numbers within 1e9 mm"
+                    .into(),
+            );
+        }
+        None
     }
 
     /// Door sanity (M5.1 stage B): every number finite, the anchor
@@ -46,11 +83,7 @@ impl Tilt {
     /// file identities (a stamp that changes for no motion).
     #[must_use]
     pub fn is_sane(&self) -> bool {
-        self.a_deg.is_finite()
-            && self.b_deg.is_finite()
-            && (-90.0..=90.0).contains(&self.a_deg)
-            && (-180.0..=180.0).contains(&self.b_deg)
-            && self.origin.iter().all(|v| v.is_finite() && v.abs() < 1e9)
+        self.refusal().is_none()
     }
 }
 
@@ -174,6 +207,10 @@ pub enum OpParams {
         /// `blend_turns`; `None` is the tool radius every earlier file
         /// blends at.
         blend_radius: Option<f64>,
+        /// Rest machining (#1489): cut only what the larger previous tool
+        /// described here could not reach (`machining2d::rest_pocket`).
+        /// `None` is off - every earlier file, and the plain pocket.
+        rest: Option<RestParams>,
         /// 3+2 index; see [`OpParams::Face`]'s field.
         tilt: Option<Tilt>,
     },
@@ -444,6 +481,11 @@ pub enum OpParams {
         /// kind or the other - the mill's Z holes or the turret's
         /// cross holes - and the generator refuses a mix by name.
         cross: Vec<camcraft_motion::drilling::CrossHole>,
+        /// How far past a through hole's floor the tip runs (#1557), mm.
+        /// `None` is the kind's own default - 1.0 mm, the drill's full diameter clean through - which every file
+        /// before the option posted; checked at generation against the
+        /// stock bottom, refused by name below it.
+        break_through: Option<f64>,
     },
     /// Mesh-driven 3D pocketing. The model is the final part: every
     /// level cuts the footprint minus the model's section strictly above
@@ -1159,6 +1201,11 @@ pub enum OpParams {
         tolerance: f64,
         holes: Vec<Hole>,
         links: Links,
+        /// How far past a through hole's floor the tip runs (#1557), mm.
+        /// `None` is the kind's own default - 1.0 mm, as the drill - which every file
+        /// before the option posted; checked at generation against the
+        /// stock bottom, refused by name below it.
+        break_through: Option<f64>,
     },
     /// Helical thread milling (M2.4 C, reworked by #894): internal
     /// threads in the listed holes - or, `external`, on the listed
@@ -1196,6 +1243,11 @@ pub enum OpParams {
         /// ([`crate::machining2d::ThreadPasses`]). The default is the
         /// #894 ride every older file meant.
         passes: crate::machining2d::ThreadPasses,
+        /// How far past a through hole's floor the tip runs (#1557), mm.
+        /// `None` is the kind's own default - one pitch, so the thread is whole at the exit - which every file
+        /// before the option posted; checked at generation against the
+        /// stock bottom, refused by name below it.
+        break_through: Option<f64>,
     },
     /// Probing (#108): a spindle touch probe finds a face, an edge, an
     /// outside corner or a bore / boss centre, then sets a work offset

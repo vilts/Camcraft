@@ -57,6 +57,7 @@ enum KindWord {
     Electrode,
     ThreadMill,
     ThreadMillSingle,
+    Wire,
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -137,6 +138,7 @@ impl Def {
                 KindWord::Electrode => ToolKind::Electrode,
                 KindWord::ThreadMill => ToolKind::ThreadMill,
                 KindWord::ThreadMillSingle => ToolKind::ThreadMillSingle,
+                KindWord::Wire => ToolKind::Wire,
             },
             diameter: self.diameter,
             corner_r: self.corner_r,

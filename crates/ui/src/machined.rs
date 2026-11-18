@@ -48,7 +48,7 @@ pub(crate) fn prime(state: &mut State) {
     if state.stock_mesh.viewed(&fv).is_none()
         && let Err(err) = state.stock_mesh.get(&fv)
     {
-        state.status += &format!(" | machined mesh refused: {err} - the sheet stands");
+        state.say_once(&format!("the cut stock cannot be drawn, the uncut stock shows: {err}"));
         return;
     }
     state.stock_mesh.classify(&fv);

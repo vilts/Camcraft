@@ -34,7 +34,7 @@ pub(crate) const SECTIONS: [&str; 6] = ["Geometry", "Heights", "Passes", "Lead i
 pub(crate) const SEC_GEO: usize = 0;
 pub(super) const SEC_HEIGHTS: usize = 1;
 pub(super) const SEC_PASSES: usize = 2;
-pub(super) const SEC_LEADS: usize = 3;
+pub(crate) const SEC_LEADS: usize = 3;
 pub(super) const SEC_FEEDS: usize = 4;
 pub(super) const SEC_MACHINE: usize = 5;
 

@@ -122,6 +122,12 @@
 
     input.addEventListener("input", function () { render(input.value); });
 
+    var query = new URLSearchParams(window.location.search).get("q");
+    if (query !== null) {
+      input.value = query;
+      render(input.value);
+    }
+
     form.addEventListener("submit", function (event) {
       event.preventDefault();
       var first = links()[0];

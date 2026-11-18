@@ -67,6 +67,7 @@ fn world_with(hole_h: f64, name: &str, t: Tool) -> (World, History) {
 fn params(radius: f64, cycle: CycleChoice) -> OpParams {
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius, entry_z: TOP, floor_z: FLOOR, through: false, stepped: false };
     OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(TOP + 10.0),
         retract_z: None,
         top_z: Height::fixed(TOP),

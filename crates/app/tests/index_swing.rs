@@ -20,7 +20,7 @@ use camcraft_app::geo2d::Point2;
 use camcraft_app::machine::{Machine, parse_mch};
 use camcraft_app::machining3d::Entry3D;
 use camcraft_app::operation::{Height, OpParams, SrcRef, Tilt};
-use camcraft_app::posting::{MACHINES, index_swing::MARGIN_MM, verification_gate};
+use camcraft_app::posting::{index_swing::MARGIN_MM, verification_gate};
 use camcraft_app::schema::{Location, PostRef};
 use camcraft_app::stock::StockShape;
 use camcraft_app::tools::catalog;
@@ -35,7 +35,7 @@ const ARC4: &str = "Tormach 770MX + microARC 4";
 const NOSE: f64 = 10.6 * IN;
 
 fn shipped(name: &str) -> Machine {
-    let text = MACHINES.iter().find(|(n, _)| *n == name).map(|(_, t)| *t).expect("shipped");
+    let text = camcraft_app::posting::builtin_machine_text(name).expect("shipped");
     parse_mch(text).expect("parses")
 }
 
@@ -65,7 +65,7 @@ fn doc(machine: Machine, len: f64, a: Option<f64>) -> World {
     t.holder_len = len - t.flute_len - t.shank_len;
     assert!(t.holder_len > 0.0, "the holder takes up the rest of the length");
     h.execute(&world, ok(AddTool::new(&world, "EM 1/4", t), "tool"));
-    let tilt = a.map(|a_deg| Tilt { a_deg, b_deg: 0.0, origin: [0.0; 3] });
+    let tilt = a.map(|a_deg| Tilt { basis_version: 1, a_deg, b_deg: 0.0, origin: [0.0; 3] });
     let flat = OpParams::Slot {
         a: Point2::new(-0.75 * IN, 0.0),
         b: Point2::new(-0.25 * IN, 0.0),
@@ -182,7 +182,7 @@ fn a_machine_with_no_a_is_unaffected() {
 /// #813: the shipped microARC text with its A's `axis` vector struck -
 /// a user's own table-A file that never states the line.
 fn arc4_without_axis_vector() -> Machine {
-    let text = MACHINES.iter().find(|(n, _)| *n == ARC4).map(|(_, t)| *t).expect("shipped");
+    let text = camcraft_app::posting::builtin_machine_text(ARC4).expect("shipped");
     let custom = text.replacen("\"axis\": [1.0, 0.0, 0.0],", "", 1);
     assert_ne!(custom, text, "the A's axis vector was struck");
     let m = parse_mch(&custom).expect("a table A with no axis vector still parses");

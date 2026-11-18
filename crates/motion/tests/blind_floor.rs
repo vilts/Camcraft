@@ -185,7 +185,7 @@ fn link_sets(entry: Entry3D) -> [Links; 2] {
 fn a_blind_pocket_never_enters_solid_under_any_ladder() {
     let entries = [Entry3D::Plunge, Entry3D::Ramp, Entry3D::Helix, Entry3D::Arc];
     let strategies = [PocketStrategy::Waterline, PocketStrategy::Zigzag];
-    let mut runs = 0;
+    let (mut runs, mut refused) = (0, 0);
     for d in [3.0, 5.5, 8.0, 12.0] {
         let f = block(d);
         let region = camcraft_motion::geometry::slice::project(&f, 64).expect("silhouette");
@@ -200,8 +200,24 @@ fn a_blind_pocket_never_enters_solid_under_any_ladder() {
                                 );
                                 let p = Pocket3DParams { links, ..params(entry, strategy, stepdown, bottom_z) };
                                 let ladder = if shell { pocket3d_offset } else { pocket3d };
-                                let t = ladder(&f, &region, &p)
-                                    .unwrap_or_else(|e| panic!("{tag}: the hole is always there to cut: {e}"));
+                                // #2004: no level stands at Top Z. A stepdown that
+                                // passes the hole floor with Bottom under it puts
+                                // no plane in the hole: the old ladder cut only the
+                                // air plane at Top Z there. Nothing can be cut
+                                // without a level under the floor, so the ladder
+                                // refuses by name - and only in that case.
+                                let no_plane_in_hole = stepdown > d && bottom_z < -d - 1e-9;
+                                let t = match ladder(&f, &region, &p) {
+                                    Ok(t) => {
+                                        assert!(!no_plane_in_hole, "{tag}: no plane fits the hole, yet a path came back");
+                                        t
+                                    }
+                                    Err(camcraft_motion::machining2d::GenError::Empty(_)) if no_plane_in_hole => {
+                                        refused += 1;
+                                        continue;
+                                    }
+                                    Err(e) => panic!("{tag}: the hole is always there to cut: {e}"),
+                                };
                                 assert!(t.all_finite() && t.is_chained(), "{tag}");
                                 if let Some((i, q)) = first_gouge(&t, d) {
                                     panic!("{tag}: move {i} enters solid at {q:?} ({:?})", t.moves[i]);
@@ -222,5 +238,7 @@ fn a_blind_pocket_never_enters_solid_under_any_ladder() {
             }
         }
     }
-    assert_eq!(runs, 4 * 3 * 3 * 4 * 2 * 2 * 2);
+    // d 3 at step 4 under Bottom ZB and ZB - 3: 2 x 4 x 2 x 2 x 2 refusals.
+    assert_eq!(refused, 2 * 4 * 2 * 2 * 2);
+    assert_eq!(runs + refused, 4 * 3 * 3 * 4 * 2 * 2 * 2);
 }

@@ -58,6 +58,14 @@ pub fn accessory_value(a: &Accessory) -> Option<Value> {
         .ok()
 }
 
+/// The `profile` key of `p` (#744).
+#[must_use]
+pub fn profile_value(p: &crate::fixture_profile::FixtureProfile) -> Option<Value> {
+    serde_json::to_value(p)
+        .inspect_err(|why| tracing::warn!("fixture profile key not saved, it would read back as plain steel: {why}"))
+        .ok()
+}
+
 /// The fixture marker of model `model` from its file form; every key
 /// that does not read or keep its law is dropped with a note.
 #[must_use]
@@ -65,9 +73,16 @@ pub fn fixture_def(f: &FixtureDto, model: &str, notes: &mut Vec<String>) -> Fixt
     let vise = read::<ViseDto>(f.vise.as_ref(), model, "vise", notes)
         .and_then(|d| lawful(Some(d.to_params()), |p| p.check(), model, "vise", notes));
     let accessory = lawful(read::<Accessory>(f.accessory.as_ref(), model, "accessory", notes), Accessory::check, model, "accessory", notes);
+    let profile = lawful(
+        read::<crate::fixture_profile::FixtureProfile>(f.profile.as_ref(), model, "profile", notes),
+        crate::fixture_profile::FixtureProfile::check,
+        model,
+        "profile",
+        notes,
+    );
     // #819: the plate keys keep their own drop-and-log lenient read.
     let plate = super::plate_dto::link_from(f.plate.as_ref(), f.on_plate.as_ref(), model, notes);
     // #820: the mod-vise jaw key keeps its own drop-and-log read.
     let mod_jaw = super::modvise_dto::params_from(f.mod_jaw.as_ref(), model, notes);
-    FixtureDef { setup: f.setup.clone(), fixed: f.fixed, vise, plate, mod_jaw, accessory }
+    FixtureDef { setup: f.setup.clone(), fixed: f.fixed, vise, plate, mod_jaw, accessory, profile }
 }

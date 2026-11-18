@@ -36,7 +36,7 @@ mod gjk;
 mod prism;
 mod ray;
 
-pub use prism::PrismReading;
+pub use prism::{BoxSteel, PrismReading};
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};

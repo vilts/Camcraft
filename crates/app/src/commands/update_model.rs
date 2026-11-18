@@ -68,6 +68,9 @@ pub struct UpdateModel {
     /// with the facets the same way; `None` is the default.
     facet_budget: Option<u64>,
     prev_facet_budget: Option<u64>,
+    /// #744: raw STEP text for STEP-imported models, traded with facets.
+    step_source: Option<String>,
+    prev_step_source: Option<String>,
     /// #826: a fixture plate's marker, when the model is one. Its grid was
     /// measured on the old mesh, so it goes with it and the riders leave
     /// the plate (the safe reading: the user re-detects), in this same
@@ -117,6 +120,8 @@ impl UpdateModel {
             prev_hole: crate::mesh_open::hole_of(world, &entity),
             facet_budget: None,
             prev_facet_budget: crate::model_fidelity::budget_of(world, &entity),
+            step_source: None,
+            prev_step_source: crate::step_source::of(world, &entity),
             plate: crate::fixture::def_of(world, &entity)
                 .filter(|d| d.plate.plate.is_some())
                 .map(|d| Box::new((d, crate::plate::mount::Unmounts::of(world, name)))),
@@ -148,6 +153,7 @@ impl UpdateModel {
         self.coarse_mm = self.prev_coarse_mm;
         self.hole.clone_from(&self.prev_hole);
         self.facet_budget = self.prev_facet_budget;
+        self.step_source.clone_from(&self.prev_step_source);
         self
     }
 
@@ -156,6 +162,13 @@ impl UpdateModel {
     #[must_use]
     pub fn with_budget(mut self, facet_budget: Option<u64>) -> Self {
         self.facet_budget = facet_budget;
+        self
+    }
+
+    /// Attach or clear the raw STEP source for STEP-imported geometry (#744).
+    #[must_use]
+    pub fn with_step_source(mut self, step_source: Option<String>) -> Self {
+        self.step_source = step_source;
         self
     }
 
@@ -192,6 +205,7 @@ impl Command for UpdateModel {
         crate::model_fidelity::set(world, &entity, self.coarse_mm);
         crate::model_fidelity::set_budget(world, &entity, self.facet_budget);
         crate::mesh_open::set(world, &entity, self.hole.as_deref());
+        crate::step_source::set(world, &entity, self.step_source.as_deref());
         // Propagation (M3.1 B): the derived stock's copy is local-frame
         // facets - the very mesh above (SetStock's copy law) - and the
         // stock's own placement is never touched: re-importing a model
@@ -227,6 +241,7 @@ impl Command for UpdateModel {
             crate::model_fidelity::set(world, &entity, self.prev_coarse_mm);
             crate::model_fidelity::set_budget(world, &entity, self.prev_facet_budget);
             crate::mesh_open::set(world, &entity, self.prev_hole.as_deref());
+            crate::step_source::set(world, &entity, self.prev_step_source.as_deref());
             if let Some(p) = &self.plate {
                 entity.entity_view(world).set(p.0.clone());
                 p.1.write(world, false);

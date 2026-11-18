@@ -172,6 +172,12 @@ pub fn suggest(world: &World, name: &str) -> Result<Suggestion, String> {
     let tool = model::find_by_name(world, &op.tool)
         .and_then(|t| model::tool_of(world, &t))
         .ok_or_else(|| format!("tool {} is not in the library", op.tool))?;
+    if tool.kind == ToolKind::Wire {
+        return Err(format!(
+            "the cutting-data table does not speak for a {} - a wire cut uses the machine's EDM condition",
+            tool.kind
+        ));
+    }
     let material = material_of(world).ok_or("no workpiece material is stated - pick one first")?;
     if crate::cutting_turn::css_op(&op.params) {
         return crate::cutting_turn::suggest(world, &op, &tool, material);

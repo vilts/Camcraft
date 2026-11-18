@@ -68,7 +68,7 @@ impl SetOperationGeometry {
         };
         // #1504: a Slot's picks seed the slot that fills them, in this
         // same command - one undo takes back the pick and the seed.
-        let params = crate::operation::slot_from_picks(world, &params, src_items(&src)).unwrap_or(params);
+        let params = crate::operation::slot_from_picks(world, prev.setup.as_deref(), &params, src_items(&src)).unwrap_or(params);
         let next = Operation { src, params, ..prev.clone() };
         Ok(SetOperationGeometry { name: name.to_string(), prev, next })
     }
@@ -109,7 +109,7 @@ fn valid_pick(world: &World, g: &GeoSel) -> Result<(), CommandError> {
     };
     let found = match g.feature {
         FeatureSel::Face(id) => features.faces.iter().any(|f| f.id == id),
-        FeatureSel::Chain(id) => feature::resolve_chain(&features, id).is_some(),
+        FeatureSel::Chain(id) => crate::model::resolve_chain(&features, id).is_some(),
         FeatureSel::Patch(id) => feature::patches(&features).iter().any(|p| p.id == id),
         FeatureSel::Vertex(id) => feature::resolve_vertex(&features, id).is_some(),
     };

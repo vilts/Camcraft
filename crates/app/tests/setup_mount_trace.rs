@@ -223,7 +223,7 @@ fn a_spindle_limit_is_judged_on_each_ops_own_machine_from_either_active_setup() 
 /// other's, whichever is active; moved to Setup1 the verdict moves too.
 #[test]
 fn a_rotary_index_swing_is_judged_on_each_ops_own_machine() {
-    let text = posting::MACHINES.iter().find(|(n, _)| *n == "Tormach 770MX + microARC 4").map(|(_, t)| *t);
+    let text = posting::builtin_machine_text("Tormach 770MX + microARC 4");
     let mut arc4 = camcraft_app::machine::parse_mch(text.expect("shipped")).expect("parses");
     for a in &mut arc4.axes {
         a.nose_to_axis = None;

@@ -102,6 +102,11 @@ pub fn validate_text(text: &str) -> Vec<Refusal> {
     units(&v, &mut out);
     let axes = axis_parts(&v);
     axis_rules(&axes, &mut out);
+    out.extend(
+        super::trunnion_refusals(&v, &axes)
+            .into_iter()
+            .map(|(key, rule)| Refusal::new(key, rule)),
+    );
     for head in head_parts(&v) {
         spindle(head.get("spindle"), &mut out);
         station(head.get("tool_station"), &mut out);
@@ -333,6 +338,15 @@ fn coolants(list: Option<&Value>, out: &mut Vec<Refusal>) {
 }
 
 fn controller(v: &Value, out: &mut Vec<Refusal>) {
+    if let Some(x) = v
+        .pointer("/controller/coordinate_rotation")
+        .filter(|x| !x.is_null() && !x.is_boolean())
+    {
+        out.push(Refusal::new(
+            "controller.coordinate_rotation",
+            format!("{x} must be true or false"),
+        ));
+    }
     let Some(parts) = v.pointer("/controller/synced_configuration/parts").filter(|p| !p.is_null()) else {
         return;
     };

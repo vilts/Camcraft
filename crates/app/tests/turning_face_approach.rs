@@ -158,7 +158,13 @@ fn every_facing_retract_lifts_z_before_it_moves_out_in_x() {
         let (ox, oz) = xz(out);
         assert!(out.starts_with("G00 ") && (oz - uz).abs() < 1e-9 && ox > 12.0, "then out in X at the lifted Z: {out}");
     }
-    assert_eq!(passes, 3, "three passes, Z16 to Z15 by 0.5: {lines:?}");
+    // #2004: the bar's end is Z16, so a pass with its nose tip at Z16
+    // cuts air (decision 2004 item 5). Two passes take the 1 mm, Z15.5
+    // and Z15: the first bite is one stepdown, the last pass stands on
+    // the part's face.
+    assert_eq!(passes, 2, "two passes, Z15.5 and Z15: {lines:?}");
+    let zs: Vec<f64> = lines.iter().filter(|l| l.starts_with("G01 ") && xz(l).0 < 0.0).map(|l| xz(l).1).collect();
+    assert_eq!(zs, [15.5, 15.0], "{lines:?}");
 }
 
 #[test]

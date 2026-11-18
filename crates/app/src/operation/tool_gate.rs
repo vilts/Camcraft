@@ -196,10 +196,9 @@ pub fn tool_problem(world: &World, op_name: &str, op: &Operation) -> Option<Stri
         kinds_phrase(info.tool_kinds)
     );
     let tool = &op.tool;
-    // #532: a wire EDM kind names no tool - and must not.
     if !info.mounts_tool() {
         return (!tool.is_empty()).then(|| {
-            format!("{op_name} names tool '{tool}'; a {} operation mounts none - the wire is the machine's EDM condition", info.label)
+            format!("{op_name} names tool '{tool}'; a {} operation mounts none", info.label)
         });
     }
     let Some(entity) = model::find_by_name(world, tool) else {
@@ -244,9 +243,12 @@ pub(super) fn job_tool(world: &World, op: &Operation) -> Result<JobTool, crate::
     let Some(tool) = model::tool_of(world, &tool_entity) else {
         return Err(GenError::Invalid(format!("'{}' is not a tool", op.tool)));
     };
+    let stored = tool.geom();
     let neck = crate::tool_cutter::neck_of(world, &tool_entity, &tool);
     let (tool, body) = crate::tool_body::judged(world, &tool_entity, tool)
         .map_err(|e| GenError::Invalid(format!("tool '{}': {e}", op.tool)))?;
+    // #2199: judge the stated shank (or neck) below a holder foot drawn beside it.
+    let neck = camcraft_tools::neck::shank_with_body(&stored, body.as_ref(), neck);
     // #369: a lathe body is judged only by the turning family's
     // revolved-stock law; on any other op no law could read it, so the
     // op is refused by name rather than cut with it unjudged.

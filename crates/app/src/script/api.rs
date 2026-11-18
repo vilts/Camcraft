@@ -5,7 +5,7 @@
 //! do its whole job returns `Err(reason)`; the dispatcher records it,
 //! and the script sees a catchable `Error` whose text is the reason.
 
-use super::{arg_opt, arg_str, builtin_cps, inventory, only_keys, Env};
+use super::{arg_opt, arg_str, inventory, only_keys, Env};
 
 use crate::commands::{GenerateOperation, History, ImportMode, ImportModel, ImportTools, UpdateModel};
 use crate::model;
@@ -68,7 +68,7 @@ pub(crate) fn v_import(env: &mut Env, args: Vec<Value>) -> Result<Value, String>
     let name = given_name.unwrap_or_else(|| imp.name.clone());
     let notes = imp.notes.clone();
     if model::find_by_name(&env.world, &name).is_some() {
-        let cmd = UpdateModel::new(&env.world, &name, imp.mesh).map_err(|e| e.to_string())?.with_fidelity(imp.coarse_mm).with_hole(imp.hole.clone()).with_budget(imp.facet_budget);
+        let cmd = UpdateModel::new(&env.world, &name, imp.mesh).map_err(|e| e.to_string())?.with_fidelity(imp.coarse_mm).with_hole(imp.hole.clone()).with_budget(imp.facet_budget).with_step_source(imp.step_source);
         env.history.execute(&env.world, cmd);
     } else {
         env.history.execute(&env.world, imp.renamed(&name));
@@ -283,7 +283,10 @@ pub(crate) fn v_check(env: &mut Env, args: Vec<Value>) -> Result<Value, String> 
 /// `.cps` by path; omitted means the document's own post.
 /// `program: true` also hands the text back to the script.
 pub(crate) fn v_post(env: &mut Env, args: Vec<Value>) -> Result<Value, String> {
-    let opts = only_keys(args.first().unwrap_or(&Value::Null), &["to", "cps", "program"])?;
+    let opts = only_keys(
+        args.first().unwrap_or(&Value::Null),
+        &["to", "cps", "program", "options"],
+    )?;
     let to = match opts.get("to") {
         Some(Value::String(s)) => PathBuf::from(s),
         Some(_) => return Err("\"to\" must be a path string".into()),
@@ -292,16 +295,7 @@ pub(crate) fn v_post(env: &mut Env, args: Vec<Value>) -> Result<Value, String> {
     // Omitted: each mount's own post (#388); named: that script for all.
     let cps = match opts.get("cps") {
         None | Some(Value::Null) => None,
-        Some(Value::String(s)) => {
-            if let Some(text) = builtin_cps(s) {
-                Some(text.to_owned())
-            } else if Path::new(s).extension().is_some_and(|e| e.eq_ignore_ascii_case("cps")) {
-                Some(std::fs::read_to_string(s).map_err(|e| format!("cannot read post script {s}: {e}"))?)
-            } else {
-                let names: Vec<&str> = crate::posting::BUILTINS.iter().map(|(n, _)| *n).collect();
-                return Err(format!("unknown built-in post '{s}' - names: {}; or give a .cps file path", names.join(", ")));
-            }
-        }
+        Some(Value::String(s)) => Some(posting::resolve_cps(s)?),
         Some(_) => return Err("\"cps\" must be a built-in name or a .cps path".into()),
     };
     let with_program = match opts.get("program") {
@@ -309,12 +303,65 @@ pub(crate) fn v_post(env: &mut Env, args: Vec<Value>) -> Result<Value, String> {
         Some(Value::Bool(b)) => *b,
         Some(_) => return Err("\"program\" must be true or false".into()),
     };
+    let extra = match opts.get("options") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(posting::json_map_to_overrides(v)?),
+    };
+    if posting::post_options(&env.world).per_op {
+        let (dir, program) = super::report::per_op_target(&to)?;
+        let files = match &cps {
+            None => {
+                posting::post_per_op_with_script_options(&env.world, dir, program, extra.as_ref())
+            }
+            Some((post_ref, text)) => posting::post_per_op_for_post_with_options(
+                &env.world,
+                dir,
+                program,
+                post_ref,
+                text,
+                extra.as_ref(),
+            ),
+        }
+        .map_err(|e| e.to_string())?;
+        let warning = cps.as_ref().and_then(|(post_ref, _)| {
+            let mut setups = Vec::new();
+            for file in &files {
+                let setup = model::find_by_name(&env.world, &file.op)
+                    .and_then(|e| model::operation_of(&env.world, &e))
+                    .and_then(|op| op.setup);
+                let effective =
+                    crate::setup::effective(&env.world, setup.as_deref()).unwrap_or_default();
+                let group = vec![effective];
+                if !setups.contains(&group) {
+                    setups.push(group);
+                }
+            }
+            crate::setup_post_options::unapplied_script_warning(&env.world, &setups, post_ref)
+        });
+        if let Some(w) = &warning {
+            env.logs.push(w.clone());
+        }
+        let mut out = super::report::posted_per_op_view(env, files, with_program);
+        if let Some(w) = warning {
+            out["warning"] = json!(w);
+        }
+        return Ok(out);
+    }
     let files = match &cps {
-        None => posting::post_mounts(&env.world, &to),
-        Some(text) => posting::post_mounts_script(&env.world, &to, text),
+        None => posting::post_mounts_with_script_options(&env.world, &to, extra.as_ref()),
+        Some((post_ref, text)) => {
+            posting::post_mounts_for_post_with_options(&env.world, &to, post_ref, text, extra.as_ref())
+        }
     }
     .map_err(|e| e.to_string())?;
-    Ok(super::report::posted_view(env, files, with_program))
+    let warning = cps.as_ref().and_then(|(post_ref, _)| {
+        let setups: Vec<Vec<String>> = files.iter().map(|f| f.mount.setups.clone()).collect();
+        crate::setup_post_options::unapplied_script_warning(&env.world, &setups, post_ref)
+    });
+    if let Some(w) = &warning {
+        env.logs.push(w.clone());
+    }
+    Ok(super::report::posted_view(env, files, with_program, warning.as_deref()))
 }
 
 /// `cam.report()` - the job on one page: the tree, the tool list, the

@@ -99,7 +99,7 @@ fn rotated_by_90(m: Mesh) -> Mesh {
 /// uncut collar the shank law (rightly) reports as a collision, and a
 /// test that generates a warning per level tests nothing.
 fn pocket(tilt: Option<Tilt>, top_z: f64) -> OpParams {
-    OpParams::Pocket {
+    OpParams::Pocket { rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt,
@@ -130,7 +130,7 @@ fn pocket(tilt: Option<Tilt>, top_z: f64) -> OpParams {
 /// recorded in RECOMMENDED.md). A fixture meant to be a rigid parked copy
 /// must therefore choose heights by the door, not by hand.
 fn pocket_parked() -> OpParams {
-    OpParams::Pocket {
+    OpParams::Pocket { rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: Some(tilt90_parked()),
@@ -154,6 +154,7 @@ fn pocket_parked() -> OpParams {
 
 fn tilt90() -> Tilt {
     Tilt {
+        basis_version: 1,
         a_deg: 0.0,
         b_deg: 90.0,
         origin: [0.0; 3],
@@ -168,6 +169,7 @@ fn tilt90() -> Tilt {
 /// world x = 15..25 over the block - the cut moves, the shape does not.
 fn tilt90_parked() -> Tilt {
     Tilt {
+        basis_version: 1,
         a_deg: 0.0,
         b_deg: 90.0,
         origin: [-25.0, 0.0, -15.0],
@@ -270,6 +272,7 @@ fn tilted_pocket_is_the_flat_pocket_rotated() {
 #[test]
 fn tilted_preview_region_is_the_flat_region_rotated() {
     let tilt = Tilt {
+        basis_version: 1,
         a_deg: 0.0,
         b_deg: 35.0,
         origin: [0.0; 3],
@@ -461,21 +464,25 @@ fn an_insane_tilt_refuses_at_the_command_door() {
     };
     for bad in [
         Tilt {
+            basis_version: 1,
             a_deg: 120.0,
             b_deg: 0.0,
             origin: [0.0; 3],
         },
         Tilt {
+            basis_version: 1,
             a_deg: 0.0,
             b_deg: 200.0,
             origin: [0.0; 3],
         },
         Tilt {
+            basis_version: 1,
             a_deg: f64::NAN,
             b_deg: 0.0,
             origin: [0.0; 3],
         },
         Tilt {
+            basis_version: 1,
             a_deg: 0.0,
             b_deg: 0.0,
             origin: [0.0, f64::INFINITY, 0.0],
@@ -506,6 +513,7 @@ fn tilt_round_trips_through_the_project_file() {
     history.execute(&world, ImportModel::from_mesh("part", block()));
     let tilted = pocket(
         Some(Tilt {
+            basis_version: 1,
             a_deg: 12.5,
             b_deg: -37.5,
             origin: [1.5, 2.5, -3.25],
@@ -570,6 +578,7 @@ fn a_tilt_edit_marks_the_operation_stale_and_undo_restores() {
             "F",
             OpParams::Face { holes: Default::default(), blend_turns: false,
                 tilt: Some(Tilt {
+                    basis_version: 1,
                     a_deg: 0.0,
                     b_deg: 20.0,
                     origin: [0.0; 3],
@@ -664,6 +673,7 @@ fn a_tilted_program_posts_under_a_tilthead_and_refuses_under_a_vmc() {
 #[test]
 fn a_tilted_pocket_sinks_on_a_helix_in_chords() {
     let tilt = Tilt {
+        basis_version: 1,
         a_deg: 0.0,
         b_deg: 35.0,
         origin: [0.0; 3],

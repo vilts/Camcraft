@@ -13,7 +13,6 @@
 
 use camcraft_app::machine::{Kind, kind, parse_mch};
 use camcraft_app::post::{engine, machine};
-use camcraft_app::posting::MACHINES;
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -46,7 +45,7 @@ fn post(text: &str, stream: &str) -> String {
 }
 
 fn tormach_mills() -> Vec<(&'static str, &'static str)> {
-    let mills: Vec<_> = MACHINES
+    let mills: Vec<_> = camcraft_app::posting::shipped_machines().expect("the shipped machines read")
         .iter()
         .copied()
         .filter(|(name, text)| {
@@ -130,7 +129,7 @@ fn a_stated_safe_z_is_the_lift_after_the_tool_change() {
 /// the section's A index as well as before its X/Y.
 #[test]
 fn a_fourth_axis_section_lifts_z_before_the_a_index() {
-    let (name, text) = MACHINES
+    let (name, text) = camcraft_app::posting::shipped_machines().expect("the shipped machines read")
         .iter()
         .copied()
         .find(|(n, _)| *n == "Tormach 770MX + microARC 4")

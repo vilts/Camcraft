@@ -31,6 +31,61 @@ pub(super) struct Cx<'a> {
     /// #1504: the Slot's room read off its picks (`Some(Ok)` when the
     /// slot fits it), or the refusal; `None` while the typed slot rules.
     pub slot_fit: &'a Option<Result<String, String>>,
+    /// #1815: diameter of the currently selected tool for seeding rest params.
+    pub tool_diameter: Option<f64>,
+}
+
+/// The note explaining what `PocketStrategy::Auto` will generate: when rest
+/// machining is on in the draft, generation resolves `Auto` via `rest_strategy`
+/// rather than the pocket's outline.
+fn pocket_auto_note(
+    world: &World,
+    op: Option<&camcraft_app::schema::Operation>,
+    stepover: f64,
+    rest_on: bool,
+) -> String {
+    let pick = "Auto picks the shape from the pocket's outline at generate.";
+    if rest_on {
+        return match camcraft_app::machining2d::rest_strategy(PocketStrategy::Auto) {
+            Ok(PocketStrategy::Waterline) => {
+                "Auto -> Waterline: rest machining cuts concentric rings along each rest area."
+            }
+            Ok(PocketStrategy::OffsetRings) => {
+                "Auto -> Offset rings: rest machining uses concentric rings along each rest area."
+            }
+            Ok(PocketStrategy::Zigzag) => {
+                "Auto -> Zigzag: rest machining fills each rest area with back-and-forth rows."
+            }
+            Ok(PocketStrategy::Adaptive) => {
+                "Auto -> Adaptive: rest machining clears each rest area with adaptive passes."
+            }
+            Ok(PocketStrategy::Auto) | Err(_) => pick,
+        }
+        .into();
+    }
+    let Some(o) = op else {
+        return pick.into();
+    };
+    let region = operation::region_of(world, o).unwrap_or_default();
+    let diameter = model::find_by_name(world, &o.tool)
+        .as_ref()
+        .and_then(|t| model::tool_of(world, t))
+        .map_or(6.0, |t| t.diameter);
+    let outer: Vec<camcraft_app::geo2d::Point2> = region
+        .loops()
+        .iter()
+        .max_by(|a, b| a.area().abs().total_cmp(&b.area().abs()))
+        .map(|l| l.points().to_vec())
+        .unwrap_or_default();
+    if outer.is_empty() {
+        return pick.into();
+    }
+    match PocketStrategy::Auto.resolve(&outer, stepover, diameter, ARC_FIT_TOL) {
+        PocketStrategy::Waterline => {
+            "Auto -> Waterline: the outline is round and the rings reach every band.".into()
+        }
+        _ => "Auto -> Zigzag: rings would not suit this outline.".into(),
+    }
 }
 
 pub(super) fn params_fields(ui: &mut Ui, state: &mut State, tab: usize) {
@@ -99,6 +154,7 @@ pub(super) fn params_fields(ui: &mut Ui, state: &mut State, tab: usize) {
     } = &state.op_ui.params
     {
         let resolved = op.as_ref().and_then(|o| {
+            let _s = crate::frame_cost::span("ui/properties.op.fields.contour_auto_side");
             operation::contour_auto_side(
                 &state.world,
                 o.setup.as_deref(),
@@ -117,36 +173,12 @@ pub(super) fn params_fields(ui: &mut Ui, state: &mut State, tab: usize) {
     if let OpParams::Pocket {
         strategy: PocketStrategy::Auto,
         stepover,
+        rest,
         ..
     } = &state.op_ui.params
     {
-        let pick = "Auto picks the shape from the pocket's outline at generate.".to_owned();
-        auto_note = Some(match op.as_ref() {
-            Some(o) => {
-                let region = operation::region_of(&state.world, o).unwrap_or_default();
-                let diameter = model::find_by_name(&state.world, &o.tool)
-                    .as_ref()
-                    .and_then(|t| model::tool_of(&state.world, t))
-                    .map_or(6.0, |t| t.diameter);
-                let outer: Vec<camcraft_app::geo2d::Point2> = region
-                    .loops()
-                    .iter()
-                    .max_by(|a, b| a.area().abs().total_cmp(&b.area().abs()))
-                    .map(|l| l.points().to_vec())
-                    .unwrap_or_default();
-                if outer.is_empty() {
-                    pick
-                } else {
-                    match PocketStrategy::Auto.resolve(&outer, *stepover, diameter, ARC_FIT_TOL) {
-                        PocketStrategy::Waterline => {
-                            "Auto -> Waterline: the outline is round and the rings reach every band.".into()
-                        }
-                        _ => "Auto -> Zigzag: rings would not suit this outline.".into(),
-                    }
-                }
-            }
-            None => pick,
-        });
+        let _s = crate::frame_cost::span("ui/properties.op.fields.pocket_auto_note");
+        auto_note = Some(pocket_auto_note(&state.world, op.as_ref(), *stepover, rest.is_some()));
     }
 
     // Which Trace-shape name the arm below renders: the engrave twin
@@ -189,6 +221,10 @@ pub(super) fn params_fields(ui: &mut Ui, state: &mut State, tab: usize) {
     } else {
         None
     };
+    let tool_diameter = model::find_by_name(&state.world, &state.op_ui.tool)
+        .as_ref()
+        .and_then(|t| model::tool_of(&state.world, t))
+        .map(|t| t.diameter);
     let mut cx = Cx {
         u,
         tab,
@@ -202,6 +238,7 @@ pub(super) fn params_fields(ui: &mut Ui, state: &mut State, tab: usize) {
         sync_toggle: false,
         circle_fit: &circle_fit,
         slot_fit: &slot_fit,
+        tool_diameter,
     };
     let world = &state.world;
     let params = &mut state.op_ui.params;

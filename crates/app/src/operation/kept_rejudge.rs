@@ -42,6 +42,19 @@ fn may_keep(op: &Operation) -> bool {
 /// inputs can no longer be read is refused too: no verdict is no pass.
 #[must_use]
 pub fn moved_part_problem(world: &World, name: &str, op: &Operation, path: &Toolpath) -> Option<String> {
+    part_problem(world, name, op, path, false)
+}
+
+/// #2313: the part a CONVICTED stock-source Chamfer or Deburr breaks
+/// into (its cached findings carry the stock-edge gouge), named by the
+/// same live judge - so the post's refusal names the op, the part and
+/// the way out, also for a part that was there at generation.
+#[must_use]
+pub fn stock_edge_problem(world: &World, name: &str, op: &Operation, path: &Toolpath) -> Option<String> {
+    part_problem(world, name, op, path, true)
+}
+
+fn part_problem(world: &World, name: &str, op: &Operation, path: &Toolpath, known: bool) -> Option<String> {
     if !may_keep(op) {
         return None;
     }
@@ -114,6 +127,8 @@ pub fn moved_part_problem(world: &World, name: &str, op: &Operation, path: &Tool
                         w.to_string()
                     } else if matches!(w, verify::Warning::StockChamferGouge { .. }) {
                         "stock-source chamfer breaks into a part; chamfer with the part as source".to_owned()
+                    } else if matches!(w, verify::Warning::StockDeburrGouge { .. }) {
+                        "stock-source deburr breaks into a part; use the part as source".to_owned()
                     } else {
                         String::new()
                     }
@@ -123,9 +138,11 @@ pub fn moved_part_problem(world: &World, name: &str, op: &Operation, path: &Tool
         if let Some(w) = found {
             // A local path's move numbers are not the posted path's: said only upright.
             let what = if w.is_empty() { String::new() } else { format!(" ({w})") };
-            return Some(format!(
-                "{name} now cuts part '{part}'{what} - a part moved, added or no longer workholding since it was generated; regenerate it"
-            ));
+            return Some(if known {
+                format!("{name} breaks into part '{part}'{what}")
+            } else {
+                format!("{name} now cuts part '{part}'{what} - a part moved, added or no longer workholding since it was generated; regenerate it")
+            });
         }
     }
     None

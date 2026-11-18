@@ -4,7 +4,9 @@
 use super::tools as registry;
 use serde_json::{Value, json};
 
-pub use super::fallback::{FallbackMode, PendingCall, parse_prompt, prompt_context, qa_context};
+pub use super::fallback::{
+    FallbackMode, PendingCall, is_read_only_tool, parse_prompt, prompt_context, qa_context,
+};
 pub use super::provider_calls::{ToolCall, parse_calls, tool_result};
 
 /// Select the wire format by endpoint, including Responses-only models.

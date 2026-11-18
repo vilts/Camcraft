@@ -4,7 +4,8 @@
 //! label-left rows in one grid column, and the three actions as equal
 //! buttons under a divider. The per-side margins are shown only when
 //! "Per side" is ticked, and the source rows only for stock from a model.
-//! Every change is a command: `SetStock` (Apply), `StockFit` /
+//! #2015: a Material group states the stock's workpiece material.
+//! Every change is a command: `SetStock` (Apply), `SetStockMaterial`, `StockFit` /
 //! `StockFitSides` (Fit to Models) and `DeleteByName` - the page only
 //! drafts and queues.
 //!
@@ -16,7 +17,7 @@ use egui::{RichText, Ui, Vec2};
 use camcraft_app::model;
 use camcraft_app::stock::StockShape;
 
-use crate::state::{CommandKind, State};
+use crate::state::{CommandKind, ErrorScope, State};
 
 use super::fields::{combo_owned, num, num_plain};
 use super::layout::{group, prop_grid};
@@ -27,9 +28,12 @@ const BUTTON_H: f32 = 24.0;
 pub(super) fn stock_page(ui: &mut Ui, state: &mut State) {
     let u = state.units();
     group(ui, "Shape", None, |ui| shape_section(ui, state));
+    group(ui, "Material", None, |ui| super::stock_material_row::stock_material_row(ui, state));
     group(ui, "Size", None, |ui| size_fields(ui, state, u));
     group(ui, "Position and rotation", None, |ui| position_fields(ui, state, u));
-    group(ui, "Fit to models", None, |ui| fit_fields(ui, state, u));
+    if state.stock_ui.shape != 2 {
+        group(ui, "Fit to models", None, |ui| fit_fields(ui, state, u));
+    }
     actions(ui, state);
 }
 
@@ -39,11 +43,23 @@ fn shape_section(ui: &mut Ui, state: &mut State) {
     // numbers below re-render from the world next pass.
     super::post_options::units_row(ui, state, "Units");
     let u = state.units();
+    let before = state.stock_ui.shape;
     ui.horizontal_wrapped(|ui| {
         for (i, name) in ["Box", "Cylinder", "From model"].iter().enumerate() {
             ui.radio_value(&mut state.stock_ui.shape, i as i32, *name);
         }
     });
+    if state.stock_ui.shape != before && state.error_for(ErrorScope::Setup).is_some() {
+        // A refusal describes the previous draft, including its status echo.
+        if let Some((_, msg)) = state.feedback.take()
+            && state.status == msg
+        {
+            state.status = String::from("ready");
+        }
+        state.feedback_ctx = None;
+        state.feedback_at = None;
+        state.feedback_ghost = None;
+    }
     // #197: the models' size, right above the numbers it informs.
     match super::stock_info::part_size_lines(&state.world, u) {
         Some([size, extents]) => {
@@ -162,15 +178,20 @@ fn actions(ui: &mut Ui, state: &mut State) {
     if let Some(s) = active.as_deref() {
         ui.label(RichText::new(format!("Stock of setup {s}.")).small().weak());
     }
-    let labels: &[&str] = if has_stock { &["Apply", "Fit to Models", "Delete"] } else { &["Apply", "Fit to Models"] };
+    let labels: &[&str] = match (state.stock_ui.shape == 2, has_stock) {
+        (true, true) => &["Apply", "Delete"],
+        (true, false) => &["Apply"],
+        (false, true) => &["Apply", "Fit to Models", "Delete"],
+        (false, false) => &["Apply", "Fit to Models"],
+    };
     let avail = ui.available_width();
     let gaps = ui.spacing().item_spacing.x * labels.len().saturating_sub(1) as f32;
     let size = Vec2::new(((avail - gaps) / labels.len() as f32).max(24.0), BUTTON_H);
-    match super::wcs_page::even_row(ui, labels, size) {
-        Some(0) => apply(state),
-        Some(1) => fit(state),
-        Some(_) => state.pending.push_back(CommandKind::DeleteByName(stock_name)),
-        None => {}
+    match super::wcs_page::even_row(ui, labels, size).and_then(|i| labels.get(i)).copied() {
+        Some("Apply") => apply(state),
+        Some("Fit to Models") => fit(state),
+        Some("Delete") => state.pending.push_back(CommandKind::DeleteByName(stock_name)),
+        _ => {}
     }
 }
 

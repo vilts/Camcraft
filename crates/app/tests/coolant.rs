@@ -78,7 +78,7 @@ fn has_word(line: &str, code: &str) -> bool {
 const MILLS: [&str; 7] = ["Fanuc", "Haas", "Siemens 840D", "Heidenhain", "Mazak", "grblHAL", "TinyG"];
 
 fn script(name: &str) -> &'static str {
-    posting::BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, s)| *s).expect("a built-in")
+    posting::builtin_post_text(name).expect("a built-in")
 }
 
 /// The first line at or after `from` matching `pred` - for order checks.

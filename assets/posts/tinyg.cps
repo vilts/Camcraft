@@ -23,6 +23,31 @@ workOffsetMax = 6;      // G54..G59, per the public control documentation cited 
 coolantModes = true; // reads PARAM Coolant (#112/#150)
 afterModes = true;   // reads PARAM AfterOperation (#110)
 programUnits = "mm inch"; // #902: writes the document's unit (postOptions.Units), G21 / G20
+endUnits = "G20 G21";     // #2189: switches end units before M30 when asked
+
+declaredOptions = {
+  showSequenceNumbers: {
+    type: "enum",
+    title: "Sequence numbers",
+    group: "Format",
+    description: "Where to emit N-word block numbers",
+    choices: [
+      { id: "off", title: "Off" },
+      { id: "every-block", title: "Every block" },
+      { id: "tool-change", title: "On tool change" },
+      { id: "op-start", title: "On operation start" },
+    ],
+    default: "off",
+  },
+  sequenceNumberStart: { type: "integer", title: "First sequence number", group: "Format", description: "Starting N number", min: 1, max: 999999, default: 10 },
+  sequenceNumberIncrement: { type: "integer", title: "Sequence number increment", group: "Format", description: "Step between sequence numbers", min: 1, max: 10000, default: 10 },
+  separateWordsWithSpace: { type: "boolean", title: "Separate words with space", group: "Format", description: "Insert a space between G-code words on a block", default: true },
+  writeMachine: { type: "boolean", title: "Write machine header", group: "Header & comments", description: "Emit a comment naming the machine in the header", default: false },
+  writeToolList: { type: "boolean", title: "Write tool list", group: "Header & comments", description: "Emit a summary comment per tool at program start", default: false },
+  writeVersion: { type: "boolean", title: "Write post version", group: "Header & comments", description: "Emit post version metadata comment in the header", default: false },
+  optionalStop: { type: "boolean", title: "Optional stop (M1)", group: "Behavior", description: "Write M1 before tool changes after the first operation", default: false },
+  SpindleDwellSeconds: { type: "number", title: "Spindle dwell (s)", group: "Spindle", description: "Optional delay in seconds after spindle start (0..4294)", min: 0, max: 4294, default: 0 },
+};
 
 // Determinism law: no timestamps, no randomness - the same stream
 // always posts to the same text (golden files depend on it).
@@ -82,15 +107,61 @@ function fw(v) {
 // always arrives whole, and a longer one is refused here by name, never
 // cut by the board.
 var LINE_CAP = 191;
+var seqNum = 0;
+var seqNextForce = false;
+var secStarted = 0;
+function optBool(k, def) {
+  return typeof postOptions !== "undefined" && postOptions && typeof postOptions[k] === "boolean" ? postOptions[k] : def;
+}
+function optInt(k, def) {
+  return typeof postOptions !== "undefined" && postOptions && typeof postOptions[k] === "number" && isFinite(postOptions[k]) ? Math.round(postOptions[k]) : def;
+}
+function optStr(k, def) {
+  return typeof postOptions !== "undefined" && postOptions && typeof postOptions[k] === "string" ? postOptions[k] : def;
+}
+function nextSeq() {
+  if (seqNum <= 0) seqNum = optInt("sequenceNumberStart", 10);
+  else seqNum += optInt("sequenceNumberIncrement", 10);
+  return "N" + seqNum;
+}
+function isCommentOnly(a) {
+  return a.length === 1 && String(a[0]).charAt(0) === "(" && String(a[0]).charAt(String(a[0]).length - 1) === ")";
+}
 function block(words) {  // join the non-empty words onto one line
   var a = [];
   for (var i = 0; i < words.length; i++) {
     if (words[i] !== "" && words[i] !== null && words[i] !== undefined) a.push(words[i]);
   }
   if (a.length === 0) return;
-  var line = a.join(" ");
+  var commentOnly = isCommentOnly(a);
+  var sep = !commentOnly && !optBool("separateWordsWithSpace", true) ? "" : " ";
+  var body = a.join(sep);
+  var prefix = "";
+  if (!commentOnly) {
+    var mode = optStr("showSequenceNumbers", "off");
+    if (mode === "every-block" || ((mode === "tool-change" || mode === "op-start") && seqNextForce)) {
+      prefix = nextSeq() + " ";
+      seqNextForce = false;
+    }
+  }
+  var line = prefix + body;
   if (line.length > LINE_CAP) { msg("a program line of " + line.length + " bytes is over TinyG's " + LINE_CAP + "-byte line limit"); return; }
   writeln(line);
+}
+function writeHeaderExtras() {
+  var nm = (typeof machine !== "undefined" && machine.name) || "";
+  if (optBool("writeMachine", false) && nm) note("MACHINE: " + clean(nm));
+  if (optBool("writeVersion", false)) note("POST: " + clean(description));
+  if (optBool("writeToolList", false) && typeof programTools !== "undefined" && programTools.length) {
+    for (var i = 0; i < programTools.length; i++) {
+      var pt = programTools[i];
+      var desc = [];
+      if (pt.kind) desc.push(clean(String(pt.kind).toUpperCase()));
+      if (has(pt.diameter) && pt.diameter > 0) desc.push("D" + fu(pt.diameter));
+      if (pt.name) desc.push(clean(pt.name));
+      note("T" + ni(pt.number) + (desc.length ? " - " + desc.join(" ") : ""));
+    }
+  }
 }
 function xyz(p) { return [wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ)]; }
 function wo(letter, v, o) { return has(v) ? letter + fu(v - o) : ""; }  // axis word, origin-relative
@@ -243,6 +314,7 @@ function onOpen() {
   inch = typeof postOptions !== "undefined" && postOptions && postOptions.Units === "inch"; // #902: the document's unit, never the machine file's
   var nm = (typeof machine !== "undefined" && machine.name) || "CAMCRAFT";
   note(clean(nm) || "CAMCRAFT");
+  writeHeaderExtras();
   block([inch ? "G20" : "G21", "G17", "G90", "G91.1", "G94", "G64"]);
 }
 
@@ -372,6 +444,9 @@ function spindleDwell() {
 function startPreamble() {
   if (sectionOpen) return;
   sectionOpen = true;
+  var secIdx = secStarted;
+  secStarted += 1;
+  if (optStr("showSequenceNumbers", "off") === "op-start") seqNextForce = true;
   opNotes();
   block(["G17", "G90", wcsWord]);
   if (toolWait) {
@@ -379,7 +454,9 @@ function startPreamble() {
     block(["M5"]);
     block(["M9"]);
     retract();
+    if (secIdx > 0 && optBool("optionalStop", false)) block(["M1"]);
     xyUnknown = true;        // the operator may jog X and Y at the stop
+    if (optStr("showSequenceNumbers", "off") === "tool-change") seqNextForce = true;
     block(["T" + ni(tNo), "M6"]);
     block(["M0"]);
     // Touch-off may change Z and jogging may change distance mode.

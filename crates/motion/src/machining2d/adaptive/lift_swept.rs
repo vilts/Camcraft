@@ -208,8 +208,13 @@ mod tests {
         // The strip cut (the lap at y = 9 walked): the same return stands.
         let mut after = swept.clone();
         after.cut(&[p(55.0, 9.0), p(5.0, 9.0)]);
-        let Some(Return { high: true, down, .. }) = law(&after).high(&piece) else { panic!("the landing on cut stock") };
-        assert!(after.covers(down[0], r - EDGE));
+        let Some(high) = law(&after).high(&piece) else { panic!("the landing on cut stock") };
+        assert!(high.high && after.covers(high.down[0], r - EDGE));
+        let mut b = crate::cl::PathBuilder::new(crate::geometry::Point3::new(30.0, 8.96, 0.0));
+        crate::machining2d::microlift::link_at(&mut b, &high, 0.0, 5.0, 500.0);
+        let path = b.finish();
+        assert!(crate::approach::refusal(&path).is_none(), "a planner-proved high return remains allowed");
+        assert!(path.moves.iter().any(|m| m.kind == crate::cl::MoveKind::Rapid && m.to.z == high.lift));
         // The hop's landing takes a lead point the pieces swept before
         // one only the cells read clear; with none proved, the cells'.
         let landing = super::super::lift_link::landing;
@@ -218,5 +223,67 @@ mod tests {
         bent.lead.insert(0, p(20.0, 8.9));
         assert_eq!(landing(&ras, &swept, &bent, (r, rim)), p(20.0, 8.9), "the swept point of the lead");
         assert_eq!(landing(&ras, &after, &bent, (r, rim)), piece.pts[0], "the strip cut: the piece's own start");
+    }
+
+    #[test]
+    fn a_crossing_low_return_cannot_rapid_onto_an_uncleared_wall_strip() {
+        use crate::cl::{MoveKind, PathBuilder};
+        use crate::geometry::Point3;
+        use crate::machining2d::microlift::{link_at, profile};
+
+        let reach = rect(0.0, 0.0, 60.0, 14.0);
+        let center = rect(5.0, 5.0, 55.0, 9.0);
+        let r = 5.0;
+        let Ok(mut ras) = Raster::from_region(&reach, 10.0 / 120.0, r) else { panic!("raster") };
+        let rim = crate::quality::rim_for(10.0, ras.h);
+        let cut = [p(5.0, 5.0), p(55.0, 5.0), p(55.0, 8.96), p(5.0, 8.96)];
+        ras.walk(&cut, r, rim, 0.5);
+        let mut swept = Swept::new(r);
+        swept.cut(&cut);
+        let piece = Piece {
+            pts: vec![p(17.0, 8.98), p(6.0, 8.98)],
+            lead: (0..=10).map(|k| p(20.0 - 0.3 * k as f64, 8.98)).collect(),
+            tail: Vec::new(),
+            fine: None,
+        };
+        let law = LinkLaw {
+            ras: &ras,
+            center: &center,
+            links: &[],
+            swept: &swept,
+            r,
+            rim,
+            step: 0.5,
+            bite: crate::load::deg_at_rim(0.005, 10.0, rim),
+            orbit: (p(0.0, 0.0), 0.0),
+        };
+        let at = p(30.0, 8.96);
+        let Some(ret) = law.find(at, &[at, p(28.0, 8.96)], &piece, None) else { panic!("a legal low return") };
+        assert!(!ret.high && law.legal(at, &ret));
+        assert_eq!(law.high(&piece), None, "the high return has no proved rapid landing");
+        let high = Return { high: true, ..ret.clone() };
+        let land = profile(at, &high)[0].0;
+        let stock = p(land.x, 13.965);
+        assert!((stock.x - land.x).hypot(stock.y - land.y) < r - EDGE);
+        assert!(cut.windows(2).all(|w| super::super::lift_split::seg_dist(stock, w[0], w[1]) > r));
+
+        let mut b = PathBuilder::new(Point3::new(29.0, 8.7, 0.1));
+        b.push(MoveKind::Feed, Point3::new(29.0, 9.0, 0.5), Some(500.0));
+        b.push(MoveKind::Rapid, Point3::new(cut[0].x, cut[0].y, 5.0), None);
+        b.push(MoveKind::Plunge, Point3::new(cut[0].x, cut[0].y, 0.0), Some(150.0));
+        for q in cut.iter().skip(1).chain(std::iter::once(&at)) {
+            b.push(MoveKind::Feed, Point3::new(q.x, q.y, 0.0), Some(500.0));
+        }
+        let low = profile(at, &ret);
+        let mut probe = PathBuilder::new(b.at());
+        for &(q, z) in low.iter().skip(1) {
+            probe.push(MoveKind::Feed, Point3::new(q.x, q.y, z), Some(500.0));
+        }
+        assert!(crate::machining2d::arc_cross::moves_cross_prior(probe.moves(), b.moves()), "the low climb crosses an earlier feed");
+        let before = b.moves_len();
+        link_at(&mut b, &ret, 0.0, 5.0, 500.0);
+        let path = b.finish();
+        assert!(crate::approach::refusal(&path).is_some_and(|why| why.starts_with(crate::approach::MICROLIFT_REFUSAL)));
+        assert_eq!(path.moves.len(), before, "an unproved crossing fallback emits no rapid landing or plunge");
     }
 }

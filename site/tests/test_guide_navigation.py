@@ -121,6 +121,7 @@ class GuideNavigation(unittest.TestCase):
                      for path in (SITE / "content/guide" / section).glob("*.md")
                      if path.stem != "_index")
         pages.append("guide/getting-started/first-router-part")
+        pages.append("guide/getting-started/first-4axis-part")
         for page in pages:
             with self.subTest(page=page):
                 document = self.read(page)

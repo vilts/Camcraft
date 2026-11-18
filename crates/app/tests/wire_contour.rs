@@ -111,13 +111,18 @@ fn wire_doc() -> (World, History) {
     let world = new_world();
     let mut h = History::default();
     mount(&world, &mut h, &machine_text(TABLE));
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire tool"),
+    );
     h.execute(&world, ImportModel::from_mesh("slug", prism(&outline(40.0, 20.0, 2.0))));
     h.execute(&world, ImportModel::from_mesh("sharp", prism(&outline(40.0, 20.0, 0.0))));
     (world, h)
 }
 
 fn create(world: &World, name: &str, model: &str, op: WireContourOp) -> Result<CreateOperation, String> {
-    CreateOperation::new(world, name, "", SrcRef::Entity(model.into()), OpParams::WireContour(op)).map_err(|e| e.to_string())
+    CreateOperation::new(world, name, "EDM-W025", SrcRef::Entity(model.into()), OpParams::WireContour(op)).map_err(|e| e.to_string())
 }
 
 fn path(world: &World, name: &str) -> camcraft_app::cl::Toolpath {
@@ -141,10 +146,11 @@ fn top_at_x0(p: &camcraft_app::cl::Toolpath) -> f64 {
 }
 
 #[test]
-fn the_wire_family_lives_on_a_wire_edm_only_and_mounts_no_tool() {
+fn the_wire_family_lives_on_a_wire_edm_only_and_mounts_a_wire_tool() {
     let info = OpType::WireContour.info();
     assert_eq!((info.family(), info.section, info.label), (Family::WireEdm, Section::WireEdm, "Wire Contour"));
-    assert!(info.tool_kinds.is_empty() && !info.mounts_tool(), "the wire is the machine's condition, not a library tool");
+    assert_eq!(info.tool_kinds, operation::tool_law::WIRE);
+    assert!(info.mounts_tool());
     assert_eq!(KindInfo::ALL[41].ty, OpType::WireContour, "appended: stored kind ids never move");
     assert_eq!(operation::shown_for(Kind::WireEdm), vec![Section::WireEdm]);
     assert_eq!(Section::WireEdm.kinds_for(Kind::WireEdm), vec![OpType::WireContour.ordinal()]);
@@ -155,33 +161,44 @@ fn the_wire_family_lives_on_a_wire_edm_only_and_mounts_no_tool() {
     // At the door: a wire cut on a mill (no machine mounted) is refused by name.
     let world = new_world();
     let mut h = History::default();
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("slug", prism(&outline(40.0, 20.0, 2.0))));
     let err = create(&world, "W", "slug", wire_op(WireSide::Die, Some([0.0, 0.0]))).err().expect("refused on a mill");
     assert!(err.contains("wire EDM work") && err.contains("mount a wire EDM first"), "{err}");
-    // And a library tool named on a wire cut is refused: no second source for the wire.
+    // A non-wire library tool is refused, and a mounted wire tool has no problem.
     let (world, mut h) = wire_doc();
     let em = camcraft_app::tools::catalog().remove(0);
     h.execute(&world, camcraft_app::commands::AddTool::new(&world, em.0, em.1).expect("tool"));
     let err = CreateOperation::new(&world, "W", em.0, SrcRef::Entity("slug".into()), OpParams::WireContour(wire_op(WireSide::Die, None)))
         .err()
-        .expect("a tool on a wire cut")
+        .expect("wrong tool on a wire cut")
         .to_string();
-    assert!(err.contains("mounts no library tool"), "{err}");
-    h.execute(&world, create(&world, "W", "slug", wire_op(WireSide::Die, None)).expect("no tool, a stated condition"));
-    let err = EditOperationLinks::new(&world, "W", Some(em.0), None).err().expect("no tool can be given later").to_string();
-    assert!(err.contains("mounts no library tool"), "{err}");
+    assert!(err.contains("cuts with a wire"), "{err}");
+    h.execute(&world, create(&world, "W", "slug", wire_op(WireSide::Die, None)).expect("wire tool, a stated condition"));
+    let err = EditOperationLinks::new(&world, "W", Some(em.0), None).err().expect("non-wire tool refused").to_string();
+    assert!(err.contains("cuts with a wire"), "{err}");
     let e = model::find_by_name(&world, "W").expect("op");
-    assert_eq!(operation::tool_gate::tool_problem_of(&world, &e), None, "naming no tool is no problem for a wire cut");
+    assert_eq!(operation::tool_gate::tool_problem_of(&world, &e), None);
 }
 
-/// The issue's refusal at command creation: a missing condition, gap or
-/// wire diameter never reaches a generator.
+/// The issue's refusal at command creation: a missing condition or gap, or a
+/// wire/condition mismatch never reaches a generator, while a condition omitting
+/// `wire_diameter` reads it from the mounted wire tool.
 #[test]
-fn a_missing_condition_gap_or_wire_diameter_is_refused_at_command_creation() {
+fn a_missing_condition_gap_or_wire_mismatch_is_refused_at_command_creation() {
     // The template machine states no condition at all.
     let world = new_world();
     let mut h = History::default();
     mount(&world, &mut h, WIRE);
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("slug", prism(&outline(40.0, 20.0, 2.0))));
     let err = create(&world, "W", "slug", wire_op(WireSide::Die, None)).err().expect("no table");
     assert!(err.contains("states no EDM condition \"C110\"") && err.contains("it states none"), "{err}");
@@ -194,8 +211,23 @@ fn a_missing_condition_gap_or_wire_diameter_is_refused_at_command_creation() {
     assert!(unknown.contains("states no EDM condition \"C999\"") && unknown.contains("C110, 330, S9"), "{unknown}");
     let gapless = create(&world, "W", "slug", with("330")).err().expect("no gap");
     assert!(gapless.contains("\"330\" states no gap"), "{gapless}");
-    let wireless = create(&world, "W", "slug", with("S9")).err().expect("no wire diameter");
-    assert!(wireless.contains("\"S9\" states no wire_diameter"), "{wireless}");
+    // A condition without wire_diameter reads diameter from the mounted wire tool.
+    h.execute(&world, create(&world, "GapOnly", "slug", with("S9")).expect("gap-only condition works with wire tool"));
+    assert_eq!(
+        operation::wire_op::condition_of(&world, None, "EDM-W025", &with("S9")).expect("cond").wire_diameter,
+        0.25
+    );
+    // A wire tool whose diameter disagrees with the condition's stated wire_diameter is refused.
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "Wire020", camcraft_app::wire_tools::wire_tool(0.20))
+            .expect("wire 0.20"),
+    );
+    let mismatch = CreateOperation::new(&world, "BadWire", "Wire020", SrcRef::Entity("slug".into()), OpParams::WireContour(with("C110")))
+        .err()
+        .expect("mismatched wire diameter")
+        .to_string();
+    assert!(mismatch.contains("expects wire diameter 0.25 mm") && mismatch.contains("Wire020"), "{mismatch}");
     assert!(model::find_by_name(&world, "W").is_none(), "nothing entered the document");
     // The same door on an edit, and on the parameter set's own sanity.
     h.execute(&world, create(&world, "W", "slug", with("C110")).expect("a complete condition"));
@@ -306,11 +338,11 @@ fn create_and_edit_undo_and_redo() {
     assert!(h.redo(&world) && h.redo(&world));
     assert_eq!(params(&world), Some(p1));
     let op = model::find_by_name(&world, "W").and_then(|e| model::operation_of(&world, &e)).expect("op");
-    assert_eq!(op.tool, "", "a wire cut names no tool");
+    assert_eq!(op.tool, "EDM-W025", "a wire cut names its wire tool");
 }
 
 /// The op rides the project file; its side is never defaulted by a
-/// reader, and a wire cut that names a tool is a corrupt file.
+/// reader, and a wire cut names its wire tool.
 #[test]
 fn the_op_round_trips_and_its_side_is_never_defaulted() {
     let (world, mut h) = wire_doc();
@@ -324,7 +356,7 @@ fn the_op_round_trips_and_its_side_is_never_defaulted() {
     loaded.expect("load");
     let op = model::find_by_name(&back, "Punch1").and_then(|e| model::operation_of(&back, &e)).expect("op");
     assert_eq!(op.params, OpParams::WireContour(wire_op(WireSide::Punch, Some([-30.0, 0.0]))));
-    assert_eq!(op.tool, "");
+    assert_eq!(op.tool, "EDM-W025");
     assert_eq!(path(&back, "Punch1").moves, path(&world, "Punch1").moves);
     assert_eq!(status(&back, "Punch1"), OpStatus::Ok, "the loaded machine states the same condition");
     // The JSON door the file and the MCP patch share.

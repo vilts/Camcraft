@@ -12,18 +12,20 @@ use super::field_cut::{SdfTool, chord_sweep, chords};
 use super::field_solid::tool_kind;
 use super::field_sweep::Sweep;
 use crate::cl::MoveKind;
+use crate::fixture_mesh::FixtureMesh;
 use crate::geometry::Point3;
 
 pub(super) type Span = (f64, f64);
 const RAY_EPS: f64 = 0.0001;
 const RAY_BUDGET: usize = 100_000;
+const MESH_RAY_BUDGET: u64 = 1_000_000;
 
 #[cfg(test)]
 #[path = "carry_history_tests.rs"]
 mod tests;
 
 #[derive(Clone)]
-enum Shape {
+pub(super) enum Shape {
     Sweep(Arc<Sweep>),
     Cone(f64),
 }
@@ -31,8 +33,8 @@ enum Shape {
 #[derive(Clone)]
 pub(super) struct Cut {
     pub(super) frame: Frame,
-    shape: Shape,
-    profile: Arc<Profile>,
+    pub(super) shape: Shape,
+    pub(super) profile: Arc<Profile>,
 }
 
 impl std::fmt::Debug for Cut {
@@ -44,7 +46,7 @@ impl std::fmt::Debug for Cut {
 #[derive(Clone, Debug)]
 pub(super) struct Clip {
     pub(super) frame: Frame,
-    grid: Dexel,
+    pub(super) grid: Dexel,
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +54,8 @@ pub(super) struct History {
     pub(super) frame: Frame,
     pub(super) lo: Point3,
     pub(super) hi: Point3,
+    pub(super) cylinder: Option<(f64, f64, f64)>,
+    pub(super) mesh: Option<Arc<FixtureMesh>>,
     pub(super) cell: f64,
     pub(super) cuts: Vec<Cut>,
     pub(super) clips: Vec<Clip>,
@@ -65,6 +69,23 @@ impl History {
             frame: Frame::IDENTITY,
             lo: Point3::new(x0, y0, f64::NEG_INFINITY),
             hi: Point3::new(x1, y1, top),
+            cylinder: None,
+            mesh: None,
+            cell,
+            cuts: Vec::new(),
+            clips: Vec::new(),
+            active: false,
+            entry: None,
+        }
+    }
+
+    pub(super) fn with_mesh(lo: Point3, hi: Point3, cell: f64, mesh: Arc<FixtureMesh>) -> Self {
+        Self {
+            frame: Frame::IDENTITY,
+            lo,
+            hi,
+            cylinder: None,
+            mesh: Some(mesh),
             cell,
             cuts: Vec::new(),
             clips: Vec::new(),
@@ -128,13 +149,32 @@ impl History {
     }
 
     pub(super) fn spans(&self, x: f64, y: f64) -> Result<Vec<Span>, String> {
-        let Some((lo, hi)) = box_span(self.frame, self.lo, self.hi, x, y) else {
+        let Some((mut lo, mut hi)) = box_span(self.frame, self.lo, self.hi, x, y) else {
             return Ok(Vec::new());
         };
         if !(lo.is_finite() && hi.is_finite()) {
             return Err("exact side-on carry cannot read an unbounded stock ray".into());
         }
-        let mut spans = vec![(lo, hi)];
+        if let Some((cx, cy, r)) = self.cylinder {
+            let Some((cl, ch)) = cylinder_span(self.frame, cx, cy, r, x, y) else {
+                return Ok(Vec::new());
+            };
+            lo = lo.max(cl);
+            hi = hi.min(ch);
+            if lo > hi {
+                return Ok(Vec::new());
+            }
+        }
+        let mut spans = if let Some(mesh) = &self.mesh {
+            let (a, d) = self.frame.ray(x, y);
+            let mut mesh_budget = MESH_RAY_BUDGET;
+            let raw = mesh
+                .steel_on_axis_line(a, d, &mut mesh_budget)
+                .ok_or_else(|| "exact side-on carry exhausted its stock mesh ray budget".to_owned())?;
+            intersect_with_span(&raw, (lo, hi))
+        } else {
+            vec![(lo, hi)]
+        };
         let mut budget = RAY_BUDGET;
         for cut in &self.cuts {
             if spans.is_empty() {
@@ -262,7 +302,36 @@ impl Cut {
     }
 }
 
-fn joined(mut spans: Vec<Span>) -> Vec<Span> {
+fn cylinder_span(frame: Frame, cx: f64, cy: f64, r: f64, x: f64, y: f64) -> Option<Span> {
+    let (a, d) = frame.ray(x, y);
+    if d[2] != 0.0 {
+        return ((a.x - cx).hypot(a.y - cy) <= r).then_some((f64::NEG_INFINITY, f64::INFINITY));
+    }
+    let (perp, axis_a, axis_d) = if d[0] != 0.0 {
+        (a.y - cy, a.x - cx, d[0])
+    } else {
+        (a.x - cx, a.y - cy, d[1])
+    };
+    let rest = r * r - perp * perp;
+    if rest < 0.0 {
+        return None;
+    }
+    let half = rest.sqrt();
+    let (u, v) = ((-half - axis_a) / axis_d, (half - axis_a) / axis_d);
+    Some((u.min(v), u.max(v)))
+}
+
+fn intersect_with_span(spans: &[Span], bound: Span) -> Vec<Span> {
+    spans
+        .iter()
+        .filter_map(|&(a, b)| {
+            let (lo, hi) = (a.max(bound.0), b.min(bound.1));
+            (lo < hi).then_some((lo, hi))
+        })
+        .collect()
+}
+
+pub(super) fn joined(mut spans: Vec<Span>) -> Vec<Span> {
     spans.sort_by(|a, b| a.0.total_cmp(&b.0));
     let mut out: Vec<Span> = Vec::new();
     for span in spans {

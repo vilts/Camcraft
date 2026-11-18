@@ -242,9 +242,13 @@ fn two_setups_hold_the_part_differently_without_touching_each_other() {
 #[test]
 fn unverified_kinds_are_refused_while_verified_picks_generate_aligned() {
     let (world, mut h) = document(60.0);
-    let seed = (KindInfo::ALL[OpType::Offset2D.ordinal()].seed)(&Carried::of(&contour_params()));
-    let op = CreateOperation::new(&world, "Offset2D", TOOL, SrcRef::Entity("part".into()), seed);
-    h.execute(&world, op.expect("create offset pocket"));
+    // #2276 / #2283: 2D Offset, Circular and 2D Chamfer are verified
+    // now; Deburr still waits for proof (the op keeps its old name).
+    let seed = (KindInfo::ALL[OpType::Deburr.ordinal()].seed)(&Carried::of(&contour_params()));
+    let cm = catalog().into_iter().find(|(n, _)| *n == "CM-0600-90").map(|(_, t)| t).expect("chamfer mill");
+    h.execute(&world, AddTool::new(&world, "CM-0600-90", cm).expect("add chamfer mill"));
+    let op = CreateOperation::new(&world, "Circular", "CM-0600-90", SrcRef::Entity("part".into()), seed);
+    h.execute(&world, op.expect("create the Deburr"));
     // The modelled BOTTOM face (Z 0, the plain 40 x 40 square):
     // flipped over Y it is the setup's top, and Outside of its ring is
     // air at every level - the legal pick of an aligned face contour.
@@ -280,7 +284,7 @@ fn unverified_kinds_are_refused_while_verified_picks_generate_aligned() {
     h.execute(&world, control.expect("create the control contour"));
     generate(&world, &mut h, "InMaterial").expect("as modelled the hole ring trims its wall");
     align(&world, &mut h, AlignPreset::FlipY);
-    let err = generate(&world, &mut h, "Offset2D").expect_err("offset pocket is not verified aligned");
+    let err = generate(&world, &mut h, "Circular").expect_err("Deburr is not verified aligned");
     assert!(err.contains("part alignment") && err.contains("not supported yet"), "{err}");
     generate(&world, &mut h, "Picked").expect("verified-kind picks generate aligned");
     let e = model::find_by_name(&world, "Picked").expect("picked op");

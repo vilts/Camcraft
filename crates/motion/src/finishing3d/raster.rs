@@ -10,7 +10,7 @@ use super::params::{Finish3DParams, FinishPattern, dirs, refinement_floor, scall
 use super::support::{Sup, build_sups, plunge_support};
 use super::march::{emit_runs, march_curve};
 use super::rim::rim_rows;
-use super::rings::emit_rings;
+use super::rings::emit_rings_with_trim;
 /// One Z-following raster pass: lines perpendicular to `(ux, uy)`
 /// across the shallow facets' padded bounds, stepped by the cos-law
 /// (or an explicit `stepover`), each walked by `march_curve`'s laws
@@ -81,7 +81,10 @@ pub(super) fn raster_pass_spaced(
         )));
     }
     let delta0 = scallop_stepdown(r, p.tolerance).max(1e-6);
-    let eps_chord = p.tolerance * 0.25;
+    // Midpoint chord checks miss up to 2x on off-center convex facet kinks, and
+    // stock simulation holds DEV_TOL (0.01 mm). Capping eps_chord at 0.005 mm
+    // (half DEV_TOL) keeps convex ridge chords within DEV_TOL.
+    let eps_chord = (p.tolerance * 0.25).min(0.005);
     let at = |t: f64, v: f64| Point2::new(ux * t + vx * v, uy * t + vy * v);
     // Ground a vertical plunge can actually REACH: a tangent center
     // under a canopy is not a floor the tool may promise (support's
@@ -219,18 +222,30 @@ pub fn blend(facets: &[Triangle], p: &Finish3DParams) -> Result<Toolpath, GenErr
 /// and the finiteness gate. `parallel`, `radial` and `spiral` all
 /// end here, so no strategy can drift from the ladder.
 pub(super) fn rings_and_tail(
+    b: PathBuilder,
+    p: &Finish3DParams,
+    r: f64,
+    facets: &[Triangle],
+    emitted: bool,
+) -> Result<Toolpath, GenError> {
+    rings_and_tail_with_trim(b, p, r, facets, emitted, true)
+}
+
+fn rings_and_tail_with_trim(
     mut b: PathBuilder,
     p: &Finish3DParams,
     r: f64,
     facets: &[Triangle],
     emitted: bool,
+    trim_columns: bool,
 ) -> Result<Toolpath, GenError> {
     // #1015: the rings refuse with the shallow pass (and any rings) built.
     let zs = levels(p, r, facets).map_err(|e| e.with_ghost_moves(b.moves()))?;
     let ds = dirs(r, p.tolerance);
     let mut last = Some(p.clearance_z);
     let mut emitted = emitted;
-    emitted |= emit_rings(&mut b, p, r, facets, &zs, &ds, &mut last).map_err(|e| e.with_ghost_moves(b.moves()))?;
+    emitted |= emit_rings_with_trim(&mut b, p, facets, &zs, &ds, &mut last, trim_columns)
+        .map_err(|e| e.with_ghost_moves(b.moves()))?;
     if !emitted {
         return Err(GenError::Empty(
             "no surface reaches within one ball radius of the requested depths".into(),
@@ -267,7 +282,8 @@ pub fn swarf(
     let (ux, uy) = norm_dir(ux, uy)?;
     let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
     let emitted = raster_pass(&mut b, p, r, &sups, ux, uy, false)?;
-    rings_and_tail(b, p, r, facets, emitted)
+    // Swarf tilts off +Z in 5-axis stamping; keep under-equator rings intact.
+    rings_and_tail_with_trim(b, p, r, facets, emitted, false)
 }
 
 /// The tolerance-aware multi-pass swarf (advanced swarf, M5.1 D):
@@ -323,7 +339,8 @@ pub fn swarf_multi(
         emitted |= raster_pass_spaced(&mut b, &q, r, &sups, (ux, uy), emitted, spacing.tolerance).map_err(|e| ghost(e, &b))?;
         let zs = levels(&spacing, r, facets).map_err(|e| ghost(e, &b))?;
         let mut last = Some(q.clearance_z);
-        emitted |= emit_rings(&mut b, &q, r, facets, &zs, &ds, &mut last).map_err(|e| ghost(e, &b))?;
+        emitted |= emit_rings_with_trim(&mut b, &q, facets, &zs, &ds, &mut last, false)
+            .map_err(|e| ghost(e, &b))?;
     }
     if !emitted {
         return Err(GenError::Empty(

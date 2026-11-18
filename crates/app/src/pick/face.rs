@@ -79,11 +79,14 @@ pub fn face_origin(world: &World, entity: &str, sel: FeatureSel) -> Result<FaceO
             (f.facets.iter().map(|&i| i as usize).collect(), Some(f.normal))
         }
         FeatureSel::Patch(pid) => {
-            let p = feature::patches(&features).into_iter().find(|p| p.id == pid).ok_or(gone)?;
+            // #2247: memoized per feature set - the chips ask on each frame.
+            let all = model::patches(&features);
+            let p = all.iter().find(|p| p.id == pid).ok_or(gone)?;
             let facets = features
                 .faces
                 .iter()
-                .filter(|f| p.faces.contains(&f.id))
+                // `Patch::faces` is sorted: a search, not a scan per face.
+                .filter(|f| p.faces.binary_search(&f.id).is_ok())
                 .flat_map(|f| f.facets.iter().map(|&i| i as usize))
                 .collect();
             (facets, None)

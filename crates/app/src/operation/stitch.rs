@@ -83,7 +83,7 @@ pub(super) fn gather_runs(
         let Some(features) = model::features_of(world, &entity) else {
             continue;
         };
-        let Some(c) = feature::resolve_chain(&features, cid) else {
+        let Some(c) = crate::model::resolve_chain(&features, cid) else {
             continue;
         };
         if c.closed {

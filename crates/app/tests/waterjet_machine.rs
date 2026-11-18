@@ -40,7 +40,7 @@ fn machine() -> Machine {
 
 fn recipe(thickness: f64) -> CuttingRow {
     CuttingRow {
-        material: WorkMaterial::MildSteel, rpm: 0.0, feed: 600.0,
+        material: Some(WorkMaterial::MildSteel), rpm: 0.0, feed: 600.0, stepdown: None, stepover: None,
         waterjet: Some(WaterjetCutData {
             thickness, kerf: 0.8, pierce_time: 2.0, abrasive_delay: 0.3,
             re_pierce_time: 1.0, pierce_method: PierceMethod::Wiggle,

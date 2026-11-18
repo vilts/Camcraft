@@ -37,7 +37,7 @@ fn setup() -> State {
         &state.world,
         ImportModel::from_mesh("part", cube(Point3::new(-10.0, -10.0, 0.0), Point3::new(10.0, 10.0, 5.0))),
     );
-    let pocket = OpParams::Pocket {
+    let pocket = OpParams::Pocket { rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
@@ -172,4 +172,91 @@ fn the_command_modifier_from_egui_toggles_and_control_alone_does_not() {
     queue_edge_pick(&mut state, edge.clone(), cmd);
     state.drain_actions();
     assert_eq!(picks(&state), vec![other, edge]);
+}
+
+#[test]
+fn shift_click_on_an_aligned_setup_closes_around_the_setup_horizontal_face() {
+    use camcraft_app::commands::{ActivateSetup, AlignPartToSetup, CreateOperation, CreateSetup};
+
+    let mut state = State::new();
+    state.pending.push_back(CommandKind::SetStock {
+        shape: StockShape::Box { dx: 60.0, dy: 60.0, dz: 60.0 },
+        pos: [0.0, 0.0, -25.0],
+        yaw_deg: 0.0,
+    });
+    let tool = catalog().into_iter().find(|(n, _)| *n == TOOL).map(|(_, t)| t).expect("catalog tool");
+    state.pending.push_back(CommandKind::AddTool { name: TOOL.into(), tool });
+    state.drain_actions();
+    state.history.execute(
+        &state.world,
+        ImportModel::from_mesh("part", cube(Point3::new(-20.0, -10.0, 0.0), Point3::new(20.0, 10.0, 10.0))),
+    );
+    state.history.execute(&state.world, CreateSetup::new(&state.world, None, None).expect("Setup1"));
+    state.history.execute(&state.world, CreateSetup::new(&state.world, None, None).expect("Setup2"));
+    state.history.execute(&state.world, ActivateSetup::new(&state.world, Some("Setup2")).expect("Setup2 active"));
+    state.pending.push_back(CommandKind::SetStock {
+        shape: StockShape::Box { dx: 60.0, dy: 60.0, dz: 60.0 },
+        pos: [0.0, 0.0, -25.0],
+        yaw_deg: 0.0,
+    });
+    state.drain_actions();
+    state.history.execute(
+        &state.world,
+        AlignPartToSetup::angles(&state.world, "Setup2", [90.0, 0.0, 0.0]).expect("align Setup2"),
+    );
+    let pocket = OpParams::Pocket {
+        rest: None,
+        blend_radius: None,
+        links: camcraft_app::links::Links::PLANAR,
+        tilt: None,
+        stepover: 1.5,
+        stock_to_leave: 0.0,
+        clearance_z: Height::fixed(30.0),
+        retract_z: None,
+        top_z: Height::fixed(20.0),
+        bottom_z: Height::fixed(5.0),
+        stepdown: 5.0,
+        feed: 800.0,
+        plunge_feed: 200.0,
+        climb: true,
+        strategy: PocketStrategy::Zigzag,
+        entry: camcraft_app::machining3d::Entry3D::Plunge,
+        helix_radius: 1.0,
+        optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
+        blend_turns: false,
+    };
+    state.history.execute(
+        &state.world,
+        CreateOperation::new(&state.world, "A2", TOOL, SrcRef::Stock, pocket).expect("A2"),
+    );
+    // Activate Setup1 (unaligned) while A2 (owned by Setup2) is open.
+    state.history.execute(&state.world, ActivateSetup::new(&state.world, Some("Setup1")).expect("Setup1 active"));
+    state.pending.push_back(CommandKind::Select(Some("A2".into())));
+    state.drain_actions();
+    state.sync_ops_ui();
+
+    let part = model::find_by_name(&state.world, "part").expect("part");
+    let f = model::features_of(&state.world, &part).expect("features");
+    let edge = feature::chains(&f)
+        .into_iter()
+        .find(|c| {
+            let p = feature::chain_points(&f, c);
+            !c.closed && p.len() >= 2 && p.iter().all(|q| (q[1] - 10.0).abs() < 1e-9 && (q[2] - 10.0).abs() < 1e-9)
+        })
+        .map(|c| GeoSel { entity: "part".into(), feature: FeatureSel::Chain(c.id) })
+        .expect("shared edge");
+    queue_edge_pick(&mut state, edge, Mods { shift: true, ..Default::default() });
+    state.drain_actions();
+
+    let op_e = model::find_by_name(&state.world, "A2").expect("A2");
+    let SrcRef::Selection(items) = model::operation_of(&state.world, &op_e).expect("op").src else {
+        panic!("selection expected");
+    };
+    assert_eq!(items.len(), 4);
+    for g in items {
+        let FeatureSel::Chain(id) = g.feature else { panic!("chain expected") };
+        let c = feature::resolve_chain(&f, id).expect("chain");
+        let pts = feature::chain_points(&f, &c);
+        assert!(pts.iter().all(|q| (q[1] - 10.0).abs() < 1e-6), "selected y=10 loop, got {pts:?}");
+    }
 }

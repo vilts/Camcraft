@@ -22,7 +22,7 @@ fn a_refused_playback_is_said_once_and_retired_with_the_transport() {
     state.sim = Some(Sim::new()); // an empty document: no stock to cut
     ensure_field_view(&mut state);
     assert!(matches!(state.field_view, Some(Err(_))), "no stock is a named refusal");
-    assert!(state.status.contains("traced playback refused"), "{}", state.status);
+    assert!(state.status.contains("simulation shows the uncut stock"), "{}", state.status);
     let said = state.status.clone();
     ensure_field_view(&mut state);
     assert_eq!(state.status, said, "the same state is not re-walked or re-said");
@@ -39,4 +39,28 @@ fn the_stock_export_refuses_by_name_and_writes_nothing_without_stock() {
     state.drain_actions();
     assert!(state.status.starts_with("stock export refused:"), "{}", state.status);
     assert!(!path.exists(), "a refusal writes no file");
+}
+
+/// #2177: a refusal that each document edit asks again is said once,
+/// and the uncut stock still stands in the scene while it is refused.
+#[test]
+fn a_refusal_asked_again_is_said_once_and_the_stock_stays_drawn() {
+    use camcraft_app::commands::SetStock;
+    use camcraft_app::geometry::{quat_from_euler, Point3};
+    use camcraft_app::schema::Location;
+    use camcraft_app::stock::StockShape;
+    let mut state = State::new();
+    let turned = Location { pos: Point3::ZERO, rot: quat_from_euler(0.0, 0.0, 0.7) };
+    let stock = SetStock::new(&state.world, StockShape::Box { dx: 20.0, dy: 10.0, dz: 8.0 }, turned).expect("box stock");
+    state.history.execute(&state.world, stock);
+    state.sim = Some(Sim::new());
+    ensure_field_view(&mut state);
+    assert!(matches!(state.field_view, Some(Err(_))), "nothing to cut is a named refusal");
+    state.doc_version += 1; // an edit: the playback is asked again
+    ensure_field_view(&mut state);
+    assert_eq!(state.status.matches("simulation shows the uncut stock").count(), 1, "{}", state.status);
+    assert!(!state.status.contains("sheet stands") && !state.status.contains("field view"), "{}", state.status);
+    let scene = crate::egui_app::world::collect(&state);
+    let drawn = scene.parts.iter().find(|p| p.stock).expect("the refused stock is still drawn");
+    assert_eq!(drawn.verts.len(), 36, "the uncut box's twelve facets");
 }

@@ -19,11 +19,13 @@ use crate::state::{CommandKind, FixtureLibDialog, InsertFixtureDraft, State};
 
 use super::fields::{num_by, num_plain_by};
 use super::fixture_accessory_dialog::AccessoryAct;
+use super::fixture_profile_dialog::ProfileDialogAct;
 use super::fixture_vise_dialog::ViseAct;
 
 /// What a click asked for; applied after the dialog is drawn.
 enum Act {
     Close,
+    LoadProfileDxf,
     Save { replace: bool },
     Insert(Box<CommandKind>),
     Delete(String),
@@ -49,6 +51,7 @@ fn setup_label(setup: &str) -> &str {
 
 pub(crate) fn window(ctx: &egui::Context, state: &mut State) {
     let u = state.units();
+    let browser_why = state.in_browser(crate::browser_files::NEEDS_PICKER);
     let path = state.fixture_library_path().map(|p| p.display().to_string()).unwrap_or_else(|e| e);
     let Some(dialog) = state.fixture_lib.as_mut() else {
         return;
@@ -121,6 +124,13 @@ pub(crate) fn window(ctx: &egui::Context, state: &mut State) {
                     AccessoryAct::Place(cmd) => Act::Insert(cmd),
                 });
             }
+            FixtureLibDialog::Profile(d) => {
+                act = super::fixture_profile_dialog::body(ui, u, d, browser_why).map(|a| match a {
+                    ProfileDialogAct::Close => Act::Close,
+                    ProfileDialogAct::LoadDxf => Act::LoadProfileDxf,
+                    ProfileDialogAct::Insert(cmd) => Act::Insert(cmd),
+                });
+            }
             FixtureLibDialog::Insert(d) => {
                 ui.heading("Insert from library");
                 ui.label(RichText::new(&path).small());
@@ -191,6 +201,7 @@ pub(crate) fn window(ctx: &egui::Context, state: &mut State) {
     }
     match act {
         Some(Act::Close) => state.fixture_lib = None,
+        Some(Act::LoadProfileDxf) => state.load_profile_dxf_dialog(),
         Some(Act::Save { replace }) => state.save_fixtures_to_library(replace),
         Some(Act::Insert(cmd)) => state.pending.push_back(*cmd),
         Some(Act::Delete(name)) => state.delete_library_entry(&name),

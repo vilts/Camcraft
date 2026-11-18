@@ -147,6 +147,24 @@ impl Ring {
         }
         keeps
     }
+
+    /// The keeps of [`Self::tab_keeps`] for a ring whose start the user
+    /// picked (#1473): the same count, width and equal spacing, but
+    /// measured from the start, so the first window begins at the pick.
+    /// Tab `i` spans `[(i+1)s - width, (i+1)s]`; the last one ends on the
+    /// seam itself, so no window crosses it. Tabs as wide as their
+    /// spacing leave nothing, as in `tab_keeps`.
+    pub(super) fn tab_keeps_from_start(&self, count: usize, width: f64) -> Vec<(f64, f64)> {
+        let l = self.len;
+        if count == 0 || l <= 0.0 {
+            return vec![(0.0, l.max(0.0))];
+        }
+        let spacing = l / count as f64;
+        if width >= spacing {
+            return Vec::new();
+        }
+        (0..count).map(|i| (i as f64 * spacing, (i + 1) as f64 * spacing - width)).collect()
+    }
 }
 
 pub(super) fn dist(a: Point2, b: Point2) -> f64 {

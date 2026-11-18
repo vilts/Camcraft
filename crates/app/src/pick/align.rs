@@ -221,7 +221,7 @@ pub(super) fn straight_edge(
     let FeatureSel::Chain(cid) = g.feature else { return Err(gone(g)) };
     let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(g))?;
     let features = model::features_of(world, &e).ok_or_else(|| gone(g))?;
-    let c = feature::resolve_chain(&features, cid).ok_or_else(|| gone(g))?;
+    let c = crate::model::resolve_chain(&features, cid).ok_or_else(|| gone(g))?;
     if c.closed {
         return Err(format!("{} of '{}' is a closed loop - pick one straight edge {role}", g.feature, g.entity));
     }

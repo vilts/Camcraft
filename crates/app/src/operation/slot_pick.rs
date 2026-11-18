@@ -13,15 +13,16 @@
 use super::*;
 use crate::machining2d::{SlotBound, SlotFit};
 
-/// The room a Slot's picks allow, as the world stands now: two open
-/// edges give the strip between them, one face or closed ring its
-/// region. Any other selection is refused by name - a slot is never
+/// The room a Slot's picks allow, as the world stands now, in the
+/// frame of the setup `setup` (#2276: a part that setup holds turned
+/// reads turned, through `setup_align::pose_in`): two open edges give
+/// the strip between them, one face or closed ring its region. Any other selection is refused by name - a slot is never
 /// guessed from picks that do not bound one.
 ///
 /// # Errors
 /// A vanished pick, a point or wall pick, or a selection that is not
 /// two opposite edges or one face.
-pub fn slot_bound_of(world: &World, items: &[GeoSel]) -> Result<SlotBound, GenError> {
+pub fn slot_bound_of(world: &World, setup: Option<&str>, items: &[GeoSel]) -> Result<SlotBound, GenError> {
     let mut edges: Vec<Vec<Point2>> = Vec::new();
     let mut rings: Vec<Loop> = Vec::new();
     let mut areas = 0usize;
@@ -32,7 +33,7 @@ pub fn slot_bound_of(world: &World, items: &[GeoSel]) -> Result<SlotBound, GenEr
         let Some(features) = model::features_of(world, &entity) else {
             return Err(GenError::Invalid(format!("'{}' has no geometry to select from", g.entity)));
         };
-        let loc = model::transform_of(world, &entity).unwrap_or_default();
+        let loc = crate::setup_align::pose_in(world, &entity, setup).unwrap_or_default();
         let xy = |p: &[f64; 3]| {
             let w = transform_point(Point3::new(p[0], p[1], p[2]), loc.pos, loc.rot);
             Point2::new(w.x, w.y)
@@ -51,7 +52,7 @@ pub fn slot_bound_of(world: &World, items: &[GeoSel]) -> Result<SlotBound, GenEr
                 areas += 1;
             }
             FeatureSel::Chain(cid) => {
-                let c = feature::resolve_chain(&features, cid).ok_or_else(gone)?;
+                let c = crate::model::resolve_chain(&features, cid).ok_or_else(gone)?;
                 let pts: Vec<Point2> = feature::chain_points(&features, &c).iter().map(xy).collect();
                 if c.closed {
                     rings.push(Loop::new(pts).map_err(|_| {
@@ -89,10 +90,10 @@ pub fn slot_bound_of(world: &World, items: &[GeoSel]) -> Result<SlotBound, GenEr
 ///
 /// # Errors
 /// The picks bound no slot room, or the slot does not fit it.
-pub(super) fn confine_slot(world: &World, src: Option<&SrcRef>, params: &OpParams) -> Result<(), GenError> {
+pub(super) fn confine_slot(world: &World, setup: Option<&str>, src: Option<&SrcRef>, params: &OpParams) -> Result<(), GenError> {
     match (params, src) {
         (OpParams::Slot { a, b, width, .. }, Some(SrcRef::Selection(items))) if !items.is_empty() => {
-            slot_bound_of(world, items)?.judge(*a, *b, *width)
+            slot_bound_of(world, setup, items)?.judge(*a, *b, *width)
         }
         _ => Ok(()),
     }
@@ -104,11 +105,11 @@ pub(super) fn confine_slot(world: &World, src: Option<&SrcRef>, params: &OpParam
 /// slot room yet (one edge of two picked so far): the typed numbers
 /// stand, and generation names why.
 #[must_use]
-pub fn slot_from_picks(world: &World, params: &OpParams, items: &[GeoSel]) -> Option<OpParams> {
+pub fn slot_from_picks(world: &World, setup: Option<&str>, params: &OpParams, items: &[GeoSel]) -> Option<OpParams> {
     if !matches!(params, OpParams::Slot { .. }) || items.is_empty() {
         return None;
     }
-    let fit = match slot_bound_of(world, items).and_then(|b| b.fit()) {
+    let fit = match slot_bound_of(world, setup, items).and_then(|b| b.fit()) {
         Ok(f) => f,
         Err(e) => {
             tracing::debug!("slot picks seed nothing: {e}");
@@ -134,7 +135,7 @@ pub fn slot_fit_of(world: &World, op: &Operation) -> Option<Result<String, Strin
     if items.is_empty() {
         return None;
     }
-    let bound = match slot_bound_of(world, items) {
+    let bound = match slot_bound_of(world, op.setup.as_deref(), items) {
         Ok(bd) => bd,
         Err(e) => return Some(Err(e.to_string())),
     };

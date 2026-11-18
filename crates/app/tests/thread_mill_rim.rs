@@ -136,6 +136,7 @@ fn hole(x: f64, radius: f64) -> Hole {
 
 fn thread(x: f64, radius: f64) -> OpParams {
     OpParams::Thread {
+        break_through: None,
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(TOP),
@@ -171,6 +172,7 @@ fn open_ahead(world: &World, h: &mut History, thread: &OpParams) {
         let (t, op) = (format!("OPEN-T{k}"), format!("OPEN{k}"));
         h.execute(world, AddTool::new(world, &t, tool).expect("open tool"));
         let bore = OpParams::Bore {
+            break_through: None,
             links: camcraft_app::links::Links::PLANAR,
             clearance_z: Height::fixed(30.0),
             retract_z: None,
@@ -250,7 +252,7 @@ fn a_thread_taken_below_the_models_hole_floor_convicts() {
     let OpParams::Thread { clearance_z, retract_z, top_z, bottom_z, infeed, feed, plunge_feed, climb, pitch, hand, .. } = thread(0.0, 5.0) else {
         unreachable!("a thread op")
     };
-    let p = OpParams::Thread { clearance_z, retract_z, top_z, bottom_z, infeed, feed, plunge_feed, climb, holes: vec![h], pitch, hand, external: false, passes: camcraft_app::machining2d::ThreadPasses::default() };
+    let p = OpParams::Thread { break_through: None, clearance_z, retract_z, top_z, bottom_z, infeed, feed, plunge_feed, climb, holes: vec![h], pitch, hand, external: false, passes: camcraft_app::machining2d::ThreadPasses::default() };
     let w = verdict(drilled_block(5.0), p);
     assert!(gouged(&w), "{w:?}");
 }

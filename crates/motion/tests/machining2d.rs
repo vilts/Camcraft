@@ -40,6 +40,7 @@ fn params() -> FaceParams {
         plunge_feed: 100.0,
         climb: true,
         blend_turns: false,
+        stock_top: None,
     }
 }
 
@@ -137,7 +138,9 @@ fn face_steps_down_through_levels() {
         .filter(|m| m.kind == MoveKind::Plunge)
         .map(|m| m.to.z)
         .collect();
-    assert_eq!(zs, [4.0, 3.0, 2.0], "three staged levels");
+    // #2004: no air level at Top Z 4.0; the first level is one
+    // stepdown under it.
+    assert_eq!(zs, [3.0, 2.0], "two staged levels");
     // Same rows at every level: the band law is computed once and the
     // single-level sweep count repeats per staged level (3 rows, 20x20).
     for &z in &zs {
@@ -187,7 +190,7 @@ fn face_levels_snap_to_bottom_exactly() {
         .filter(|m| m.kind == MoveKind::Plunge)
         .map(|m| m.to.z)
         .collect();
-    assert_eq!(zs, [4.5, 3.0, 2.0], "last level lands on cut_z, not below");
+    assert_eq!(zs, [3.0, 2.0], "last level lands on cut_z, not below (#2004: no level at Top Z 4.5)");
 
     let mut p = params();
     p.top_z = Some(4.5);
@@ -199,7 +202,7 @@ fn face_levels_snap_to_bottom_exactly() {
         .filter(|m| m.kind == MoveKind::Plunge)
         .map(|m| m.to.z)
         .collect();
-    assert_eq!(zs, [4.5, 2.5, 2.0], "odd arithmetic still snaps exactly");
+    assert_eq!(zs, [2.5, 2.0], "odd arithmetic still snaps exactly (#2004: no level at Top Z 4.5)");
 }
 
 #[test]
@@ -528,7 +531,7 @@ fn contour_levels_snap_to_the_bottom() {
     p.bottom_z = -6.0;
     p.stepdown = 2.5;
     let t = contour(&rect(0.0, 0.0, 20.0, 20.0), &p).expect("valid");
-    assert_eq!(plunge_xy(&t).len(), 4, "levels 0, -2.5, -5, -6");
+    assert_eq!(plunge_xy(&t).len(), 3, "levels -2.5, -5, -6 (#2004: no air level at Top Z 0)");
     let mut zs: Vec<f64> = t
         .moves
         .iter()
@@ -537,7 +540,7 @@ fn contour_levels_snap_to_the_bottom() {
         .collect();
     zs.sort_by(f64::total_cmp);
     zs.dedup();
-    assert_eq!(zs, vec![-6.0, -5.0, -2.5, 0.0], "steps snap onto the bottom");
+    assert_eq!(zs, vec![-6.0, -5.0, -2.5], "steps snap onto the bottom");
 }
 
 #[test]
@@ -747,8 +750,9 @@ fn tabs_hold_the_part_until_the_floor() {
     p.tab_width = 6.0;
     p.tab_height = 2.0;
     let t = contour(&rect(0.0, 0.0, 20.0, 20.0), &p).expect("valid");
-    // Levels 0 and -3 run full rings, -6 runs four subpaths between tabs.
-    assert_eq!(plunge_xy(&t).len(), 6);
+    // Level -3 runs a full ring, -6 runs four subpaths between tabs
+    // (#2004: no air level at Top Z 0).
+    assert_eq!(plunge_xy(&t).len(), 5);
     // Hop motion only at the tabbed level: three retract feeds + rapids.
     let up = t
         .moves
@@ -1002,6 +1006,47 @@ fn pp() -> PocketParams {
     }
 }
 
+// The crossing helper must retain the opening rapid even when entry XY
+// equals the builder cursor. Without it the post starts with a plunge.
+fn assert_pocket_origin_approach(strategy: PocketStrategy) {
+    let mut p = pp();
+    p.strategy = strategy;
+    p.tool_diameter = 8.0;
+    p.stepover = 2.0;
+    p.bottom_z = -1.0;
+    p.stepdown = 1.0;
+    p.links.approach.plunge_height = 0.0;
+    let first = pocket(&rect(-4.0, -4.0, 24.0, 24.0), &p).expect("valid pocket");
+    let entry = first.moves[0].to;
+    assert_eq!(first.moves[0].kind, MoveKind::Rapid);
+    let path = pocket(
+        &rect(-4.0 - entry.x, -4.0 - entry.y, 24.0 - entry.x, 24.0 - entry.y),
+        &p,
+    )
+    .expect("valid translated pocket");
+    let (rapid, plunge) = (&path.moves[0], &path.moves[1]);
+    assert_eq!(rapid.kind, MoveKind::Rapid, "{strategy:?}: {rapid:?}");
+    assert_eq!((rapid.from.x, rapid.from.y, rapid.from.z), (0.0, 0.0, p.clearance_z));
+    assert_eq!(rapid.to, rapid.from, "entry must be at the cursor");
+    assert_eq!(rapid.feed, None);
+    assert_eq!(plunge.kind, MoveKind::Plunge);
+    assert_eq!(plunge.from, rapid.to);
+    // #2004: with no stock above Top Z, the first cut is one step below it.
+    assert_eq!(plunge.to.z, p.bottom_z);
+    assert_eq!(plunge.feed, Some(p.plunge_feed));
+    assert!(path.is_chained() && path.all_finite());
+}
+
+#[test]
+fn offset_rings_at_origin_keeps_opening_rapid() {
+    assert_pocket_origin_approach(PocketStrategy::OffsetRings);
+}
+
+#[test]
+fn waterline_at_origin_keeps_opening_rapid() {
+    assert_pocket_origin_approach(PocketStrategy::Waterline);
+}
+
 fn in_closed(r: &Region, q: (f64, f64)) -> bool {
     let p = Point2::new(q.0, q.1);
     r.contains(p) || on_boundary(r, p)
@@ -1039,8 +1084,10 @@ fn polyline_at(t: &Toolpath, z: f64) -> (Vec<(f64, f64)>, Vec<bool>) {
     (pts, lifted)
 }
 
-fn levels_3_zs() -> [f64; 3] {
-    [0.0, -3.0, -6.0]
+/// The levels of `pp()` / `sp()` (top 0, bottom -6, stepdown 3): no
+/// air level at Top Z 0 (#2004).
+fn levels_3_zs() -> [f64; 2] {
+    [-3.0, -6.0]
 }
 
 #[test]
@@ -1054,10 +1101,11 @@ fn zigzag_fills_a_square_with_one_plunge_per_level() {
     // lands its dive on a wall corner, not even the stock's own
     // surface corner) - first dives at the floor's room, then links
     // to the row start - a chord across the rows' lines, so the
-    // hop-and-dive link. 3 levels: 2 * 3. M11.3's one-entry law: the
+    // hop-and-dive link. M11.3's one-entry law: the
     // dive lands on the first row a little past its wall-corner start
     // and links back along the row at depth - one dive per level.
-    assert_eq!(plunge_xy(&t).len(), 3, "one entry dive at every level");
+    // #2004: two levels (-3, -6), no air level at Top Z 0.
+    assert_eq!(plunge_xy(&t).len(), 2, "one entry dive at every level");
     let floor = t
         .moves
         .iter()
@@ -1119,8 +1167,8 @@ fn zigzag_hops_over_islands_and_leaves_them_standing() {
     // interior entry dive whose link to the row start the island
     // forces to a hop, plus three island-crossing hops. 5 + 5 + 5.
     // M11.3: the entry lands on the first row and links along it, so the
-    // entry's second dive is gone - 4 per level.
-    assert_eq!(plunge_xy(&t).len(), 12);
+    // entry's second dive is gone - 4 per level. #2004: two levels.
+    assert_eq!(plunge_xy(&t).len(), 8);
 
     for z in levels_3_zs() {
         let (pts, lifted) = polyline_at(&t, z);
@@ -1409,8 +1457,8 @@ fn waterline_rings_split_by_an_island_hop_below_clearance() {
     p.tool_diameter = 8.0;
     p.stepover = 2.0;
     p.top_z = 0.0;
-    p.bottom_z = -3.0;
-    p.stepdown = 3.0; // two levels: 0 and -3
+    p.bottom_z = -6.0;
+    p.stepdown = 3.0; // two levels: -3 and -6 (#2004: none at Top Z 0)
     p.clearance_z = 5.0;
     p.retract_z = Some(2.0); // hop plane, below clearance, above the cut
     // The traverse-plane law itself (M11.3's plunge height 0 keeps it).
@@ -1474,7 +1522,7 @@ fn waterline_rings_split_by_an_island_hop_below_clearance() {
 /// or above the stock top, so no hop ever slides through solid.
 #[test]
 fn zigzag_and_levels_still_lift_to_clearance() {
-    let mut p = pp(); // zigzag, top 0, bottom -6, stepdown 3 -> 3 levels
+    let mut p = pp(); // zigzag, top 0, bottom -6, stepdown 3 -> 2 levels (#2004)
     p.clearance_z = 5.0;
     p.retract_z = Some(2.0);
     // The traverse-plane law itself (M11.3's plunge height 0 keeps it).
@@ -1502,7 +1550,7 @@ fn zigzag_and_levels_still_lift_to_clearance() {
             }
         }
     }
-    assert_eq!(first_zs.len(), 3, "each of the three levels engages once");
+    assert_eq!(first_zs.len(), 2, "each of the two levels engages once");
 }
 
 /// A retract plane inside the material would make a between-pass hop
@@ -1629,6 +1677,7 @@ fn tp() -> TraceParams {
         feed: 500.0,
         plunge_feed: 100.0,
         climb: true,
+        stock_top: None,
     }
 }
 
@@ -1657,7 +1706,7 @@ fn slot_the_tool_fills_the_channel_and_runs_the_centerline() {
         assert!(lifted[0] && lifted[1..].iter().all(|&l| !l));
         assert!((level_len(&t, z) - 40.0).abs() < 1e-9);
     }
-    assert_eq!(plunge_xy(&t).len(), 3, "one plunge per level, no in-cut lift");
+    assert_eq!(plunge_xy(&t).len(), 2, "one plunge per level, no in-cut lift");
     for m in t.moves.iter().filter(|m| m.kind == MoveKind::Rapid) {
         assert!(m.from.z == 5.0 || m.to.z == 5.0, "rapid inside the cut: {m:?}");
     }
@@ -2021,8 +2070,8 @@ fn trace_cuts_every_loop_at_every_level() {
         .unwrap(),
     ])
     .unwrap();
-    let t = trace(&r, &tp()).expect("valid"); // zs 0, -1, -2
-    assert_eq!(plunge_xy(&t).len(), 6, "two loops at three levels");
+    let t = trace(&r, &tp()).expect("valid"); // zs -1, -2 (#2004: none at Top Z 0)
+    assert_eq!(plunge_xy(&t).len(), 4, "two loops at two levels");
     for m in t.moves.iter().filter(|m| m.kind == MoveKind::Rapid) {
         assert!(m.from.z == 5.0 || m.to.z == 5.0, "rapid inside the cut: {m:?}");
     }
@@ -2031,7 +2080,7 @@ fn trace_cuts_every_loop_at_every_level() {
         .iter()
         .flat_map(|l| l.points().iter().map(|q| (q.x, q.y)))
         .collect();
-    for &z in &[0.0, -1.0, -2.0] {
+    for &z in &[-1.0, -2.0] {
         let (pts, _) = polyline_at(&t, z);
         assert_eq!(pts.len(), 10, "both rings closed at {z}: {pts:?}");
         for q in &pts {
@@ -2111,19 +2160,20 @@ fn offset_rings_are_the_engagement_law_on_the_plane() {
 fn a_ramp_down_the_plane_feeds_in_one_diagonal() {
     // The 3-D ladder's ramp on a planar pocket: every level shares one
     // center area, so a chord that clears it is legal at every plane
-    // the diagonal crosses. Level 0 takes the arm too (M8.1): home
+    // the diagonal crosses. The first level (-3, #2004: no air level at
+    // Top Z 0) takes the arm too (M8.1): home
     // stands outside the center, so its chord is unproven - the arm
     // substitutes the axial dive at the floor's room and SAYS so,
-    // while the -3.0 level, entering from cut floor, rides the slope.
+    // while the -6.0 level, entering from cut floor, rides the slope.
     let region = rect(0.0, 0.0, 30.0, 30.0);
     let mut p = pp();
     p.entry = Entry3D::Ramp;
     let t = pocket(&region, &p).expect("ramp valid");
-    let first_plunge = t.moves.iter().find(|m| m.to.z == 0.0).expect("level 0 cut");
+    let first_plunge = t.moves.iter().find(|m| m.to.z == -3.0).expect("level -3 cut");
     assert_eq!(first_plunge.kind, MoveKind::Plunge, "the substituted dive");
     assert!(
         t.notes.iter().any(|n| n.contains("ramp's chord is blocked")),
-        "the level 0 substitution must be said, got {:?}",
+        "the first level's substitution must be said, got {:?}",
         t.notes
     );
     assert!(
@@ -2131,10 +2181,10 @@ fn a_ramp_down_the_plane_feeds_in_one_diagonal() {
             m.kind == MoveKind::Feed
                 && (m.from.x != m.to.x || m.from.y != m.to.y)
                 && m.from.z != m.to.z
-                && m.from.z > -3.0
-                && m.to.z == -3.0
+                && m.from.z > -6.0
+                && m.to.z == -6.0
         }),
-        "the -3.0 level is entered on a ramp"
+        "the -6.0 level is entered on a ramp"
     );
     assert!(t.is_chained() && t.all_finite());
 }
@@ -2156,8 +2206,9 @@ fn the_entry_family_is_obeyed_at_the_first_level() {
     let reach = t
         .moves
         .iter()
-        .find(|m| (m.to.z - 0.0).abs() < 1e-9 && m.kind != MoveKind::Rapid)
-        .expect("something reaches the surface plane");
+        // #2004: the first level is -3 (no air level at Top Z 0).
+        .find(|m| (m.to.z + 3.0).abs() < 1e-9 && m.kind != MoveKind::Rapid)
+        .expect("something reaches the first level");
     assert_eq!(reach.kind, MoveKind::Feed, "the first level is entered in arcs: {reach:?}");
     assert!(reach.arc.is_some(), "and the arc is the helix's own");
     // M11.3: the helix lands on the first row; only a named second dive
@@ -2316,8 +2367,8 @@ fn roughing_rings_run_inside_out_and_the_wall_walks_last() {
     let last_top = t
         .moves
         .iter()
-        .rfind(|m| m.kind == MoveKind::Feed && m.to.z == 0.0)
-        .expect("the top level cuts");
+        .rfind(|m| m.kind == MoveKind::Feed && m.to.z == -3.0)
+        .expect("the top level (-3, #2004) cuts");
     assert!(d(last_top) >= 14.0, "the wall ring walks last, got {:?}", last_top.to);
     assert!(t.is_chained() && t.all_finite());
 }

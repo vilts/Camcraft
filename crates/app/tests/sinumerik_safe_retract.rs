@@ -13,7 +13,6 @@
 
 use camcraft_app::machine::parse_mch;
 use camcraft_app::post::{engine, machine};
-use camcraft_app::posting::MACHINES;
 use serde_json::{json, Value};
 use std::path::Path;
 
@@ -80,7 +79,7 @@ fn a_stated_z0_and_no_machine_post_byte_identical() {
     assert_z0(&out.program);
     let strip = |p: &str| p.lines().skip(1).collect::<Vec<_>>().join("\n");
     let mut checked = 0;
-    for (name, text) in MACHINES {
+    for (name, text) in camcraft_app::posting::shipped_machines().expect("the shipped machines read") {
         let m = parse_mch(text).unwrap_or_else(|e| panic!("{name}: {e}"));
         if m.safe_retract_z != Some(0.0) {
             continue;

@@ -24,7 +24,7 @@ use flecs_ecs::prelude::World;
 use camcraft_app::commands::{
     AddTool, ChangeTool, CreateOperation, ElectrodeFromFaces, GenerateOperation, History, ImportModel, LoadMachine, SetStock,
 };
-use camcraft_app::geometry::feature::FaceKind;
+use camcraft_app::geometry::feature::{self, FaceKind};
 use camcraft_app::geometry::Mesh;
 use camcraft_app::machine::parse_mch;
 use camcraft_app::operation::sinker_faces::condition_undersize;
@@ -169,6 +169,39 @@ fn a_rounded_pockets_faces_yield_an_electrode_whose_burn_is_judged_clean() {
     assert!(sim.dev.gouge_cells > 0 && sim.dev.max_gouge > 1.0, "a square corner in a round one: max gouge {}", sim.dev.max_gouge);
     let at = sim.dev.max_gouge_at.expect("located");
     assert!(at.x.abs() > 8.0 && at.y.abs() > 4.0, "the gouge is in a corner: {at:?}");
+}
+
+#[test]
+fn a_rounded_pockets_corners_picked_as_welded_faces_yield_the_strips_electrode() {
+    // #1808: the floor and the wall picked as its welded (curved) face -
+    // what a click on a rounded corner gives: the tangent flat walls and
+    // corner strips weld into one face - make the electrode of the
+    // planar-strip pick.
+    let (world, mut h) = doc(rounded());
+    let strips = faces_in(&world, (-10.0, -6.0), (10.0, 6.0));
+    let f = model::features_of(&world, &model::find_by_name(&world, "part").expect("part")).expect("features");
+    let welds = feature::patches(&f);
+    assert_eq!(welds.len(), 1, "the tangent wall band welds into one face");
+    let welded: Vec<u64> = welds.iter().flat_map(|p| p.faces.iter().copied()).collect();
+    assert_eq!(welded.len(), 20, "four flat walls and sixteen corner strips");
+    let mut picks: Vec<GeoSel> = strips.iter().filter(|g| !matches!(g.feature, FeatureSel::Face(id) if welded.contains(&id))).cloned().collect();
+    assert_eq!(picks.len(), 1, "the floor");
+    picks.extend(welds.iter().map(|p| GeoSel { entity: "part".into(), feature: FeatureSel::Patch(p.id) }));
+    let of_strips = ElectrodeFromFaces::new(&world, "E-S", &strips, &spec(0.02)).expect("the strips' electrode");
+    let e = electrode_and_burn(&world, &mut h, &picks, "E-W", "F1", SinkerPass::Finish);
+    assert_eq!(&e, of_strips.electrode(), "the welded pick is the strips' electrode");
+    assert!(e.body && e.cavity == (20.0, 12.0), "{e:?}");
+    let sim = simulate_document(&world).expect("judged");
+    assert!(sim.dev.is_clean(), "max rest {} at {:?}, max gouge {} at {:?}", sim.dev.max_rest, sim.dev.max_rest_at, sim.dev.max_gouge, sim.dev.max_gouge_at);
+    // A welded face picked beside its own strips: the same walls twice.
+    let mut both = picks.clone();
+    both.extend(strips.iter().cloned());
+    let again = ElectrodeFromFaces::new(&world, "E-B", &both, &spec(0.02)).expect("electrode");
+    assert_eq!(again.electrode(), of_strips.electrode());
+    // A stale welded face is refused by name.
+    let stale = GeoSel { entity: "part".into(), feature: FeatureSel::Patch(0xDEAD_BEEF) };
+    let Err(why) = ElectrodeFromFaces::new(&world, "E-X", &[stale], &spec(0.02)) else { panic!("a stale patch was admitted") };
+    assert!(why.to_string().contains("no longer in the model"), "{why}");
 }
 
 #[test]

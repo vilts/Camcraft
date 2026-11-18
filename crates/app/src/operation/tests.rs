@@ -81,7 +81,7 @@ fn params_sanity_gates() {
         climb: true,
     };
     assert!(!no_step.is_sane(), "stepdown must be positive when set");
-    let bad = OpParams::Pocket { tilt: None, blend_radius: None,
+    let bad = OpParams::Pocket { rest: None, tilt: None, blend_radius: None,
         links: crate::links::Links::PLANAR,
         stepover: f64::NAN,
         stock_to_leave: 0.0,
@@ -170,6 +170,7 @@ fn stamp_follows_every_input() {
     // flip made outside EditOperationParams must not leave a cached
     // internal path reading Ok on an external op).
     let thread = |external: bool| OpParams::Thread {
+        break_through: None,
         clearance_z: Height::fixed(5.0),
         retract_z: None,
         top_z: Height::fixed(0.0),
@@ -494,7 +495,7 @@ fn the_arc_entry_splits_the_stamp_and_leaves_the_others_alone() {
     // Arc op is never served a Ramp or Helix cache - and the three old
     // words keep the bytes they always wrote.
     let world = crate::world::new_world();
-    let pocket = |entry: Entry3D| OpParams::Pocket {
+    let pocket = |entry: Entry3D| OpParams::Pocket { rest: None,
         blend_radius: None,
         links: crate::links::Links::PLANAR,
         tilt: None,

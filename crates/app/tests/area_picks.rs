@@ -157,3 +157,151 @@ fn an_open_boundary_of_three_runs_clears_inside_the_u_it_draws() {
     assert!(f.iter().all(|p| p.x + R <= 20.0 + EPS && p.y.abs() + R <= 20.0 + EPS), "never across the chain");
     assert!(max_by(&f, |p| -p.x) > 20.0 + R, "runs on out of the U's mouth");
 }
+
+fn loop_segments_in_setup(world: &World, setup: Option<&str>, picks: &[GeoSel]) -> Vec<([i64; 3], [i64; 3])> {
+    let quant = |p: Point3| -> [i64; 3] {
+        [(p.x * 1e4).round() as i64, (p.y * 1e4).round() as i64, (p.z * 1e4).round() as i64]
+    };
+    let e = model::find_by_name(world, "part").expect("part");
+    let f = model::features_of(world, &e).expect("features");
+    let loc = camcraft_app::setup_align::pose_in(world, &e, setup).unwrap_or_default();
+    let mut segs: Vec<([i64; 3], [i64; 3])> = picks
+        .iter()
+        .map(|g| {
+            let FeatureSel::Chain(id) = g.feature else { panic!("expected chain pick, got {g:?}") };
+            let c = feature::resolve_chain(&f, id).expect("chain resolves");
+            let pts = feature::chain_points(&f, &c);
+            let a = quant(camcraft_app::geometry::transform_point(
+                Point3::new(pts[0][0], pts[0][1], pts[0][2]),
+                loc.pos,
+                loc.rot,
+            ));
+            let b = quant(camcraft_app::geometry::transform_point(
+                Point3::new(pts[pts.len() - 1][0], pts[pts.len() - 1][1], pts[pts.len() - 1][2]),
+                loc.pos,
+                loc.rot,
+            ));
+            if a <= b { (a, b) } else { (b, a) }
+        })
+        .collect();
+    segs.sort();
+    segs
+}
+
+fn edge_at_setup_midpoint(world: &World, setup: Option<&str>, target: Point3) -> GeoSel {
+    let e = model::find_by_name(world, "part").expect("part");
+    let f = model::features_of(world, &e).expect("features");
+    let loc = camcraft_app::setup_align::pose_in(world, &e, setup).unwrap_or_default();
+    let c = feature::chains(&f)
+        .into_iter()
+        .find(|c| {
+            if c.closed {
+                return false;
+            }
+            let pts = feature::chain_points(&f, c);
+            let a = camcraft_app::geometry::transform_point(
+                Point3::new(pts[0][0], pts[0][1], pts[0][2]),
+                loc.pos,
+                loc.rot,
+            );
+            let b = camcraft_app::geometry::transform_point(
+                Point3::new(pts[pts.len() - 1][0], pts[pts.len() - 1][1], pts[pts.len() - 1][2]),
+                loc.pos,
+                loc.rot,
+            );
+            let mid = Point3::new(0.5 * (a.x + b.x), 0.5 * (a.y + b.y), 0.5 * (a.z + b.z));
+            (mid.x - target.x).abs() < 1e-6 && (mid.y - target.y).abs() < 1e-6 && (mid.z - target.z).abs() < 1e-6
+        })
+        .expect("matching edge chain");
+    GeoSel { entity: "part".into(), feature: FeatureSel::Chain(c.id) }
+}
+
+fn rotated_block_world(deg: [f64; 3], aligned: bool) -> (World, History, Point3) {
+    let raw = cube(Point3::new(-20.0, -10.0, 0.0), Point3::new(20.0, 10.0, 10.0));
+    let rot = camcraft_app::setup_align::rotation_from_angles(deg).expect("rot");
+    let loc = camcraft_app::setup_align::about_centre(rot, Point3::new(0.0, 0.0, 5.0)).unwrap_or_default();
+    let mesh = if aligned {
+        raw
+    } else {
+        camcraft_app::geometry::Mesh::from_facets(
+            raw.facets
+                .iter()
+                .map(|t| {
+                    camcraft_app::geometry::Triangle::new(
+                        camcraft_app::geometry::transform_point(t.a, loc.pos, loc.rot),
+                        camcraft_app::geometry::transform_point(t.b, loc.pos, loc.rot),
+                        camcraft_app::geometry::transform_point(t.c, loc.pos, loc.rot),
+                    )
+                })
+                .collect(),
+        )
+    };
+    let world = world_with(Some(ImportModel::from_mesh("part", mesh)), -20.0, 50.0);
+    let mut h = History::default();
+    h.execute(&world, camcraft_app::commands::CreateSetup::new(&world, None, None).expect("Setup1"));
+    if aligned {
+        h.execute(
+            &world,
+            camcraft_app::commands::AlignPartToSetup::angles(&world, "Setup1", deg).expect("align"),
+        );
+    }
+    let mid = camcraft_app::geometry::transform_point(Point3::new(0.0, 10.0, 10.0), loc.pos, loc.rot);
+    (world, h, mid)
+}
+
+#[test]
+fn extend_to_loop_reads_face_normals_in_the_setup_frame() {
+    for deg in [
+        [180.0, 0.0, 0.0],
+        [0.0, 0.0, 90.0],
+        [90.0, 0.0, 0.0],
+        [55.0, 0.0, 0.0],
+    ] {
+        let (aligned_world, _ha, mid_a) = rotated_block_world(deg, true);
+        let (baked_world, _hb, mid_b) = rotated_block_world(deg, false);
+        let edge_a = edge_at_setup_midpoint(&aligned_world, Some("Setup1"), mid_a);
+        let edge_b = edge_at_setup_midpoint(&baked_world, Some("Setup1"), mid_b);
+        let got = operation::extend_to_loop(&aligned_world, std::slice::from_ref(&edge_a)).expect("aligned loop");
+        let want = operation::extend_to_loop(&baked_world, std::slice::from_ref(&edge_b)).expect("baked loop");
+        assert_eq!(
+            loop_segments_in_setup(&aligned_world, Some("Setup1"), &got),
+            loop_segments_in_setup(&baked_world, Some("Setup1"), &want),
+            "extend_to_loop mismatch for setup alignment {deg:?}"
+        );
+    }
+
+    // Active Setup2 alignment is honoured even when Setup1 is unaligned.
+    let (world, mut h, _) = rotated_block_world([0.0, 0.0, 0.0], false);
+    h.execute(&world, camcraft_app::commands::CreateSetup::new(&world, None, None).expect("Setup2"));
+    h.execute(
+        &world,
+        camcraft_app::commands::AlignPartToSetup::angles(&world, "Setup2", [90.0, 0.0, 0.0]).expect("align Setup2"),
+    );
+    h.execute(
+        &world,
+        camcraft_app::commands::ActivateSetup::new(&world, Some("Setup2")).expect("activate Setup2"),
+    );
+    let (baked_world, _hb, mid_b) = rotated_block_world([90.0, 0.0, 0.0], false);
+    let edge_s2 = edge_at_setup_midpoint(&world, Some("Setup2"), mid_b);
+    let edge_b = edge_at_setup_midpoint(&baked_world, Some("Setup1"), mid_b);
+    let got = operation::extend_to_loop(&world, std::slice::from_ref(&edge_s2)).expect("Setup2 loop");
+    let want = operation::extend_to_loop(&baked_world, std::slice::from_ref(&edge_b)).expect("baked loop");
+    assert_eq!(
+        loop_segments_in_setup(&world, Some("Setup2"), &got),
+        loop_segments_in_setup(&baked_world, Some("Setup1"), &want),
+        "extend_to_loop should use active Setup2's alignment"
+    );
+
+    // Explicit setup reads Setup2's alignment even when Setup1 is active.
+    h.execute(
+        &world,
+        camcraft_app::commands::ActivateSetup::new(&world, Some("Setup1")).expect("activate Setup1"),
+    );
+    let got_in = operation::extend_to_loop_in(&world, Some("Setup2"), std::slice::from_ref(&edge_s2))
+        .expect("explicit Setup2 loop");
+    assert_eq!(
+        loop_segments_in_setup(&world, Some("Setup2"), &got_in),
+        loop_segments_in_setup(&baked_world, Some("Setup1"), &want),
+        "extend_to_loop_in should use the named Setup2 alignment even when Setup1 is active"
+    );
+}

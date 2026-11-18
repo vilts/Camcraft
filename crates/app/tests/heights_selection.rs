@@ -86,7 +86,7 @@ fn bottom_of(src: &SrcRef, world: &World, off: f64) -> Option<f64> {
 
 /// A pocket whose four heights all read the selection.
 fn pocket_from_selection() -> OpParams {
-    OpParams::Pocket {
+    OpParams::Pocket { rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
@@ -236,7 +236,7 @@ fn creation_and_edits_refuse_a_selection_that_yields_no_height() {
         .to_string();
     assert!(err.contains("cut downward"), "{err}");
     // Params that never read the selection pass the pick exactly as before.
-    let fixed = OpParams::Pocket {
+    let fixed = OpParams::Pocket { rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
@@ -293,7 +293,7 @@ fn generation_refuses_a_vanished_selection_by_name() {
 #[test]
 fn an_edit_to_selection_rides_edit_params_and_undoes() {
     let (world, mut history) = fixture();
-    let before = OpParams::Pocket {
+    let before = OpParams::Pocket { rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,

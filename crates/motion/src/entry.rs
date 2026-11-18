@@ -81,7 +81,15 @@ pub(crate) fn helix_about(
     for h in 0..half_turns {
         let frac = f64::from(h + 1) / f64::from(half_turns);
         let last = h + 1 == half_turns;
-        let tz = lattice(z0 - span * frac);
+        // Land the final half-turn on exact `z1` so adjacent levels do not
+        // inherit a 1-ULP ramp between `lattice(z1)` and `z1`.
+        let tz = if last {
+            z1
+        } else if z0 >= z1 {
+            lattice(z0 - span * frac).max(z1)
+        } else {
+            lattice(z0 - span * frac).min(z1)
+        };
         // Alternating far/near point of the circle; even counts close on
         // xy at the last leg.
         let q = if h % 2 == 0 { far } else if last { xy } else { near };
@@ -214,4 +222,36 @@ fn boundary_clears(region: &Region, p: Point2, d: f64) -> bool {
         }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::helix_about;
+    use crate::cl::{MoveKind, PathBuilder};
+    use crate::geo2d::Point2;
+    use crate::geometry::Point3;
+    use crate::verify::crossed_pairs;
+
+    #[test]
+    fn helix_about_exact_end_z_prevents_next_level_ulp_crossing() {
+        // -0.30 - 0.15 == -0.44999999999999996 while latticeSnap == -0.45:
+        // helix ending at lattice(z1) leaves a 1-ULP step into lvl.z that overlaps the next level's helix.
+        let z0 = -0.30_f64;
+        let z1 = z0 - 0.15;
+        let z2 = z1 - 0.15;
+        assert_ne!((z1 * 1e6).round() / 1e6, z1, "expected 1-ULP difference at -0.45");
+
+        let start = Point2::new(10.5, 0.0);
+        let center = Point2::new(12.0, 0.0);
+        let mut b = PathBuilder::new(Point3::new(start.x, start.y, z0));
+        helix_about(&mut b, start, center, z0, z1, 1.0, 500.0, true);
+        // First level cut arc at z1
+        b.push_arc(MoveKind::Feed, Point3::new(12.75, -1.30, z1), Some(500.0), center, true);
+        // Next level helix descending from z1 to z2 at the same entry center
+        b.push(MoveKind::Rapid, Point3::new(start.x, start.y, z1), None);
+        helix_about(&mut b, start, center, z1, z2, 1.0, 500.0, true);
+        let path = b.finish();
+        let c = crossed_pairs(&path, 0.01);
+        assert!(c.is_empty(), "ULP helix step caused false crossing: {c:?}");
+    }
 }

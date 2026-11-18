@@ -1,12 +1,13 @@
 //! The WCS page (#342: the active setup's one work coordinate system),
 //! split out of `pages.rs` and laid out in three sections (#739): Origin
 //! and orientation (label and field on one row, the fields in one column),
-//! Quarter turns (equal buttons filling the pane's width) and Anchor on
+//! Quarter turns (equal buttons filling the pane's width, with the #1720
+//! Flip X / Flip Y / Flip Z toggles under the turns) and Anchor on
 //! (the stock box or model bounds as a 3x3 compass of equal cells, or the
 //! centre of a picked circular edge). Every change is a command:
 //! `SetWcs` for the fields, turns and box points, `SetWcsCircle` for the
 //! circle centre (the app's shared `pick::circle_centre` reads the
-//! circle) - the page only drafts and queues.
+//! circle) - the page only drafts and queues. `SetWcsFlip` for a flip.
 //!
 //! Provenance: behaviour specced from published CAM setup practice; the
 //! layout is our own over the `layout` form helpers; no vendor material.
@@ -29,6 +30,8 @@ pub(super) const SOURCES: [&str; 3] = ["Stock box", "Model bounds", "Circle cent
 const CIRCLE: usize = 2;
 /// A button row's height, and the compass cells' size cap.
 const BUTTON_H: f32 = 24.0;
+/// The group holding the setup's work offset picker (#1648; drawn by `pages.rs`).
+pub(super) const OFFSET_GROUP: &str = "Work offset (G54-G59)";
 const CELL_MAX: Vec2 = Vec2::new(72.0, 30.0);
 
 /// The quarter turns, two rows of three: (label, setup axis, sign).
@@ -36,6 +39,9 @@ const TURNS: [[(&str, usize, f64); 3]; 2] = [
     [("Turn X+", 0, 1.0), ("Turn Y+", 1, 1.0), ("Turn Z+", 2, 1.0)],
     [("Turn X-", 0, -1.0), ("Turn Y-", 1, -1.0), ("Turn Z-", 2, -1.0)],
 ];
+
+/// The axis flip toggles (#1720), one per axis X, Y, Z.
+pub(super) const FLIPS: [&str; 3] = ["Flip X", "Flip Y", "Flip Z"];
 
 const MILL_TILT_HINT: &str =
     "Milling cuts along machine Z. Use Part alignment on the Setup page to turn the part.";
@@ -135,6 +141,7 @@ fn quarter_turns(ui: &mut Ui, state: &mut State, is_mill: bool) {
             turn_wcs(state, *axis, *sign);
         }
     }
+    flip_row(ui, state, size3);
     let size2 = Vec2::new(cell_w(ui, avail, 2), BUTTON_H);
     match even_row(ui, &["Level", "Set Origin"], size2) {
         Some(0) => {
@@ -145,6 +152,36 @@ fn quarter_turns(ui: &mut Ui, state: &mut State, is_mill: bool) {
         }
         Some(_) => apply_wcs_drafts(state),
         None => {}
+    }
+}
+
+/// #1720: three toggles; a lit one is a reversed axis of the active
+/// setup's WCS. A click queues the flags with that axis toggled.
+fn flip_row(ui: &mut Ui, state: &mut State, size: Vec2) {
+    let active = camcraft_app::setup::active(&state.world);
+    let flip = camcraft_app::setup_wcs_flip::of_setup(&state.world, active.as_deref());
+    let mut hit = None;
+    ui.horizontal(|ui| {
+        for (i, label) in FLIPS.iter().enumerate() {
+            let on = flip.get(i).copied().unwrap_or(false);
+            if ui.add_sized(size, Button::selectable(on, *label)).clicked() {
+                hit = Some(i);
+            }
+        }
+    });
+    if let Some(i) = hit {
+        let mut next = flip;
+        if let Some(f) = next.get_mut(i) {
+            *f = !*f;
+        }
+        state.pending.push_back(CommandKind::SetWcsFlip { flip: next });
+    }
+    if flip.iter().any(|f| *f) {
+        ui.label(
+            RichText::new("A flipped axis does not post yet: posting and generating are refused until the flip is cleared.")
+                .small()
+                .weak(),
+        );
     }
 }
 

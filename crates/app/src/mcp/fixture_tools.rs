@@ -11,7 +11,7 @@
 use super::setup_tools::{cmd_err, loc_view, obj, opt_nums, point, setup_or_active};
 use super::tools::{req_str, Tool};
 use crate::commands::{Locate, MoveFixture, TagFixture, UntagFixture};
-use crate::fixture_locate::{LocateOffset, LocateSpec, Mate, Mover};
+use crate::fixture_locate::{self, LocateBody, LocateOffset, LocateSpec, Mate, Mover};
 use crate::operation::GeoSel;
 use crate::fixture;
 use crate::model;
@@ -26,7 +26,7 @@ pub(super) const TOOLS: &[Tool] = &[
     Tool { name: "add_fixture", description: "Mark an imported model as a fixture (workholding steel the verifier checks every toolpath against) of a setup - the active one by default. Import the model with import_model first.", schema: s_add_fixture, run: add_fixture },
     Tool { name: "remove_fixture", description: "Unmark a fixture: the model stays, the verifier stops checking against it.", schema: s_fixture_name, run: remove_fixture },
     Tool { name: "move_fixture", description: "Place a fixture: position [x, y, z] in mm and an optional unit quaternion rotation [x, y, z, w] (omitted keeps the current one).", schema: s_move_fixture, run: move_fixture },
-    Tool { name: "locate_part", description: "Locate the part in a fixture (or, with move \"fixture\", the fixture on the part) by mates: each mate pairs a part face or vertex id with the fixture face or vertex it sits on (list_features prints the ids). One to three mates - floor, fixed jaw, stop (3-2-1) - then an optional offset [dx, dy, dz] mm and turn (degrees about the first face mate's normal). One undoable step; refusals and an interpenetration warning are said by name.", schema: s_locate_part, run: locate_part },
+    Tool { name: "locate_part", description: "Locate the part in a fixture (or, with move \"fixture\", the fixture on the part) by mates: each mate pairs a part face or vertex id (or, with body \"stock\", a face or vertex id of the setup's stock) with the fixture face or vertex it sits on (list_features prints the ids). One to three mates - floor, fixed jaw, stop (3-2-1) - then an optional offset [dx, dy, dz] mm and turn (degrees about the first face mate's normal). One undoable step; refusals and an interpenetration warning are said by name.", schema: s_locate_part, run: locate_part },
     Tool { name: "get_fixture_findings", description: "The verifier's fixture check, live: every setup's fixtures and machine table with their boxes, and each collision of a toolpath with them (op, move index, struck part, message). Needs every operation generated.", schema: s_empty, run: get_fixture_findings },
 ];
 
@@ -72,6 +72,16 @@ fn locate_part(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
         Some("fixture") => Mover::Fixture,
         Some(other) => return Err(format!("\"move\" is \"part\" or \"fixture\", not \"{other}\"")),
     };
+    // #2173: the mates' first ids are on the part, or on its setup's stock.
+    let (body, held) = match super::tools::opt_str(a, "body")? {
+        None | Some("part") => (LocateBody::Part, part.to_owned()),
+        Some("stock") => (
+            LocateBody::Stock,
+            fixture_locate::stock_of(&env.world, steel)
+                .ok_or_else(|| format!("the setup of '{steel}' has no stock to locate - set the stock first"))?,
+        ),
+        Some(other) => return Err(format!("\"body\" is \"part\" or \"stock\", not \"{other}\"")),
+    };
     let Some(Value::Array(items)) = a.get("mates") else {
         return Err("\"mates\" is required: an array of {\"part\": id, \"fixture\": id}".into());
     };
@@ -85,7 +95,7 @@ fn locate_part(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
     let mates = items
         .iter()
         .map(|v| match v {
-            Value::Object(m) => Ok(Mate { part: side(m, "part", part)?, fixture: side(m, "fixture", steel)? }),
+            Value::Object(m) => Ok(Mate { part: side(m, "part", &held)?, fixture: side(m, "fixture", steel)? }),
             other => Err(format!("a mate is an object {{\"part\", \"fixture\"}}, got {other}")),
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -94,7 +104,7 @@ fn locate_part(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
         None | Some(Value::Null) => 0.0,
         Some(v) => v.as_f64().ok_or("\"turn\" must be a number of degrees")?,
     };
-    let spec = LocateSpec { part: part.to_owned(), fixture: steel.to_owned(), mates, offset: LocateOffset { dx, dy, dz, turn_deg } };
+    let spec = LocateSpec { part: part.to_owned(), fixture: steel.to_owned(), body, mates, offset: LocateOffset { dx, dy, dz, turn_deg } };
     let cmd = Locate::new(&env.world, &spec, mover).map_err(cmd_err)?;
     let warning = cmd.warning().map(str::to_owned);
     env.history.execute(&env.world, cmd);
@@ -206,14 +216,15 @@ fn s_locate_part() -> Value {
             "fixture": { "type": "string", "description": "The fixture it sits in." },
             "mates": { "type": "array", "minItems": 1, "maxItems": 3,
                 "items": { "type": "object", "properties": {
-                    "part": { "type": "string", "description": "A part face or vertex id (\"face:0x…\", \"vertex:0x…\")." },
+                    "part": { "type": "string", "description": "A face or vertex id (\"face:0x…\", \"vertex:0x…\") on the held body: the part, or its stock with body \"stock\"." },
                     "fixture": { "type": "string", "description": "The fixture face or vertex id it meets." } },
                     "required": ["part", "fixture"] },
                 "description": "In order: the floor, the fixed jaw, the stop." },
             "offset": { "type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
                 "description": "A nudge [dx, dy, dz] mm after the mates (the part relative to the fixture)." },
             "turn": { "type": "number", "description": "Degrees about the first face mate's normal, after the mates." },
-            "move": { "type": "string", "enum": ["part", "fixture"], "description": "Which body moves; the part by default." }
+            "move": { "type": "string", "enum": ["part", "fixture"], "description": "Which body moves; the part by default." },
+            "body": { "type": "string", "enum": ["part", "stock"], "description": "Which body the mates' first ids are on: the part (default), or the stock of the fixture's setup. With \"stock\" the part moves and its stock follows it onto the mates." }
         }),
         &["part", "fixture", "mates"],
     )

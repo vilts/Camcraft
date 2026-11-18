@@ -136,6 +136,7 @@ fn the_opened_bore_leaves_no_post_at_the_lane_start() {
         return_feed: 800.0,
         plunge_feed: 200.0,
         climb: true,
+        stock_top: None,
     };
     let Ok(plain) = plan_lane(&chain, &tp, false) else { panic!("plain") };
     assert!(rest(&plain.path) > 4.0, "the plain bore's post: {:.2} mm2", rest(&plain.path));
@@ -172,6 +173,7 @@ fn a_slot_band_within_the_tool_radius_keeps_the_plain_bore() {
             return_feed: 2000.0,
             plunge_feed: 200.0,
             climb: true,
+            stock_top: None,
         };
         let Ok(plain) = plan_lane(&chain, &tp, false) else { panic!("plain {width}") };
         let Ok(slot) = super::super::plan_trochoidal_slot(&chain, &tp) else { panic!("slot {width}") };

@@ -102,6 +102,10 @@ pub struct StepBudget {
     pub facets: u64,
 }
 
+/// Raw STEP text preserved for models/fixtures imported from STEP (#744).
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+pub struct StepSource(pub String);
+
 /// The hole of a model imported from a STEP closed shell that meshes open
 /// (#1610), said in words: the model rides fidelity unknown
 /// (`ReducedFidelity` at `model_fidelity::UNKNOWN_MM`) and every refusal
@@ -142,6 +146,14 @@ pub struct StockSourceOnly {
     pub print: GeomPrint,
 }
 
+/// #2015: the workpiece material a setup's stock states. Rides the stock
+/// entity; absent (every older file) states none, and the document's
+/// material speaks for the setup. It picks the tool cutting-data row the
+/// setup's operations are seeded from. Only `SetStockMaterial`, the
+/// project loader and the stock's delete/undo write it.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StockMaterial(pub crate::tools::WorkMaterial);
+
 /// A model's geometry as the program verdict reads it (#1094,
 /// `stock_print`): its facet count and two independent 64-bit hashes over
 /// every vertex coordinate's bits (local frame) and its placement's bits.
@@ -170,6 +182,15 @@ pub struct GeomPrintMemo {
 /// (`SetupDef::work_offset`). Never has facets.
 #[derive(Component, Debug)]
 pub struct Wcs;
+
+/// #1720: the axes of a WCS that run reversed (X+ becomes X-), in X, Y,
+/// Z order. Rides the `Wcs` entity beside its `Location`: a unit
+/// quaternion cannot hold a mirror. Absent is no flip (every older
+/// file); written only through `SetWcsFlip`, the project loader and the
+/// undo of a delete (`setup_wcs_flip::set`). The post and generation
+/// refuse a set flag by name until a flip is carried into the program.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WcsFlip(pub [bool; 3]);
 
 /// A cutting tool definition, on the entity named by the catalog or the
 /// user. Tools never have facets; operations and the verifier read their
@@ -310,6 +331,7 @@ pub struct SetupDef {
     pub relative_to: Option<String>,
     pub stock_source: Option<crate::setup_stock::StockSource>,
     pub post_options: Option<PostOptions>,
+    pub post_properties: Option<PostScriptOptions>,
     pub nose_to_axis: Option<f64>,
     pub workholding_max_rpm: Option<f64>,
 }
@@ -345,6 +367,8 @@ pub struct FixtureDef {
     /// A built-in accessory's parameters (#789: parallels, blocks, a
     /// strap clamp, a soft jaw); `None` - not one.
     pub accessory: Option<crate::accessory::Accessory>,
+    /// Editable 2D profile when built from DXF/profile or derived (#744).
+    pub profile: Option<crate::fixture_profile::FixtureProfile>,
 }
 
 /// The document's active setup, stored as a flecs singleton like `Units`:
@@ -483,6 +507,56 @@ pub enum PostRef {
     File(String),
 }
 
+/// Per-post declared script option overrides (`declaredOptions`), keyed by
+/// canonical post key (`builtin:<Name>` or `file:<Path>`). Empty maps are pruned
+/// so untouched documents store zero extra keys.
+#[derive(Component, Debug, Clone, Default, PartialEq)]
+pub struct PostScriptOptions {
+    pub by_post: std::collections::BTreeMap<
+        String,
+        std::collections::BTreeMap<String, crate::post::options::OptionValue>,
+    >,
+}
+
+static EMPTY_SCRIPT_OPTIONS: std::sync::LazyLock<
+    std::collections::BTreeMap<String, crate::post::options::OptionValue>,
+> = std::sync::LazyLock::new(std::collections::BTreeMap::new);
+
+impl PostScriptOptions {
+    /// True when every post entry is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.by_post.values().all(std::collections::BTreeMap::is_empty)
+    }
+
+    /// Borrow the overrides map for `key`, or an empty map when none are set.
+    #[must_use]
+    pub fn for_post(
+        &self,
+        key: &str,
+    ) -> &std::collections::BTreeMap<String, crate::post::options::OptionValue> {
+        self.by_post.get(key).unwrap_or(&EMPTY_SCRIPT_OPTIONS)
+    }
+
+    /// Replace overrides for `key`, removing the entry when empty.
+    pub fn set_for_post(
+        &mut self,
+        key: &str,
+        overrides: std::collections::BTreeMap<String, crate::post::options::OptionValue>,
+    ) {
+        if overrides.is_empty() {
+            self.by_post.remove(key);
+        } else {
+            self.by_post.insert(key.to_owned(), overrides);
+        }
+    }
+
+    /// Remove empty per-post maps.
+    pub fn normalize(&mut self) {
+        self.by_post.retain(|_, v| !v.is_empty());
+    }
+}
+
 /// The user's choices for the document's post (issue #34), a flecs
 /// singleton beside `PostRef`: setup furniture, moved only by
 /// `SetPostOptions` (undoable) or a document load. A script reads the
@@ -519,6 +593,46 @@ pub struct PostOptions {
     /// next (#1532): pause for the operator (the default), an optional
     /// stop, run straight on, or write one file per setup.
     pub between_setups: BetweenSetups,
+    /// How a Z-rotated work offset is expressed at post (#760):
+    /// `Bake` (the default) rotates XY coordinates into the WCS frame so
+    /// every 3-axis control can run them; `Control` emits `G68 X0. Y0. R`
+    /// or `ROT RPL=` when both machine and post script declare support.
+    pub wcs_rotation: WcsRotationOutput,
+}
+
+/// How a Z-rotated work offset posts (#760).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum WcsRotationOutput {
+    /// Transform XY coordinates into the rotated WCS frame (works on every control).
+    #[default]
+    Bake,
+    /// Keep WCS coordinates and emit controller coordinate rotation (`G68` / `ROT`).
+    Control,
+}
+
+impl WcsRotationOutput {
+    pub const ALL: [Self; 2] = [Self::Bake, Self::Control];
+
+    #[must_use]
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Bake => "bake",
+            Self::Control => "control",
+        }
+    }
+
+    #[must_use]
+    pub fn from_word(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|v| v.word() == word)
+    }
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Bake => "Bake into XY",
+            Self::Control => "Control rotation (G68 / ROT)",
+        }
+    }
 }
 
 /// The between-setups choice of [`PostOptions`] (#1532). A setup is a
@@ -707,12 +821,15 @@ pub fn register_schema(world: &World) {
     world.component::<GeoSig>();
     world.component::<ReducedFidelity>();
     world.component::<StepBudget>();
+    world.component::<StepSource>();
     world.component::<MeshOpen>();
     world.component::<Selected>();
     world.component::<StockDef>();
     world.component::<StockSourceOnly>();
+    world.component::<StockMaterial>();
     world.component::<GeomPrintMemo>();
     world.component::<Wcs>();
+    world.component::<WcsFlip>();
     world.component::<ToolDef>();
     world.component::<ToolBody>();
     world.component::<ToolCutter>();
@@ -726,6 +843,7 @@ pub fn register_schema(world: &World) {
     world.component::<PostOptions>();
     world.component::<ThemeRef>();
     world.component::<PostOptions>();
+    world.component::<PostScriptOptions>();
     world.component::<ProgramInfo>();
     world.component::<ColorVision>();
     world.component::<WorkMaterialDef>();

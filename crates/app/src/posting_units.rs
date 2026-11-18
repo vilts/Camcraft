@@ -12,6 +12,7 @@
 use flecs_ecs::prelude::World;
 use serde_json::Value;
 
+use crate::schema::PostRef;
 use crate::units::{self, Unit};
 
 /// The word a post reads for `unit`: `"mm"` or `"inch"`.
@@ -21,6 +22,13 @@ pub fn unit_word(unit: Unit) -> &'static str {
         Unit::Millimeters => "mm",
         Unit::Inches => "inch",
     }
+}
+
+/// The inch and mm end-unit words a [`PostRef`] declares via `endUnits`
+/// (#2189), or `None` when the post writes none (`"note"` or absent).
+pub fn end_units_words(post: &PostRef) -> Result<Option<(String, String)>, String> {
+    let (_, cps) = super::script_of(post)?;
+    crate::post::end_units::words(&cps).map_err(|e| e.to_string())
 }
 
 /// The options object a program posts with: the post options in force

@@ -24,6 +24,10 @@ impl Shell {
         let now = std::time::Instant::now;
         let followup_redraw = std::mem::take(&mut self.followup_redraw);
         self.frame_watch.begin(now());
+        // #2262: the frame-rate rule logs on a level change only.
+        if let Some(line) = self.state.frame_rate.frame(now()) {
+            eprintln!("{line}");
+        }
         // Commands the panels queued last frame land before the scene is
         // collected, so this frame draws what the user's click did.
         self.state.drain_actions();

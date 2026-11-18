@@ -50,6 +50,10 @@ pub struct FixtureEntry {
     pub datum: Location,
     /// The mesh in the fixture's own model frame.
     pub facets: Vec<Triangle>,
+    /// Raw STEP source text when saved from an imported STEP fixture (#744).
+    pub step_source: Option<String>,
+    /// Editable spun/extruded profile when saved from a profile fixture (#744).
+    pub profile: Option<crate::fixture_profile::FixtureProfile>,
 }
 
 /// Which frame of the fixture a saved entry is placed by.
@@ -98,11 +102,15 @@ pub fn entry_from_model(
         DatumChoice::ModelOrigin => Point3::ZERO,
         DatumChoice::BottomCentre => bottom_centre(&facets).unwrap_or(Point3::ZERO),
     };
+    let step_source = crate::step_source::of(world, &e);
+    let profile = crate::fixture::def_of(world, &e).and_then(|d| d.profile);
     let entry = FixtureEntry {
         name: name.trim().to_owned(),
         note: note.map(str::trim).filter(|n| !n.is_empty()).map(str::to_owned),
         datum: Location { pos: origin, rot: IDENTITY_Q },
         facets,
+        step_source,
+        profile,
     };
     check_entry(&entry)?;
     Ok(entry)
@@ -131,6 +139,12 @@ pub fn check_entry(e: &FixtureEntry) -> Result<(), String> {
     }
     if !e.datum.pos.is_finite() || normalize_quat(e.datum.rot).is_none() {
         return Err(format!("fixture '{name}': the datum must be a finite point and a rotation"));
+    }
+    if e.step_source.as_ref().is_some_and(|s| s.trim().is_empty()) {
+        return Err(format!("fixture '{name}': step_source cannot be blank"));
+    }
+    if let Some(prof) = &e.profile {
+        prof.check().map_err(|why| format!("fixture '{name}': invalid profile ({why})"))?;
     }
     Ok(())
 }
@@ -166,6 +180,13 @@ pub fn to_text(entries: &[FixtureEntry]) -> Result<String, String> {
         out.push_str(&format!("    {{\n      \"name\": {},\n", s(&json!(e.name))?));
         if let Some(note) = &e.note {
             out.push_str(&format!("      \"note\": {},\n", s(&json!(note))?));
+        }
+        if let Some(step) = &e.step_source {
+            out.push_str(&format!("      \"step_source\": {},\n", s(&json!(step))?));
+        }
+        if let Some(prof) = &e.profile {
+            let v = serde_json::to_value(prof).map_err(|err| format!("fixture library not written: {err}"))?;
+            out.push_str(&format!("      \"profile\": {},\n", s(&v)?));
         }
         let datum = json!({ "origin": num3(e.datum.pos), "rot": e.datum.rot });
         out.push_str(&format!("      \"datum\": {},\n      \"facets\": [\n", s(&datum)?));
@@ -226,7 +247,18 @@ fn read_entry(row: &Value, n: usize) -> Result<FixtureEntry, String> {
         let tri = tri.ok_or_else(|| format!("fixture '{name}': facet #{} is not three [x, y, z] points", k + 1))?;
         facets.push(tri);
     }
-    let entry = FixtureEntry { name, note, datum: Location { pos, rot }, facets };
+    let step_source = match row.get("step_source") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(v.as_str().ok_or_else(|| format!("fixture '{name}': step_source is not text"))?.to_owned()),
+    };
+    let profile = match row.get("profile") {
+        None | Some(Value::Null) => None,
+        Some(v) => Some(
+            serde_json::from_value::<crate::fixture_profile::FixtureProfile>(v.clone())
+                .map_err(|e| format!("fixture '{name}': invalid profile: {e}"))?,
+        ),
+    };
+    let entry = FixtureEntry { name, note, datum: Location { pos, rot }, facets, step_source, profile };
     check_entry(&entry)?;
     Ok(entry)
 }

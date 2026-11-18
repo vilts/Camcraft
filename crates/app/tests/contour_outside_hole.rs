@@ -199,7 +199,7 @@ fn inside_and_auto_on_the_hole_wall_cut_every_level_clean() {
             let (world, mut h) = world_with(holed_plate());
             let items = items(&world);
             let (t, w) = generate(&world, &mut h, items, full(side)).expect("a hole cut from inside is legal");
-            assert_eq!(feed_levels(&t), [10.0, 7.5, 5.0, 2.5, 0.0], "{side:?}");
+            assert_eq!(feed_levels(&t), [7.5, 5.0, 2.5, 0.0], "{side:?}");
             assert_eq!(gouges(&w), 0, "{side:?}: {w:?}");
             for m in t.moves.iter().filter(|m| m.kind == MoveKind::Feed) {
                 let r = m.to.x.hypot(m.to.y);
@@ -215,13 +215,14 @@ fn outside_on_an_outer_wall_and_on_a_boss_stays_legal() {
     let (world, mut h) = world_with(block());
     let items = top_face(&world, 10.0);
     let (t, w) = generate(&world, &mut h, items, full(Side::Outside)).expect("Outside of an outer wall");
-    assert_eq!(feed_levels(&t), [10.0, 7.5, 5.0, 2.5, 0.0]);
+    assert_eq!(feed_levels(&t), [7.5, 5.0, 2.5, 0.0]);
     assert_eq!(gouges(&w), 0, "{w:?}");
     // A boss on a floor: Outside walks down to the floor at Z 5 and stops.
+    // (#2004: Top Z 10 is the part top, so no level at 10.)
     let (world, mut h) = world_with(bossed_base());
     let items = top_face(&world, 10.0);
     let (t, w) = generate(&world, &mut h, items, full(Side::Outside)).expect("Outside of a boss");
-    assert_eq!(feed_levels(&t), [10.0, 7.5, 5.0]);
+    assert_eq!(feed_levels(&t), [7.5, 5.0]);
     assert_eq!(gouges(&w), 0, "{w:?}");
 }
 

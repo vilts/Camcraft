@@ -40,8 +40,6 @@ pub(crate) const VIEW3D_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8
 /// from `theme::current()`; this const is the test fixture's number.
 #[cfg(test)]
 pub(crate) const RIBBON_H: f32 = theme::ribbon_h(&theme::Tokens::DARK);
-/// Status strip height (imgui's single-line bottom bar).
-const STATUS_H: f32 = 22.0;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Tab {
@@ -51,6 +49,7 @@ pub(crate) enum Tab {
     Machines,
     AiChat,
     Tools,
+    DebugInfo,
 }
 
 impl Tab {
@@ -62,6 +61,7 @@ impl Tab {
             Tab::Machines => "Machines",
             Tab::AiChat => "AI Chat",
             Tab::Tools => "Tool library",
+            Tab::DebugInfo => "Debug info",
         }
     }
 }
@@ -113,13 +113,15 @@ pub(crate) fn shell_layout(
         .frame(egui::Frame::NONE)
         .exact_size(theme::ribbon_h(&pal))
         .show(ui, |ui| {
+            let _s = crate::frame_cost::span("ui/ribbon");
             panes::ribbon(ui, &mut *state, &pal, icons);
         });
     layout::settle(state, dock);
     egui::Panel::bottom("status")
         .frame(egui::Frame::NONE)
-        .exact_size(STATUS_H)
+        .exact_size(theme::status_h(&pal))
         .show(ui, |ui| {
+            let _s = crate::frame_cost::span("ui/status");
             panes::status(ui, &mut *state, &pal, icons);
         });
     // #667: the Setups page pick sweep runs here, once a frame, whatever
@@ -162,6 +164,7 @@ pub(crate) fn shell_layout(
     // surface; the single-OS-window law stands. Closed by default
     // (`state.tool_editor` is None on a fresh State), so no panel below
     // it ever moves in the snapshot until something opens it.
+    let windows = crate::frame_cost::span("ui/windows");
     pages::tool_editor_window(ui.ctx(), state);
     // M1.7d: the G-code viewer - same window law as the tool editor (an
     // in-app egui::Window over the dock; the single-OS-window law
@@ -175,13 +178,12 @@ pub(crate) fn shell_layout(
     // (in-app egui::Window over the dock, None on a fresh State, so
     // snapshots never move until the Setup pane opens it).
     machine_editor::window(ui.ctx(), state);
-    // #157: the Debug info window - same window law (closed on a fresh
-    // State, opened from the status strip's bug button).
-    super::debug_info::window(ui.ctx(), state);
+    super::post_dialog::window(ui.ctx(), state);
     // #339 slice 6: the fixture library dialogs (None on a fresh State).
     super::fixture_library_dialog::window(ui.ctx(), state);
     // #107: the unsaved-changes prompt, last so it sits over everything.
     unsaved_prompt::window(ui.ctx(), state);
+    drop(windows);
     // #1507: the panes set the row hover after the viewport drew; a change
     // needs one more frame for the highlight to follow (or clear).
     if state.geo_hover != state.geo_hover_drawn {
@@ -241,6 +243,7 @@ impl TabViewer for ShellTabs<'_> {
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut Self::Tab) {
         match tab {
             Tab::Viewport => {
+                let _s = crate::frame_cost::span("ui/viewport");
                 viewport_panel(
                     ui,
                     self.state,
@@ -252,10 +255,12 @@ impl TabViewer for ShellTabs<'_> {
             Tab::Browser => {
                 // Same seam, same table: every reader of the live theme
                 // calls `current()` (M6.1 C makes it document state).
+                let _s = crate::frame_cost::span("ui/browser");
                 let pal = theme::current();
                 panes::browser(ui, self.state, &pal, self.icons);
             }
             Tab::Properties => {
+                let _s = crate::frame_cost::span("ui/properties");
                 let pal = theme::current();
                 pages::properties(ui, self.state, &pal);
             }
@@ -265,6 +270,7 @@ impl TabViewer for ShellTabs<'_> {
                 machines_pane::draw(ui, self.state, &pal);
             }
             Tab::AiChat => super::ai_chat::draw(ui, self.state),
+            Tab::DebugInfo => super::debug_info::draw(ui, self.state),
         }
     }
 }
@@ -300,7 +306,7 @@ fn viewport_panel(
     // view state (AGENTS.md's explicit exemption), never a command.
     let mut sim_marker: Option<([f64; 3], [f64; 3])> = None;
     if state.sim.is_some() {
-        let sc = cached_script(state);
+        let sc = crate::frame_cost::time("ui/viewport.sim_script", || cached_script(state));
         let total = sc.total.max(0.0);
         let unit = camcraft_app::units::of(&state.world);
         if let Some(sim) = state.sim.as_mut() {
@@ -352,6 +358,7 @@ fn viewport_panel(
                 });
             }
         });
+        crate::play_precalc::transport_row(ui, state);
         if stop {
             state.sim = None;
         } else if !sc.is_empty()
@@ -422,8 +429,13 @@ fn viewport_panel(
     // global pointer coords imgui's viewport_rect fed the raw-event path.
     let ([rx0, ry0], [rx1, ry1]) = (parr(resp.rect.min), parr(resp.rect.max));
     state.viewport_rect = ([rx0, ry0], [rx1, ry1]);
-    super::file_drop::paint_hint(ui, resp.rect);
-    let hot = resp.hovered();
+    let pal = theme::current();
+    super::file_drop::paint_hint(ui, resp.rect, &pal);
+    // #2257: the progress overlay while a toolpath generates.
+    // A press on it (Cancel) is the overlay's, never a viewport pick.
+    let overlay = super::gen_overlay::paint(ui, resp.rect, state, &pal);
+    let over_overlay = overlay.is_some_and(|r| ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| r.contains(p)));
+    let hot = resp.hovered() && !over_overlay;
     state.viewport_hot = hot;
     let (rw, rh) = (rx1 - rx0, ry1 - ry0);
     // The M1.5 corner furniture, laid out from the pane rect alone: the
@@ -559,7 +571,7 @@ fn viewport_panel(
         }
     }
     if let Some(p) = pos {
-        interact::update_hover(state, parr(p), left_press.is_some());
+        crate::frame_cost::time("ui/viewport.hover", || interact::update_hover(state, parr(p), left_press.is_some()));
     }
 
     // Screen-space overlays on the image: axis/anchor/gizmo labels and the
@@ -584,7 +596,7 @@ fn viewport_panel(
         // #195: the origin triads, chunky - a dark outline, then the axis
         // colour - over the 1 px GPU lines (a wgpu line has no width).
         let shade = egui::Color32::from_black_alpha(170);
-        let segs = interact::gizmo_segments(state, aspect);
+        let segs = crate::frame_cost::time("ui/viewport.gizmos", || interact::gizmo_segments(state, aspect));
         for (a, b, _) in &segs {
             ui.painter().line_segment([to_px(*a), to_px(*b)], egui::Stroke::new(interact::GIZMO_OUTLINE_PX, shade));
         }
@@ -592,7 +604,7 @@ fn viewport_panel(
             ui.painter().line_segment([to_px(*a), to_px(*b)], egui::Stroke::new(interact::GIZMO_STROKE_PX, rgb8(*rgb)));
         }
         let axis_font = egui::FontId::proportional((font.size * 1.4).max(14.0));
-        for (uv, rgb, text) in interact::overlay_labels(state, aspect) {
+        for (uv, rgb, text) in crate::frame_cost::time("ui/viewport.labels", || interact::overlay_labels(state, aspect)) {
             let at = to_px(uv);
             if interact::is_axis_label(&text) {
                 // Bigger, with a shadow, so a letter reads on any ground.
@@ -603,7 +615,7 @@ fn viewport_panel(
             }
         }
         // #738: the alignment draft's picks - filled faces, bold edges, discs.
-        crate::align_pick_viz::paint(ui.painter(), egui::Rect::from_min_size(to_px([0.0, 0.0]), egui::vec2(rw, rh)), state, aspect);
+        crate::frame_cost::time("ui/viewport.align_pick", || crate::align_pick_viz::paint(ui.painter(), egui::Rect::from_min_size(to_px([0.0, 0.0]), egui::vec2(rw, rh)), state, aspect));
         // #709: picked points, violet and never occluded; the hover over them.
         for (a, b) in crate::vertex_pick::picked_point_marks(state, aspect) {
             ui.painter().line_segment([to_px(a), to_px(b)], egui::Stroke::new(2.0, rgb8(super::ground_ink::overlay(super::ground_ink::Overlay::Pick))));
@@ -614,11 +626,11 @@ fn viewport_panel(
         }
         // #1505/#1507: selected picks and the viewport hover
         // as thick, haloed strokes over the model.
-        crate::pick_ink::paint(ui.painter(), state, aspect, to_px, rgb8);
+        crate::frame_cost::time("ui/viewport.pick_ink", || crate::pick_ink::paint(ui.painter(), state, aspect, to_px, rgb8));
         // #1507: the Geometry-list row hover, strong: a dark halo, then the
         // row-hover ink.
         {
-            let segs = interact::row_hover_segments(state, aspect);
+            let segs = crate::frame_cost::time("ui/viewport.row_hover", || interact::row_hover_segments(state, aspect));
             let ink = rgb8(super::ground_ink::overlay(super::ground_ink::Overlay::RowHover));
             let halo = egui::Color32::from_black_alpha(200);
             for (a, b) in &segs {
@@ -645,7 +657,7 @@ fn viewport_panel(
         }
         // #819: fixture plate grids - hole crosses, dowel diamonds, and
         // the names along row A and column 1.
-        let plates = crate::plate_viz::plate_marks(state, aspect);
+        let plates = crate::frame_cost::time("ui/viewport.plates", || crate::plate_viz::plate_marks(state, aspect));
         for (a, b, dowel) in &plates.segs {
             let ink = if *dowel { egui::Color32::from_rgb(120, 200, 255) } else { egui::Color32::from_rgb(230, 190, 90) };
             ui.painter().line_segment([to_px(*a), to_px(*b)], egui::Stroke::new(1.5, ink));
@@ -655,7 +667,7 @@ fn viewport_panel(
         }
         // The Boundary group's marks (M11.5 UX): role-coloured picked
         // edges, the edge a click would take, chain ends, machined side.
-        for m in crate::boundary_viz::boundary_marks(state, aspect) {
+        for m in crate::frame_cost::time("ui/viewport.boundary_marks", || crate::boundary_viz::boundary_marks(state, aspect)) {
             ui.painter().line_segment(
                 [
                     egui::pos2(rx0 + m.a[0] * rw, ry0 + m.a[1] * rh),
@@ -665,7 +677,7 @@ fn viewport_panel(
             );
         }
         // #1732: a Slot's hand-typed A and B, following the page draft.
-        for m in crate::slot_manual_viz::slot_marks(state, aspect) {
+        for m in crate::frame_cost::time("ui/viewport.slot_marks", || crate::slot_manual_viz::slot_marks(state, aspect)) {
             ui.painter().line_segment(
                 [to_px(m.a), to_px(m.b)],
                 egui::Stroke::new(m.width, super::colorvision::ink(m.rgb)),

@@ -368,13 +368,14 @@ fn an_outside_l_boss_rounds_its_concave_corner_off_the_part() {
         let sharp = contour(&region, &cp(Side::Outside, climb, false)).unwrap();
         let blended = contour(&region, &cp(Side::Outside, climb, true)).unwrap();
         assert!(sharp.notes.is_empty(), "{:?}", sharp.notes);
-        // One concave corner per level, three levels (0, -2, -4).
+        // One concave corner per level, two levels (-2, -4; #2004: no
+        // air level at Top Z 0).
         let added = assert_fillets_tangent_and_bounded(&blended, &sharp, 3.0, 0.01);
-        assert_eq!(added, 3, "climb {climb}");
-        assert_eq!(blended.arc_count(), sharp.arc_count() + 3);
+        assert_eq!(added, 2, "climb {climb}");
+        assert_eq!(blended.arc_count(), sharp.arc_count() + 2);
         assert_eq!(notes_with(&blended, "rounded").len(), 1, "{:?}", blended.notes);
         assert!(blended.is_chained() && blended.all_finite());
-        for z in [0.0, -2.0, -4.0] {
+        for z in [-2.0, -4.0] {
             let d_sharp = min_to_part(&sharp, z, &region);
             let d_blend = min_to_part(&blended, z, &region);
             // The round joins ride fitted arcs, within the fitter's own
@@ -394,9 +395,10 @@ fn a_bore_rounds_its_corners_and_states_the_rest_it_leaves() {
     let sharp = contour(&hole, &cp(Side::Inside, true, false)).unwrap();
     let blended = contour(&hole, &cp(Side::Inside, true, true)).unwrap();
     let added = assert_fillets_tangent_and_bounded(&blended, &sharp, 3.0, 0.01);
-    assert_eq!(added, 9, "{:?}", blended.notes);
-    assert_eq!(notes_with(&blended, "9 of 12 walked corner(s) rounded").len(), 1, "{:?}", blended.notes);
-    assert_eq!(notes_with(&blended, "3 of 12 walked corner(s) kept sharp - the walk starts").len(), 1);
+    // Two levels (-2, -4; #2004: no air level at Top Z 0).
+    assert_eq!(added, 6, "{:?}", blended.notes);
+    assert_eq!(notes_with(&blended, "6 of 8 walked corner(s) rounded").len(), 1, "{:?}", blended.notes);
+    assert_eq!(notes_with(&blended, "2 of 8 walked corner(s) kept sharp - the walk starts").len(), 1);
     let rest = stated_rest(&blended);
     // Measurable: every sharp corner point of the walk stands exactly the
     // stated rest from the blended path (to the note's 4 decimals), and
@@ -412,7 +414,7 @@ fn a_bore_rounds_its_corners_and_states_the_rest_it_leaves() {
     assert!((worst - rest).abs() < 2e-3, "measured {worst}, stated {rest}");
     // Never closer to the wall than the sharp walk: the bore's wall is
     // the hole outline.
-    for z in [0.0, -2.0, -4.0] {
+    for z in [-2.0, -4.0] {
         let d_sharp = min_to_part(&sharp, z, &hole);
         let d_blend = min_to_part(&blended, z, &hole);
         assert!(d_blend >= d_sharp - 1e-6, "gouge: {d_blend} < {d_sharp}");
@@ -428,8 +430,9 @@ fn a_plate_hole_seen_from_the_outside_law_rounds_the_hole_corners() {
     let sharp = contour(&region, &cp(Side::Auto, true, false)).unwrap();
     let blended = contour(&region, &cp(Side::Auto, true, true)).unwrap();
     let added = assert_fillets_tangent_and_bounded(&blended, &sharp, 3.0, 0.01);
-    assert_eq!(added, 9, "{:?}", blended.notes);
-    for z in [0.0, -2.0, -4.0] {
+    // Two levels (-2, -4; #2004: no air level at Top Z 0).
+    assert_eq!(added, 6, "{:?}", blended.notes);
+    for z in [-2.0, -4.0] {
         assert!(min_to_part(&blended, z, &region) >= min_to_part(&sharp, z, &region) - 1e-6);
     }
 }

@@ -1,5 +1,6 @@
 //! Lathe chucks generated from their figures (#1442): a self-centring jaw
-//! chuck (three or four jaws) and a collet chuck, as closed outward
+//! chuck (three or four jaws; gripping outside or inside, plain or
+//! stepped jaws - #1468, [`jaw`]) and a collet chuck, as closed outward
 //! shells in the chuck's own frame, plus the fit of either to a round
 //! stock standing on the spindle axis.
 //!
@@ -16,7 +17,9 @@
 //! stands on (a jaw chuck's body face, a collet chuck's nose face), the
 //! work above it. A jaw chuck's body is z -body_length..0; its jaws stand
 //! z 0..jaw_height, the first along +x, the rest evenly round the axis,
-//! each gripping face flat at the grip radius. A collet chuck's nose is z
+//! each gripping face flat at the grip radius (an inside grip's the arc
+//! of the bore it opens into; a stepped jaw seats the work at the step
+//! height, not on the body face - [`jaw`]). A collet chuck's nose is z
 //! -nose_length..0 and its body below it; the collet bore runs through
 //! both (the work stands in it).
 //!
@@ -40,12 +43,17 @@
 //!   law's ray-crossing test reads one inside per point.
 //! - **Figures are refused by name** ([`JawChuck::check`],
 //!   [`ColletChuck::check`]): non-finite, zero, negative or absurd sizes,
-//!   a bore not inside the body, jaws reaching past the body or meeting
-//!   each other at the grip, a collet bore not inside the nose.
+//!   a bore not inside the body, jaws reaching past the body or the
+//!   axis or meeting each other, a step set by half or as tall as its
+//!   jaw, a collet bore not inside the nose.
 
 use serde::{Deserialize, Serialize};
 
 use crate::geometry::{Point3, Triangle};
+
+pub mod jaw;
+
+pub use jaw::Grip;
 
 /// Sides of every drawn round face.
 pub const SIDES: usize = 64;
@@ -62,14 +70,26 @@ pub struct JawChuck {
     pub body_length: f64,
     /// The through bore.
     pub bore_diameter: f64,
-    /// The work diameter the jaws close on (outside grip).
+    /// The work diameter the jaws close on (outside grip) or the bore
+    /// they open into (inside grip).
     pub grip_diameter: f64,
-    /// Radial: from the gripping face outward.
+    /// Radial: from the gripping face outward (inside grip: inward).
     pub jaw_length: f64,
     /// Across the jaw, tangential.
     pub jaw_width: f64,
     /// Axial: how far the jaw stands proud of the body face.
     pub jaw_height: f64,
+    /// Which way the jaws grip (#1468; files from before it: outside).
+    #[serde(default)]
+    pub grip: Grip,
+    /// Stepped jaws (#1468): how high over the body face the step the
+    /// work sits on stands. Zero with `step_depth`: plain jaws.
+    #[serde(default)]
+    pub step_height: f64,
+    /// Stepped jaws: how far the step reaches under the work, radially
+    /// past the gripping face.
+    #[serde(default)]
+    pub step_depth: f64,
 }
 
 /// A collet chuck's figures (mm).
@@ -102,7 +122,7 @@ fn sane<'a>(what: &str, dims: impl IntoIterator<Item = (&'a str, f64)>) -> Resul
 
 impl JawChuck {
     /// The chuck's figures as (key, label, value), in the order shown.
-    pub fn dims_mut(&mut self) -> [(&'static str, &'static str, &mut f64); 7] {
+    pub fn dims_mut(&mut self) -> [(&'static str, &'static str, &mut f64); 9] {
         [
             ("body_diameter", "Body diameter", &mut self.body_diameter),
             ("body_length", "Body length", &mut self.body_length),
@@ -111,6 +131,8 @@ impl JawChuck {
             ("jaw_length", "Jaw length (radial)", &mut self.jaw_length),
             ("jaw_width", "Jaw width", &mut self.jaw_width),
             ("jaw_height", "Jaw height (above the face)", &mut self.jaw_height),
+            ("step_height", "Step height (0: plain jaws)", &mut self.step_height),
+            ("step_depth", "Step depth (radial, under the work)", &mut self.step_depth),
         ]
     }
 
@@ -118,7 +140,8 @@ impl JawChuck {
     /// kind's label) and the figure.
     pub fn check(&self, what: &str, jaws: u32) -> Result<(), String> {
         let mut c = *self;
-        sane(what, c.dims_mut().into_iter().map(|(_, l, v)| (l, *v)))?;
+        // The two step figures may be zero: the jaws' law reads them.
+        sane(what, c.dims_mut().into_iter().take(7).map(|(_, l, v)| (l, *v)))?;
         if !(2..=12).contains(&jaws) {
             return Err(format!("{what} must have 2 to 12 jaws (got {jaws})"));
         }
@@ -128,34 +151,15 @@ impl JawChuck {
                 self.bore_diameter, self.body_diameter
             ));
         }
-        let reach = 0.5 * self.grip_diameter + self.jaw_length;
-        if reach > 0.5 * self.body_diameter {
-            return Err(format!(
-                "{what} jaws reach {:.3} mm from the axis (half the grip diameter plus the jaw length), past the body's {:.3} mm radius",
-                reach,
-                0.5 * self.body_diameter
-            ));
-        }
-        // Adjacent jaws meet at the grip when each spans half the angle
-        // between them or more.
-        let half = (0.5 * self.jaw_width).atan2(0.5 * self.grip_diameter);
-        if half >= std::f64::consts::PI / f64::from(jaws) {
-            return Err(format!(
-                "{what} jaw width {:.3} mm is too wide: {jaws} jaws closed on a {:.3} mm grip would meet each other",
-                self.jaw_width, self.grip_diameter
-            ));
-        }
-        Ok(())
+        jaw::check(self, what, jaws)
     }
 
     /// The chuck's shells for `jaws` jaws (`self` assumed checked).
     #[must_use]
     pub fn solid(&self, jaws: u32) -> Vec<Triangle> {
         let mut t = ring(0.5 * self.bore_diameter, 0.5 * self.body_diameter, -self.body_length, 0.0);
-        let (r0, hw) = (0.5 * self.grip_diameter, 0.5 * self.jaw_width);
         for k in 0..jaws {
-            let a = std::f64::consts::TAU * f64::from(k) / f64::from(jaws);
-            t.extend(jaw(a, (r0, r0 + self.jaw_length), (-hw, hw), (0.0, self.jaw_height)));
+            t.extend(jaw::shells(self, std::f64::consts::TAU * f64::from(k) / f64::from(jaws)));
         }
         t
     }
@@ -165,6 +169,12 @@ impl JawChuck {
     pub fn gripping(mut self, diameter: f64) -> Self {
         self.grip_diameter = diameter;
         self
+    }
+
+    /// Does the work sit on a step of the jaws?
+    #[must_use]
+    pub fn stepped(&self) -> bool {
+        self.step_height > 0.0 && self.step_depth > 0.0
     }
 }
 
@@ -263,21 +273,4 @@ pub fn ring(r_in: f64, r_out: f64, z0: f64, z1: f64) -> Vec<Triangle> {
         t.push(Triangle::new(o0, i0, i1));
     }
     t
-}
-
-/// A closed, outward jaw: the box radial `u`, tangential `v`, axial `z`,
-/// turned `a` radians about the z axis.
-fn jaw(a: f64, u: (f64, f64), v: (f64, f64), z: (f64, f64)) -> Vec<Triangle> {
-    let (s, c) = a.sin_cos();
-    let corner = |i: usize| {
-        let (uu, vv) = (if i & 1 == 0 { u.0 } else { u.1 }, if i & 2 == 0 { v.0 } else { v.1 });
-        Point3::new(uu * c - vv * s, uu * s + vv * c, if i & 4 == 0 { z.0 } else { z.1 })
-    };
-    let quads = [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]];
-    quads
-        .iter()
-        .flat_map(|q| {
-            [Triangle::new(corner(q[0]), corner(q[1]), corner(q[2])), Triangle::new(corner(q[0]), corner(q[2]), corner(q[3]))]
-        })
-        .collect()
 }

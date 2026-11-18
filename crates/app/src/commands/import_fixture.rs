@@ -64,7 +64,8 @@ impl ImportFixture {
                 UpdateModel::new(world, &name, import.mesh)?
                     .with_fidelity(import.coarse_mm)
                     .with_hole(import.hole.clone())
-                    .with_budget(import.facet_budget),
+                    .with_budget(import.facet_budget)
+                    .with_step_source(import.step_source.clone()),
             ),
             None => Landing::Fresh(import),
         };
@@ -81,6 +82,7 @@ impl ImportFixture {
                 vise: None,
                 mod_jaw: None,
                 accessory: None,
+                profile: None,
                 plate: crate::plate::PlateLink { plate: None, mount: prev.as_ref().and_then(|d| d.plate.mount.clone()) },
             },
             riders,

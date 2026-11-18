@@ -374,8 +374,8 @@ fn a_missing_sinker_code_refuses_the_post_by_name() {
 /// codes) refuses by name for the first missing code.
 #[test]
 fn the_shipped_sinker_template_lists_and_refuses_its_unfilled_codes_by_name() {
-    use camcraft_app::posting::{self, MACHINES};
-    let (name, text) = MACHINES.iter().find(|(n, _)| n.starts_with("Sinker EDM")).expect("the library ships the sinker template");
+    use camcraft_app::posting::self;
+    let (name, text) = camcraft_app::posting::shipped_machines().expect("the shipped machines read").iter().find(|(n, _)| n.starts_with("Sinker EDM")).expect("the library ships the sinker template");
     assert!(text.lines().eq(SINKER.lines()), "the fixture copy drifted from the shipped template");
     let entry = camcraft_app::machine::library::builtins().into_iter().find(|e| e.name == *name).expect("listed");
     assert!(entry.is_valid(), "{:?}", entry.refusals);

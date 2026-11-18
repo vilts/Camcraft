@@ -37,7 +37,7 @@ use crate::links::Links;
 
 use super::bore_core::{CORE_TOL, MAX_BORE_RINGS, bore_ring_count, max_bore_diameter};
 use super::face::GenError;
-use super::levels::{Cert, Motion, cut_levels, run_levels};
+use super::levels::{Cert, Motion, run_levels};
 
 /// One finished round hole the ride is paid to. `xy`/`radius` are the
 /// model's wall; `floor_z` is where the rim's bottom edge stops.
@@ -305,7 +305,7 @@ pub fn bore(p: &BoreParams) -> Result<Toolpath, GenError> {
             prev = start;
         }
         // #871: a part-way refusal hands back the holes bored so far.
-        let zs = cut_levels(h.top_z, bottom, p.stepdown).map_err(|e| e.with_ghost_moves(b.moves()))?;
+        let zs = super::levels::cut_levels_under(h.top_z, p.links.approach.stock_top, bottom, p.stepdown).map_err(|e| e.with_ghost_moves(b.moves()))?;
         // Each hole's own entry surface is its top of cut (M11.3 B).
         if h.top_z.is_finite() {
             motion.top_z = h.top_z.min(motion.clearance_z);

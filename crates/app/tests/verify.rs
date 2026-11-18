@@ -527,6 +527,7 @@ fn engrave_paths_skip_the_gouge_law() {
             feed: 500.0,
             plunge_feed: 100.0,
             climb: true,
+            stock_top: None,
         },
     )
     .unwrap();

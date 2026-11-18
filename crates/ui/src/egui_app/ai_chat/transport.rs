@@ -5,7 +5,10 @@
 use std::io::Cursor;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use camcraft_app::mcp::provider::{FallbackMode, Provider, prompt_context, qa_context, tools};
+use camcraft_app::mcp::provider::{
+    FallbackMode, Provider, is_read_only_tool, prompt_context, qa_context, tools,
+};
+use camcraft_app::mcp::requires_approval;
 use serde_json::{Value, json};
 
 /// Whether a preset targets a remote cloud API or a local/loopback model runtime.
@@ -180,36 +183,19 @@ pub(crate) fn check_offline_policy(
     Ok(())
 }
 
-/// Allowlist of read-only inspection/suggestion MCP tools that need no user confirmation.
-fn is_read_only_tool(name: &str) -> bool {
-    matches!(
-        name,
-        "get_job"
-            | "list_operation_types"
-            | "list_tool_catalog"
-            | "list_holder_library"
-            | "list_features"
-            | "get_operation_geometry"
-            | "get_tool_cutter_profile"
-            | "suggest_cutting_data"
-    )
-}
-
 /// Guard deciding whether a tool invocation must wait for explicit inline Allow/Deny.
 #[must_use]
-pub(crate) fn requires_confirmation(tool_name: &str, mode: FallbackMode) -> bool {
+pub(crate) fn requires_confirmation(
+    tool_name: &str,
+    arguments: &Value,
+    mode: FallbackMode,
+) -> bool {
     match mode {
         FallbackMode::ReadOnly => true,
         FallbackMode::PromptJson => !is_read_only_tool(tool_name),
-        FallbackMode::Native => matches!(
-            tool_name,
-            "post"
-                | "open_project"
-                | "save_project"
-                | "import_model"
-                | "import_tool_library"
-                | "export_tool_library"
-        ),
+        FallbackMode::Native => {
+            tool_name == "open_project" || requires_approval(tool_name, arguments).is_some()
+        }
     }
 }
 

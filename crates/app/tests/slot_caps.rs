@@ -261,10 +261,11 @@ fn the_stadium_region_hugs_the_true_caps() {
 }
 
 #[test]
-fn the_slot_ladder_starts_at_the_authored_top() {
-    // The 2D ladders' shared convention (`cut_levels`): the first level
-    // IS Top, so a Top set on the material's top surface opens with a
-    // zero-depth pass there, then steps down by `stepdown` to Bottom.
+fn the_slot_ladder_starts_one_stepdown_under_the_authored_top() {
+    // The 2D ladders' shared convention (`cut_levels`, #2004): Top is
+    // the material's top, never a level - a pass there cuts air - so
+    // the first level is Top - stepdown, then down by `stepdown` to
+    // Bottom.
     let (world, _h) = job(6.0, false);
     let (path, _) = cached(&world);
     let mut levels: Vec<f64> = Vec::new();
@@ -273,5 +274,5 @@ fn the_slot_ladder_starts_at_the_authored_top() {
             levels.push(m.to.z);
         }
     }
-    assert_eq!(levels, vec![20.0, 15.0, 10.0]);
+    assert_eq!(levels, vec![15.0, 10.0]);
 }

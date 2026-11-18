@@ -69,6 +69,7 @@ fn assert_tilted_draft_marks(origin: [f64; 3], expected: ([f64; 3], [f64; 3])) {
     let mut state = opened();
     if let OpParams::Slot { tilt, b, .. } = &mut state.op_ui.params {
         *tilt = Some(camcraft_app::operation::Tilt {
+            basis_version: 1,
             a_deg: 90.0,
             b_deg: 0.0,
             origin,

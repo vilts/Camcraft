@@ -113,7 +113,7 @@ fn reopen(dock: &mut DockState<Tab>, tab: Tab) {
     // #287: the Machines pane opens as a tab beside the properties pane
     // when that is open (same side, same width - one more context pane),
     // else alone at the right like the properties pane would.
-    if matches!(tab, Tab::Machines | Tab::Tools | Tab::AiChat)
+    if matches!(tab, Tab::Machines | Tab::Tools | Tab::AiChat | Tab::DebugInfo)
         && let Some(props) = dock.find_tab(&Tab::Properties)
         && let Ok(leaf) = dock.leaf_mut(props.node_path())
     {
@@ -148,6 +148,12 @@ pub(crate) fn apply(dock: &mut DockState<Tab>, req: LayoutRequest) {
     match req {
         LayoutRequest::Show(p) => show(dock, tab_of(p)),
         LayoutRequest::ToolLibrary => show(dock, Tab::Tools),
+        LayoutRequest::ToggleDebugInfo => match dock.find_tab(&Tab::DebugInfo) {
+            Some(path) => {
+                dock.remove_tab(path);
+            }
+            None => show(dock, Tab::DebugInfo),
+        },
         LayoutRequest::Toggle(p) if is_open(dock, &tab_of(p)) => close(dock, p),
         LayoutRequest::Toggle(p) => show(dock, tab_of(p)),
         LayoutRequest::Reset => *dock = build_dock(),
@@ -163,6 +169,8 @@ pub(crate) fn settle(state: &mut State, dock: &mut DockState<Tab>) {
         apply(dock, req);
     }
     state.panels_open = panels_open(dock);
+    // #2262: the tab's own X closes the panel too, so the flag follows the dock.
+    state.debug_info_open = is_open(dock, &Tab::DebugInfo);
 }
 
 // ------------------------------------------------------------ View door
@@ -265,6 +273,7 @@ pub(super) fn view_drop(
                     ViewRow::Panel(pn) => Some(open.get(*pn)),
                     ViewRow::Reset => None,
                 };
+                super::painted::menu_item(&resp, row_label(*row), live, checked);
                 if let Some(on) = checked {
                     let b = Rect::from_center_size(
                         r.left_center() + Vec2::new(14.0, 0.0),

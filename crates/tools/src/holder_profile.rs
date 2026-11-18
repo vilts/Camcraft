@@ -209,6 +209,15 @@ impl HolderProfile {
             .fold(0.0, |a, b| a.max(b.r))
     }
 
+    /// Farthest any band of the body reaches strictly inside `(lo, hi)`:
+    /// a band touching only `lo` or `hi` contributes 0.
+    fn span_reach(&self, lo: f64, hi: f64) -> f64 {
+        self.bands
+            .iter()
+            .filter(|b| b.above < hi - 1e-9 && b.above + b.len > lo + 1e-9)
+            .fold(0.0, |a, b| a.max(b.r))
+    }
+
     /// The stack the fixture laws sweep above the shank of `g`: the
     /// body's bands, the shank carried up to the body's foot where the
     /// body starts above the shank's top (the shank runs into the
@@ -272,8 +281,8 @@ impl HolderProfile {
         if self.bottom() < fl - 1e-9 {
             return None;
         }
-        let beside = self.reach_over(fl, shank_top);
-        let above = self.reach_over(shank_top, f64::INFINITY);
+        let beside = self.span_reach(fl, shank_top);
+        let above = self.span_reach(shank_top, f64::INFINITY);
         Some(Tool {
             shank_d: t.shank_d.max(2.0 * beside),
             holder_d: 2.0 * above,

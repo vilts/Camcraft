@@ -199,6 +199,10 @@ impl MoveModel {
                     rot: quat_mul(quat_mul(next.rot, quat_conjugate(prev.rot)), before.rot),
                 }
             };
+            // #2177: a move that does not turn the part leaves the stock's
+            // turn as it was - the composed quaternions' float noise (a
+            // locate's solve, q * q^-1) never lands on a square stock.
+            let after = if turns(prev.rot, next.rot) { after } else { Location { rot: before.rot, ..after } };
             let after = check_location(after, &format!("stock '{stock_name}'"))?;
             stock.push(StockMove { name: stock_name, before, after, reshape: None });
         }

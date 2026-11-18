@@ -77,7 +77,7 @@ fn coolant(name: &str, code: &str) -> Coolant {
 }
 
 fn script(name: &str) -> &'static str {
-    posting::BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, s)| *s).expect("a built-in")
+    posting::builtin_post_text(name).expect("a built-in")
 }
 
 fn post_with(world: &World, script: &str) -> post::PostOutput {

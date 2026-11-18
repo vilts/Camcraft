@@ -99,6 +99,7 @@ fn main() -> ExitCode {
         climb: true,
         blend_turns: false,
         holes: FaceHoles::default(),
+        stock_top: None,
     };
     let path = match face(&region, &p) {
         Ok(t) => t,

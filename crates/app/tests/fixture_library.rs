@@ -43,6 +43,8 @@ fn entry(name: &str) -> FixtureEntry {
         note: Some("100 mm vise, fixed jaw at Y0".into()),
         datum: Location { pos: p(50.0, 0.0, 0.0), rot: IDENTITY_Q },
         facets: cube(p(0.0, 0.0, 0.0), p(100.0, 40.0, 30.125)),
+        step_source: None,
+        profile: None,
     }
 }
 

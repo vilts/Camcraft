@@ -45,6 +45,7 @@ package() {
     for _asset in posts machines ui scripts themes; do
         cp -a "assets/$_asset" "$pkgdir/usr/lib/camcraft/assets/$_asset"
     done
+    cp -a examples "$pkgdir/usr/lib/camcraft/examples"
     for _pair in camcraft:camcraft-ui camcraft-cli:camcraft-cli camcraft-post:post; do
         _command=${_pair%%:*}
         _binary=${_pair#*:}

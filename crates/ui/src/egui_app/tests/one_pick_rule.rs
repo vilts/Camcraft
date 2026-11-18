@@ -279,6 +279,9 @@ fn locate_and_points_drafts_take_box_corners_as_points() {
     harness.get_by_label("Locate part…").click();
     harness.run();
     assert_eq!(harness.state().state.geo_pick, GeoPick::Face, "the locate draft arms in Face mode");
+    // #2173: the setup has a stock, so the draft holds it by default;
+    // this pin is about the part's corner.
+    crate::locate_pick::set_body(&mut harness.state_mut().state, camcraft_app::fixture_locate::LocateBody::Part);
     let p = a_corner(harness.state());
     click_viewport(&mut harness, p);
     let st = &harness.state().state;

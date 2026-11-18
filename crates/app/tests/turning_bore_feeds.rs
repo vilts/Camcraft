@@ -44,6 +44,7 @@ fn a_stepped_bar_whose_shank_rubs_the_wall_during_the_ride_is_convicted() {
     history.execute(&world, AddTool::new(&world, "DR-1300-L", drill).expect("a sane drill"));
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius: 6.55, entry_z: 50.0, floor_z: -16.0, through: false, stepped: false };
     let drill_params = OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(60.0),
         retract_z: None,
         top_z: Height::fixed(50.0),

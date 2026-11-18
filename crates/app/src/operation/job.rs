@@ -150,6 +150,8 @@ pub struct GenJob {
     /// it can be. The drill-reach refusals run on worker threads with
     /// no World to read, so they spell their depths through this lens.
     pub(super) unit: crate::units::Unit,
+    /// #760: active Z-rotated WCS on an upright milling operation (`None` when square).
+    pub(super) wcs_yaw: Option<super::wcs_yaw::WcsYaw>,
 }
 
 /// The tripwire phrase for a stored precompute whose arm never collected
@@ -166,14 +168,10 @@ pub(super) fn unreached(what: &str) -> GenError {
 /// everything an arm used to refuse at lives on as a stored `Result`
 /// for `run_job` to take at that exact statement.
 pub fn collect_job(world: &World, op: &Operation, op_name: &str) -> Result<GenJob, GenError> {
-    // #532: a wire EDM kind mounts no library tool - the machine's
-    // condition stands in its place, read (and refused by name) here.
+    // #532 / #2011: resolve the mounted library tool (Wire tool for Wire Contour)
+    // and, for Wire Contour, the machine condition pair validated against it.
+    let (tool, body, lathe_body, neck) = super::tool_gate::job_tool(world, op)?;
     let wire = super::wire_op::job_wire(world, op)?;
-    // Tool: the diameter drives the path, the body drives the reach law.
-    let (tool, body, lathe_body, neck) = match &wire {
-        Some((cond, _)) => (super::wire_op::job_tool(cond), None, None, Vec::new()),
-        None => super::tool_gate::job_tool(world, op)?,
-    };
     let setup = op.setup.as_deref();
     // #326: an op this slice has not verified in an aligned setup is
     // refused by name here, at the one door every generation passes -
@@ -184,6 +182,11 @@ pub fn collect_job(world: &World, op: &Operation, op_name: &str) -> Result<GenJo
     // #1510: a milling WCS whose Z is tilted off the machine's would
     // cut the part as it lies, not as the WCS shows - refused by name.
     if let Some(why) = crate::setup_wcs_tilt::generation_problem(world, op) {
+        return Err(GenError::Invalid(why));
+    }
+    // #1720: a flipped WCS axis is not carried into a path yet - refused
+    // by name, never cut in the unflipped frame.
+    if let Some(why) = crate::setup_wcs_flip::generation_problem(world, op) {
         return Err(GenError::Invalid(why));
     }
     // #763: the one machining-frame seam. Built before the first read;
@@ -263,7 +266,7 @@ pub fn collect_job(world: &World, op: &Operation, op_name: &str) -> Result<GenJo
         _ => None,
     };
     let slot_bound = match (&op.params, &op.src) {
-        (OpParams::Slot { .. }, SrcRef::Selection(items)) if !items.is_empty() => Some(super::slot_pick::slot_bound_of(world, items)),
+        (OpParams::Slot { .. }, SrcRef::Selection(items)) if !items.is_empty() => Some(super::slot_pick::slot_bound_of(world, setup, items)),
         _ => None,
     };
     let drive_chains = match &op.params {
@@ -377,6 +380,7 @@ pub fn collect_job(world: &World, op: &Operation, op_name: &str) -> Result<GenJo
         (m.model, rot)
     });
 
+    let wcs_yaw = super::wcs_yaw::WcsYaw::from_world(world, setup, machine_kind, &op.params);
     Ok(GenJob {
         op_name: op_name.to_owned(),
         tool,
@@ -427,6 +431,7 @@ pub fn collect_job(world: &World, op: &Operation, op_name: &str) -> Result<GenJo
         sinker_pass,
         sinker_wear,
         unit: crate::units::of(world),
+        wcs_yaw,
     })
 }
 

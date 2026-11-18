@@ -5,7 +5,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, mpsc};
 
 use camcraft_app::commands::History;
-use camcraft_app::mcp::Request;
+use camcraft_app::mcp::{ApprovedCall, Request};
 use camcraft_app::model;
 use flecs_ecs::prelude::World;
 use serde_json::Value;
@@ -31,6 +31,7 @@ pub struct AiChatState {
     turns: Vec<ChatTurn>,
     next_turn_id: u64,
     pending_confirm: Option<ConfirmRequest>,
+    approved_call: Option<ApprovedCall>,
     last_error: Option<String>,
     worker: Option<(u64, WorkerHandle)>,
     wake: Option<WakeFn>,
@@ -62,6 +63,7 @@ impl AiChatState {
             turns: Vec::new(),
             next_turn_id: 1,
             pending_confirm: None,
+            approved_call: None,
             last_error: None,
             worker: None,
             wake: None,
@@ -169,6 +171,7 @@ impl AiChatState {
         self.prompt_draft.clear();
         self.last_error = None;
         self.pending_confirm = None;
+        self.approved_call = None;
 
         let turn_id = self.next_turn_id;
         self.next_turn_id += 1;
@@ -226,6 +229,11 @@ impl AiChatState {
         }
     }
 
+    /// Take the single-call explicit approval granted when the user clicked Allow.
+    pub(crate) fn take_approved_call(&mut self) -> Option<ApprovedCall> {
+        self.approved_call.take()
+    }
+
     /// Only the active, uncancelled turn may execute requests from its inbox.
     pub(crate) fn accepts_mcp_requests(&self) -> bool {
         self.worker
@@ -242,7 +250,7 @@ impl AiChatState {
     }
 
     /// Drain pending worker events onto UI state without blocking.
-    pub fn poll(&mut self, current_done_len: usize) {
+    pub fn poll(&mut self, history: &mut History) {
         let mut events = Vec::new();
         let mut disconnected_turn = None;
         if let Some((turn_id, handle)) = &self.worker {
@@ -258,7 +266,7 @@ impl AiChatState {
             }
         }
         for ev in events {
-            self.apply_event(ev, current_done_len);
+            self.apply_event(ev, history);
         }
         if let Some(turn_id) = disconnected_turn
             && self.worker.as_ref().is_some_and(|(id, _)| *id == turn_id)
@@ -266,12 +274,12 @@ impl AiChatState {
             self.finish_turn(
                 turn_id,
                 TurnFinish::Failed("AI chat worker disconnected unexpectedly".to_owned()),
-                current_done_len,
+                history,
             );
         }
     }
 
-    fn apply_event(&mut self, ev: WorkerEvent, current_done_len: usize) {
+    fn apply_event(&mut self, ev: WorkerEvent, history: &mut History) {
         match ev {
             WorkerEvent::AssistantText { turn_id, text } => {
                 if let Some(turn) = self.turns.iter_mut().find(|t| t.id == turn_id) {
@@ -297,16 +305,17 @@ impl AiChatState {
                 self.pending_confirm = Some(req);
             }
             WorkerEvent::Finished { turn_id, status } => {
-                self.finish_turn(turn_id, status, current_done_len);
+                self.finish_turn(turn_id, status, history);
             }
         }
     }
 
-    fn finish_turn(&mut self, turn_id: u64, status: TurnFinish, current_done_len: usize) {
+    fn finish_turn(&mut self, turn_id: u64, status: TurnFinish, history: &mut History) {
         self.pending_confirm = None;
+        self.approved_call = None;
         self.worker = None;
         if let Some(turn) = self.turns.iter_mut().find(|t| t.id == turn_id)
-            && let Some(err) = turn.finish(status, current_done_len)
+            && let Some(err) = turn.finish(status, history)
         {
             self.last_error = Some(err);
         }
@@ -315,6 +324,7 @@ impl AiChatState {
     /// Deliver the user's inline Allow or Deny choice back to the waiting worker.
     pub(crate) fn resolve_confirmation(&mut self, allow: bool) {
         if let Some(req) = self.pending_confirm.take() {
+            self.approved_call = allow.then(|| ApprovedCall::new(req.tool_name, req.arguments));
             let _ = req.decision_tx.send(allow);
         }
     }
@@ -325,6 +335,7 @@ impl AiChatState {
             handle.cancel.store(true, Ordering::Relaxed);
         }
         self.pending_confirm = None;
+        self.approved_call = None;
     }
 
     /// Revert all contiguous commands executed during `turn_id` when no later edits exist.
@@ -354,6 +365,7 @@ impl AiChatState {
     /// Cancel and join any running worker thread cleanly before shutdown or document reset.
     pub fn shutdown(&mut self) {
         self.pending_confirm = None;
+        self.approved_call = None;
         if let Some((turn_id, handle)) = self.worker.take() {
             handle.cancel.store(true, Ordering::Relaxed);
             drop(handle);

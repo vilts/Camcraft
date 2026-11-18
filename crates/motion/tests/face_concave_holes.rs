@@ -24,6 +24,7 @@ fn params() -> FaceParams {
         climb: true,
         blend_turns: false,
         holes: FaceHoles::Lift,
+        stock_top: None,
     }
 }
 

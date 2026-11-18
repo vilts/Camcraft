@@ -4,7 +4,8 @@
 //! (`camcraft_app::posting::MACHINES`); no vendor material consulted.
 
 use camcraft_app::machine::Kind as MachineKind;
-use camcraft_app::operation::shown_for;
+use camcraft_app::operation::{shown_for, KindInfo};
+use camcraft_app::tools::ToolKind;
 
 use crate::state::{CommandKind, State};
 
@@ -97,4 +98,32 @@ pub(crate) fn set_machine_mode(state: &mut State, kind: MachineKind) {
         ));
         state.status = format!("machine mode: {caption}");
     }
+}
+
+/// Whether `kind` belongs to at least one operation kind whose machine kind is
+/// selectable in `modes` or already mounted on the document (`mounted`).
+pub(crate) fn tool_kind_offered_for(
+    kind: ToolKind,
+    modes: &[(MachineKind, &str, &str)],
+    mounted: &[MachineKind],
+) -> bool {
+    KindInfo::ALL.iter().any(|info| {
+        info.accepts(kind)
+            && (modes.iter().any(|(m, _, _)| info.admits(*m)) || mounted.iter().any(|m| info.admits(*m)))
+    })
+}
+
+/// Whether `kind` should be offered in the catalog and New Tool dropdowns for
+/// the current workspace (`MACHINE_MODES` or any machine mounted on `world`).
+pub(crate) fn tool_kind_offered(world: &flecs_ecs::prelude::World, kind: ToolKind) -> bool {
+    let mut mounted = vec![camcraft_app::machine::kind_of(world)];
+    if let (_, Some(m)) = camcraft_app::machine::document_of(world) {
+        mounted.push(camcraft_app::machine::kind(Some(&m)));
+    }
+    for s in camcraft_app::setup::names(world) {
+        if let (_, Some(m)) = camcraft_app::machine::of_setup(world, Some(&s)) {
+            mounted.push(camcraft_app::machine::kind(Some(&m)));
+        }
+    }
+    tool_kind_offered_for(kind, &MACHINE_MODES, &mounted)
 }

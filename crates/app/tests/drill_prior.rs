@@ -121,6 +121,7 @@ fn mill_world(pocket: Option<f64>, stock_top: f64) -> (World, History) {
 fn drill(entry: f64, floor: f64, r: f64) -> OpParams {
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius: 2.0, entry_z: entry, floor_z: floor, through: false, stepped: false };
     OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(TOP + 15.0),
         retract_z: None,
         top_z: Height::fixed(r),
@@ -427,9 +428,22 @@ fn a_stock_facing_allowance_is_faced_and_the_drill_after_it_stands() {
         .filter(|m| m.kind == MoveKind::Feed && m.to.x.hypot(m.to.y) < 1e-6)
         .map(|m| m.to.z)
         .collect();
-    assert_eq!(feeds_to_axis.len(), 5, "five passes over the 2 mm allowance: {feeds_to_axis:?}");
+    // #2004: four bites of the 0.5 mm stepdown remove the 2 mm allowance.
+    // The old fifth pass had its tip at the stock end Z 22 and cut air.
+    assert_eq!(feeds_to_axis.len(), 4, "four passes over the 2 mm allowance: {feeds_to_axis:?}");
     let nose = 0.8;
     assert!(feeds_to_axis.iter().all(|z| *z >= TOP + nose - 1e-6), "a pass below the finished end: {feeds_to_axis:?}");
+    // The full allowance comes off: the last pass is at the finished end,
+    // the first is one stepdown under the stock end, and no bite is deeper
+    // than one stepdown.
+    let last = feeds_to_axis.last().copied().unwrap_or(f64::NAN);
+    assert!((last - (TOP + nose)).abs() < 1e-6, "the last pass faces to the finished end: {feeds_to_axis:?}");
+    let first = feeds_to_axis.first().copied().unwrap_or(f64::NAN);
+    assert!((first - (22.0 - 0.5 + nose)).abs() < 1e-6, "the first bite is one stepdown: {feeds_to_axis:?}");
+    assert!(
+        feeds_to_axis.windows(2).all(|w| w[0] - w[1] <= 0.5 + 1e-6 && w[0] > w[1]),
+        "each bite at most one stepdown: {feeds_to_axis:?}"
+    );
     create(&world, &mut h, "Op2", "DR-0400", "bar", drill(TOP, 10.0, TOP + 1.0));
     generate(&world, &mut h, "Op2").unwrap_or_else(|e| panic!("the drill on the faced end generates: {e}"));
     assert_eq!(status(&world, "Op2"), OpStatus::Ok);

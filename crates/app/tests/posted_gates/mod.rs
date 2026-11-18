@@ -183,6 +183,7 @@ pub fn region_verdicts() -> Vec<(&'static str, Vec<Warning>)> {
         return_feed: 2000.0,
         plunge_feed: 200.0,
         climb: true,
+        stock_top: None,
     };
     let t = trochoidal_slot(&[a, b], &p).expect("trochoid");
     let op = OpParams::TrochoidalSlot {
@@ -210,7 +211,7 @@ pub fn region_verdicts() -> Vec<(&'static str, Vec<Warning>)> {
     // The trace: the 40 x 20 plate with its 8 x 8 through hole, its
     // section the region the trace rides; a D3 end mill engraving.
     let (outer, hole) = (rect(0.0, 0.0, 40.0, 20.0), rect(16.0, 6.0, 24.0, 14.0));
-    let p = TraceParams { clearance_z: 5.0, retract_z: None, top_z: 0.0, bottom_z: -2.0, stepdown: 1.0, feed: 500.0, plunge_feed: 100.0, climb: true };
+    let p = TraceParams { clearance_z: 5.0, retract_z: None, top_z: 0.0, bottom_z: -2.0, stepdown: 1.0, feed: 500.0, plunge_feed: 100.0, climb: true, stock_top: None };
     let t = trace(&region(&[outer.clone(), hole.clone()]), &p).expect("trace");
     let mut part = Vec::new();
     plate(&outer, Some((&hole, -4.0)), -4.0, 0.0, &mut part);

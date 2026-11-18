@@ -33,6 +33,7 @@ fn p(stepover: f64, blend: bool) -> FaceParams {
         plunge_feed: 100.0,
         climb: true,
         blend_turns: blend,
+        stock_top: None,
     }
 }
 
@@ -135,8 +136,9 @@ fn conventional_and_staged_blend_every_level() {
     q.top_z = Some(1.0);
     q.stepdown = Some(1.5);
     let t = face(&rect(0.0, 0.0, 40.0, 40.0), &q).unwrap();
-    // Levels 1.0, -0.5, -2.0: four reversals each.
-    assert_eq!(arcs(&t).len(), 12);
+    // Levels -0.5, -2.0 (#2004: no air level at Top Z 1.0): four
+    // reversals each.
+    assert_eq!(arcs(&t).len(), 8);
     // Conventional: row 0 runs -X, so the first turn is to the right.
     assert!(!arcs(&t)[0].arc.unwrap().ccw);
     assert!(t.is_chained() && t.all_finite());

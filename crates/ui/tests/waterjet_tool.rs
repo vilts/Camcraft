@@ -11,7 +11,7 @@ fn waterjet_tool_draft_preserves_recipe_through_apply_and_undo() {
     let mut state = State::new();
     let mut tool = waterjet_tool(0.8);
     tool.cutting.push(CuttingRow {
-        material: WorkMaterial::MildSteel, rpm: 0.0, feed: 600.0,
+        material: Some(WorkMaterial::MildSteel), rpm: 0.0, feed: 600.0, stepdown: None, stepover: None,
         waterjet: Some(WaterjetCutData {
             thickness: 5.0, kerf: 0.8, pierce_time: 2.0, abrasive_delay: 0.3,
             re_pierce_time: 1.0, pierce_method: PierceMethod::Wiggle,

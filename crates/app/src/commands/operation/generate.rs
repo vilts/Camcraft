@@ -103,6 +103,47 @@ impl GenerateOperation {
     pub fn new(world: &World, name: &str) -> Result<Self, CommandError> {
         stage_generation(world, name)?.finish()
     }
+
+    /// The operation this command generates.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// #2257: the operation and its cached path are still what they were
+    /// when the generation was staged. A background generation that lands
+    /// after an edit, an undo or a delete of its operation is discarded:
+    /// applying it would write old parameters over the user's newer ones.
+    #[must_use]
+    pub fn still_current(&self, world: &World) -> bool {
+        model::find_by_name(world, &self.name).is_some_and(|e| {
+            model::operation_of(world, &e).as_ref() == Some(&self.prev_operation)
+                && model::toolpath_of(world, &e) == self.prev_cache
+        })
+    }
+}
+
+/// #2257: one generation split at the M5.3 B seam for a background
+/// worker. [`StagedGeneration::new`] does every world read on the caller's
+/// thread; [`StagedGeneration::finish`] reads no world and can run on any
+/// thread. `GenerateOperation::new` is exactly `new` then `finish`.
+pub struct StagedGeneration(Staged);
+
+impl StagedGeneration {
+    pub fn new(world: &World, name: &str) -> Result<Self, CommandError> {
+        stage_generation(world, name).map(Self)
+    }
+
+    /// The operation this generation is for.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        &self.0.name
+    }
+
+    /// Run the generator, verification and stamp on the staged job.
+    pub fn finish(self) -> Result<GenerateOperation, CommandError> {
+        self.0.finish()
+    }
 }
 
 impl Command for GenerateOperation {

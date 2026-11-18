@@ -10,7 +10,6 @@
 use camcraft_app::fixture::table_of;
 use camcraft_app::machine::parse_mch;
 use camcraft_app::mcp::Server;
-use camcraft_app::posting::MACHINES;
 
 use serde_json::{Value, json};
 
@@ -69,7 +68,7 @@ fn a_subplate_is_pinned_on_a_plate_and_raises_the_rotary_over_mcp() {
     c.ok("add_setup", json!({ "name": "Setup1" }));
     let plate = c.ok("add_fixture_plate", json!({ "preset": "300 x 300 mm", "on_table": true }))["fixture"].as_str().expect("name").to_owned();
     // On the table's top (#821 review: the rise is read from where it stands).
-    let text = MACHINES.iter().find(|(n, _)| *n == "Tormach 770MX + microARC 4").map(|(_, t)| *t).expect("shipped");
+    let text = camcraft_app::posting::builtin_machine_text("Tormach 770MX + microARC 4").expect("shipped");
     let top = table_of(&parse_mch(text).expect("parses")).expect("a table").max.z;
     let added = c.ok("add_accessory", json!({ "kind": "rotary_subplate", "position": [0.0, 0.0, top], "dimensions": { "bore_spacing": 100.0 } }));
     let sub = added["fixture"].as_str().expect("name").to_owned();

@@ -3,43 +3,181 @@
 //! ([`crate::cutting::WorkMaterial`]), so one tool library serves a shop
 //! that cuts several materials with the same cutters.
 //!
+//! #2015: every tool also has the `Unknown` row (`material: None`, file
+//! word [`UNKNOWN_WORD`]) - the numbers it runs when no row names the
+//! material in force, and the fallback for a row's missing stepdown or
+//! stepover. A row may state a stepdown and a stepover (mm) besides its
+//! rpm and feed. Canonical form: the `Unknown` row is STORED only when it
+//! says something the tool's own rpm / feed do not ([`canonical`]);
+//! otherwise it is derived from them ([`unknown_of`]), so a tool with
+//! just its own numbers keeps an empty table, in memory and on disk.
+//!
 //! Provenance: our own data model; the per-material speed/feed table is
 //! the ordinary shape of a public tooling catalog's cutting-data page.
 //! Pure module: no flecs, no I/O. The tool's own `rpm` / `feed` stay its
-//! running numbers (what the post reads) and the fallback when no row
-//! names the document's material; a row only moves them through a
+//! running numbers (what the post reads); a row only moves them through a
 //! command (the app's `cutting_rows` seam), never on load.
 
 use crate::cutting::WorkMaterial;
 
-/// One material's starting spindle speed (rpm) and feed (mm/min).
+/// The word the files write for the `Unknown` row's material.
+pub const UNKNOWN_WORD: &str = "unknown";
+/// The label the editor shows for it.
+pub const UNKNOWN_LABEL: &str = "Unknown";
+
+/// One material's starting spindle speed (rpm) and feed (mm/min), and
+/// (#2015) its stepdown and stepover (mm) where stated.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CuttingRow {
-    pub material: WorkMaterial,
+    /// `None` is the `Unknown` row (#2015).
+    pub material: Option<WorkMaterial>,
     pub rpm: f64,
     pub feed: f64,
+    /// Axial depth per level, mm; `None` = not stated (the `Unknown`
+    /// row's, else the operation's own).
+    pub stepdown: Option<f64>,
+    /// Radial width between passes, mm; `None` as `stepdown`.
+    pub stepover: Option<f64>,
     /// A material-and-thickness recipe, never selected by material alone.
     pub waterjet: Option<crate::waterjet::WaterjetCutData>,
 }
 
-/// The row for `material`, if the table names it. `None` for an
-/// unstated material: nothing is matched to "no material".
+impl CuttingRow {
+    /// A plain speed-and-feed row with no step data.
+    #[must_use]
+    pub const fn plain(material: Option<WorkMaterial>, rpm: f64, feed: f64) -> Self {
+        Self { material, rpm, feed, stepdown: None, stepover: None, waterjet: None }
+    }
+
+    /// Is this the `Unknown` row?
+    #[must_use]
+    pub fn is_unknown(&self) -> bool {
+        self.material.is_none() && self.waterjet.is_none()
+    }
+}
+
+/// The row label: the material's, or "Unknown".
+#[must_use]
+pub fn material_label(m: Option<WorkMaterial>) -> &'static str {
+    m.map_or(UNKNOWN_LABEL, WorkMaterial::label)
+}
+
+/// The row keys an editor offers, `Unknown` first.
+#[must_use]
+pub fn row_keys() -> Vec<Option<WorkMaterial>> {
+    std::iter::once(None).chain(WorkMaterial::ALL.into_iter().map(Some)).collect()
+}
+
+/// The `Unknown` row of a table, if it has one.
+#[must_use]
+pub fn unknown_row(rows: &[CuttingRow]) -> Option<&CuttingRow> {
+    rows.iter().find(|r| r.is_unknown())
+}
+
+/// The row in force for `material` (#2015): the row naming it, else the
+/// `Unknown` row (also for an unstated material). `None` only for a
+/// table with neither - a waterjet's, or an electrode's.
 #[must_use]
 pub fn row_for(rows: &[CuttingRow], material: Option<WorkMaterial>) -> Option<&CuttingRow> {
-    let m = material?;
-    rows.iter().find(|r| r.material == m && r.waterjet.is_none())
+    material
+        .and_then(|m| rows.iter().find(|r| r.material == Some(m) && r.waterjet.is_none()))
+        .or_else(|| unknown_row(rows))
+}
+
+/// The stepdown and stepover in force for `material`: the row's own,
+/// each missing one from the `Unknown` row (#2015).
+#[must_use]
+pub fn steps_for(rows: &[CuttingRow], material: Option<WorkMaterial>) -> (Option<f64>, Option<f64>) {
+    let row = row_for(rows, material);
+    let unknown = unknown_row(rows);
+    let down = row.and_then(|r| r.stepdown).or_else(|| unknown.and_then(|r| r.stepdown));
+    let over = row.and_then(|r| r.stepover).or_else(|| unknown.and_then(|r| r.stepover));
+    (down, over)
+}
+
+/// The `Unknown` row derived from `tool`'s own rpm / feed, or `None`
+/// for a kind whose table cannot hold it (a waterjet's recipes, an
+/// electrode with no spindle) - so a sane tool never turns insane.
+#[must_use]
+pub fn derived_unknown(tool: &crate::tools::Tool) -> Option<CuttingRow> {
+    let row = CuttingRow::plain(None, tool.rpm, tool.feed);
+    refusal_for_kind(std::slice::from_ref(&row), tool.kind).is_none().then_some(row)
+}
+
+/// The tool's `Unknown` row: the stored one, else the derived one.
+#[must_use]
+pub fn unknown_of(tool: &crate::tools::Tool) -> Option<CuttingRow> {
+    unknown_row(&tool.cutting).copied().or_else(|| derived_unknown(tool))
+}
+
+/// The row in force for `material` on `tool`: the row naming it, else
+/// [`unknown_of`].
+#[must_use]
+pub fn row_in_tool(tool: &crate::tools::Tool, material: Option<WorkMaterial>) -> Option<CuttingRow> {
+    material
+        .and_then(|m| tool.cutting.iter().find(|r| r.material == Some(m) && r.waterjet.is_none()).copied())
+        .or_else(|| unknown_of(tool))
+}
+
+/// [`steps_for`] over the tool's table with its `Unknown` row.
+#[must_use]
+pub fn steps_in_tool(tool: &crate::tools::Tool, material: Option<WorkMaterial>) -> (Option<f64>, Option<f64>) {
+    steps_for(&rows_with_unknown(tool), material)
+}
+
+/// The table with the `Unknown` row in front - stored or derived - as
+/// an editor shows it.
+#[must_use]
+pub fn rows_with_unknown(tool: &crate::tools::Tool) -> Vec<CuttingRow> {
+    let mut rows = tool.cutting.clone();
+    if unknown_row(&rows).is_none()
+        && let Some(u) = derived_unknown(tool)
+    {
+        rows.insert(0, u);
+    }
+    rows
+}
+
+/// Store the derived `Unknown` row (before a command moves the running
+/// numbers away from it, so the default is not lost). `true` when one
+/// was stored.
+pub fn ensure_unknown_row(tool: &mut crate::tools::Tool) -> bool {
+    if unknown_row(&tool.cutting).is_some() {
+        return false;
+    }
+    let Some(row) = derived_unknown(tool) else { return false };
+    tool.cutting.insert(0, row);
+    true
+}
+
+/// Drop a stored `Unknown` row that only repeats the running numbers
+/// (the canonical form, module doc).
+pub fn canonical(tool: &mut crate::tools::Tool) {
+    let (rpm, feed) = (tool.rpm, tool.feed);
+    tool.cutting.retain(|r| !is_derived_unknown(r, rpm, feed));
+}
+
+/// Is `row` exactly what [`ensure_unknown_row`] would derive from the
+/// running numbers? Then a file need not write it (#2015: a tool with
+/// only its own rpm / feed saves byte for byte as before).
+#[must_use]
+pub fn is_derived_unknown(row: &CuttingRow, rpm: f64, feed: f64) -> bool {
+    *row == CuttingRow::plain(None, rpm, feed)
 }
 
 /// A waterjet recipe requires both keys; no nearest-thickness substitution.
 #[must_use]
 pub fn waterjet_row_for(rows: &[CuttingRow], material: WorkMaterial, thickness: f64) -> Option<&CuttingRow> {
-    rows.iter().find(|r| r.material == material && r.waterjet.is_some_and(|w| w.thickness == thickness))
+    rows.iter().find(|r| r.material == Some(material) && r.waterjet.is_some_and(|w| w.thickness == thickness))
 }
 
 /// Validate a table against its tool kind before storing it.
 #[must_use]
 pub fn refusal_for_kind(rows: &[CuttingRow], kind: crate::tools::ToolKind) -> Option<String> {
     use crate::tools::ToolKind;
+    if kind == ToolKind::Wire {
+        return (!rows.is_empty()).then(|| "an EDM wire uses machine EDM conditions, not per-material cutting data rows".into());
+    }
     if kind != ToolKind::Waterjet {
         if rows.iter().any(|r| r.waterjet.is_some()) {
             return Some("waterjet cutting data requires a waterjet tool".into());
@@ -51,12 +189,15 @@ pub fn refusal_for_kind(rows: &[CuttingRow], kind: crate::tools::ToolKind) -> Op
             return Some("waterjet cutting data requires thickness, kerf and pierce data".into());
         };
         if let Some(why) = w.refusal() { return Some(why); }
+        if r.material.is_none() {
+            return Some("waterjet cutting data names its workpiece material".into());
+        }
         if r.rpm != 0.0 { return Some("waterjet cutting data rpm must be 0".into()); }
         if !r.feed.is_finite() || r.feed <= 0.0 {
             return Some("waterjet cutting data feed must be finite and above zero".into());
         }
         if rows[..i].iter().any(|p| p.material == r.material && p.waterjet.is_some_and(|p| p.thickness == w.thickness)) {
-            return Some(format!("waterjet cutting data names {} at thickness {} twice", r.material.label(), w.thickness));
+            return Some(format!("waterjet cutting data names {} at thickness {} twice", material_label(r.material), w.thickness));
         }
     }
     None
@@ -64,12 +205,13 @@ pub fn refusal_for_kind(rows: &[CuttingRow], kind: crate::tools::ToolKind) -> Op
 
 /// The refusal text for a table that cannot be stored, or `None`.
 /// Every row states a finite positive feed and a finite positive rpm
-/// (a torch, which turns no spindle, states rpm 0 - the #670 law), and
-/// no material appears twice.
+/// (a torch, which turns no spindle, states rpm 0 - the #670 law), a
+/// stated stepdown or stepover is finite and positive (#2015), and no
+/// material (nor `Unknown`) appears twice.
 #[must_use]
 pub fn refusal(rows: &[CuttingRow], torch: bool) -> Option<String> {
     for (i, r) in rows.iter().enumerate() {
-        let what = r.material.label();
+        let what = material_label(r.material);
         if rows[..i].iter().any(|p| p.material == r.material) {
             return Some(format!("cutting data names {what} twice"));
         }
@@ -81,6 +223,13 @@ pub fn refusal(rows: &[CuttingRow], torch: bool) -> Option<String> {
             let want = if torch { "0 on a torch" } else { "a finite number above zero" };
             return Some(format!("cutting data for {what}: spindle rpm must be {want} (it states {})", r.rpm));
         }
+        for (name, v) in [("stepdown", r.stepdown), ("stepover", r.stepover)] {
+            if let Some(v) = v
+                && !(v.is_finite() && v > 0.0)
+            {
+                return Some(format!("cutting data for {what}: {name} must be a finite number above zero (it states {v})"));
+            }
+        }
     }
     None
 }
@@ -90,7 +239,7 @@ mod tests {
     use super::*;
 
     fn row(m: WorkMaterial, rpm: f64, feed: f64) -> CuttingRow {
-        CuttingRow { material: m, rpm, feed, waterjet: None }
+        CuttingRow::plain(Some(m), rpm, feed)
     }
 
     #[test]

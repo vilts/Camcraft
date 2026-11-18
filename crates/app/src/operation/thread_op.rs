@@ -105,7 +105,7 @@ pub fn door(tool: &Tool, params: &OpParams) -> Option<String> {
 /// The kernel's parameters for this operation and tool, heights
 /// resolved; every door refusal is the generator's refusal too.
 pub(super) fn kernel_params(tool: &Tool, params: &OpParams, hl: &ResolvedHeights) -> Result<ThreadParams, GenError> {
-    let OpParams::Thread { infeed, feed, plunge_feed, climb, holes, pitch, hand, external, passes, .. } = params else {
+    let OpParams::Thread { infeed, feed, plunge_feed, climb, holes, pitch, hand, external, passes, break_through, .. } = params else {
         return Err(GenError::Invalid("not a thread-milling operation".into()));
     };
     if !form::is_thread_mill(tool.kind) {
@@ -127,6 +127,7 @@ pub(super) fn kernel_params(tool: &Tool, params: &OpParams, hl: &ResolvedHeights
         return Err(GenError::Invalid(why));
     }
     Ok(ThreadParams {
+        through_run: *break_through,
         holes: holes
             .iter()
             .map(|x| ThreadHole {
@@ -262,6 +263,7 @@ mod tests {
 
     fn thread(pitch: Option<f64>) -> OpParams {
         OpParams::Thread {
+            break_through: None,
             clearance_z: Height::fixed(10.0),
             retract_z: None,
             top_z: Height::fixed(0.0),

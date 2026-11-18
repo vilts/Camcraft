@@ -1,5 +1,5 @@
-//! One job budget for a whole gate run (#2057): the lanes of a wave share it, so `-j` summed over a
-//! wave never exceeds it. Provenance: our own build law (AGENTS.md "Three gate tiers"), cargo's `-j`
+//! One job budget for a whole gate run (#2057): the lanes of the release queue share it, so `-j` summed
+//! over the running lanes never exceeds it. Provenance: our own build law (AGENTS.md "Three gate tiers"), cargo's `-j`
 //! and libtest's `--test-threads` flags as documented in the Cargo Book and the rustc test docs.
 
 /// The budget when `CAMCRAFT_GATE_JOBS` is not set. The plan writes this value as `plan::J`.
@@ -23,7 +23,7 @@ pub fn from_env() -> (usize, Option<String>) {
     from_value(std::env::var(ENV).ok().as_deref())
 }
 
-/// The most lanes in one wave: half the budget, so each lane has two jobs or more; at least one.
+/// The most lanes of the release queue: half the budget, so each lane has two jobs or more; at least one.
 pub fn lane_limit(budget: usize) -> usize {
     (budget / 2).max(1)
 }
@@ -67,5 +67,5 @@ pub fn header(budget: usize, lanes: bool) -> String {
     }
     let limit = lane_limit(budget);
     let split: Vec<String> = (1..=limit).map(|n| format!("{n} lane(s) x -j {}", per_lane(budget, n))).collect();
-    format!("gate budget: {budget} job(s) ({ENV} overrides); at most {limit} lane(s) per wave; {}", split.join(", "))
+    format!("gate budget: {budget} job(s) ({ENV} overrides); at most {limit} queue lane(s); alone steps take all {budget}; {}", split.join(", "))
 }

@@ -44,6 +44,7 @@ done
 for asset in posts machines ui scripts themes; do
     cp -a "assets/$asset" "$appdir/usr/bin/assets/$asset"
 done
+cp -a examples "$appdir/usr/bin/examples"
 cat > "$appdir/usr/share/applications/camcraft.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application

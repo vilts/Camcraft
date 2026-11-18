@@ -22,14 +22,12 @@
 //!   strictly inside the fixture's footprint and its material
 //!   (`floor..top`) overlaps the fixture's steel by more than the
 //!   contact tolerance - jaws gripping a side face and a part seated on
-//!   a plate or in a nest are contact by design. A footprint narrower
-//!   than a cell (holding no centre) is judged by the column under its
-//!   own centre, by the box. The column sampling resolves to the
-//!   carried grid's pitch: an overlap narrower than half a cell beside a
-//!   face can pass, and is stated so in the decision record.
-//! - **The shape, not the box (#1530).** The box is the broad phase; a
-//!   fixture it flags is then judged by its closed world mesh, in two
-//!   readings, and refused when either convicts:
+//!   a plate or in a nest are contact by design. When continuous stock
+//!   history is absent, a footprint narrower than a cell is judged by
+//!   the column under its own centre.
+//! - **The shape, not the box (#1530, #1580).** The box is the broad
+//!   phase; a fixture it flags is then judged by its closed world mesh,
+//!   in two readings plus sub-pitch boundary subdivision:
 //!   - **On each column** whose centre the box holds: the steel on the
 //!     column's vertical line (and on four lines [`CARRIED_CONTACT_TOL`]
 //!     beside it - a face at the column centre is contact) against the
@@ -39,12 +37,10 @@
 //!     WHOLE against the material all four agree on
 //!     (`FixtureMesh::steel_in_prism`) - a post or a lip narrower than
 //!     the pitch standing in the part cannot pass between the lines.
-//!     Where the four disagree (a side face or a step of the carried
-//!     part runs through the rectangle) only what they share is judged:
-//!     a material boundary is known to one pitch, as the box law always
-//!     read it (steel at most one pitch into the material at a side face
-//!     or step, short of the next column centre, passes; the decision
-//!     record states it, #1580 tracks it).
+//!   - **At side faces and steps (#1580)**: where continuous stock
+//!     history is retained, boundary tiles where corners disagree or
+//!     material meets air are subdivided against the continuous stock
+//!     and fixture mesh down to sub-pitch tolerances.
 //!
 //!   A vise is its jaws, not the box that spans the part they grip; a
 //!   nest is its walls and floor. The mesh only acquits: an open,
@@ -63,7 +59,7 @@ use flecs_ecs::prelude::{Entity, World};
 use crate::fixture::{FIXTURE_HIT_TOL, FixtureBox};
 use crate::geo2d::Point2;
 use crate::model;
-use crate::stock_sim::Body;
+use crate::stock_sim::{Body, boundary_box_penetration, boundary_mesh_penetration};
 use camcraft_sim::fixture_mesh::{FixtureMesh, PrismReading};
 
 /// The phrase every carried-workholding refusal carries.
@@ -135,7 +131,7 @@ fn scan(
     // A footprint narrower than a cell holds no column centre: the column
     // under its own centre speaks for it, never nothing.
     let mid = Point2::new((bx0 + bx1) * 0.5, (by0 + by1) * 0.5);
-    if !any_inside && let Some(k) = dex.col(mid) && !body.empty_at(k) {
+    if !any_inside && !body.has_continuous_history() && let Some(k) = dex.col(mid) && !body.empty_at(k) {
         let d = judge(k, mid, false, worst);
         take(&mut worst, d);
     }
@@ -150,6 +146,12 @@ fn box_depth(body: &Body, b: &FixtureBox, k: usize) -> f64 {
 
 /// An unread exact ray keeps the conservative column hull.
 fn material(body: &Body, k: usize) -> Vec<(f64, f64)> {
+    if body.needs_continuous_column(k) {
+        let c = body.dex.center(k % body.dex.nx, k / body.dex.nx);
+        if let Ok(spans) = body.continuous_spans_at(c.x, c.y) {
+            return spans;
+        }
+    }
     body.material_spans_at(k).unwrap_or_else(|_| vec![(body.floor_at(k), body.dex.top_at(k))])
 }
 
@@ -165,7 +167,8 @@ fn shared_spans(a: &[(f64, f64)], b: &[(f64, f64)]) -> Vec<(f64, f64)> {
 /// `None` when no column overlaps beyond [`FIXTURE_HIT_TOL`].
 #[must_use]
 pub fn penetration(body: &Body, b: &FixtureBox) -> Option<f64> {
-    scan(body, b, |k, _, _, _| Some(box_depth(body, b, k)).filter(|d| d.is_finite() && *d > FIXTURE_HIT_TOL))
+    let worst = scan(body, b, |k, _, _, _| Some(box_depth(body, b, k)).filter(|d| d.is_finite() && *d > FIXTURE_HIT_TOL));
+    boundary_box_penetration(body, b, worst)
 }
 
 /// Material `lo..hi` overlapped by `spans`, in millimetres.
@@ -189,10 +192,11 @@ pub const MESH_VISIT_BUDGET: u64 = 50_000_000;
 pub fn mesh_penetration(body: &Body, b: &FixtureBox, mesh: &FixtureMesh, budget: &mut u64) -> Option<f64> {
     let worst = on_columns(body, b, mesh, budget);
     let between = between_columns(body, b, mesh, budget, worst);
-    match (worst, between) {
+    let coarse = match (worst, between) {
         (Some(w), Some(d)) => Some(w.max(d)),
         (w, d) => w.or(d),
-    }
+    };
+    boundary_mesh_penetration(body, b, mesh, CARRIED_CONTACT_TOL, budget, coarse)
 }
 
 /// The steel ON the material columns the box holds: per column, the

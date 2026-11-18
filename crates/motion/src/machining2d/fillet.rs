@@ -271,13 +271,50 @@ pub fn fillet_corners(
     tol: f64,
     legal: &Legal,
 ) -> (Vec<Seg>, FilletTally) {
+    let (out, tally, _) = fillet_corners_except(walk, start, r_max, tol, legal, &|_| false);
+    (out, tally)
+}
+
+/// Where an arc of a rounded walk came from, when it is not an arc of
+/// the walk handed in: the corner it rounds, or the end its arc had
+/// before a corner arc trimmed it.
+pub(super) enum Source {
+    Corner(Point2),
+    Trimmed(Point2),
+}
+
+/// An arc of the rounded walk (its end, center and sense) and its source.
+pub(super) struct Traced {
+    pub(super) to: Point2,
+    pub(super) center: Point2,
+    pub(super) ccw: bool,
+    pub(super) source: Source,
+}
+
+/// [`fillet_corners`] with the corners `banned` names kept sharp (the
+/// crossing law's refusal, #2317: counted as `crossed`), and the trace
+/// of every arc the rounding added or trimmed. A ban changes no other
+/// corner: each joint is judged on its own legs.
+pub(super) fn fillet_corners_except(
+    walk: &[Seg],
+    start: Point2,
+    r_max: f64,
+    tol: f64,
+    legal: &Legal,
+    banned: &dyn Fn(Point2) -> bool,
+) -> (Vec<Seg>, FilletTally, Vec<Traced>) {
+    let mut trace = Vec::new();
     let els = elements(walk, start);
     let floor = fillet_floor(tol);
     let mut tally = FilletTally::default();
     // joints[j]: the fillet replacing the joint between els[j] and els[j+1].
     let mut joints: Vec<Option<(Point2, Point2, Point2, bool)>> = Vec::with_capacity(els.len());
     for pair in els.windows(2) {
-        joints.push(tally.count(judge(&pair[0], &pair[1], r_max, floor, legal)));
+        let verdict = match judge(&pair[0], &pair[1], r_max, floor, legal) {
+            Verdict::Round(..) if banned(pair[0].to()) => Verdict::Crossed,
+            v => v,
+        };
+        joints.push(tally.count(verdict));
     }
     // A closed walk's seam is a corner too - one the walk cannot round
     // without moving where it starts. Counted, never silent.
@@ -291,7 +328,7 @@ pub fn fillet_corners(
     }
     if tally.rounded == 0 {
         // Nothing proved: the walk the caller handed in, verbatim.
-        return (walk.to_vec(), tally);
+        return (walk.to_vec(), tally, trace);
     }
     let mut out: Vec<Seg> = Vec::new();
     let mut line: Vec<Point2> = Vec::new();
@@ -315,6 +352,9 @@ pub fn fillet_corners(
                 // Trimmed to the fillet's T1 when its end corner rounds
                 // (its start already sits at the previous fillet's T2).
                 let end = fillet.map_or(to, |(t1, ..)| t1);
+                if end != to {
+                    trace.push(Traced { to: end, center, ccw, source: Source::Trimmed(to) });
+                }
                 out.push(Seg::Arc { center, ccw, to: end });
                 at = end;
             }
@@ -323,6 +363,7 @@ pub fn fillet_corners(
             if !line.is_empty() {
                 out.push(Seg::Line(std::mem::take(&mut line)));
             }
+            trace.push(Traced { to: t2, center: c, ccw, source: Source::Corner(el.to()) });
             out.push(Seg::Arc { center: c, ccw, to: t2 });
             at = t2;
         }
@@ -330,5 +371,5 @@ pub fn fillet_corners(
     if !line.is_empty() {
         out.push(Seg::Line(line));
     }
-    (out, tally)
+    (out, tally, trace)
 }

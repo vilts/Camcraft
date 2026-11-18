@@ -131,6 +131,7 @@ fn an_inner_patch_face_runs_its_entry_out_to_air_for_a_tool_that_is_not_centre_c
                 plunge_feed: 300.0,
                 climb,
                 blend_turns: false,
+                stock_top: None,
             },
         )
         .expect("face");
@@ -153,6 +154,7 @@ fn an_inner_patch_face_runs_its_entry_out_to_air_for_a_tool_that_is_not_centre_c
 fn a_drill_cycle_with_a_tool_that_is_not_centre_cutting_is_refused_by_name() {
     let (world, _h) = world_with("DR-0400");
     let drill = OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(22.0),

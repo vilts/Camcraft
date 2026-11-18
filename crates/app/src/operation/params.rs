@@ -164,6 +164,7 @@ impl OpParams {
             }
             OpParams::Pocket {
                 blend_radius,
+                rest,
                 links: _,
                 stepover,
                 stock_to_leave,
@@ -224,6 +225,14 @@ impl OpParams {
                     if let Some(r) = blend_radius {
                         h.write_u8(0xB2);
                         w(h, *r);
+                    }
+                }
+                // #1489: written only when ON, so every pocket without
+                // rest machining keeps its digest.
+                if let Some(r) = rest {
+                    h.write_u8(0xD7);
+                    for v in [r.previous_tool_diameter, r.previous_corner_radius, r.previous_stock_to_leave, r.allowance] {
+                        w(h, v);
                     }
                 }
             }

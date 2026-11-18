@@ -42,6 +42,9 @@ type EyeSlot = Rc<RefCell<Option<Result<StockEye, String>>>>;
 /// start-up itself runs on the browser's event loop.
 #[wasm_bindgen]
 pub fn camcraft_start(canvas_id: String) {
+    // Route camcraft-app's tracing events (and wgpu/eframe log lines) to
+    // stderr, which web/wasi_shim.js sends to console.warn without SystemTime.
+    camcraft_app::logging::init();
     report("starting", "CamCraft is starting...");
     wasm_bindgen_futures::spawn_local(async move {
         match start(&canvas_id).await {
@@ -249,6 +252,9 @@ impl eframe::App for WebShell {
         });
         view_pass::encode(&mut self.state, &mut self.view, &mut self.stock_eye, device, queue, &mut encoder);
         queue.submit([encoder.finish()]);
+        if self.stock_eye.as_ref().is_some_and(StockEye::cpu_pending) {
+            ui.ctx().request_repaint();
+        }
 
         // eframe keeps egui's own repaint timer; the document adds its own
         // (queued commands, an import, a playing simulation).

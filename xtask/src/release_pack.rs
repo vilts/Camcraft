@@ -57,6 +57,9 @@ pub const EXES: &[&str] = &["camcraft-ui", "camcraft-cli", "post"];
 pub const PRODUCT: &[&str] = &["camcraft-ui", "camcraft-app", "camcraft-post"];
 /// Asset dirs copied beside the executables, whole.
 pub const ASSET_DIRS: &[&str] = &["assets/posts", "assets/machines", "assets/ui", "assets/scripts", "assets/themes"];
+/// The example projects and models, copied whole beside `assets/` (#2042). The example `.camproj` files
+/// embed their model, so no path inside them depends on this layout.
+pub const EXAMPLES_DIR: &str = "examples";
 /// Top-level files copied beside the executables (release.yml ships NOTICE too).
 pub const DOCS: &[&str] = &["RELEASE_NOTES.md", "TESTING.md", "LICENSE", "NOTICE"];
 
@@ -135,6 +138,16 @@ pub fn stage_list(root: &Path, bin: &Path, os: Os) -> Result<Vec<(PathBuf, PathB
             let rel = f.strip_prefix(root).map_err(|e| format!("{}: {e}", f.display()))?.to_path_buf();
             list.push((f, rel));
         }
+    }
+    let ex = root.join(EXAMPLES_DIR);
+    if !ex.is_dir() {
+        return Err(format!("{EXAMPLES_DIR}/ missing: the packages must ship the example projects"));
+    }
+    let mut files = Vec::new();
+    files_under(&ex, &mut files)?;
+    for f in files {
+        let rel = f.strip_prefix(root).map_err(|e| format!("{}: {e}", f.display()))?.to_path_buf();
+        list.push((f, rel));
     }
     for d in DOCS {
         let p = root.join(d);

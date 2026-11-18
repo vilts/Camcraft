@@ -106,6 +106,11 @@ pub struct ThreadParams {
     /// Feed at the cutting edge (the thread's own circle), mm/min.
     pub feed: f64,
     pub plunge_feed: f64,
+    /// How far past a through hole's floor the tip runs (#1557): `None`
+    /// is one pitch, so the thread is cut whole at the exit (every
+    /// thread before the option); `Some` is the operation's stated
+    /// break-through.
+    pub through_run: Option<f64>,
 }
 
 impl ThreadParams {
@@ -153,6 +158,9 @@ impl ThreadParams {
         }
         if self.pitch <= 0.0 {
             return bad("a thread mill needs a positive pitch to time its helix against");
+        }
+        if self.through_run.is_some_and(|r| !(r.is_finite() && r >= 0.0)) {
+            return bad("the through-hole break-through must be zero or positive");
         }
         if self.tool_diameter <= 0.0 {
             return bad("tool diameter must be positive");
@@ -302,7 +310,7 @@ impl HolePlan {
             })
             .collect();
         let lead_max = passes.iter().map(|q| q.lead_z).fold(0.0, f64::max);
-        let floor = if x.through { x.floor_z - p.pitch } else { x.floor_z };
+        let floor = if x.through { x.floor_z - p.through_run.unwrap_or(p.pitch) } else { x.floor_z };
         let span = x.top_z - floor - lead_max;
         let per_level = f64::from(p.rows) * p.pitch;
         let (turns, levels) = if p.rows == 1 {

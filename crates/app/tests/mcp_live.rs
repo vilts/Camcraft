@@ -5,8 +5,13 @@
 //! Gate map (M4.4): covers app::mcp (live, listen, bridge).
 
 use camcraft_app::commands::History;
-use camcraft_app::mcp::{answer_live, port_from, Inbox};
+use camcraft_app::mcp::provider::{FallbackMode, parse_prompt};
+use camcraft_app::mcp::{
+    answer_live, answer_live_with, port_from, Inbox, LiveGate, LiveOptions, PickMode,
+    SelectionContext,
+};
 use camcraft_app::model;
+use camcraft_app::operation::{FeatureSel, GeoSel};
 use camcraft_app::world::new_world;
 
 use flecs_ecs::prelude::World;
@@ -438,3 +443,252 @@ fn a_trickling_client_is_dropped_on_the_idle_schedule() {
         assert!(text.contains(&format!("client {trickler_addr} dropped: idle")), "the log names the trickling client: {text}");
     }
 }
+
+#[test]
+fn get_selection_returns_selected_entities_and_empty_picks_headless() {
+    let world = new_world();
+    let mut history = History::default();
+    face_job(&world, &mut history);
+    History::execute_ephemeral(
+        &world,
+        camcraft_app::commands::SelectEntity::new(&world, Some("Face1")),
+    );
+
+    let answer = answer_live(&world, &mut history, None, &call(10, "get_selection", json!({})));
+    assert_eq!(answer.tool.as_deref(), Some("get_selection"));
+    let reply: Value = serde_json::from_str(&answer.reply.expect("reply")).expect("json");
+    assert_eq!(reply["result"]["isError"], json!(false), "{reply}");
+    let sc = &reply["result"]["structuredContent"];
+    assert_eq!(sc["selected_entities"], json!(["Face1"]));
+    assert_eq!(sc["selected_operation"], json!("Face1"));
+    assert_eq!(sc["geometry_picks"], json!([]));
+    assert!(sc["pick_mode"].is_null());
+}
+
+#[test]
+fn live_permission_gate_blocks_unapproved_post_file_writes_paths_and_machine_limits() {
+    let world = new_world();
+    let mut history = History::default();
+    face_job(&world, &mut history);
+    ok(&world, &mut history, 4, "generate", json!({}));
+    ok(&world, &mut history, 5, "add_setup", json!({ "name": "Setup1" }));
+
+    let tmp_dir = std::env::temp_dir().join(format!("camcraft-live-gate-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    std::fs::create_dir_all(&tmp_dir).expect("temp dir");
+
+    let nc_path = tmp_dir.join("blocked.nc");
+    let proj_path = tmp_dir.join("blocked.camproj");
+    let tools_path = tmp_dir.join("blocked.camtools");
+    let dxf_path = tmp_dir.join("blocked.dxf");
+    let before_depth = history.done_len();
+
+    let blocked_calls = [
+        ("post", json!({ "output": nc_path.display().to_string() })),
+        ("save_project", json!({})),
+        ("save_project", json!({ "path": proj_path.display().to_string() })),
+        ("export_tool_library", json!({ "path": tools_path.display().to_string() })),
+        ("import_model", json!({ "path": tmp_dir.join("missing.stl").display().to_string() })),
+        ("import_tool_library", json!({ "path": tmp_dir.join("missing.camtools").display().to_string() })),
+        ("set_tool_body", json!({ "tool": "EM-0400-2FL", "path": tmp_dir.join("holder.step").display().to_string() })),
+        ("import_dxf_fixture", json!({ "kind": "extruded", "path": dxf_path.display().to_string() })),
+        ("export_fixture_dxf", json!({ "name": "MissingFixture", "path": dxf_path.display().to_string() })),
+        ("load_machine", json!({ "builtin": "VMC 3-axis" })),
+        ("edit_machine", json!({ "patch": { "model": "Injected" } })),
+        ("set_setup_post", json!({ "setup": "Setup1", "post": "Haas" })),
+        ("set_workholding_max_rpm", json!({ "setup": "Setup1", "max_rpm": 1500.0 })),
+        ("set_setup_nose_to_axis", json!({ "setup": "Setup1", "nose_to_axis": 250.0 })),
+    ];
+
+    for (idx, (tool, args)) in blocked_calls.iter().enumerate() {
+        let answer = answer_live(
+            &world,
+            &mut history,
+            Some(&proj_path),
+            &call(100 + idx as u64, tool, args.clone()),
+        );
+        let reply: Value = serde_json::from_str(&answer.reply.expect("reply")).expect("json");
+        assert_eq!(
+            reply["result"]["isError"],
+            json!(true),
+            "{tool} must be blocked without user approval: {reply}"
+        );
+        let msg = reply["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap_or_default()
+            .to_lowercase();
+        assert!(
+            msg.contains("approval"),
+            "{tool} refusal should name explicit approval requirement: {msg}"
+        );
+    }
+
+    assert_eq!(history.done_len(), before_depth, "blocked calls must not mutate history");
+    assert!(!nc_path.exists(), "blocked post must not write NC file");
+    assert!(!proj_path.exists(), "blocked save_project must not write project file");
+    assert!(!tools_path.exists(), "blocked export_tool_library must not write tool library");
+    assert!(!dxf_path.exists(), "blocked export_fixture_dxf must not write DXF");
+    assert!(camcraft_app::machine::document_of(&world).1.is_none());
+    assert!(camcraft_app::setup_workholding::of(&world, Some("Setup1")).is_none());
+    assert!(camcraft_app::rotary_stack::stated(&world, Some("Setup1")).is_none());
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+
+#[test]
+fn get_selection_reads_live_ui_selection_context_and_prompt_json_treats_it_read_only() {
+    let world = new_world();
+    let mut history = History::default();
+    face_job(&world, &mut history);
+    History::execute_ephemeral(
+        &world,
+        camcraft_app::commands::SelectEntity::new(&world, Some("Face1")),
+    );
+
+    let options = LiveOptions {
+        gate: LiveGate::default(),
+        selection: Some(SelectionContext {
+            pick_mode: Some(PickMode::Edge),
+            geometry_picks: vec![GeoSel {
+                entity: "Block".to_owned(),
+                feature: FeatureSel::Chain(0xABCD),
+            }],
+            active_operation: Some("Face1".to_owned()),
+        }),
+    };
+    let answer = answer_live_with(
+        &world,
+        &mut history,
+        None,
+        &call(20, "get_selection", json!({})),
+        &options,
+    );
+    let reply: Value = serde_json::from_str(&answer.reply.expect("reply")).expect("json");
+    assert_eq!(reply["result"]["isError"], json!(false), "{reply}");
+    let sc = &reply["result"]["structuredContent"];
+    assert_eq!(sc["pick_mode"], json!("edge"));
+    assert_eq!(sc["selected_entities"], json!(["Face1"]));
+    assert_eq!(sc["selected_operation"], json!("Face1"));
+    assert_eq!(
+        sc["geometry_picks"],
+        json!([{ "model": "Block", "id": "chain:0x000000000000abcd" }])
+    );
+
+    // PromptJson fallback treats get_selection as read-only (no confirmation required).
+    let pending = parse_prompt(r#"{"tool":"get_selection","arguments":{}}"#).expect("valid prompt");
+    assert!(!pending.requires_confirmation());
+    assert_eq!(
+        FallbackMode::for_capabilities(false, true),
+        FallbackMode::PromptJson
+    );
+}
+
+#[test]
+fn live_gate_allows_explicitly_approved_calls_and_never_auto_approves_post_or_machine_edits() {
+    let world = new_world();
+    let mut history = History::default();
+    face_job(&world, &mut history);
+    ok(&world, &mut history, 4, "generate", json!({}));
+    ok(&world, &mut history, 5, "add_setup", json!({ "name": "Setup1" }));
+
+    let tmp_dir = std::env::temp_dir().join(format!("camcraft-live-approve-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    std::fs::create_dir_all(&tmp_dir).expect("temp dir");
+    let nc_path = tmp_dir.join("approved.nc");
+    let wrong_nc_path = tmp_dir.join("wrong.nc");
+    let proj_path = tmp_dir.join("approved.camproj");
+    let tools_path = tmp_dir.join("approved.camtools");
+
+    // Auto-approve flag NEVER approves G-code posting or machine edits.
+    let auto_only = LiveOptions {
+        gate: LiveGate {
+            approved: None,
+            auto_approve_non_critical: true,
+        },
+        selection: None,
+    };
+    for (idx, (tool, args)) in [
+        ("post", json!({ "output": nc_path.display().to_string() })),
+        ("load_machine", json!({ "builtin": "VMC 3-axis" })),
+        ("edit_machine", json!({ "patch": { "model": "Tampered" } })),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let ans = answer_live_with(
+            &world,
+            &mut history,
+            None,
+            &call(200 + idx as u64, tool, args.clone()),
+            &auto_only,
+        );
+        let reply: Value = serde_json::from_str(&ans.reply.expect("reply")).expect("json");
+        assert_eq!(
+            reply["result"]["isError"],
+            json!(true),
+            "{tool} must NEVER be auto-approved: {reply}"
+        );
+        assert!(reply["result"]["content"][0]["text"]
+            .as_str()
+            .is_some_and(|t| t.contains("auto-approval is forbidden")));
+    }
+    assert!(!nc_path.exists());
+    assert!(camcraft_app::machine::document_of(&world).1.is_none());
+
+    // Approval bound to one argument object must not authorize different arguments.
+    let mismatched = LiveOptions {
+        gate: LiveGate::allow_once("post", json!({ "output": nc_path.display().to_string() })),
+        selection: None,
+    };
+    let ans = answer_live_with(
+        &world,
+        &mut history,
+        None,
+        &call(210, "post", json!({ "output": wrong_nc_path.display().to_string() })),
+        &mismatched,
+    );
+    let reply: Value = serde_json::from_str(&ans.reply.expect("reply")).expect("json");
+    assert_eq!(reply["result"]["isError"], json!(true));
+    assert!(!wrong_nc_path.exists());
+
+    // Explicit per-call user approval lets each gated tool succeed.
+    for (idx, (tool, args)) in [
+        ("load_machine", json!({ "builtin": "VMC 3-axis" })),
+        ("edit_machine", json!({ "patch": { "model": "Approved Mill" } })),
+        ("set_setup_post", json!({ "setup": "Setup1", "post": "Haas" })),
+        ("set_workholding_max_rpm", json!({ "setup": "Setup1", "max_rpm": 2500.0 })),
+        ("set_setup_nose_to_axis", json!({ "setup": "Setup1", "nose_to_axis": 220.0 })),
+        ("save_project", json!({ "path": proj_path.display().to_string() })),
+        ("export_tool_library", json!({ "path": tools_path.display().to_string() })),
+        ("post", json!({ "output": nc_path.display().to_string() })),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let opts = LiveOptions {
+            gate: LiveGate::allow_once(tool, args.clone()),
+            selection: None,
+        };
+        let ans = answer_live_with(
+            &world,
+            &mut history,
+            None,
+            &call(300 + idx as u64, tool, args),
+            &opts,
+        );
+        let reply: Value = serde_json::from_str(&ans.reply.expect("reply")).expect("json");
+        assert_eq!(reply["result"]["isError"], json!(false), "{tool}: {reply}");
+    }
+
+    assert!(nc_path.exists(), "approved post wrote NC file");
+    assert!(proj_path.exists(), "approved save_project wrote project file");
+    assert!(tools_path.exists(), "approved export_tool_library wrote tool library");
+    assert_eq!(
+        camcraft_app::machine::document_of(&world).1.expect("machine").model,
+        "Approved Mill"
+    );
+    assert_eq!(camcraft_app::setup_workholding::of(&world, Some("Setup1")), Some(2500.0));
+    assert_eq!(camcraft_app::rotary_stack::stated(&world, Some("Setup1")), Some(220.0));
+
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+

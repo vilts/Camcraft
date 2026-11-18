@@ -17,7 +17,9 @@ coolantModes = true; // reads PARAM Coolant (#112/#150): the engine refuses non-
 afterModes = true; // reads PARAM AfterOperation (#110): the engine refuses a stop or home ask for a post without it
 workOffsetIndex = true; // reads PARAM WorkOffset as the 1-based offset number (#931)
 workOffsetMax = 6;      // G54..G57, G505, G506 (#934); more G505+ frames need the machine's frame count (#931)
+wcsRotation = true;        // #760: writes ROT RPL=.. / ROT in Control mode from PARAM WcsYaw & WcsRotationMode
 programUnits = "mm inch"; // #902: writes the document's unit (postOptions.Units), G710 / G700
+endUnits = "G700 G710";   // #2189: switches end units before M2 when asked
 
 // Determinism law: no timestamps, no randomness - the same stream
 // always posts to the same text (golden files depend on it).
@@ -48,6 +50,9 @@ var compD = "";            // the D word riding the engage block ("" when the to
 var compOn = false;        // compensation is engaged (G41/G42 written, no G40 yet)
 var compNoted = false;     // the section's operator note was written
 var orgX = 0, orgY = 0, orgZ = 0;
+var wcsYaw = 0;            // #760: Z rotation (deg) for Control mode (ROT RPL=)
+var wcsRotMode = "";       // #760: "control" | "bake" | ""
+var wcsRotActive = false;  // #760: ROT is currently active in this section
 var nLine = 0;             // the numbered-block dialect: every written
                            // block advances N by 10 (gap left for hand edits)
 
@@ -390,6 +395,13 @@ function onParameter(name, value) {
   else if (name === "OriginX" && has(value)) orgX = Number(value);
   else if (name === "OriginY" && has(value)) orgY = Number(value);
   else if (name === "OriginZ" && has(value)) orgZ = Number(value);
+  else if (name === "WcsYaw" && has(value)) wcsYaw = Number(value);
+  else if (name === "WcsRotationMode") wcsRotMode = String(value || "");
+}
+
+function wcsRotControl() {
+  var m = wcsRotMode || ((typeof postOptions !== "undefined" && postOptions.WcsRotation) ? String(postOptions.WcsRotation) : "");
+  return m === "control" && has(wcsYaw) && Math.abs(wcsYaw) > 1e-6;
 }
 
 function onSpindleSpeed() {
@@ -460,6 +472,10 @@ function startPreamble() {
   coolant = probeStop ? "" : coolantFor(coolantAsk);
   if (coolant) block([coolant]);
   smoothOn();
+  if (wcsRotControl()) {
+    block(["ROT", "RPL=" + trimNum(Number(wcsYaw).toFixed(3))]);
+    wcsRotActive = true;
+  }
 }
 
 // The op's after-action (#110), written once its spindle has stopped:
@@ -499,6 +515,9 @@ function endPreamble() {
   smoothOff();
   if (inCycle) block(["G80"]);
   inCycle = false;
+  if (wcsRotActive) { block(["ROT"]); wcsRotActive = false; }
+  wcsYaw = 0;
+  wcsRotMode = "";
   if (compOn || compG) {
     msg("cutter compensation still engaged at section end - no cancel block");
     compG = ""; compD = ""; compOn = false;
@@ -705,6 +724,15 @@ function onCycle() {
     msg("canned cycle " + g + " has no feed rate - refused: without F the control drills at whatever feed was last modal");
     return;
   }
+  // #1445: G86 (feed in, spindle stop, rapid out) has no dwell word on
+  // this control (Fanuc's and Haas's published G86 formats are X Y Z R F,
+  // with P only on G82/G88/G89). A P written on G86 is not read, so a
+  // bore dwell is refused by name, never dropped. Sinumerik's ISO mode is
+  // not verified for a G86 P either, so it refuses the same.
+  if (g === "G86" && ms > 0) {
+    msg("canned cycle G86 (bore) has no dwell word on this control - a " + (ms / 1000) + " s dwell is refused, not dropped; set the dwell to 0");
+    return;
+  }
   if (spindleStopped("canned cycle " + g)) return;
   if (!xyFirst(p.X, p.Y, p.R, false)) return;  // #1633: refused - the move is not written
   cycleSeat(p);
@@ -712,6 +740,13 @@ function onCycle() {
   if ((p.CycleType === "PECK" || p.CycleType === "DEEP") && has(p.Q) && p.Q > 0) {
     words.push(w("Q", p.Q)); // an increment (peck depth): no origin shift
   }
+  // #2349: the bottom dwell is P in whole milliseconds on G82 and G83.
+  // Source for G83: the maintainer's verification on an 840D in ISO
+  // dialect mode (G291), 2026-11-17. This post writes no G291: it assumes
+  // the control runs in ISO dialect mode. Siemens' "ISO dialects" Function
+  // Manual (SINUMERIK ONE / 840D sl / 828D, 07/2021), section 6.3, lists
+  // no P in its G73 and G83 formats, so G73 is left as it was (#2354 is
+  // open for that dispute). G84 takes no P here.
   if (ms > 0 && g !== "G73" && g !== "G84") words.push("P" + ms);
   words.push(fw(p.FeedRate));
   block(words);
@@ -836,6 +871,15 @@ function onProbeResult() {
 // ------------------------------------------------------------ footer
 // Homing rides machine coordinates (G53), not a stored home point; the
 // height is the machine's stated safe Z (#503, safeZ).
+// #2189: Group 13 unit word (G700 inch / G710 mm, lengths and feeds)
+// after the final retract, right before M2, when postOptions.EndUnits
+// asks for the other unit.
+function endUnitsWord() {
+  var want = typeof postOptions !== "undefined" && postOptions ? postOptions.EndUnits : undefined;
+  if (want === "inch" && !inch) return "G700";
+  if (want === "mm" && inch) return "G710";
+  return "";
+}
 function onClose() {
   endPreamble();
   // #504: a trip home with nothing written after it (a trailing Go
@@ -844,5 +888,7 @@ function onClose() {
     var z = safeZ();
     if (z !== null) block(["G53", "Z" + fu(z)]);
   }
+  var u = endUnitsWord();
+  if (u) block([u]);
   block(["M2"]);
 }

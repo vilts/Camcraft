@@ -169,7 +169,7 @@ pub fn circle_centre_in(
     let gone = || CircleRefusal::Gone(format!("{} of '{}'", pick.feature, pick.entity));
     let e = model::find_by_name(world, &pick.entity).ok_or_else(gone)?;
     let graph = graph_of(world, &pick.entity).ok_or_else(gone)?;
-    let run = feature::resolve_chain(&graph.features, id).ok_or_else(gone)?;
+    let run = crate::model::resolve_chain(&graph.features, id).ok_or_else(gone)?;
     let local = circle_of_run(&graph.features, &run)?;
     let loc = pose(world, &e).unwrap_or_default();
     let c = transform_point(Point3::new(local.centre[0], local.centre[1], local.centre[2]), loc.pos, loc.rot);

@@ -78,13 +78,12 @@ pub fn selection_account(
     if let Some(account) = super::probe_account(world, items, params) {
         return account;
     }
-    let mut notes = Vec::new();
-    match selection_geometry_impl(world, setup, items, params, Some(&mut notes)) {
-        Ok(_) => (notes, None),
-        // Other refusals stay `region_of`'s and generation's to make,
-        // with detail; notes stay as far as the walk got.
-        Err(err) => (notes, door_refusal(params, err)),
-    }
+    // One walk per input, not per frame (#2248): the memo keys on the
+    // picks, the parameters and every world read of the walk. Other
+    // refusals stay `region_of`'s and generation's to make, with detail;
+    // notes stay as far as the walk got.
+    let a = super::selection_memo::answer(world, setup, items, params);
+    (a.notes, a.refusal)
 }
 
 /// The early flat-area refusal, decided at the pick/link/create doors.
@@ -131,7 +130,7 @@ fn pocket_family(params: &OpParams) -> bool {
     )
 }
 
-fn door_refusal(params: &OpParams, err: GenError) -> Option<String> {
+pub(super) fn door_refusal(params: &OpParams, err: GenError) -> Option<String> {
     // #871: a door refusal that carried a ghost is the same sentence -
     // the pick shows the words alone, so its ghost (and the spot it
     // names) are dropped here, exactly as a plain refusal has none.

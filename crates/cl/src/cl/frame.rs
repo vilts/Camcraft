@@ -64,6 +64,13 @@ impl TiltedFrame {
     /// prismatic path exactly, goldens and all.
     #[must_use]
     pub fn new(origin: Point3, axis: [f64; 3]) -> Option<Self> {
+        Self::new_versioned(origin, axis, 1)
+    }
+
+    fn new_versioned(origin: Point3, axis: [f64; 3], basis_version: u8) -> Option<Self> {
+        if basis_version > 1 {
+            return None;
+        }
         let a = normalize_axis(axis)?;
         if is_vertical(&a) {
             return Some(TiltedFrame {
@@ -74,9 +81,13 @@ impl TiltedFrame {
             });
         }
         let abs = [a[0].abs(), a[1].abs(), a[2].abs()];
-        let seed_idx = if abs[0] <= abs[1] && abs[0] <= abs[2] {
+        // Ignore trigonometric float dust (such as sin(180 deg) ~ 1.22e-16)
+        // when breaking ties for the smallest component, so an axis in the YZ
+        // plane such as A0 B180 keeps plane X along machine +X.
+        let eff = abs.map(|x| if basis_version == 1 && x < 1e-12 { 0.0 } else { x });
+        let seed_idx = if eff[0] <= eff[1] && eff[0] <= eff[2] {
             0
-        } else if abs[1] <= abs[2] {
+        } else if eff[1] <= eff[2] {
             1
         } else {
             2
@@ -98,8 +109,15 @@ impl TiltedFrame {
     /// cares about A and B). None on a non-finite angle.
     #[must_use]
     pub fn from_angles(origin: Point3, a_deg: f64, b_deg: f64) -> Option<Self> {
+        Self::from_angles_versioned(origin, a_deg, b_deg, 1)
+    }
+
+    /// Read the persisted basis version. Version 0 preserves the original
+    /// smallest-component rule, including its trigonometric roundoff.
+    #[must_use]
+    pub fn from_angles_versioned(origin: Point3, a_deg: f64, b_deg: f64, basis_version: u8) -> Option<Self> {
         let axis = angles_to_axis([a_deg, b_deg, 0.0])?;
-        Self::new(origin, axis)
+        Self::new_versioned(origin, axis, basis_version)
     }
 
     /// True when this frame IS the world's XY: the exact-vertical test

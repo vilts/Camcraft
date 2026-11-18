@@ -49,9 +49,12 @@ The Sodick post supports vertical 2-axis cuts only. It refuses taper,
 4-axis profiles, unsupported angle-word moves and control-side G41/G42
 H-register offsets by operation name. CamCraft verifies its generated
 wire-centre path, not an offset chosen separately at the control.
-Same-path skim offsets are unsupported. Tank, flushing and wire-drive words
-are not programmed; set them at the control. Sodick output remains unverified on
-a real control.
+Same-path skim offsets are unsupported. When the wire machine states its
+**Tank** (submerged or non-submerged) and **Flushing** (high or low) in the
+machine editor, the Sodick post writes T94 / T89 and T84 / T85 after each
+threading, before the condition word; left unstated, they are not programmed
+and are set at the control. Tank fill, drain, flushing pump and wire-drive words
+are never written. Sodick output remains unverified on a real control.
 
 ## Wire Contour
 

@@ -114,10 +114,18 @@ pub fn run_program_with(
     if let Some(why) = super::units::refusal(&mut s, options)? {
         return Err(PostError::Refused(why));
     }
+    // #2189: EndUnits on a script that declares no endUnits manifest.
+    if let Some(why) = super::end_units::refusal(&mut s, options)? {
+        return Err(PostError::Refused(why));
+    }
     let wo = super::work_offset::Manifest::read(&mut s);
     // #1386: Explain G-code on a script that states no comment form is
     // refused by name here, before any hook runs.
     let explain_form = super::explain::form(&mut s, options)?;
+    // #760: a Z-rotated work offset transforms coordinates into WCS XY
+    // (before machine axis inversion so Bake mirrors in WCS slides), and
+    // checks Control mode declarations (`coordinateRotation`, `wcsRotation`).
+    let records = super::wcs_rotate::apply(records, mch, &s, options)?;
     // #374: an inverted machine axis - the one place the stream is
     // mirrored into the controller's frame, or refused by name.
     let records = super::invert::apply(records, mch, &s)?;
@@ -128,6 +136,8 @@ pub fn run_program_with(
         .words_global("serves")?
         .is_some_and(|w| w.iter().any(|k| crate::machine::Kind::from_word(k) == Some(crate::machine::Kind::SinkerEdm)));
     s.set_program(id)?;
+    let tools_src = super::options::program_tools_js(&records)?;
+    s.eval_src(&tools_src)?;
     if options.is_object() {
         s.set_options(options)?;
     }

@@ -261,7 +261,7 @@ fn the_word_stands_down_where_only_the_law_can_know() {
     let (world, mut history) = bench();
     let mut tilted = contour(LOW, LOW);
     if let OpParams::Contour { tilt, .. } = &mut tilted {
-        *tilt = Some(operation::Tilt { a_deg: 0.0, b_deg: 10.0, origin: [0.0; 3] });
+        *tilt = Some(operation::Tilt { basis_version: 1, a_deg: 0.0, b_deg: 10.0, origin: [0.0; 3] });
     }
     assert_eq!(word(&world, SrcRef::Entity("part".into()), &tilted), None);
     // A stepped stock has no single top: Z 10 over x < 0, Z 5 beside it.

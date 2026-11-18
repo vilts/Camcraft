@@ -52,6 +52,7 @@ pub(super) fn trochoid_params(b: f64, p: &PocketParams, t: &AdaptiveTrochParams)
         return_feed: t.return_feed.unwrap_or(p.feed),
         plunge_feed: p.plunge_feed,
         climb: p.climb,
+        stock_top: p.links.approach.stock_top,
     }
 }
 

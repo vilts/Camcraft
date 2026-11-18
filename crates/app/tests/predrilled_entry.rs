@@ -100,6 +100,7 @@ fn world() -> (World, History) {
 fn drill(tip: f64, radius: f64) -> OpParams {
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius, entry_z: TOP, floor_z: tip, through: false, stepped: false };
     OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(TOP + 15.0),
         retract_z: None,
         top_z: Height::fixed(TOP),
@@ -115,7 +116,7 @@ fn drill(tip: f64, radius: f64) -> OpParams {
 }
 
 fn pocket(predrilled: bool) -> OpParams {
-    OpParams::Pocket {
+    OpParams::Pocket { rest: None,
         blend_radius: None,
         stepover: 1.6,
         stock_to_leave: 0.0,
@@ -197,8 +198,10 @@ fn noted(t: &Toolpath, s: &str) -> bool {
 fn a_drilled_hole_ahead_is_plunged_to_full_depth_and_posted() {
     // DR-0600 to Z 5: its point is full Ø6 by Z 6.8, far under the floor.
     let (world, _h, t) = job(Some((5.0, 3.0, "DR-0600")), true);
-    assert_eq!(centre_plunges(&t), vec![TOP, 16.0, FLOOR], "{:?}", t.notes);
-    assert!([TOP, 16.0, FLOOR].iter().all(|&z| first_entry_is_plunge(&t, z)));
+    // #2004: the stock top is TOP, so the ladder starts one stepdown
+    // under it (16, then the floor 12); the air level at TOP is gone.
+    assert_eq!(centre_plunges(&t), vec![16.0, FLOOR], "{:?}", t.notes);
+    assert!([16.0, FLOOR].iter().all(|&z| first_entry_is_plunge(&t, z)));
     assert_eq!(helix_moves(&t), 0, "no helix where the hole serves: {:?}", t.notes);
     assert!(noted(&t, "down the pre-drilled hole at (0.000, 0.000)"), "{:?}", t.notes);
     let nc = std::env::temp_dir().join(format!("camcraft-predrilled-{}.nc", std::process::id()));
@@ -247,7 +250,12 @@ fn a_shallow_hole_serves_only_the_levels_it_reaches() {
     // Tip at Z 14: full Ø4.2 only above 14 + 2.1 x cot(59) = 15.26 -
     // the Z 16 level plunges, the floor level helixes, said with numbers.
     let (_w, _h, t) = job(Some((14.0, 3.0, "DR-0600")), true);
-    assert!(first_entry_is_plunge(&t, TOP) && first_entry_is_plunge(&t, 16.0));
+    // #2004: no level at TOP (the stock top); Z 16 is the first level.
+    assert!(first_entry_is_plunge(&t, 16.0));
+    assert!(
+        !t.moves.iter().any(|m| m.kind != MoveKind::Rapid && m.to.z < m.from.z && (m.to.z - TOP).abs() < 1e-9),
+        "no descent onto an air level at TOP"
+    );
     assert!(!first_entry_is_plunge(&t, FLOOR), "the floor level is entered by its helix");
     assert!(helix_moves(&t) > 0);
     assert!(t.moves.iter().filter(|m| m.arc.is_some() && m.to.z < m.from.z).all(|m| m.from.z <= 16.0 + 1e-9));

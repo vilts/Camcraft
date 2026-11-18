@@ -51,6 +51,7 @@ pub fn free_name(world: &World, base: &str) -> String {
 pub struct InsertFixture {
     name: String,
     facets: std::sync::Arc<[Triangle]>,
+    step_source: Option<String>,
     location: Location,
     def: FixtureDef,
 }
@@ -75,11 +76,24 @@ impl InsertFixture {
         let pick = check_location(pick, "fixture datum")?;
         let datum = check_location(entry.datum, "library datum")?;
         let location = check_location(place_datum(pick, datum), "fixture")?;
+        let facets = if entry.step_source.is_none()
+            && let Some(prof) = &entry.profile
+        {
+            prof.mesh().map_err(CommandError::Invalid)?.facets
+        } else {
+            entry.facets.clone().into()
+        };
         Ok(InsertFixture {
             name: free_name(world, &entry.name),
-            facets: entry.facets.clone().into(),
+            facets,
+            step_source: entry.step_source.clone(),
             location,
-            def: FixtureDef { setup: setup_name.map(str::to_owned), fixed: false, ..FixtureDef::default() },
+            def: FixtureDef {
+                setup: setup_name.map(str::to_owned),
+                fixed: false,
+                profile: entry.profile.clone(),
+                ..FixtureDef::default()
+            },
         })
     }
 
@@ -152,6 +166,7 @@ impl Command for InsertFixture {
         model::set_facets(world, &entity, self.facets.clone());
         model::set_rev(world, &entity, 1);
         model::set_transform(world, &entity, self.location);
+        crate::step_source::set(world, &entity, self.step_source.as_deref());
         entity.entity_view(world).set(self.def.clone());
     }
 

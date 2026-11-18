@@ -237,7 +237,7 @@ fn post_options_refuses_enum_types_without_applying_valid_fields() {
     let document = c.ok("get_post_options", json!({}));
     let setup = c.ok("get_post_options", json!({ "setup": "Setup1" }));
 
-    for field in ["threading", "end_units", "between_setups"] {
+    for field in ["threading", "end_units", "between_setups", "wcs_rotation"] {
         for invalid in [Value::Null, json!(true), json!(42), json!([]), json!({})] {
             for target in [None, Some("Setup1")] {
                 let mut args = json!({ "skip_stops": true });
@@ -252,4 +252,42 @@ fn post_options_refuses_enum_types_without_applying_valid_fields() {
             }
         }
     }
+}
+
+#[test]
+fn wcs_rotation_round_trips_through_mcp_and_refuses_bad_word() {
+    let mut c = Client::new();
+    let initial = c.ok("get_post_options", json!({}));
+    assert_eq!(initial["options"]["wcs_rotation"], json!("bake"));
+    assert!(c.refused("set_post_options", json!({ "wcs_rotation": "g68" })).contains("wcs_rotation"));
+
+    let updated = c.ok("set_post_options", json!({ "wcs_rotation": "control" }));
+    assert_eq!(updated["options"]["wcs_rotation"], json!("control"));
+    assert_eq!(c.ok("get_post_options", json!({}))["options"]["wcs_rotation"], json!("control"));
+
+    c.ok("undo", json!({}));
+    assert_eq!(c.ok("get_post_options", json!({}))["options"]["wcs_rotation"], json!("bake"));
+}
+
+#[test]
+fn wcs_rotation_and_script_options_share_undo_and_preserve_refusals() {
+    let mut c = Client::new();
+    let initial = c.ok("get_post_options", json!({}));
+    let updated = c.ok("set_post_options", json!({
+        "wcs_rotation": "control", "script_options": { "writeMachine": true }
+    }));
+    assert_eq!(updated["options"]["wcs_rotation"], json!("control"));
+    assert_eq!(updated["script_options"]["writeMachine"], json!(true));
+    for bad in [
+        json!({ "wcs_rotation": "bake", "script_options": { "noSuchOpt": true } }),
+        json!({ "wcs_rotation": "bake", "script_options": { "sequenceNumberStart": 0 } }),
+        json!({ "wcs_rotation": "g68", "script_options": { "writeMachine": false } }),
+    ] {
+        c.refused("set_post_options", bad);
+        assert_eq!(c.ok("get_post_options", json!({})), updated);
+    }
+    c.ok("undo", json!({}));
+    assert_eq!(c.ok("get_post_options", json!({})), initial);
+    c.ok("redo", json!({}));
+    assert_eq!(c.ok("get_post_options", json!({})), updated);
 }

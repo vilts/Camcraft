@@ -95,8 +95,10 @@ fn mill_envelope_stands_on_table_for_all_travel_files() {
         assert_eq!(lines.len(), 24, "{}", path.display());
         let bottom = lines.iter().map(|v| v[2]).fold(f32::INFINITY, f32::min);
         let top = lines.iter().map(|v| v[2]).fold(f32::NEG_INFINITY, f32::max);
-        assert_eq!(bottom, 0.0, "{}: bottom on table", path.display());
-        assert_eq!(top, (max[2] - min[2]) as f32, "{}: full Z travel", path.display());
+        // #2172: the table is the floor under the seeded block's stock.
+        let floor = crate::floor::floor_z(&h.state().state);
+        assert_eq!(bottom, floor as f32, "{}: bottom on the floor", path.display());
+        assert_eq!(top, (floor + (max[2] - min[2])) as f32, "{}: full Z travel", path.display());
         for k in 0..2 {
             assert_eq!(lines.iter().map(|v| v[k]).fold(f32::INFINITY, f32::min), min[k] as f32);
             assert_eq!(lines.iter().map(|v| v[k]).fold(f32::NEG_INFINITY, f32::max), max[k] as f32);
@@ -122,6 +124,6 @@ fn mill_envelope_stays_on_table_with_shifted_origin_and_inverted_z() {
         assert_eq!(lines.iter().map(|v| v[2]).fold(f32::NEG_INFINITY, f32::max), 30.0);
         assert_eq!(machine::work_envelope(&st.world), before, "program travel stays unchanged");
         assert!(lines.iter().any(|v| v[0] == -90.0 && v[1] == -30.0));
-        assert!(crate::work_envelope::tooltip(&st).contains("table"));
+        assert!(crate::work_envelope::tooltip(&st).contains("floor"));
     }
 }

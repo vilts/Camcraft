@@ -77,7 +77,7 @@ pub(super) fn render_operations(world: &World, target: Option<&String>, out: &mu
             out.push_str(&n);
             out.push('\n');
         }
-        render_wire(world, op.setup.as_deref(), &op.params, out);
+        render_wire(world, op.setup.as_deref(), &op.tool, &op.params, out);
         render_cycles(world, op.setup.as_deref(), &op.src, &op.tool, &op.params, out);
     }
     if count == 0 {
@@ -158,11 +158,11 @@ fn tool_cell(params: &OpParams, tool: &str) -> String {
 /// the sheet never states a number the cut was not made with. A
 /// condition the machine no longer states is said by name. Silent for
 /// every kind that mounts a library tool.
-fn render_wire(world: &World, op_setup: Option<&str>, params: &OpParams, out: &mut String) {
+fn render_wire(world: &World, op_setup: Option<&str>, tool_name: &str, params: &OpParams, out: &mut String) {
     let OpParams::WireContour(w) = params else {
         return;
     };
-    match operation::wire_op::condition_of(world, op_setup, w) {
+    match operation::wire_op::condition_of(world, op_setup, tool_name, w) {
         Ok(c) => out.push_str(&format!(
             "      CONDITION {}  WIRE D {}  GAP {}\n",
             c.id,

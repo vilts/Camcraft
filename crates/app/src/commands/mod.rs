@@ -5,12 +5,15 @@
 
 // M13.2: workpiece material + the feeds-and-speeds suggestion.
 pub mod accessory;
+pub mod batch;
 pub mod builtin_vise;
 pub mod cutting_data;
 pub mod delete_entity;
 pub mod fixture;
 pub mod fixture_move;
 pub mod fixture_plate;
+// #2174: a fixture turned about a world axis (quarter turns, typed angles).
+pub mod fixture_turn;
 pub mod mod_vise;
 // #832: edit and re-fit a placed mod vise pair.
 pub mod mod_vise_edit;
@@ -18,6 +21,8 @@ pub mod import_fixture;
 pub mod import_model;
 // #339 slice 6: a fixture library entry placed into a setup.
 pub mod insert_fixture;
+// #744: DXF/profile fixtures and STEP profile derivation.
+pub mod profile_fixture;
 pub mod load_machine;
 // #561: locate the part in a fixture (or the fixture on the part) by mates.
 pub mod locate;
@@ -25,6 +30,7 @@ pub mod move_model;
 pub mod operation;
 pub mod post;
 pub mod post_options;
+pub mod post_script_options;
 // #258: the document's program number and comment.
 pub mod program_info;
 // #155: Pause / Home entries of the operation list.
@@ -36,6 +42,7 @@ pub mod ribbon_pins;
 pub mod select_entity;
 pub mod set_stock;
 pub mod stock_source_only;
+pub mod stock_material;
 pub mod setup;
 pub mod setup_delete;
 // #196: a setup's picked program offset.
@@ -59,6 +66,7 @@ pub mod theme;
 // M13.4 / #877: the viewer's colour-vision remap, the theme's twin.
 pub mod color_vision;
 pub mod set_wcs;
+pub mod set_wcs_flip;
 // #739: the WCS origin on a picked circle's centre.
 pub mod wcs_circle;
 pub mod tool;
@@ -77,28 +85,34 @@ pub mod electrode;
 use flecs_ecs::prelude::World;
 
 pub use accessory::{AccessoryPlacement, InsertAccessory, SetAccessory};
+pub use batch::BatchCommand;
 pub use builtin_vise::{InsertVise, SetVise, VisePlacement};
 pub use cutting_data::{ApplyCuttingData, SetWorkMaterial};
 pub use delete_entity::DeleteEntity;
 pub use fixture::{
     AddFixtureModel, DeleteFixture, MoveFixture, SetFixtureFixed, TagFixture, UntagFixture,
 };
+pub use fixture_turn::TurnFixture;
 pub use fixture_plate::{InsertPlate, PlaceOnPlate, PlatePlacement, SetPlate, SetPlateGrid};
 pub use mod_vise::PlaceModVisePair;
 pub use mod_vise_edit::{RefitModVise, SetModJaw};
 pub use import_fixture::ImportFixture;
 pub use import_model::ImportModel;
 pub use insert_fixture::InsertFixture;
+pub use profile_fixture::{DeriveFixtureProfile, InsertProfileFixture, SetFixtureProfile};
 pub use load_machine::LoadMachine;
 pub use locate::{Locate, LocateFixture, LocatePart};
 pub use move_model::MoveModel;
 pub use operation::{
     ChangeOperationKind, ClearToolpath, CreateOperation, DeleteOperation, EditOperationLinks,
     EditOperationParams,
-    GenerateOperation, PasteOperation, RegenerateAll, RenameOperation, ReorderOperation, SetOperationGeometry,
+    GenerateOperation, PasteOperation, RegenerateAll, RenameOperation, ReorderOperation, SetOperationGeometry, StagedGeneration,
 };
 pub use post::SelectPost;
 pub use post_options::SetPostOptions;
+pub use post_script_options::{
+    PostSettingsEdit, SetPostScriptOptions, SetPostSettings, SetSetupPostScriptOptions,
+};
 pub use program_info::SetProgramInfo;
 pub use program_entry::{AddProgramEntry, EditProgramEntry};
 pub use repair_model::RepairModel;
@@ -106,6 +120,7 @@ pub use ribbon_pins::SetRibbonPins;
 pub use select_entity::SelectEntity;
 pub use set_stock::SetStock;
 pub use stock_source_only::SetStockSourceOnly;
+pub use stock_material::SetStockMaterial;
 pub use setup::{ActivateSetup, CreateSetup, DeleteSetup, SetOperationSetup};
 pub use setup_align::AlignPartToSetup;
 pub use setup_wcs::SetSetupWorkOffset;
@@ -120,6 +135,7 @@ pub use theme::{check_theme, theme_of, theme_set};
 pub use color_vision::{color_vision_of, color_vision_set};
 pub use set_wcs::{BoxPoint, OriginAt, SetWcsOrigin, place_setup_origin};
 pub use wcs_circle::SetWcsAtCircleCentre;
+pub use set_wcs_flip::SetWcsFlip;
 pub use tool::{AddTool, ChangeTool, DeleteTool, HolderPick};
 pub use tool_body::{LatheBodySpec, SetToolBody, ToolBodySpec};
 pub use tool_cutter::{ReshapeTool, SetToolCutter};
@@ -194,9 +210,12 @@ fn next_history_id() -> u64 {
     NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
-struct HistoryEntry {
-    id: u64,
-    command: Box<dyn Command>,
+use batch::GroupFrame;
+
+pub(super) struct HistoryEntry {
+    pub(super) id: u64,
+    pub(super) label: Option<String>,
+    pub(super) command: Box<dyn Command>,
 }
 
 /// Linear undo/redo over executed commands. Executing a fresh command clears
@@ -211,6 +230,7 @@ struct HistoryEntry {
 pub struct History {
     done: Vec<HistoryEntry>,
     redo: Vec<HistoryEntry>,
+    groups: Vec<GroupFrame>,
     identity: u64,
     saved: Option<usize>,
 }
@@ -220,6 +240,7 @@ impl Default for History {
         Self {
             done: Vec::new(),
             redo: Vec::new(),
+            groups: Vec::new(),
             saved: Some(0),
             identity: next_history_id(),
         }
@@ -235,9 +256,45 @@ impl History {
         command.apply(world);
         self.done.push(HistoryEntry {
             id: next_history_id(),
+            label: None,
             command: Box::new(command),
         });
         self.redo.clear();
+    }
+
+    /// Begin a labelled undo group (`BatchCommand`) so commands executed
+    /// before [`Self::commit_group`] fold into one undo/redo step (#1942).
+    pub fn begin_group(&mut self, label: impl Into<String>) {
+        self.groups.push(GroupFrame {
+            label: label.into(),
+            start_len: self.done.len(),
+        });
+    }
+
+    /// Fold commands executed since the matching [`Self::begin_group`] into
+    /// one [`BatchCommand`] undo step. Empty groups add nothing and return `false`.
+    pub fn commit_group(&mut self) -> bool {
+        let Some(frame) = self.groups.pop() else {
+            return false;
+        };
+        batch::commit_frame(frame, &mut self.done, &mut self.saved)
+    }
+
+    /// Close the innermost open group without collapsing its commands into one batch.
+    pub fn cancel_group(&mut self) -> bool {
+        self.groups.pop().is_some()
+    }
+
+    /// True while an undo group opened by [`Self::begin_group`] is active.
+    #[must_use]
+    pub fn in_group(&self) -> bool {
+        !self.groups.is_empty()
+    }
+
+    /// Label of the top committed [`BatchCommand`], if any.
+    #[must_use]
+    pub fn top_label(&self) -> Option<&str> {
+        self.done.last().and_then(|entry| entry.label.as_deref())
     }
 
     pub fn undo(&mut self, world: &World) -> bool {
@@ -246,6 +303,9 @@ impl History {
                 tracing::debug!("undo");
                 command.command.invert(world);
                 self.redo.push(command);
+                for frame in &mut self.groups {
+                    frame.start_len = frame.start_len.min(self.done.len());
+                }
                 true
             }
             None => false,
@@ -275,6 +335,7 @@ impl History {
         self.identity = next_history_id();
         self.done.clear();
         self.redo.clear();
+        self.groups.clear();
         self.saved = Some(0);
     }
 

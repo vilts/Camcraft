@@ -54,7 +54,7 @@ fn rad(m: &Move, q: camcraft_motion::geometry::Point3) -> f64 {
     (q.x - c.x).hypot(q.y - c.y)
 }
 
-/// Two rings (R 1.0 and 0.5) at 13 levels: 26 ring-levels. With arcs
+/// Two rings (R 1.0 and 0.5) at 12 levels (#2004): 24 ring-levels. With arcs
 /// each is two moves plus its entry (a ramp of a dozen helical arcs
 /// where the helix stands down) and hops: the issue's ceiling is ~500
 /// (it measured 74,131 with the 512-gon).
@@ -71,8 +71,9 @@ fn each_ring_level_is_two_half_turn_arcs_about_the_centre() {
     for climb in [true, false] {
         let t = path(&params(Entry3D::Plunge, climb));
         let arcs: Vec<&Move> = t.moves.iter().filter(|m| m.arc.is_some()).collect();
-        // 2 rings x 13 levels (-0.508 by 1 mm to -11.508, then -11.524) x 2 halves.
-        assert_eq!(arcs.len(), 52, "climb {climb}");
+        // 2 rings x 12 levels (-1.508 by 1 mm to -11.508, then -11.524;
+        // #2004: no air level at Top Z -0.508) x 2 halves.
+        assert_eq!(arcs.len(), 48, "climb {climb}");
         for m in &arcs {
             let a = m.arc.expect("arc");
             assert_eq!(m.kind, MoveKind::Feed);
@@ -119,7 +120,7 @@ fn the_ramp_rides_the_ring_as_helical_arcs() {
             if a.ccw == climb { senses.0 += 1 } else { senses.1 += 1 }
         }
         assert!(senses.0 > 0 && senses.0 == senses.1, "out and back legs pair up: {senses:?}");
-        // 26 ring-levels; each ramp is a few out-and-back legs of at most
+        // 24 ring-levels; each ramp is a few out-and-back legs of at most
         // two half turns each (the 512-gon took ~2,700 chords per ramp).
         assert!(ramps.len() <= 26 * 12, "{} ramp moves", ramps.len());
     }
@@ -162,7 +163,8 @@ fn the_ring_ramp_holds_the_ramp_angle_on_every_piece() {
         if !run.is_empty() {
             ramps.push(run);
         }
-        assert!(ramps.len() >= 26, "climb {climb}: {} ramps", ramps.len());
+        // 2 rings x 12 levels (#2004: no air level at Top Z).
+        assert!(ramps.len() >= 24, "climb {climb}: {} ramps", ramps.len());
         for r in &ramps {
             let (mut xy, mut dz) = (0.0, 0.0);
             let mut legs: Vec<f64> = Vec::new();

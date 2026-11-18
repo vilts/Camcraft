@@ -53,8 +53,9 @@ fn post(stem: &str, t: &Toolpath) -> String {
 }
 
 /// The G-word posts: the plane word is stated, the other vertical one
-/// never, and exactly three arc blocks carry the plane's center words
-/// (`I`/`K` for G18, `J`/`K` for G19) - one per level. Heidenhain
+/// never, and exactly two arc blocks carry the plane's center words
+/// (`I`/`K` for G18, `J`/`K` for G19) - one per level (#2004: the levels Z -2 and
+/// Z -4; Top Z 0 is the material top and no level). Heidenhain
 /// switches no plane.
 fn assert_posts(t: &Toolpath, plane: ArcPlane) {
     let (word, other, centers) = match plane {
@@ -73,7 +74,7 @@ fn assert_posts(t: &Toolpath, plane: ArcPlane) {
                 w(centers.0) && w(centers.1)
             })
             .count();
-        assert_eq!(blocks, 3, "{stem}: one {word} arc block per level:\n{out}");
+        assert_eq!(blocks, 2, "{stem}: one {word} arc block per level:\n{out}");
     }
     let hh = post("heidenhain", t);
     assert!(!hh.contains("G18") && !hh.contains("G19"), "Heidenhain switches no plane:\n{hh}");

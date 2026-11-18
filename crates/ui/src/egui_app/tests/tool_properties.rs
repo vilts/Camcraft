@@ -104,11 +104,7 @@ fn tools_ribbon_opens_a_docked_catalog_without_retargeting_properties() {
     let mut h = shell_harness();
     h.run_steps(2);
     let before = h.state().state.ui_target.clone();
-    let (cells, _) = mill_plan_at(1280.0);
-    let at = cells.iter().find(|c| c.cmd == Cmd::Tools).expect("Tools ribbon cell").rect.center();
-    set_pos(&mut h, at);
-    button_at(&mut h, egui::PointerButton::Primary, at, true);
-    button_at(&mut h, egui::PointerButton::Primary, at, false);
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Tools").click();
     h.run_steps(3);
     assert_eq!(h.state().state.ui_target, before, "opening the catalog preserves the Properties subject");
     assert!(painted(&h).iter().any(|(t, _)| t == "Tool library"), "the catalog has its own dock tab");
@@ -116,9 +112,7 @@ fn tools_ribbon_opens_a_docked_catalog_without_retargeting_properties() {
     assert_eq!(h.get_by_label("Import tool holders").accesskit_node().role(), egui::accesskit::Role::CheckBox);
     assert_eq!(h.get_by_label("New tool…").accesskit_node().role(), egui::accesskit::Role::Button);
     assert!(!h.query_all_by_role(egui::accesskit::Role::Window).any(|n| n.accesskit_node().label().as_deref() == Some("Tool library")), "the library docks instead of opening a window");
-    set_pos(&mut h, at);
-    button_at(&mut h, egui::PointerButton::Primary, at, true);
-    button_at(&mut h, egui::PointerButton::Primary, at, false);
+    h.get_by_role_and_label(egui::accesskit::Role::Button, "Tools").click();
     h.run_steps(3);
     assert!(h.query_by_label("Catalog").is_some(), "opening the catalog twice keeps it open");
     assert_eq!(h.state().state.ui_target, before);

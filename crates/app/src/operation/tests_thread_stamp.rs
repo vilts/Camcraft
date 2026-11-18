@@ -9,6 +9,7 @@ use std::hash::Hasher;
 
 fn thread(passes: ThreadPasses) -> OpParams {
     OpParams::Thread {
+        break_through: None,
         clearance_z: Height::fixed(5.0),
         retract_z: None,
         top_z: Height::fixed(0.0),

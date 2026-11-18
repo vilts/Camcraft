@@ -72,6 +72,37 @@ impl Units {
 }
 
 impl Unit {
+    /// The Autodesk `$INSUNITS` group 70 code for this unit (#744).
+    #[must_use]
+    pub fn insunits_code(self) -> i32 {
+        match self {
+            Self::Inches => 1,
+            Self::Feet => 2,
+            Self::Miles => 3,
+            Self::Millimeters => 4,
+            Self::Centimeters => 5,
+            Self::Meters => 6,
+            Self::Kilometers => 7,
+            Self::Microinches => 8,
+            Self::Mils => 9,
+            Self::Yards => 10,
+            Self::Angstroms => 11,
+            Self::Nanometers => 12,
+            Self::Microns => 13,
+            Self::Decimeters => 14,
+            Self::Decameters => 15,
+            Self::Hectometers => 16,
+            Self::Gigameters => 17,
+            Self::AstronomicalUnits => 18,
+            Self::LightYears => 19,
+            Self::Parsecs => 20,
+            Self::UsSurveyFeet => 21,
+            Self::UsSurveyInches => 22,
+            Self::UsSurveyYards => 23,
+            Self::UsSurveyMiles => 24,
+        }
+    }
+
     /// Metadata only. Scaling geometry is a caller decision and needs another range check.
     pub fn millimeters_per_unit(self) -> f64 {
         match self {

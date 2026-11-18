@@ -13,8 +13,8 @@ use crate::geometry::Point3;
 /// A signed permutation and translation, from an object's frame to the reader.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Frame {
-    q: [[f64; 3]; 3],
-    t: Point3,
+    pub(super) q: [[f64; 3]; 3],
+    pub(super) t: Point3,
 }
 
 impl Frame {

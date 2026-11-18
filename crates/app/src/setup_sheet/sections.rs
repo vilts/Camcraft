@@ -104,9 +104,16 @@ pub(super) fn render_wcs(world: &World, ctx: Option<&str>, out: &mut String) {
                 mm(pos.y),
                 mm(pos.z)
             ));
-            // #327: the rotation the translation line cannot show.
+            // #327 / #760: the rotation the translation line cannot show.
             match crate::posting::offset_frame(&loc) {
                 crate::posting::OffsetFrame::Square => {}
+                crate::posting::OffsetFrame::Yaw { deg, .. } => {
+                    let mode = match crate::setup_post_options::of(world, ctx).wcs_rotation {
+                        crate::schema::WcsRotationOutput::Bake => "baked into XY",
+                        crate::schema::WcsRotationOutput::Control => "control rotation G68 / ROT",
+                    };
+                    out.push_str(&format!("       rotated {deg:.3} deg about Z ({mode})\n"));
+                }
                 crate::posting::OffsetFrame::Rotated { deg, axis } => out.push_str(&format!(
                     "       rotated {deg:.3} deg about {axis} - the post refuses a rotated offset\n"
                 )),

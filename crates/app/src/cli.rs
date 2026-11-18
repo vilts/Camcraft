@@ -13,9 +13,10 @@
 //! line "CLI: headless project processing and regression runs".
 //! Clean-room, public sources only.
 
+use crate::posting;
 use crate::script;
 
-use serde_json::json;
+use serde_json::{json, Map, Value};
 use std::path::{Path, PathBuf};
 
 const USAGE: &str = "\
@@ -62,7 +63,7 @@ Exit: 0 stood, 1 refused, 2 usage.
 ";
 
 const PROCESS_USAGE: &str = "\
-camcraft-cli process <job.camproj> [-o <out.nc>] [--cps <name|file.cps>]
+camcraft-cli process <job.camproj> [-o <out.nc>] [--cps <name|file.cps>] [--post-option <k=v>]...
 
     headless project processing: load, generate, and - with -o - post;
     verify's verdict is the exit code
@@ -71,9 +72,10 @@ ARGUMENTS:
     <job.camproj>     the project to bring current
 
 OPTIONS:
-    -o, --out <out.nc>      post the program to this file
-    --cps <name|file.cps>   the post to use (takes effect with -o)
-    -h, --help              print this usage and exit 0
+    -o, --out <out.nc>          post the program to this file
+    --cps <name|file.cps>       the post to use (takes effect with -o)
+    --post-option <k=v>         override a post script option (repeatable; with -o)
+    -h, --help                  print this usage and exit 0
 
 Exit: 0 stood, 1 refused, 2 usage.
 ";
@@ -118,10 +120,18 @@ fn command_usage(cmd: &str) -> Option<&'static str> {
 /// The process lane's generated job: the verbs a headless project
 /// run always means, spelled exactly as a hand-written script would.
 /// No second code path: the CLI's project processing IS a script run.
-fn process_script(proj: &Path, out: Option<&Path>, cps: Option<&str>) -> String {
+fn process_script(
+    proj: &Path,
+    out: Option<&Path>,
+    cps: Option<&str>,
+    post_options: &Map<String, Value>,
+) -> String {
     let mut opts = json!({ "to": out.map(|p| p.display().to_string()) });
     if let Some(c) = cps {
         opts["cps"] = json!(c);
+    }
+    if !post_options.is_empty() {
+        opts["options"] = Value::Object(post_options.clone());
     }
     let mut s = format!(
         "cam.load({});\ncam.generate();\n",
@@ -223,6 +233,7 @@ fn lane_process(args: &[String]) -> i32 {
     let mut proj: Option<PathBuf> = None;
     let mut out: Option<PathBuf> = None;
     let mut cps: Option<String> = None;
+    let mut post_opt_specs: Vec<String> = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
@@ -239,6 +250,24 @@ fn lane_process(args: &[String]) -> i32 {
                     return 2;
                 };
                 cps = Some(c.clone());
+            }
+            "--post-option" => {
+                let Some(spec) = it.next() else {
+                    eprintln!("camcraft-cli: --post-option needs key=value");
+                    return 2;
+                };
+                match spec.split_once('=') {
+                    Some((k, _)) if !k.trim().is_empty() => {}
+                    Some(_) => {
+                        eprintln!("camcraft-cli: --post-option key must not be empty in '{spec}'");
+                        return 2;
+                    }
+                    None => {
+                        eprintln!("camcraft-cli: --post-option expects key=value, got '{spec}'");
+                        return 2;
+                    }
+                }
+                post_opt_specs.push(spec.clone());
             }
             other if other.starts_with('-') => {
                 eprintln!("camcraft-cli: unknown option {other:?} (try help)");
@@ -261,7 +290,18 @@ fn lane_process(args: &[String]) -> i32 {
         eprintln!("camcraft-cli: {} is not a .camproj project", path.display());
         return 2;
     }
-    let source = process_script(&path, out.as_deref(), cps.as_deref());
+    if out.is_none() && !post_opt_specs.is_empty() {
+        eprintln!("camcraft-cli: --post-option takes effect only with -o / --out");
+        return 2;
+    }
+    let post_options = match posting::parse_cli_post_options(&post_opt_specs, cps.as_deref()) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("camcraft-cli: {e}");
+            return 1;
+        }
+    };
+    let source = process_script(&path, out.as_deref(), cps.as_deref(), &post_options);
     report(&script::run(&source), out.is_some())
 }
 

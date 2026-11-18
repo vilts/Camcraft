@@ -8,7 +8,8 @@
 //!
 //! The material sim (`stock_sim::simulate_document`) refuses programs
 //! it cannot model - the turn family's half-plane, rotary sectors,
-//! posed (tilted-tool) moves, a rotated stock, a later setup's model
+//! posed (tilted-tool) moves, a stock turned off the machine axes (#2177:
+//! a quarter-turned box is judged), a later setup's model
 //! stock, no stock at all. Before this clause that refusal was dropped
 //! on the floor: the post went ahead and nothing said the material was
 //! never judged. Now the refusal is ALWAYS visible - it rides the post
@@ -35,6 +36,11 @@
 //! un-tagged after generation leaves the op fresh, so with the sim silent
 //! those parts are judged again live (`operation::kept_rejudge`, #1628):
 //! a cut into one is a blocking problem naming the op and the part.
+//! Where the sim judges, it judges those parts itself (a stock-source
+//! chamfer's bevel is credited over none of them, #2308), and a gouge it
+//! finds carries the same naming line beside its own verdict. A clean sim
+//! verdict does not end it: a cut under the sim's lattice is still seen by
+//! the live re-judge, which runs in that arm too (#2308).
 
 use crate::model;
 use crate::operation::{self, OpStatus};
@@ -90,9 +96,15 @@ fn judge_clause(world: &World) -> SimClause {
                     )
                 },
             );
+            // #2308: a part moved or added since generation names the op
+            // and the part it cuts - said beside the sim's verdict, which
+            // already blocks, so it never refuses a program on its own.
+            // #2313: and a stock-source chamfer or deburr convicted at
+            // generation names the part it breaks into, and the way out.
+            let moved = kept_moved(world).or_else(|| stock_edge_named(world)).map(|why| format!(" - {why}")).unwrap_or_default();
             SimClause {
                 problem: Some(format!(
-                    "gouge: program cuts below the model in {} cell(s), worst {} {}{at}{}",
+                    "gouge: program cuts below the model in {} cell(s), worst {} {}{at}{}{moved}",
                     sim.dev.gouge_cells,
                     crate::units::len(sim.dev.max_gouge, u, 2),
                     u.suffix(),
@@ -101,7 +113,14 @@ fn judge_clause(world: &World) -> SimClause {
                 not_judged: None,
             }
         }
-        Ok(_) => SimClause::default(),
+        // #2308: a cut too shallow for the sim's lattice (a part added
+        // after generation under a stock-source chamfer, by 0.05 mm) reads
+        // clean, so the kept parts are judged again live here too - once
+        // every op is covered, as in the not-judged arm.
+        Ok(_) => SimClause {
+            problem: if uncovered(world).is_none() { kept_moved(world) } else { None },
+            not_judged: None,
+        },
         Err(reason) => {
             let line = format!("{NOT_JUDGED}: {reason}");
             let problem = uncovered(world)
@@ -158,5 +177,20 @@ fn kept_moved(world: &World) -> Option<String> {
             return None;
         }
         operation::kept_rejudge::moved_part_problem(world, name, &op, &tp.path)
+    })
+}
+
+/// The first program op convicted of a stock-edge gouge (#2313: a
+/// stock-source chamfer or deburr that breaks into a part), with the part
+/// it enters named by the live judge. Said only beside the sim's own
+/// gouge verdict, which already blocks.
+fn stock_edge_named(world: &World) -> Option<String> {
+    use crate::verify::Warning;
+    let ops = crate::posting::program_ops(world).ok()?;
+    ops.iter().find_map(|(name, e)| {
+        let tp = model::toolpath_of(world, e)?;
+        let w = tp.warnings.iter().find(|w| matches!(w, Warning::StockChamferGouge { .. } | Warning::StockDeburrGouge { .. }))?;
+        let op = model::operation_of(world, e)?;
+        Some(operation::kept_rejudge::stock_edge_problem(world, name, &op, &tp.path).unwrap_or_else(|| format!("{name}: {w}")))
     })
 }

@@ -121,10 +121,17 @@ fn the_users_bore_roughs_adaptive_level_by_level_and_verifies_clean() {
     // it. The orbit now closes exactly on its start and every level keeps
     // its HSM plan.
     assert!(fell.is_empty(), "{fell:?}");
-    // The path as the fix plans it - every level HSM (Z 20 back on its 58
-    // microlift returns, so far more moves than its rings), its fitted
-    // arcs back. Before: main f490458a 6500 / 6464 / 222 (Z 20 and Z 10
-    // rings); 575f02d8^1 (before #839) 5530 / 5497 / 600 (Z 20 rings).
+    // The path as the fix plans it - every level HSM, its fitted arcs
+    // back. Since #2004 (PR #2013) the ladder starts one stepdown under
+    // Top Z: the stock top is Top Z (Z 20), so the level at Z 20 cut only
+    // air - feeds on the stock face and its microlift returns over it, the
+    // most moves of the path. The levels are now Z 15, 10, 5, 0. Proved on
+    // Windows, release: from the first Z 15 feed on, the moves at
+    // f887908f9 (the parent of the #2013 merge) and at 7c46c4d4c are
+    // identical (4710 moves, same Debug hash); the Z 20 level held 11303
+    // moves, 10672 planar feeds, 878 arcs, all at Z 20 or over it. Older:
+    // main f490458a 6500 / 6464 / 222 (Z 20 and Z 10 rings); 575f02d8^1
+    // (before #839) 5530 / 5497 / 600 (Z 20 rings).
     // The planner's output differs slightly between platforms (floating
     // point differs in the last bits; making it bit-stable is #1010), so
     // the triple is exact PER MEASURED PLATFORM - a real change still
@@ -139,28 +146,24 @@ fn the_users_bore_roughs_adaptive_level_by_level_and_verifies_clean() {
 /// The bore's (moves, planar feeds, arcs) on this platform (issue #980).
 fn bore_path_matches(got: (usize, usize, usize)) -> bool {
     if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        // Issue #1402: measured on main 5eeb0370e, release, two runs
-        // identical; every level verifies clean, none falls back, no
-        // planning budget is reached. Before: (16197, 15458, 1581),
-        // measured on issue/980-bore-hsm-plan and stale after #1376.
-        got == (16017, 15360, 1427)
-    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-        // Issue #882 (PR #1376): measured by its reviewer at 8cd4c918 on
-        // Apple silicon, release, two runs identical; every level
-        // verifies clean, none falls back. Before: (16160, 15432, 1571).
-        got == (16026, 15382, 1413)
+        // Issue #2004 (PR #2013): measured at 7c46c4d4c (release/v0.23.0),
+        // release, two runs identical; the Z 20 air level is gone, every
+        // other level is unchanged. Before: (16017, 15360, 1427), issue
+        // #1402, main 5eeb0370e.
+        got == (4716, 4688, 549)
     } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        // Issue #882: measured in release and debug, identical. Thinning
-        // the growth opening changes its sub-micron geometry and the
-        // fitted arcs (Z 20: 50 microlift returns, 9 rides, 1 retract
-        // hop). Every level verifies clean, none falls back, and no
-        // planning budget is reached. Before: (15561, 14837, 1561).
-        got == (16029, 15372, 1427)
+        // Issue #2004 (PR #2013): measured by the cut runner, release, run
+        // 44127297984 at a8bb30f0c; every level verifies clean, none falls
+        // back, and no planning budget is reached. Before: (16029, 15372,
+        // 1427), issue #882.
+        got == (4726, 4698, 549)
     } else {
-        // Not measured here yet: measure this platform and add its exact
-        // triple above. Until then a band covering both measured ones.
+        // Not measured here yet (macOS aarch64 included: its pin of issue
+        // #882, (16026, 15382, 1413), went stale with PR #2013, and issue
+        // #2371 owes its new triple). Measure this platform and add its
+        // exact triple above. Until then a band covering both measured ones.
         let (moves, planar, arcs) = got;
-        (16100..=16260).contains(&moves) && (15380..=15520).contains(&planar) && (1560..=1600).contains(&arcs)
+        (4706..=4736).contains(&moves) && (4678..=4708).contains(&planar) && (539..=559).contains(&arcs)
     }
 }
 

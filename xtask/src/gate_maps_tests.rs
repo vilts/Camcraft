@@ -31,6 +31,44 @@ fn count(file: &str, krate: &str) -> usize {
     selected(file, krate).len()
 }
 
+/// #2411: the DXF profile MCP suite must run when its app entry points change.
+#[test]
+fn tool_dxf_profile_mcp_is_selected_for_its_app_entry_points() {
+    for file in [
+        "crates/app/src/mcp/mod.rs",
+        "crates/app/src/tool_profile_dxf.rs",
+        "crates/app/src/commands/mod.rs",
+    ] {
+        let got = selected(file, "app");
+        assert!(got.iter().any(|b| b == "tool_dxf_profile_mcp"), "{file}: DXF profile MCP suite missing from {got:?}");
+    }
+}
+
+/// #2361: rotated WCS coverage must run when its app entry points change.
+#[test]
+fn wcs_rotation_control_is_selected_for_its_app_entry_points() {
+    let src = scan::read(&root().join("crates/app/tests/wcs_rotation_control.rs"));
+    assert_eq!(src.matches("Gate map").count(), 1, "the WCS suite must have one combined map");
+    let map = scan::gate_map(&src).expect("WCS control gate map");
+    let modules: Vec<_> = map.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':')).collect();
+    for must in [
+        "app::commands", "motion::drilling", "geometry::geo2d", "app::geometry",
+        "app::machine", "app::model", "app::operation", "app::posting", "app::schema",
+        "geometry::geometry::stock", "app::world", "tools::catalog", "app::stock_sim",
+    ] {
+        assert!(modules.contains(&must), "WCS control map must retain {must}: {map}");
+    }
+    for file in [
+        "crates/app/src/commands/mod.rs",
+        "crates/app/src/operation/mod.rs",
+        "crates/app/src/posting.rs",
+        "crates/app/src/stock_sim.rs",
+    ] {
+        let got = selected(file, "app");
+        assert!(got.iter().any(|b| b == "wcs_rotation_control"), "{file}: WCS suite missing from {got:?}");
+    }
+}
+
 #[test]
 fn post_change_selects_the_post_dialect_suites() {
     let got = selected("crates/post/src/post/mod.rs", "app");

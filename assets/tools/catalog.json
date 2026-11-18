@@ -678,6 +678,23 @@
         "flutes": 3,
         "center_cutting": false
       }
+    },
+    {
+      "name": "EDM-W025",
+      "definition": {
+        "kind": "wire",
+        "diameter": 0.25,
+        "corner_r": 0.0,
+        "flute_len": 100.0,
+        "shank_d": 0.25,
+        "shank_len": 20.0,
+        "holder_d": 0.0,
+        "holder_len": 0.0,
+        "material_group": "brass",
+        "rpm": 0.0,
+        "feed": 50.0,
+        "center_cutting": true
+      }
     }
   ]
 }

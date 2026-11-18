@@ -93,6 +93,7 @@ fn drill_op() -> Operation {
         "DR-0400",
         "part",
         OpParams::Drill {
+            break_through: None,
             clearance_z: Height::fixed(50.0),
             retract_z: None,
             top_z: Height::fixed(20.0),

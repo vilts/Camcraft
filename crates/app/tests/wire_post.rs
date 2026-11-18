@@ -36,7 +36,7 @@ use camcraft_app::machine::{parse_mch, Kind};
 use camcraft_app::operation::{self, Height, OpParams, SrcRef, WireContourOp, WireSide, WireSkim};
 use camcraft_app::post::{self, cnc};
 use camcraft_app::model;
-use camcraft_app::posting::{self, BUILTINS, WIRE_POSTS};
+use camcraft_app::posting::{self, WIRE_POSTS};
 use camcraft_app::project;
 use camcraft_app::schema::Location;
 use camcraft_app::stock::StockShape;
@@ -49,7 +49,7 @@ const SKIMS_GOLDEN: &str = "tests/golden/nc/wire-iso/wire_contour_punch_skims.nc
 const OPEN_GOLDEN: &str = "tests/golden/nc/wire-iso/wire_contour_open_cutoff.nc";
 
 fn cps(name: &str) -> &'static str {
-    BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, s)| *s).expect("registered")
+    camcraft_app::posting::builtin_post_text(name).expect("registered")
 }
 
 /// A sharp 40 x 20 slug from z = 0 to 12, centred on the origin.
@@ -97,6 +97,11 @@ fn punch_doc_with(machine_text: &str, skims: Vec<WireSkim>) -> World {
     let mut h = History::default();
     let m = parse_mch(machine_text).expect("the fixture parses");
     h.execute(&world, LoadMachine::new(&world, "wire-iso.mch".into(), Some(m)).expect("mount"));
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("slug", slug()));
     let op = WireContourOp {
         top_z: Height::fixed(12.0),
@@ -112,7 +117,7 @@ fn punch_doc_with(machine_text: &str, skims: Vec<WireSkim>) -> World {
         clearance: operation::DEFAULT_CLEARANCE,
         skims,
     };
-    let c = CreateOperation::new(&world, "Punch1", "", SrcRef::Entity("slug".into()), OpParams::WireContour(op)).expect("op");
+    let c = CreateOperation::new(&world, "Punch1", "EDM-W025", SrcRef::Entity("slug".into()), OpParams::WireContour(op)).expect("op");
     h.execute(&world, c);
     h.execute(&world, GenerateOperation::new(&world, "Punch1").expect("generates"));
     world
@@ -125,6 +130,11 @@ fn gouging_die() -> World {
     let mut h = History::default();
     let m = parse_mch(FIXTURE).expect("the fixture parses");
     h.execute(&world, LoadMachine::new(&world, "wire-iso.mch".into(), Some(m)).expect("mount"));
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("opening", opening()));
     let stock = SetStock::new(&world, StockShape::Box { dx: 60.0, dy: 60.0, dz: 20.0 }, Location::default()).expect("stock");
     h.execute(&world, stock);
@@ -142,7 +152,7 @@ fn gouging_die() -> World {
         clearance: operation::DEFAULT_CLEARANCE,
         skims: Vec::new(),
     };
-    let c = CreateOperation::new(&world, "Die1", "", SrcRef::Entity("opening".into()), OpParams::WireContour(op)).expect("op");
+    let c = CreateOperation::new(&world, "Die1", "EDM-W025", SrcRef::Entity("opening".into()), OpParams::WireContour(op)).expect("op");
     h.execute(&world, c);
     h.execute(&world, GenerateOperation::new(&world, "Die1").expect("generates"));
     world
@@ -265,7 +275,7 @@ fn a_mill_machine_and_a_cutting_post_are_refused_by_name() {
     let mill = std::fs::read_to_string("../../assets/machines/3axis-vmc.mch").expect("the vmc");
     let w = warnings(cps(WIRE), &mill, &stream);
     assert!(w.iter().any(|m| m.contains("is not declared kind wire_edm")), "{w:?}");
-    for (n, s) in BUILTINS.iter().filter(|(n, _)| !WIRE_POSTS.contains(n)) {
+    for (n, s) in camcraft_app::posting::shipped_posts().expect("the shipped posts read").iter().filter(|(n, _)| !WIRE_POSTS.contains(n)) {
         let w = warnings(s, FIXTURE, &stream);
         assert!(w.iter().any(|m| m.contains("Punch1") && m.contains("does not declare wireEdm")), "{n}: {w:?}");
     }
@@ -279,7 +289,7 @@ fn a_mill_machine_and_a_cutting_post_are_refused_by_name() {
 fn the_registry_offers_the_wire_post_for_wire_edms_only() {
     // #617 added the Sodick dialect; the generic post stays first (the default).
     assert_eq!(WIRE_POSTS.first(), Some(&WIRE));
-    for (n, _) in BUILTINS {
+    for (n, _) in camcraft_app::posting::shipped_posts().expect("the shipped posts read") {
         assert_eq!(posting::post_serves(n, Kind::WireEdm), WIRE_POSTS.contains(n), "{n}");
     }
     for k in [Kind::Mill, Kind::Lathe, Kind::MillTurn, Kind::Plasma, Kind::SinkerEdm] {
@@ -389,7 +399,7 @@ fn each_skim_refusal_is_named_at_the_door() {
     let e = refusal("C110", vec![skim("S31", false), skim("S21", false), skim("S31", false)]);
     assert!(e.contains("skim 2 (condition S21)") && e.contains("farther out than skim 1") && e.contains("cut only air"), "{e}");
     let e = refusal("C110", vec![skim("W20", false)]);
-    assert!(e.contains("skim 1 (condition W20)") && e.contains("one threading cuts every pass with one wire"), "{e}");
+    assert!(e.contains("skim 1") && e.contains("W20") && e.contains("0.2"), "{e}");
 }
 
 /// #1109: a 60 x 50 x 12 part at the left end of a 100 x 50 x 12 bar,
@@ -405,6 +415,11 @@ fn cutoff_doc(wrong: bool) -> World {
     let mut h = History::default();
     let m = parse_mch(FIXTURE).expect("the fixture parses");
     h.execute(&world, LoadMachine::new(&world, "wire-iso.mch".into(), Some(m)).expect("mount"));
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("part", prism(&[(0.0, 0.0), (60.0, 0.0), (60.0, 50.0), (0.0, 50.0)])));
     let loc = Location { pos: Point3::new(50.0, 25.0, 0.0), ..Location::default() };
     h.execute(&world, SetStock::new(&world, StockShape::Box { dx: 100.0, dy: 50.0, dz: 12.0 }, loc).expect("stock"));
@@ -436,7 +451,7 @@ fn cutoff_doc(wrong: bool) -> World {
         four_axis: None,
     };
     let src = SrcRef::Selection(vec![GeoSel { entity: "part".into(), feature: FeatureSel::Chain(chain) }]);
-    h.execute(&world, CreateOperation::new(&world, "Cutoff1", "", src, OpParams::WireContour(op)).expect("op"));
+    h.execute(&world, CreateOperation::new(&world, "Cutoff1", "EDM-W025", src, OpParams::WireContour(op)).expect("op"));
     h.execute(&world, GenerateOperation::new(&world, "Cutoff1").expect("the open run generates"));
     world
 }
@@ -536,7 +551,7 @@ fn a_sinker_setup_is_still_refused_at_post_by_name() {
     h.execute(&world, op);
     h.execute(&world, GenerateOperation::new(&world, "Burn0").expect("generates"));
     let out = std::env::temp_dir().join(format!("camcraft-wire-iso-sinker-{}.nc", std::process::id()));
-    for (n, script) in BUILTINS.iter().filter(|(n, _)| !posting::SINKER_POSTS.contains(n)) {
+    for (n, script) in camcraft_app::posting::shipped_posts().expect("the shipped posts read").iter().filter(|(n, _)| !posting::SINKER_POSTS.contains(n)) {
         let _ = std::fs::remove_file(&out);
         let err = posting::post_script(&world, &out, script).expect_err("a sinker burn never posts");
         let wrote = out.exists();

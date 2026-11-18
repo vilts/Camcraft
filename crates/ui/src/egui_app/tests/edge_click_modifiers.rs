@@ -164,7 +164,8 @@ fn hovering_a_selection_rows_remove_button_highlights_that_pick() {
     h.run_steps(2);
     assert_eq!(h.state().state.geo_hover, Some(want), "the row's pick is the highlighted one");
     let history = h.state().state.history.is_dirty();
-    h.input_mut().events.push(Event::PointerMoved(egui::pos2(1.0, 1.0)));
+    let away = super::anchors::chrome_point(&h, &[]);
+    h.input_mut().events.push(Event::PointerMoved(away));
     h.run_steps(2);
     assert_eq!(h.state().state.geo_hover, None, "the highlight goes when the pointer leaves");
     assert_eq!(h.state().state.history.is_dirty(), history, "hover is not a command");

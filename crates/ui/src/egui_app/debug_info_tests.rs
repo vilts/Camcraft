@@ -1,26 +1,9 @@
-//! Issue #157: the status strip's Debug info door opens a window with a
-//! plain-text report and a Copy button; the door closes it again.
+//! Issue #157: the Debug info report. The panel is a dock tab since #2262;
+//! its door and dock tests are in `tests/layout.rs`.
 //! Provenance: our own tests over our own window.
 
-use egui::Vec2;
-use egui_kittest::kittest::Queryable;
-use egui_kittest::Harness;
-use egui::accesskit::Role;
-
-use super::{debug_info, panes, theme};
+use super::debug_info;
 use crate::state::State;
-
-fn frame(ui: &mut egui::Ui, st: &mut State) {
-    let pal = theme::current();
-    panes::status(ui, st, &pal, None);
-    debug_info::window(ui.ctx(), st);
-}
-
-fn harness() -> Harness<'static, State> {
-    Harness::builder()
-        .with_size(Vec2::new(900.0, 500.0))
-        .build_ui_state(frame, State::new())
-}
 
 #[test]
 fn the_report_names_build_platform_gpu_and_document() {
@@ -43,41 +26,21 @@ fn the_report_names_build_platform_gpu_and_document() {
 }
 
 #[test]
-fn the_door_opens_the_window_copy_copies_and_the_door_closes_it() {
-    let mut h = harness();
-    h.run();
-    assert!(h.query_by_label("Copy").is_none(), "closed on a fresh state");
-    h.get_by_label("Debug info").click();
-    h.run();
-    assert!(h.state().debug_info_open);
-    h.get_by_label("Copy").click();
-    h.step(); // the click lands this frame; its output is this frame's
-    let copied = h.output().platform_output.commands.iter().any(|c| {
-        matches!(c, egui::OutputCommand::CopyText(t) if t.starts_with("CamCraft "))
-    });
-    assert!(copied, "Copy put the report on the clipboard");
-    h.run();
-    assert_eq!(h.state().status, "debug info copied to the clipboard");
-    // The window's title reads "Debug info" too: click the door, the button.
-    h.get_by(|n| n.role() == Role::Button && n.label().as_deref() == Some("Debug info")).click();
-    h.run();
-    assert!(!h.state().debug_info_open);
-    assert!(h.query_by_label("Copy").is_none(), "the door closed it");
-}
-
-#[test]
-fn the_title_row_folds_the_window_and_its_close_button_closes_it() {
-    // #698: the window draws its own caption row (window_chrome).
-    let mut h = harness();
-    h.get_by_label("Debug info").click();
-    h.run();
-    h.get_by_label("Collapse window").click();
-    h.run();
-    assert!(h.query_by_label("Copy").is_none(), "folded to the title row");
-    h.get_by_label("Expand window").click();
-    h.run();
-    assert!(h.query_by_label("Copy").is_some(), "unfolded again");
-    h.get_by_label("Close window").click();
-    h.run();
-    assert!(!h.state().debug_info_open, "close closes it");
+fn the_report_gives_the_frame_rate_value_then_idle_when_stale() {
+    // #2262: a fresh state has drawn no frame, so the panel says idle.
+    let mut state = State::new();
+    assert!(debug_info::report(&state).contains("Frame rate: idle"));
+    // Feed steady 16 ms frames for 1 s: the panel carries the value.
+    let t0 = camcraft_app::clock::Instant::now();
+    let mut t = t0;
+    let _ = state.frame_rate.frame(t);
+    while t < t0 + std::time::Duration::from_secs(1) {
+        t += std::time::Duration::from_millis(16);
+        let _ = state.frame_rate.frame(t);
+    }
+    let line = state.frame_rate.report_line(t);
+    assert!(line.starts_with("Frame rate: 62 fps (16.0 ms per frame)"), "{line}");
+    // Two seconds with no frame: stale, so idle again.
+    let later = state.frame_rate.report_line(t + std::time::Duration::from_secs(2));
+    assert!(later.contains("idle"), "{later}");
 }

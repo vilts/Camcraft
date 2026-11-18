@@ -20,16 +20,17 @@
 //! clearance plane and a bore helix past the turn cap are each refused
 //! by name (#774).
 
-use crate::cl::{MoveKind, PathBuilder, Toolpath, lattice};
+use crate::cl::{MoveKind, PathBuilder, Toolpath};
 use crate::geo2d::{Point2, Region};
 use crate::geometry::Point3;
 use crate::quality::{QualitySpec, measure, stock_for};
 
 use super::face::GenError;
-use super::levels::cut_levels;
+use super::levels::cut_levels_under;
 use super::trochoid_air::lifted_cut;
-use super::trochoid_bore::{bore, start as bore_start};
-use super::trochoid_loops::{Chain, El, Layout, MAX_LOOPS, contained, layout, layout_closed};
+use super::trochoid_bore::start as bore_start;
+pub(super) use super::trochoid_level::emit_level;
+use super::trochoid_loops::{Chain, Layout, MAX_LOOPS, contained, layout, layout_closed};
 
 /// The forward step is tried at these shares of the user's, longest
 /// first, until the measured engagement holds.
@@ -84,6 +85,10 @@ pub struct TrochoidParams {
     pub return_feed: f64,
     pub plunge_feed: f64,
     pub climb: bool,
+    /// The stock top in this frame (#2004): stock over Top Z keeps a
+    /// level at Top Z, so no first bite is deeper than one stepdown.
+    /// `None` reads Top Z as the material top.
+    pub stock_top: Option<f64>,
 }
 
 impl TrochoidParams {
@@ -316,7 +321,7 @@ pub(super) fn plan_lane_layout(chain: &[Point2], p: &TrochoidParams, open: bool,
 /// The kept plan over every level, said in the notes and held to the
 /// verifier's crossing law.
 fn finish(lay: &Layout, p: &TrochoidParams, step: f64, deg: f64, b: f64, room: f64, open: bool) -> Result<TrochoidPlan, GenError> {
-    let zs = cut_levels(p.top_z, p.bottom_z, p.stepdown)?;
+    let zs = cut_levels_under(p.top_z, p.stock_top, p.bottom_z, p.stepdown)?;
     let entry = bore_start(lay, p, open);
     let hop = p.retract_z.unwrap_or(p.clearance_z);
     let mut bld = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
@@ -365,45 +370,4 @@ fn finish(lay: &Layout, p: &TrochoidParams, step: f64, deg: f64, b: f64, room: f
         .with_ghost(&path));
     }
     Ok(TrochoidPlan { path, step, loop_radius: lay.rho, loops: lay.loops, max_engagement: deg })
-}
-
-/// One level at `z`: the bore from `from` (`trochoid_bore`), then each
-/// loop's wall lead and cut, the returns between them. `levels` says
-/// whether a retract return may hop (the planner's single level lifts
-/// in place instead, which reads the same stock).
-pub(super) fn emit_level(b: &mut PathBuilder, lay: &Layout, p: &TrochoidParams, z: f64, from: f64, levels: bool, open: bool) -> Result<(), GenError> {
-    let p3 = |q: Point2, zz: f64| Point3::new(lattice(q.x), lattice(q.y), lattice(zz));
-    bore(b, lay, p, z, from, open)?;
-    let n = lay.pieces.len();
-    for (i, pc) in lay.pieces.iter().enumerate() {
-        b.push(MoveKind::Feed, p3(pc.start, z), Some(p.feed));
-        for el in &pc.cut {
-            let El::Arc { center, to, ccw } = *el;
-            b.push_arc(MoveKind::Feed, p3(to, z), Some(p.feed), center, ccw);
-        }
-        if i + 1 == n {
-            break;
-        }
-        let e = pc.end();
-        match p.ret {
-            TrochoidReturn::Microlift { height } => {
-                let zl = z + height;
-                b.push(MoveKind::Feed, p3(e, zl), Some(p.return_feed));
-                for el in pc.retrace() {
-                    let El::Arc { center, to, ccw } = el;
-                    b.push_arc(MoveKind::Feed, p3(to, zl), Some(p.return_feed), center, ccw);
-                }
-                b.push(MoveKind::Feed, p3(pc.start, z), Some(p.plunge_feed));
-            }
-            TrochoidReturn::Retract => {
-                let hop = if levels { p.retract_z.unwrap_or(p.clearance_z) } else { z + 0.5 };
-                let near = (z + crate::approach::DEFAULT_PLUNGE_HEIGHT).min(hop);
-                b.push(MoveKind::Rapid, p3(e, hop), None);
-                b.push(MoveKind::Rapid, p3(pc.start, hop), None);
-                b.push(MoveKind::Rapid, p3(pc.start, near), None);
-                b.push(MoveKind::Feed, p3(pc.start, z), Some(p.plunge_feed));
-            }
-        }
-    }
-    Ok(())
 }

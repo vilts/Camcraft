@@ -168,6 +168,7 @@ pub fn plan(root: &Path, diff: &Diff, heavy: bool) -> Result<Quick, String> {
     p.mods.dedup();
     map_modules(root, &mut p, &mut plan.notes)?;
     let unmapped = map_assets(root, diff.changed, &mut p)?;
+    crate::catalog::map_catalog(root, diff.changed, &mut p.whole, &mut p.why);
     describe(&p, heavy, xtask, &unmapped, &mut plan.notes);
     plan.steps = steps(p, heavy, xtask);
     Ok(Quick::Plan(plan))

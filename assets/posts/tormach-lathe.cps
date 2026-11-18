@@ -124,8 +124,9 @@ explainTool = "station-offset";
 //    then X, when it stands in front of the face. Before G30 the tool
 //    leaves +X to the stock's diameter, then +Z to the face (or to the
 //    ClearancePlane), so the control's own G30 move starts from the
-//    stock's outer corner. The stock is the section's StockXY* box
-//    (its largest half-width about the axis) and StockZTop (the face).
+//    stock's outer corner. The stock is the section's StockTurnRadius
+//    (the radius it sweeps about the axis, #1666; never less than the
+//    StockXY* box's largest half-width) and StockZTop (the face).
 //    No stock, or no stated plane where one is needed: refused by name.
 //  - No % fences and no O word (LinuxCNC reads O as a subroutine label);
 //    comments are parenthesized and cleaned of parentheses - LinuxCNC
@@ -159,7 +160,7 @@ var pass = null;           // the G33 pass being merged: { r, z0, z, halves, lea
 var drillDwell = 0;        // the open hole's floor dwell, seconds (0 = none)
 var drillFloor = null;     // ... and its floor Z (world mm)
 var drillIgnore = false;   // the open hole was refused: its chain posts nothing
-var stk = null;            // #1604: the section's stock box (world mm) { l, r, f, b, top }, null = none stated
+var stk = null;            // #1604: the section's stock box (world mm) { l, r, f, b, top, turn }, null = none stated
 var clearZ = null;         // #1604: the section's ClearancePlane (world Z), null = none stated
 var fromG30 = false;       // #1604: the tool stands at G30 - the next point is approached axis by axis
 var lastR = null;          // #1604: the last written point: its radius (origin-relative) ...
@@ -491,7 +492,7 @@ function onSectionEnd() { endPreamble(); }
 // starts at the stock's outer corner, from which a straight line to
 // any point outside the stock's envelope stays outside it.
 function stockParam(name, value) {
-  var keys = { StockXYLeft: "l", StockXYRight: "r", StockXYFront: "f", StockXYBack: "b", StockZTop: "top" };
+  var keys = { StockXYLeft: "l", StockXYRight: "r", StockXYFront: "f", StockXYBack: "b", StockZTop: "top", StockTurnRadius: "turn" };
   var k = keys[name];
   if (!k || !has(value)) return;
   if (stk === null) stk = {};
@@ -499,12 +500,16 @@ function stockParam(name, value) {
 }
 // The stock about the spindle axis: { r: its radius, top: its face Z }
 // in world mm, null when the section states no stock box. The radius
-// is the box's largest half-width from the origin - a round bar's own.
+// is the one the stock sweeps about the axis, StockTurnRadius (#1666: a
+// square bar's corners stand out to half its diagonal), and never less
+// than the box's largest half-width from the origin - a round bar's own,
+// and all a stream that states no turning radius gives.
 function stockEnv() {
   var s = stk;
   if (s === null || !has(s.l) || !has(s.r) || !has(s.f) || !has(s.b) || !has(s.top)) return null;
   if (!(s.r - s.l > EPS) || !(s.b - s.f > EPS)) return null;   // an empty box: no stock
   var r = Math.max(Math.abs(s.l - orgX), Math.abs(s.r - orgX), Math.abs(s.f - orgY), Math.abs(s.b - orgY));
+  if (has(s.turn) && isFinite(s.turn) && s.turn > r) r = s.turn;
   return { r: r, top: s.top };
 }
 function clearOfFace(env) { return has(clearZ) && clearZ > env.top + EPS ? clearZ : null; }

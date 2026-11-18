@@ -5,12 +5,14 @@
 //! by `min(Top - Bottom, cutter radius)` and no more. A deeper cut, a
 //! Top typed under the surface, or a wall standing beside the line is a
 //! blocking `Warning::Gouge` on the operation, and the post is refused
-//! by name on its moves - with the stock aligned and with it turned
-//! (where the program sim refuses to judge). A legal mark is clean on
+//! by name on its moves - with the stock aligned and with it turned off
+//! the machine axes (where the program sim refuses to judge). A legal mark is clean on
 //! the operation, and the program sim credits it (`credit_marks`), so
 //! it posts on both stocks. Before #1595 both kinds fell to
 //! `DepthLaw::None`: aligned, the sim refused every engraving (0.02 mm
-//! included); turned, a cut 7 mm under the model posted.
+//! included); turned, a cut 7 mm under the model posted. #2177: a
+//! stock turned a quarter about Z is judged by the program sim (it is
+//! the same box, square to the axes), so its gouge blocks the post too.
 //!
 //! Provenance: our own fixtures (`pocket_support::block_with_pocket`)
 //! over the solid law and the column sim; no vendor material consulted.
@@ -59,21 +61,32 @@ fn pocket_block() -> Mesh {
 }
 
 /// [`pocket_block`] as "part", and its stock over it: axis-aligned, or
-/// the same box turned a quarter about Z (the same footprint, but a
-/// rotation the program sim refuses to model).
+/// the same box turned [`OBLIQUE`] about Z (the same footprint within
+/// 1e-4 mm, but a turn the program sim refuses to model).
 fn job(rotated: bool) -> (World, History) {
+    job_turned(if rotated { quat_from_yaw(OBLIQUE) } else { Location::default().rot })
+}
+
+/// A turn about Z off the machine axes (rad). The program sim refuses
+/// such a stock by name (`stock_follow::OBLIQUE_STOCK`), so the
+/// operation's own verdict is the only judge of the post. #2177: a
+/// quarter turn is no such device - the sim judges a square-turned box.
+const OBLIQUE: f64 = 1e-6;
+
+/// [`job`] with the stock turned by `rot` about its place.
+fn job_turned(rot: [f64; 4]) -> (World, History) {
     let world = new_world();
     let mut h = History::default();
     let tool = catalog().into_iter().find(|(n, _)| *n == TOOL).map(|(_, t)| t).expect("tool");
     h.execute(&world, AddTool::new(&world, TOOL, tool).expect("tool"));
     h.execute(&world, ImportModel::from_mesh("part", pocket_block()));
-    // A box stock stands centred on its place, so a quarter turn about
-    // Z leaves the footprint over the part.
-    let rot = if rotated { quat_from_yaw(std::f64::consts::FRAC_PI_2) } else { Location::default().rot };
+    // A box stock stands centred on its place, so a turn about Z
+    // ([`OBLIQUE`], or a quarter) leaves the footprint over the part.
     let at = Location { pos: Point3::new(0.0, 0.0, 0.0), rot };
     h.execute(&world, SetStock::new(&world, StockShape::Box { dx: 40.0, dy: 40.0, dz: 8.0 }, at).expect("stock"));
     let b = model::stock_world_aabb_for(&world, None).expect("stock box");
-    let on = |v: f64, want: f64| (v - want).abs() < 1e-9;
+    // The oblique turn moves the corners by 20 * sqrt(2) * 1e-6 mm.
+    let on = |v: f64, want: f64| (v - want).abs() < 1e-4;
     assert!(on(b.min.x, -20.0) && on(b.min.y, -20.0) && on(b.max.x, 20.0) && on(b.max.y, 20.0), "stock at {:?}..{:?}", b.min, b.max);
     (world, h)
 }
@@ -145,6 +158,9 @@ fn assert_post_refused(world: &World, tag: &str, by_op: bool) {
     assert!(err.contains("post blocked"), "{tag}: {err}");
     if by_op {
         assert!(err.contains("E1: move") && err.contains("cuts past the finish surface"), "{tag}: {err}");
+        // The device holds: the program sim refuses this stock by name.
+        let sim = camcraft_app::stock_sim::simulate_document(world).map(|_| ());
+        assert!(sim.as_ref().is_err_and(|e| e.contains(camcraft_app::stock_follow::OBLIQUE_STOCK)), "{tag}: {sim:?}");
     }
     assert!(!out.exists(), "{tag}: blocked output is never written");
 }
@@ -183,8 +199,8 @@ fn a_whole_model_cut_deep_under_the_part_gouges_and_never_posts_on_either_stock(
                 notes.iter().any(|n| n.contains("cuts deeper than a mark") && n.contains("3.000 mm")),
                 "{kind:?} rotated {rotated}: the budget is said by name: {notes:?}"
             );
-            // Turned, the op's own gouge is the only judge; aligned,
-            // the program sim also sees it and its clause may lead.
+            // Turned off the axes, the op's own gouge is the only judge;
+            // aligned, the program sim also sees it and its clause may lead.
             assert_post_refused(&world, &format!("deep-{kind:?}-{rotated}"), rotated);
         }
     }
@@ -361,5 +377,26 @@ fn over_mcp_a_whole_model_engrave_and_trace_are_judged_the_same() {
         let good = mcp_verify(&format!("legal-{kind}"), kind, 7.7);
         assert_eq!(op_gouges(&good), 0, "{kind}: {good}");
         assert_eq!(good["ok"], json!(true), "{kind}: a legal mark verifies ok: {good}");
+    }
+}
+
+#[test]
+fn a_quarter_turned_stock_is_judged_by_the_program_sim() {
+    // #2177: a box turned a quarter about Z is the same box square to
+    // the axes. The program sim judges it: the deep cut is convicted by
+    // the sim as well as on the op, and a shallow mark posts.
+    let quarter = quat_from_yaw(std::f64::consts::FRAC_PI_2);
+    for kind in KINDS {
+        let (world, mut h) = job_turned(quarter);
+        let (warns, _) = generated(&world, &mut h, whole(), cut(kind, TOP, 1.0));
+        assert!(gouges(&warns) > 0, "{kind:?}: convicted on the op: {warns:?}");
+        let dev = stock_sim::simulate_document(&world).expect("a quarter-turned box is judged").dev;
+        assert!(dev.gouge_cells > 0 && dev.max_gouge > 0.5, "{kind:?}: the sim convicts the cut: {} cell(s), worst {}", dev.gouge_cells, dev.max_gouge);
+        assert_post_refused(&world, &format!("quarter-deep-{kind:?}"), false);
+        let (world, mut h) = job_turned(quarter);
+        generated(&world, &mut h, whole(), cut(kind, TOP, 7.7));
+        let dev = stock_sim::simulate_document(&world).expect("a quarter-turned box is judged").dev;
+        assert_eq!(dev.gouge_cells, 0, "{kind:?}: a shallow mark is credited: worst {}", dev.max_gouge);
+        assert_posts(&world, &format!("quarter-shallow-{kind:?}"));
     }
 }

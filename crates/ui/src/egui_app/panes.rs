@@ -1073,14 +1073,14 @@ fn ribbon_tabs(ui: &mut Ui, state: &mut State, pal: &Tokens, strip: Rect, band: 
     );
     let current = camcraft_app::machine::kind_of(&state.world);
     let font = egui::FontId::proportional(pal.font_label);
-    let mut x = strip.left() + 8.0;
+    let mut x = strip.left() + pal.item_spacing_x;
     for (kind, caption, machine) in machine_modes::MACHINE_MODES {
         let active = kind == current;
         let ink = if active { pal.text } else { pal.text_dim };
         let galley = ui
             .painter()
             .layout_no_wrap(caption.to_uppercase(), font.clone(), ink);
-        let w = galley.size().x + 24.0;
+        let w = galley.size().x + pal.ribbon_tab_pad_x * 2.0;
         let r = Rect::from_min_max(
             egui::Pos2::new(x, band.top()),
             egui::Pos2::new(x + w, band.bottom()),
@@ -1093,12 +1093,13 @@ fn ribbon_tabs(ui: &mut Ui, state: &mut State, pal: &Tokens, strip: Rect, band: 
                 0.0,
                 pal.strip_fill(),
             );
+            let pad = (pal.ribbon_tab_pad_x * 0.5).min(w * 0.25);
             painter.line_segment(
                 [
-                    egui::Pos2::new(r.left() + 6.0, r.bottom() - 1.0),
-                    egui::Pos2::new(r.right() - 6.0, r.bottom() - 1.0),
+                    egui::Pos2::new(r.left() + pad, r.bottom() - 1.0),
+                    egui::Pos2::new(r.right() - pad, r.bottom() - 1.0),
                 ],
-                egui::Stroke::new(2.0, pal.accent),
+                egui::Stroke::new(pal.ribbon_tab_stroke, pal.accent),
             );
         } else if resp.clicked() || resp.is_pointer_button_down_on() {
             painter.rect_filled(r, pal.radius_widget, pal.accent);
@@ -1114,11 +1115,16 @@ fn ribbon_tabs(ui: &mut Ui, state: &mut State, pal: &Tokens, strip: Rect, band: 
             ink,
         );
         let clicked = resp.clicked();
+        resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, caption));
+        ui.ctx().accesskit_node_builder(resp.id, |b| {
+            b.set_role(egui::accesskit::Role::Tab);
+            b.set_selected(active);
+        });
         resp.on_hover_text(format!("{caption} workspace - mounts {machine} (undoable)"));
         if clicked {
             machine_modes::set_machine_mode(state, kind);
         }
-        x += w + 2.0;
+        x += w + pal.ribbon_tab_gap;
     }
 }
 
@@ -1186,7 +1192,10 @@ pub fn ribbon(
         // proves it.
         let gated = resp.clicked() && !fired && matches!(c, Cmd::Create(_));
         let pin = resp.secondary_clicked();
-        resp.on_hover_text(tip_of(c, state));
+        let tip = tip_of(c, state);
+        ui.ctx()
+            .accesskit_node_builder(resp.id, |b| b.set_description(tip.as_str()));
+        resp.on_hover_text(tip);
         if fired {
             run_cmd(c, state);
         }
@@ -1262,6 +1271,7 @@ pub fn ribbon(
                                 Cmd::Create(i) => TYPES.get(i).copied().unwrap_or("op"),
                                 other => label_of(other),
                             };
+                            painted::menu_item(&resp, label, en, None);
                             // The kind's own glyph at the row's left edge,
                             // in the row's ink - the door lists operations
                             // the way the tree shows them. Headless frames
@@ -1414,6 +1424,7 @@ pub fn ribbon(
                             } else {
                                 machine_modes::mode_label(*kind)
                             };
+                            painted::menu_item(&resp, &label, !current, Some(current));
                             p.text(
                                 r.left_center() + Vec2::new(8.0, 0.0),
                                 egui::Align2::LEFT_CENTER,
@@ -1588,7 +1599,8 @@ pub fn status(ui: &mut Ui, state: &mut State, pal: &Tokens, icons: Option<&IconS
             // icon set is up, its name when it is not (headless frames
             // and a failed decode degrade to text, never to nothing).
             if super::debug_info::button(ui, icons).clicked() {
-                state.debug_info_open = !state.debug_info_open;
+                // #2262: a dock tab like the other panels; the shell lands it.
+                state.layout_request = Some(crate::state::LayoutRequest::ToggleDebugInfo);
             }
             // #183: the live MCP server says it is listening.
             if let Some(note) = crate::mcp_host::badge(state) {
@@ -1600,6 +1612,11 @@ pub fn status(ui: &mut Ui, state: &mut State, pal: &Tokens, icons: Option<&IconS
                     state.pending.push_back(CommandKind::RegenerateAll);
                 }
             }
+            // #2262: placed before the status line, which fills what is
+            // left; behind it the label ran past the line onto the door.
+            if ops_n > 0 {
+                ui.label(RichText::new(format!("{ops_n} Operations")).color(pal.text_faint).small());
+            }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.add(Label::new(line).selectable(true).truncate())
                     .on_hover_text(text.as_str())
@@ -1609,9 +1626,6 @@ pub fn status(ui: &mut Ui, state: &mut State, pal: &Tokens, icons: Option<&IconS
                             ui.close();
                         }
                     });
-                if ops_n > 0 {
-                    ui.label(RichText::new(format!("{ops_n} Operations")).color(pal.text_faint).small());
-                }
             });
         });
     });

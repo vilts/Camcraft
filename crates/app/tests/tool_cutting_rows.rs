@@ -26,8 +26,8 @@ use camcraft_app::world::new_world;
 use flecs_ecs::prelude::World;
 use serde_json::{Value, json};
 
-const STEEL: CuttingRow = CuttingRow { material: WorkMaterial::MildSteel, rpm: 3100.0, feed: 410.0, waterjet: None };
-const BRASS: CuttingRow = CuttingRow { material: WorkMaterial::Brass, rpm: 8200.0, feed: 950.0, waterjet: None };
+const STEEL: CuttingRow = CuttingRow::plain(Some(WorkMaterial::MildSteel), 3100.0, 410.0);
+const BRASS: CuttingRow = CuttingRow::plain(Some(WorkMaterial::Brass), 8200.0, 950.0);
 
 fn base() -> Tool {
     catalog().into_iter().find(|(n, _)| *n == "EM-0600-4FL").map(|(_, t)| t).expect("catalog entry")
@@ -35,6 +35,11 @@ fn base() -> Tool {
 
 fn tabled() -> Tool {
     Tool { cutting: vec![STEEL, BRASS], ..base() }
+}
+
+/// #2015: the `Unknown` row a tool derives from its own numbers.
+fn unknown() -> CuttingRow {
+    CuttingRow::plain(None, base().rpm, base().feed)
 }
 
 fn read(w: &World, n: &str) -> Tool {
@@ -89,7 +94,10 @@ fn a_tool_without_rows_writes_no_key_and_a_table_round_trips() {
     let plain = project::tool_to_json(&base()).to_string();
     assert!(!plain.contains("cutting_data"), "{plain}");
     let v: Value = serde_json::from_str(&plain).expect("json");
-    assert_eq!(project::tool_from_json(&v).expect("old shape loads"), base());
+    // #2015: the old shape loads with its own numbers as the (derived) Unknown row.
+    let back = project::tool_from_json(&v).expect("old shape loads");
+    assert_eq!(back, base());
+    assert_eq!(cutting_rows::row_in(&back, None), Some(unknown()));
     let on = project::tool_to_json(&tabled());
     assert_eq!(on["cutting_data"][0], json!({ "material": "mild_steel", "rpm": 3100.0, "feed": 410.0 }));
     assert_eq!(project::tool_from_json(&on).expect("loads").cutting, vec![STEEL, BRASS]);
@@ -169,7 +177,7 @@ fn unusable_rows_are_refused_by_tool_name_at_creation() {
             assert!(e.contains("tool 'T") && e.contains("Mild steel"), "{e}");
         }
     }
-    assert!(read(&w, "T").cutting.is_empty());
+    assert!(read(&w, "T").cutting.is_empty(), "#2015: the Unknown row stays derived");
 }
 
 #[test]
@@ -180,13 +188,14 @@ fn stating_the_material_seeds_tool_and_ops_in_one_undo_step() {
     assert_eq!(cmd.seeded(), (1, 1));
     h.execute(&w, cmd);
     assert_eq!((read(&w, "T").rpm, read(&w, "T").feed, op_feed(&w, "Slot1")), (3100.0, 410.0, 410.0));
-    // Another material with a row moves them again; one without leaves them.
+    // Another material with a row moves them again; one without runs the
+    // tool's Unknown row (#2015) and leaves the op's feed alone.
     h.execute(&w, SetWorkMaterial::new(&w, Some(WorkMaterial::Brass)).expect("brass"));
     assert_eq!((read(&w, "T").rpm, op_feed(&w, "Slot1")), (8200.0, 950.0));
     let none = SetWorkMaterial::new(&w, Some(WorkMaterial::Plastics)).expect("plastics");
-    assert_eq!(none.seeded(), (0, 0), "no row: today's numbers stay");
+    assert_eq!(none.seeded(), (1, 0), "no row: the tool runs its Unknown row, the op keeps its feed");
     h.execute(&w, none);
-    assert_eq!((read(&w, "T").rpm, op_feed(&w, "Slot1")), (8200.0, 950.0));
+    assert_eq!((read(&w, "T").rpm, op_feed(&w, "Slot1")), (base().rpm, 950.0));
     assert!(h.undo(&w) && h.undo(&w) && h.undo(&w));
     assert_eq!((read(&w, "T"), op_feed(&w, "Slot1")), before);
 }

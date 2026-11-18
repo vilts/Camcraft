@@ -14,12 +14,12 @@ use crate::schema::Operation;
 /// Why the program sim does not judge a program holding a wire cut.
 pub const WIRE_VERDICT_REFUSAL: &str = "a wire cut is verified by the wire laws, not the stock sim";
 
-/// Whether the plan walk leaves `op` out: exactly the kinds that mount
-/// no library tool (the wire family). A kind that mounts one is never
-/// skipped here - a missing tool on it is still refused by name.
+/// Whether the plan walk leaves `op` out: every wire EDM operation.
+/// A cutting kind that mounts a tool is never skipped here - a missing
+/// tool on it is still refused by name.
 #[must_use]
 pub fn skips(op: &Operation) -> bool {
-    !op.params.kind().info().mounts_tool()
+    op.params.kind().info().family() == crate::operation::Family::WireEdm
 }
 
 /// The verdict's refusal: the first program op the plan left out, by

@@ -130,7 +130,7 @@ fn struck(world: &World) -> bool {
 
 #[test]
 fn a_tilted_face_over_the_clamped_stock_posts_and_raised_jaws_block_it() {
-    let tilt = Tilt { a_deg: 0.0, b_deg: 10.0, origin: [0.0, 0.0, 30.0] };
+    let tilt = Tilt { basis_version: 1, a_deg: 0.0, b_deg: 10.0, origin: [0.0, 0.0, 30.0] };
     let (world, mut history, name) = clamped(Some(tilt));
     let e = model::find_by_name(&world, "Face1").expect("op");
     let path = model::toolpath_of(&world, &e).expect("generated").path;

@@ -22,6 +22,9 @@ fn three_jaw() -> JawChuck {
         jaw_length: 35.0,
         jaw_width: 20.0,
         jaw_height: 30.0,
+        grip: chuck::Grip::Outside,
+        step_height: 0.0,
+        step_depth: 0.0,
     }
 }
 

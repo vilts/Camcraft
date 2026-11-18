@@ -30,20 +30,7 @@ fn a_fresh_document_reaches_setups_and_creates_the_first_one_undoably() {
     assert_eq!(rows[row].label, "Setups");
 
     // The ribbon: a real click on the Setups cell opens the page.
-    let plan = panes::ribbon_plan(camcraft_app::machine::Kind::Mill, &[]);
-    let (cells, _, _, _) = panes::ribbon_cells(
-        egui::Rect::from_min_size(egui::Pos2::ZERO, Vec2::new(1280.0, super::super::shell::RIBBON_H)),
-        &theme::current(),
-        &plan,
-    );
-    let cell = cells
-        .iter()
-        .find(|c| c.cmd == Cmd::Setups)
-        .expect("the Setup group carries a Setups cell");
-    let at = cell.rect.center();
-    set_pos(&mut harness, at);
-    button_at(&mut harness, egui::PointerButton::Primary, at, true);
-    button_at(&mut harness, egui::PointerButton::Primary, at, false);
+    harness.get_by_role_and_label(egui::accesskit::Role::Button, "Setups").click();
     harness.run_steps(2);
     assert!(
         matches!(harness.state().state.ui_target, UiTarget::Setups),

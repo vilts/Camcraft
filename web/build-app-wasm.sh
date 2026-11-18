@@ -36,7 +36,7 @@
 #
 # Usage: web/build-app-wasm.sh [--release]
 # Needs: clang with the wasm32 target, curl, tar, sha256sum (or shasum), rustup target
-# wasm32-unknown-unknown.
+# wasm32-unknown-unknown; llvm-ar on macOS (LLVM or rustup llvm-tools).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -75,6 +75,28 @@ sha256_of() {
     if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1
     else shasum -a 256 "$1" | cut -d' ' -f1; fi
 }
+
+# Apple's ar/ranlib cannot index flecs' wasm objects. Select a target-only
+# LLVM archiver before downloading or building; keep explicit overrides.
+if [[ "$(uname -s)" == "Darwin" && -z "${AR_wasm32_unknown_unknown+x}" ]]; then
+    wasm_ar="$(command -v llvm-ar || true)"
+    if [[ -z "$wasm_ar" ]] && command -v brew >/dev/null 2>&1; then
+        llvm_prefix="$(brew --prefix llvm 2>/dev/null || true)"
+        if [[ -n "$llvm_prefix" && -x "$llvm_prefix/bin/llvm-ar" ]]; then
+            wasm_ar="$llvm_prefix/bin/llvm-ar"
+        fi
+    fi
+    if [[ -z "$wasm_ar" ]] && command -v rustc >/dev/null 2>&1; then
+        rust_sysroot="$(rustc --print sysroot 2>/dev/null || true)"
+        rust_host="$(rustc -vV 2>/dev/null | sed -n 's/^host: //p' || true)"
+        rust_ar="$rust_sysroot/lib/rustlib/$rust_host/bin/llvm-ar"
+        if [[ -n "$rust_sysroot" && -n "$rust_host" && -x "$rust_ar" ]]; then
+            wasm_ar="$rust_ar"
+        fi
+    fi
+    [[ -n "$wasm_ar" ]] || die "macOS wasm builds need llvm-ar: run brew install llvm or rustup component add llvm-tools, or set AR_wasm32_unknown_unknown to llvm-ar"
+    export AR_wasm32_unknown_unknown="$wasm_ar"
+fi
 
 TOOLS="$ROOT/target/wasm-tools"
 mkdir -p "$TOOLS"

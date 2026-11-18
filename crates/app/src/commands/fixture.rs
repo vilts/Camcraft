@@ -112,6 +112,7 @@ impl TagFixture {
                 // ...and a mod-vise jaw block's (#820).
                 mod_jaw: prev.as_ref().and_then(|d| d.mod_jaw.clone()),
                 accessory: prev.as_ref().and_then(|d| d.accessory.clone()),
+                profile: prev.as_ref().and_then(|d| d.profile.clone()),
             },
             prev,
         })
@@ -223,6 +224,7 @@ pub struct DeleteFixture {
     def: FixtureDef,
     location: Location,
     facets: std::sync::Arc<[Triangle]>,
+    step_source: Option<String>,
     /// #819: a deleted plate's riders leave it (they stay where they
     /// stand), so a later plate given the same name never carries them.
     riders: crate::plate::mount::Unmounts,
@@ -241,6 +243,7 @@ impl DeleteFixture {
             def,
             location: model::transform_of(world, &entity).unwrap_or_default(),
             facets: model::facets_of(world, &entity).unwrap_or_default(),
+            step_source: crate::step_source::of(world, &entity),
             riders: crate::plate::mount::Unmounts::of(world, name),
             marks: super::stock_source_only::MarkDrops::of(world, name),
         })
@@ -264,6 +267,7 @@ impl Command for DeleteFixture {
         let entity = model::spawn(world, &self.name);
         model::set_transform(world, &entity, self.location);
         model::set_facets(world, &entity, self.facets.clone());
+        crate::step_source::set(world, &entity, self.step_source.as_deref());
         entity.entity_view(world).set(self.def.clone());
         self.marks.write(world, false);
     }
@@ -280,6 +284,7 @@ pub struct AddFixtureModel {
     facets: std::sync::Arc<[Triangle]>,
     /// #864: the chord error of a mesh imported coarser than promised.
     coarse_mm: Option<f64>,
+    step_source: Option<String>,
 }
 
 impl AddFixtureModel {
@@ -306,6 +311,7 @@ impl AddFixtureModel {
             name: name.to_string(),
             facets: graded.mesh.facets,
             coarse_mm: graded.coarse_mm,
+            step_source: graded.step_source,
         })
     }
 }
@@ -324,6 +330,7 @@ impl Command for AddFixtureModel {
         model::set_facets(world, &entity, self.facets.clone());
         model::set_rev(world, &entity, 1);
         crate::model_fidelity::set(world, &entity, self.coarse_mm);
+        crate::step_source::set(world, &entity, self.step_source.as_deref());
         entity.entity_view(world).set(FixtureDef::default());
     }
 

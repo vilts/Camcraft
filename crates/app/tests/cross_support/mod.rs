@@ -216,6 +216,7 @@ pub fn typed() -> Vec<CrossHole> {
 
 pub fn cross_params(cross: Vec<CrossHole>, bottom_z: Option<Height>) -> OpParams {
     OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(20.0),
         retract_z: None,
         top_z: Height::fixed(15.0),

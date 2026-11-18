@@ -102,7 +102,7 @@ fn floor_face(world: &World) -> GeoSel {
 }
 
 fn refusal(world: &World, picks: &[GeoSel]) -> String {
-    slot_bound_of(world, picks).expect_err("refused").to_string()
+    slot_bound_of(world, None, picks).expect_err("refused").to_string()
 }
 
 fn ends(world: &World, name: &str) -> (Point2, Point2, f64) {
@@ -117,7 +117,7 @@ fn picks_that_bound_no_slot_are_refused_by_name() {
     let (world, _) = square_pocket();
     let edges = floor_edges(&world);
     assert!(edges.len() >= 3, "the long floor edges and an end edge: {edges:?}");
-    slot_bound_of(&world, &edges[..2]).expect("the two long edges bound the slot");
+    slot_bound_of(&world, None, &edges[..2]).expect("the two long edges bound the slot");
     let e = refusal(&world, &edges[..1]);
     assert!(e.contains("this selection has 1 open edge and 0 faces or rings"), "{e}");
     let e = refusal(&world, &edges[..3]);

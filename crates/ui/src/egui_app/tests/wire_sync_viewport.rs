@@ -34,6 +34,10 @@ fn two_clicked_corners_state_a_sync_pair_and_a_flat_one_is_refused() {
         let st = &mut harness.state_mut().state;
         let machine = camcraft_app::machine::parse_mch(include_str!("../../../../app/tests/edm/wire-iso-fixture.mch")).expect("fixture");
         st.pending.push_back(CommandKind::EditMachineApply { path: "wire-test.mch".into(), machine: Box::new(machine) });
+        st.pending.push_back(CommandKind::AddTool {
+            name: "EDM-W025".into(),
+            tool: camcraft_app::wire_tools::wire_tool(0.25),
+        });
         st.drain_actions();
         let kind = camcraft_app::operation::KindInfo::ALL.iter().position(|k| k.label == "Wire Contour").expect("wire kind");
         crate::actions::add_operation(st, kind);

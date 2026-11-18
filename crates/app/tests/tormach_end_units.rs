@@ -166,3 +166,29 @@ fn the_end_units_choice_round_trips_and_old_files_leave_it() {
     let _ = std::fs::remove_file(&path);
     assert!(!text.contains("end_units") && !text.contains("post_options"), "{text}");
 }
+
+#[test]
+fn every_builtin_handles_or_refuses_end_units_by_name() {
+    use camcraft_app::post::PostError;
+    use camcraft_app::schema::PostRef;
+    let ask = posting::options_value(PostOptions { end_units: EndUnits::Inch, ..PostOptions::default() });
+    for (name, cps) in camcraft_app::posting::shipped_posts().expect("the shipped posts read") {
+        let declares = cps.lines().any(|l| l.trim_start().starts_with("endUnits ="));
+        let words = posting::end_units_words(&PostRef::Named((*name).to_owned())).expect("reads manifest");
+        match engine::run_with(cps, &serde_json::Value::Null, "", &ask) {
+            Err(PostError::Refused(why)) if !declares => {
+                assert!(words.is_none(), "{name}");
+                assert!(why.contains("endUnits"), "{name}: {why}");
+            }
+            Err(PostError::Refused(why)) => panic!("{name} declares endUnits but refused empty stream: {why}"),
+            _ if declares => {
+                if cps.contains("endUnits = \"note\"") {
+                    assert!(words.is_none(), "{name} note post must not advertise words");
+                } else {
+                    assert!(words.is_some(), "{name} switching post must advertise words");
+                }
+            }
+            other => panic!("{name} states no endUnits yet was not refused: {:?}", other.map(|o| o.program)),
+        }
+    }
+}

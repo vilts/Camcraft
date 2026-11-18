@@ -15,6 +15,8 @@
 //!
 //! Provenance: our own display design; no vendor material consulted.
 
+use std::sync::Arc;
+
 use camcraft_app::geo2d::{Point2, Region};
 use camcraft_app::operation::{self, PickShape, area_applies};
 
@@ -224,13 +226,29 @@ pub fn side_arrows(chain: &[Point2], region: &Region) -> Vec<(Point2, Point2)> {
     out
 }
 
-/// The draft's machined-area preview to fill: (plane, region), only
-/// while the group is [`active`] and the preview resolved.
+/// The preview fill's triangles, shared so a clone of the preview stays
+/// cheap.
+pub type Fill = Arc<[[Point2; 3]]>;
+
+/// #2246: triangulate a preview region once, when the preview is made
+/// (`boundary_draft::refresh_preview`, keyed on the draft and the
+/// document version); `None` when it refuses or is empty, as the scene
+/// skipped those before. The span counts each build (the probe's pin: a
+/// still frame makes none).
 #[must_use]
-pub fn preview_fill(state: &State) -> Option<(f64, &Region)> {
+pub fn fill_of(region: &Region) -> Option<Fill> {
+    let _s = crate::frame_cost::span("ui/properties.boundary.preview.triangulate");
+    region.triangles().ok().filter(|t| !t.is_empty()).map(Arc::from)
+}
+
+/// The draft's machined-area preview to fill: (plane, triangles), only
+/// while the group is [`active`] and the preview resolved. The triangles
+/// were made with the preview; a frame only reads them.
+#[must_use]
+pub fn preview_fill(state: &State) -> Option<(f64, &[[Point2; 3]])> {
     if !active(state) {
         return None;
     }
     let p = state.boundary_view.preview.as_ref()?;
-    Some((p.z, p.footprint.as_ref().or(p.region.as_ref())?))
+    Some((p.z, p.fill.as_deref()?))
 }

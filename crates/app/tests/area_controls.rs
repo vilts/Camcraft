@@ -216,7 +216,7 @@ fn a_boundary_offset_on_a_tilted_pocket_is_the_flat_offset_pocket_rotated() {
     let bare = tilt_world_with(false);
     let world = tilt_world();
     let area = AreaControls { offset: 3.0, ..Default::default() };
-    let tilt = Tilt { a_deg: 0.0, b_deg: 90.0, origin: [0.0; 3] };
+    let tilt = Tilt { basis_version: 1, a_deg: 0.0, b_deg: 90.0, origin: [0.0; 3] };
     let (flat, wf) = run(&bare, &op(SrcRef::Entity("twin".into()), tilt_pocket(None, 40.0), area.clone())).expect("flat");
     let (tilted, wt) = run(&bare, &op(SrcRef::Entity("part".into()), tilt_pocket(Some(tilt), 40.0), area.clone())).expect("tilted");
     assert_eq!(wf, wt);
@@ -239,7 +239,7 @@ fn a_boundary_offset_on_a_tilted_pocket_is_the_flat_offset_pocket_rotated() {
     // XY, so it is read at b = 35): the +3 offset grows the shadow's
     // bounds by 3 in the plane, which projects to between 3 cos 35 and
     // 3 on each side in the world.
-    let t35 = Tilt { a_deg: 0.0, b_deg: 35.0, origin: [0.0; 3] };
+    let t35 = Tilt { basis_version: 1, a_deg: 0.0, b_deg: 35.0, origin: [0.0; 3] };
     let bounds = |offset: f64| {
         operation::region_of(&world, &op(SrcRef::Entity("tower".into()), tilt_pocket(Some(t35), 35.0), AreaControls { offset, ..Default::default() }))
             .expect("tilted preview")
@@ -261,7 +261,7 @@ fn a_boundary_offset_on_a_tilted_pocket_is_the_flat_offset_pocket_rotated() {
 #[test]
 fn a_tilted_face_band_is_the_local_band_projected_through_the_frame() {
     let world = tilt_world();
-    let t35 = Tilt { a_deg: 0.0, b_deg: 35.0, origin: [0.0; 3] };
+    let t35 = Tilt { basis_version: 1, a_deg: 0.0, b_deg: 35.0, origin: [0.0; 3] };
     let u = t35.frame().expect("frame").u;
     let mut p = face(30.0);
     if let OpParams::Face { tilt, clearance_z, .. } = &mut p {
@@ -281,7 +281,7 @@ fn a_tilted_face_band_is_the_local_band_projected_through_the_frame() {
 #[test]
 fn a_tilt_with_a_non_finite_angle_still_refuses_by_name_under_a_boundary() {
     let world = tilt_world();
-    let bad = Tilt { a_deg: f64::NAN, b_deg: 0.0, origin: [0.0; 3] };
+    let bad = Tilt { basis_version: 1, a_deg: f64::NAN, b_deg: 0.0, origin: [0.0; 3] };
     let o = op(SrcRef::Entity("part".into()), tilt_pocket(Some(bad), 40.0), AreaControls { offset: 3.0, ..Default::default() });
     let err = run(&world, &o).expect_err("no direction");
     assert!(err.contains("commands no direction"), "{err}");

@@ -60,13 +60,6 @@ fn bounds(loc: &Location, pts: impl IntoIterator<Item = [f64; 3]>) -> Value {
     json!({ "min": [fnum(lo[0]), fnum(lo[1]), fnum(lo[2])], "max": [fnum(hi[0]), fnum(hi[1]), fnum(hi[2])] })
 }
 
-/// A local direction turned into the world frame (rigid placement).
-fn world_dir(loc: &Location, n: [f64; 3]) -> [f64; 3] {
-    let o = world_pt(loc, [0.0; 3]);
-    let t = world_pt(loc, n);
-    [t.x - o.x, t.y - o.y, t.z - o.z]
-}
-
 /// Which way a face looks, in the words a 2.5D pick is chosen by.
 fn facing(n: [f64; 3]) -> &'static str {
     const LEVEL: f64 = 0.999_999;
@@ -125,17 +118,19 @@ fn loop_view(lp: &feature::Loop, by_edge: &HashMap<(u32, u32), u64>, loc: &Locat
     })
 }
 
-/// #884, #956: the face's outward unit normal where the part sits. The
+/// #884, #956, #2186: the face's outward unit normal where the part sits. The
 /// plane normal is sign-canonical (winding-free), so a bottom cap and a top
 /// cap share one; `pick::align::outward_normal` (the WCS picks' helper)
 /// flips it to the facets' outside and turns it by the part's placement.
 /// Where it refuses (an open or inside-out shell, no usable plane) the row
-/// keeps the canonical normal, placed - a listing must not fail on one face.
-fn outward(w: &World, model: &str, fa: &feature::Face, loc: &Location) -> [f64; 3] {
+/// says so: `Err` carries the reason. The row never guesses a side, and a
+/// listing does not fail on one face.
+fn outward(w: &World, model: &str, fa: &feature::Face) -> Result<[f64; 3], String> {
     let sel = GeoSel { entity: model.to_owned(), feature: FeatureSel::Face(fa.id) };
     match outward_normal(w, &sel, model::transform_of) {
-        Ok(Some(n)) => n,
-        _ => world_dir(loc, fa.normal),
+        Ok(Some(n)) => Ok(n),
+        Ok(None) => Err(format!("{} of '{model}' is not a flat face", sel.feature)),
+        Err(why) => Err(why),
     }
 }
 
@@ -154,12 +149,17 @@ fn faces_view(w: &World, name: &str, g: &FeatureGraph, loc: &Location, limit: us
         .iter()
         .take(limit)
         .map(|fa| {
-            let n = outward(w, name, fa, loc);
+            let side = match outward(w, name, fa) {
+                Ok(n) => json!({ "normal": [fnum(n[0]), fnum(n[1]), fnum(n[2])], "facing": facing(n) }),
+                // #2186: the outside cannot be told; say so, never guess.
+                Err(why) => json!({ "normal": null, "facing": null, "outside_unknown": why }),
+            };
             let verts = fa.loops.iter().flat_map(|l| l.verts.iter()).filter_map(|&v| f.verts.get(v as usize).copied());
             json!({
                 "id": feature_id(FeatureSel::Face(fa.id)),
-                "normal": [fnum(n[0]), fnum(n[1]), fnum(n[2])],
-                "facing": facing(n),
+                "normal": side["normal"],
+                "facing": side["facing"],
+                "outside_unknown": side["outside_unknown"],
                 "area": fnum(fa.area),
                 "bounds": bounds(loc, verts),
                 "patch": patch_of.get(&fa.id).map(|p| feature_id(FeatureSel::Patch(*p))),
@@ -256,6 +256,8 @@ pub(super) fn list_features(env: &mut Env, a: &Map<String, Value>) -> Result<Val
     // #561: a fixture's faces are pickable too - `locate_part` mates them.
     let e = match model::find_by_name(&env.world, name) {
         Some(e) if model::is_fixture(&env.world, &e) => e,
+        // #2173: so is a stock's - `locate_part` with body "stock" mates them.
+        Some(e) if model::is_stock(&env.world, &e) => e,
         _ => req_model(env, name)?,
     };
     let w = &env.world;

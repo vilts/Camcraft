@@ -192,10 +192,43 @@ impl Body {
     }
 
     /// A body whose floor is the lowest surface of a stock mesh (the
-    /// from-model stock): the mesh read from below.
+    /// from-model stock): the mesh read from below. Retains closed mesh
+    /// provenance when `FixtureMesh::build(facets)` succeeds so side-face
+    /// contact resolves finer than one grid pitch.
     #[must_use]
     pub fn on_mesh(mut dex: Dexel, facets: &[Triangle]) -> Self {
-        dex.history = None;
+        let prior = dex.history.take();
+        if let Ok(mesh) = crate::fixture_mesh::FixtureMesh::build(facets) {
+            let (mut mlo, mut mhi) = (
+                Point3::new(f64::INFINITY, f64::INFINITY, f64::INFINITY),
+                Point3::new(f64::NEG_INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY),
+            );
+            for t in facets {
+                for p in [t.a, t.b, t.c] {
+                    mlo = Point3::new(mlo.x.min(p.x), mlo.y.min(p.y), mlo.z.min(p.z));
+                    mhi = Point3::new(mhi.x.max(p.x), mhi.y.max(p.y), mhi.z.max(p.z));
+                }
+            }
+            if mlo.is_finite() && mhi.is_finite() {
+                let (lo, hi) = match prior.as_deref().filter(|h| !h.active && h.cuts.is_empty() && h.clips.is_empty()) {
+                    Some(h) => (
+                        Point3::new(
+                            h.lo.x.max(mlo.x),
+                            h.lo.y.max(mlo.y),
+                            if h.lo.z.is_finite() { h.lo.z.max(mlo.z) } else { mlo.z },
+                        ),
+                        Point3::new(h.hi.x.min(mhi.x), h.hi.y.min(mhi.y), h.hi.z.min(mhi.z)),
+                    ),
+                    None => (mlo, mhi),
+                };
+                dex.history = Some(std::sync::Arc::new(super::carry_history::History::with_mesh(
+                    lo,
+                    hi,
+                    dex.cell,
+                    std::sync::Arc::new(mesh),
+                )));
+            }
+        }
         let floor = bottom_surface(facets, &dex).into_iter().map(|b| if b.is_finite() { b } else { f64::INFINITY }).collect();
         Body { dex, floor, floor_judged: false }
     }

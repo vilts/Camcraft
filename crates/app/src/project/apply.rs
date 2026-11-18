@@ -514,6 +514,17 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
         // v60 -> v61 (#258): the document may state its program number
         // and comment; absent states neither (O0001, the machine's name).
         // v61 -> v62 (#1453): absent tap hand defaults to right-hand.
+        // v62 -> v63 (#1557): absent break-through keeps the kind default.
+        // v63 -> v64 (#2015): each tool's own rpm / feed is its Unknown
+        // cutting row (derived where the tool is read); absent stock
+        // material states none.
+        // v64 -> v65 (#2133): absent tilt basis preserves the legacy frame.
+        // Saving writes v65 so old readers cannot drop an explicit basis.
+        // v65 -> v66 (#1962): absent trunnion fields and `controller_rtcp`
+        // read as before (tool_rh, RTCP inferred from tilt). Saving writes
+        // v66 so old readers cannot drop `controller_rtcp: false`.
+        // v66 -> v67 (#1720): a WCS may record flipped axes; absent is
+        // no flip.
         notes = super::wcs_one::settle(&mut file, from)?;
         notes.extend(super::fidelity_migrate::settle(&mut file.entities, from));
         // v59 -> v60 (#902): the document's unit is its programs' unit;
@@ -556,7 +567,22 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
             Some(w) => crate::schema::BetweenSetups::from_word(w)
                 .ok_or_else(|| corrupt(format!("unknown between-setups choice {w:?}")))?,
         },
+        // #760: an absent key is the default bake into XY.
+        wcs_rotation: match file.post_options.as_ref().and_then(|o| o.wcs_rotation.as_deref()) {
+            None => crate::schema::WcsRotationOutput::default(),
+            Some(w) => crate::schema::WcsRotationOutput::from_word(w)
+                .ok_or_else(|| corrupt(format!("unknown wcs-rotation choice {w:?}")))?,
+        },
     };
+    let mut doc_script = crate::schema::PostScriptOptions {
+        by_post: file
+            .post_options
+            .as_ref()
+            .map(|o| o.script.clone())
+            .unwrap_or_default(),
+    };
+    doc_script.normalize();
+    crate::commands::post_script_options::validate_post_map(&doc_script).map_err(corrupt)?;
     // The program identity (#258): checked by `SetProgramInfo`'s rules,
     // so a hand-edited value they refuse is a corrupt file, refused
     // before any world write; absent is nothing stated.
@@ -578,6 +604,18 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
     // in the list must not leave a half-loaded document behind.
     for dto in &file.entities {
         validate_kind(dto, dto.kind.unwrap_or(EntityKind::Model))?;
+    }
+    for dto in &mut file.entities {
+        if let Some(op) = &mut dto.operation
+            && op.tool.is_empty()
+            && matches!(op.params.to_params(), OpParams::WireContour(_))
+        {
+            // Never trust a pre-tool generation stamp or cached path. Keep the
+            // machine's condition (including its wire diameter) unchanged.
+            op.stamp = None;
+            op.cache = None;
+            notes.push(format!("operation '{}': legacy Wire Contour has no wire tool; assign a wire tool before generating or posting", dto.name));
+        }
     }
     super::setup_links::check(&file)?;
     let keys: std::collections::HashSet<&str> = file.entities.iter()
@@ -639,6 +677,7 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
     // refusal is the net (`script_source` reads both, and both refuse
     // by name when gone).
     crate::posting::post_options_set(world, post_options);
+    crate::setup_post_options::script_document_set(world, doc_script);
     crate::posting::program_info_set(world, program);
     crate::posting::post_set(
         world,
@@ -695,6 +734,7 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                 crate::mesh_open::set(world, &entity, dto.mesh_open.as_deref());
                 // #1054: validate_kind refused a budget out of bounds.
                 crate::model_fidelity::set_budget(world, &entity, dto.facet_budget);
+                crate::step_source::set(world, &entity, dto.step_source.as_deref());
             }
             EntityKind::Stock => {
                 // validate_kind already refused these; Result, never unwrap.
@@ -725,6 +765,8 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                 entity.entity_view(world).set(StockDef {
                     shape: shape.clone(),
                 });
+                // #2015: the word was judged at parse (StockMaterialWord).
+                crate::stock_material::land_entity(world, &entity, dto.stock_material.map(|w| w.0));
                 // #1094: the mark lands only on a from-model stock, naming
                 // its source; anywhere else it means nothing and is dropped.
                 // The print is the mark's check (third review): no print,
@@ -742,6 +784,10 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
             }
             EntityKind::Wcs => {
                 entity.entity_view(world).add(Wcs);
+                // #1720: absent is no flip (every pre-v67 file).
+                if let Some(f) = dto.flip {
+                    crate::setup_wcs_flip::set(world, &entity, [f.x, f.y, f.z]);
+                }
             }
             EntityKind::Entry => super::program_entry_dto::apply(world, &entity, dto.entry)?,
             EntityKind::Tool => {
@@ -848,6 +894,16 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                     None => None,
                     Some(o) => Some(o.to_options(&dto.name).map_err(corrupt)?),
                 };
+                let post_properties = match sdto.post_properties {
+                    None => None,
+                    Some(by_post) => {
+                        let mut s = crate::schema::PostScriptOptions { by_post };
+                        s.normalize();
+                        crate::commands::post_script_options::validate_post_map(&s)
+                            .map_err(|e| corrupt(format!("setup '{}': {e}", dto.name)))?;
+                        Some(s)
+                    }
+                };
                 // #1031: a limit no command would accept is a corrupt file,
                 // never a guessed one.
                 if let Some(why) = sdto.workholding_max_rpm.and_then(crate::setup_workholding::invalid) {
@@ -870,6 +926,7 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                     relative_to: sdto.relative_to.clone(),
                     stock_source,
                     post_options,
+                    post_properties,
                     // #821: absent in every earlier file - states none.
                     nose_to_axis: sdto.nose_to_axis,
                     workholding_max_rpm: sdto.workholding_max_rpm,

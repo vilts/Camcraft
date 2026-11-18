@@ -109,6 +109,7 @@ pub fn op_pick_locked(state: &State) -> bool {
         && !crate::wcs_pick::collecting(state)
         && !crate::plane_pick::collecting(state)
         && !crate::axis_pick::collecting(state)
+        && !crate::start_exit_pick::collecting(state)
 }
 
 /// A click inside the viewport, routed by the pick mode: models,
@@ -142,7 +143,9 @@ pub(crate) fn pick_at(state: &mut State, p: [f32; 2], mods: Mods) {
 /// `feature_click`, or the draft never receives a pick. Disarmed or
 /// paused, the mode's own click behaviour is back.
 pub(crate) fn feature_routed(state: &State) -> bool {
-    state.geo_pick != GeoPick::Model || crate::wcs_pick::collecting(state)
+    state.geo_pick != GeoPick::Model
+        || crate::wcs_pick::collecting(state)
+        || crate::start_exit_pick::collecting(state)
 }
 
 /// Raycast at a logical-px point inside the viewport; queues Select
@@ -389,6 +392,18 @@ pub(crate) struct Gizmo {
     /// dimmed neutral axes. Drawn beside the origin so whose-zero is
     /// whose reads at a glance, with no hover.
     pub name: String,
+    /// #1720: the reversed axes (X, Y, Z) of this WCS; a flipped axis is
+    /// drawn pointing the other way, so the triad shows what is stored.
+    pub flip: [bool; 3],
+}
+
+impl Gizmo {
+    /// The world axis direction `dir` of axis `i`, reversed when that
+    /// axis is flipped.
+    pub(crate) fn axis_dir(&self, i: usize, dir: &[f64; 3]) -> [f64; 3] {
+        let s = if self.flip.get(i).copied().unwrap_or(false) { -1.0 } else { 1.0 };
+        [dir[0] * s, dir[1] * s, dir[2] * s]
+    }
 }
 
 /// The axis inks on a light viewport (#698): the dark set washes out on
@@ -481,6 +496,7 @@ pub(crate) fn gizmos(state: &State) -> Vec<Gizmo> {
             rot: loc.rot,
             world_axes: false,
             name: name.clone(),
+            flip: camcraft_app::setup_wcs_flip::of_entity(&state.world, &entity),
         });
     }
     let claims_origin = out.iter().any(|g| {
@@ -490,7 +506,7 @@ pub(crate) fn gizmos(state: &State) -> Vec<Gizmo> {
             && g.rot[1].abs() < 1e-6
             && g.rot[2].abs() < 1e-6
             && (1.0 - g.rot[3].abs()).abs() < 1e-6;
-        on_spot && unrotated
+        on_spot && unrotated && !g.flip.iter().any(|f| *f)
     });
     if !claims_origin && state.show_world_axes {
         out.push(Gizmo {
@@ -498,6 +514,7 @@ pub(crate) fn gizmos(state: &State) -> Vec<Gizmo> {
             rot: [0.0, 0.0, 0.0, 1.0],
             world_axes: true,
             name: WORLD_LABEL.to_string(),
+            flip: [false; 3],
         });
     }
     out
@@ -580,7 +597,7 @@ pub(crate) fn feature_segments(
             }
         }
         FeatureSel::Chain(cid) => {
-            let Some(chain) = feature::resolve_chain(&features, cid) else {
+            let Some(chain) = camcraft_app::model::resolve_chain(&features, cid) else {
                 return;
             };
             let pts = feature::chain_points(&features, &chain);
@@ -725,6 +742,7 @@ pub(crate) fn overlay_labels(state: &State, aspect: f64) -> Vec<([f32; 2], [f32;
             out.push(([uv[0], uv[1] + NAME_DROP_UV], c, gizmo.name.clone()));
         }
         for (axis, (rgb, dir)) in axes().iter().enumerate() {
+            let dir = gizmo.axis_dir(axis, dir);
             let p = transform_point(
                 Point3::new(
                     dir[0] * len * 1.08,
@@ -764,7 +782,8 @@ pub(crate) fn gizmo_segments(state: &State, aspect: f64) -> Vec<([f32; 2], [f32;
         let Some(o) = project_uv(&mvp, gizmo.pos) else {
             continue;
         };
-        for (rgb, dir) in &axes() {
+        for (axis, (rgb, dir)) in axes().iter().enumerate() {
+            let dir = gizmo.axis_dir(axis, dir);
             let p = transform_point(Point3::new(dir[0] * len, dir[1] * len, dir[2] * len), base, gizmo.rot);
             let Some(tip) = project_uv(&mvp, [p.x, p.y, p.z]) else {
                 continue;
@@ -803,7 +822,9 @@ const GRID_MAX_COORD: f64 = 1.0e9;
 /// Every fifth line is a major one (0.5, 1, 5, 10, 50 ... on a 1-2-5 step).
 const GRID_MAJOR_EVERY: i64 = 5;
 
-/// The Z=0 ground grid: the machine table plane under the part, one line
+/// The ground grid: the floor under the bodies (#2172: at
+/// [`crate::floor::floor_z`], the lowest point of the model, the stock and
+/// the setup's fixtures, so they all stand on it), one line
 /// per 1-2-5 step of `dist / 10`, centred on the camera target and snapped
 /// to round machine coordinates so the spacing reads in whole millimetres
 /// at any zoom. World-space geometry in the overlay buffer, not a
@@ -829,6 +850,7 @@ pub(crate) fn ground_grid_lines(state: &State) -> Vec<[f32; 6]> {
     {
         return Vec::new();
     }
+    let z = crate::floor::floor_z(state);
     let reach = step * GRID_HALF_STEPS as f64;
     let (k0x, k1x) = (
         ((cx - reach) / step).floor() as i64,
@@ -845,12 +867,12 @@ pub(crate) fn ground_grid_lines(state: &State) -> Vec<[f32; 6]> {
     for k in k0y..=k1y {
         let y = k as f64 * step;
         let c = grid_ink(k, ciy);
-        push_line(&mut out, Point3::new(cx - reach, y, 0.0), Point3::new(cx + reach, y, 0.0), c);
+        push_line(&mut out, Point3::new(cx - reach, y, z), Point3::new(cx + reach, y, z), c);
     }
     for k in k0x..=k1x {
         let x = k as f64 * step;
         let c = grid_ink(k, cix);
-        push_line(&mut out, Point3::new(x, cy - reach, 0.0), Point3::new(x, cy + reach, 0.0), c);
+        push_line(&mut out, Point3::new(x, cy - reach, z), Point3::new(x, cy + reach, z), c);
     }
     out
 }
@@ -906,7 +928,8 @@ pub(crate) fn collect_overlay(state: &State) -> Vec<[f32; 6]> {
     let mut out: Vec<[f32; 6]> = Vec::new();
     for gizmo in gizmos(state) {
         let (px, py, pz) = (ftoz(gizmo.pos[0]), ftoz(gizmo.pos[1]), ftoz(gizmo.pos[2]));
-        for (rgb, dir) in &axes() {
+        for (axis, (rgb, dir)) in axes().iter().enumerate() {
+            let dir = gizmo.axis_dir(axis, dir);
             let p = transform_point(
                 Point3::new(dir[0] * len, dir[1] * len, dir[2] * len),
                 Point3::new(gizmo.pos[0], gizmo.pos[1], gizmo.pos[2]),
@@ -941,11 +964,12 @@ pub(crate) fn collect_overlay(state: &State) -> Vec<[f32; 6]> {
             }
         }
     }
-    out.extend(toolpath_lines(state));
-    out.extend(region_lines(state));
-    out.extend(height_plane_lines(state));
-    out.extend(crate::work_envelope::envelope_lines(state));
-    out.extend(selection_feature_lines(state));
+    use crate::frame_cost::time;
+    out.extend(time("scene/overlay.toolpaths", || toolpath_lines(state)));
+    out.extend(time("scene/overlay.regions", || region_lines(state)));
+    out.extend(time("scene/overlay.height_planes", || height_plane_lines(state)));
+    out.extend(time("scene/overlay.envelope", || crate::work_envelope::envelope_lines(state)));
+    out.extend(time("scene/overlay.selection_features", || selection_feature_lines(state)).iter().copied());
     capped(out)
 }
 
@@ -1140,7 +1164,7 @@ pub(crate) fn region_lines(state: &State) -> Vec<[f32; 6]> {
             continue; // the region plane's source is gone - draw nothing
                       // rather than an outline at a guessed level
         };
-        if let Some(region) = operation::region_of(&state.world, &op) {
+        if let Some(region) = crate::frame_memo::region_of(&state.world, &name, &op) {
             for l in region.loops() {
                 let pts = l.points();
                 if pts.len() < 3 {
@@ -1191,7 +1215,7 @@ pub(crate) fn shown_regions(state: &State) -> Vec<(f64, Option<Region>)> {
         let Some(op) = model::operation_of(&state.world, &entity) else {
             continue;
         };
-        let region = operation::region_of(&state.world, &op);
+        let region = crate::frame_memo::region_of(&state.world, &name, &op);
         if let Some(z) = operation::region_z(&state.world, op.setup.as_deref(), Some(&op.src), &op.params)
             && (region.is_some() || !operation::chains_of(&state.world, &op).is_empty())
         {
@@ -1682,7 +1706,18 @@ pub(crate) fn height_plane_lines(state: &State) -> Vec<[f32; 6]> {
 /// selection gates as the rest of `collect_overlay`, so picks hold their
 /// place while orbiting. A vanished pick - hidden model, deleted entity,
 /// stale id - draws nothing rather than a ghost, the hover rule again.
-pub(crate) fn selection_feature_lines(state: &State) -> Vec<[f32; 6]> {
+///
+/// #2250: the lines are built when the input changes and read from
+/// [`crate::pick_line_memo`] on other frames.
+pub(crate) fn selection_feature_lines(state: &State) -> std::sync::Arc<[[f32; 6]]> {
+    let items = shown_picks(state);
+    crate::pick_line_memo::lines(state, &items, overlay(Overlay::Pick), || gizmo_len(state), || feature_lines(state, &items))
+}
+
+/// [`selection_feature_lines`] without the memo: one real build, for the
+/// pins that prove a hit equals a fresh build.
+#[cfg(test)]
+pub(crate) fn selection_feature_lines_fresh(state: &State) -> Vec<[f32; 6]> {
     feature_lines(state, &shown_picks(state))
 }
 
@@ -1760,7 +1795,7 @@ fn feature_lines(state: &State, items: &[GeoSel]) -> Vec<[f32; 6]> {
                 }
             }
             FeatureSel::Chain(cid) => {
-                let Some(chain) = feature::resolve_chain(&features, cid) else {
+                let Some(chain) = camcraft_app::model::resolve_chain(&features, cid) else {
                     continue;
                 };
                 let pts = feature::chain_points(&features, &chain);

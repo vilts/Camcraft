@@ -9,7 +9,7 @@
 //! Provenance: our own UI over 3-2-1 fixturing practice; no vendor
 //! material consulted.
 
-use camcraft_app::fixture_locate::{self, LocateOffset, LocateSpec, MAX_MATES, Mate, Mover};
+use camcraft_app::fixture_locate::{self, LocateBody, LocateOffset, LocateSpec, MAX_MATES, Mate, Mover};
 use camcraft_app::geometry::units;
 use camcraft_app::model;
 use camcraft_app::operation::{FeatureSel, GeoSel};
@@ -24,6 +24,9 @@ pub struct LocateDraft {
     /// The part; empty until the first part pick names it (or the page
     /// that armed the draft did).
     pub part: String,
+    /// The body the first pick of each mate is on (#2173): the stock by
+    /// default when the fixture's setup has one - a vise holds the blank.
+    pub body: LocateBody,
     pub mover: Mover,
     pub mates: Vec<Mate>,
     /// The part half of the mate being picked, waiting for its fixture half.
@@ -38,6 +41,7 @@ impl LocateDraft {
         LocateSpec {
             part: self.part.clone(),
             fixture: self.fixture.clone(),
+            body: self.body,
             mates: self.mates.clone(),
             offset: self.offset,
         }
@@ -53,6 +57,36 @@ pub fn check(state: &State, d: &LocateDraft) -> Result<(), String> {
 
 /// The part already sits where the mates and the offset put it.
 pub const STILL: &str = "nothing would move";
+
+/// The held body's name for this draft: the part, or the stock of the
+/// fixture's setup (#2173). Empty when not known yet.
+#[must_use]
+pub fn held(state: &State, d: &LocateDraft) -> String {
+    match d.body {
+        LocateBody::Part => d.part.clone(),
+        LocateBody::Stock => fixture_locate::stock_of(&state.world, &d.fixture).unwrap_or_default(),
+    }
+}
+
+/// The held body in plain words: "part" or "stock".
+#[must_use]
+pub fn noun(d: &LocateDraft) -> &'static str {
+    match d.body {
+        LocateBody::Part => "part",
+        LocateBody::Stock => "stock",
+    }
+}
+
+/// Hold the other body: the mates picked so far are on the old one, so
+/// they are dropped (#2173).
+pub fn set_body(state: &mut State, body: LocateBody) {
+    let Some(d) = state.locate_pick.as_mut() else { return };
+    if d.body != body {
+        d.body = body;
+        d.mates.clear();
+        d.half = None;
+    }
+}
 
 /// Is this draft's refusal only "it is already there" (a located draft
 /// waiting for an Offset or Turn edit)?
@@ -124,11 +158,15 @@ pub fn arm(state: &mut State, fixture: &str, part: Option<&str>) {
         [only] => Some(only.clone()),
         _ => None,
     });
-    state.locate_pick = Some(LocateDraft { fixture: fixture.to_owned(), part: part.unwrap_or_default(), ..LocateDraft::default() });
+    // #2173: a vise holds the stock, so the stock is the default body
+    // when the fixture's setup has one.
+    let body = if fixture_locate::stock_of(&state.world, fixture).is_some() { LocateBody::Stock } else { LocateBody::Part };
+    let d = LocateDraft { fixture: fixture.to_owned(), part: part.unwrap_or_default(), body, ..LocateDraft::default() };
+    state.status = format!("{fixture}: pick a {} face or point, then the {fixture} face or point it sits on", noun(&d));
+    state.locate_pick = Some(d);
     if !matches!(state.geo_pick, GeoPick::Face | GeoPick::Vertex) {
         state.geo_pick = GeoPick::Face;
     }
-    state.status = format!("{fixture}: pick a part face or point, then the {fixture} face or point it sits on");
 }
 
 /// Stop collecting; the draft is dropped.
@@ -171,6 +209,8 @@ pub fn take(state: &mut State, pick: GeoSel) {
     let is_part = model::find_by_name(&state.world, &pick.entity)
         .is_some_and(|e| camcraft_app::setup_align::is_part(&state.world, &e));
     let fixture = d.fixture.clone();
+    let (body, noun) = (d.body, noun(d));
+    let stock = held(state, d);
     if pick.entity == fixture {
         let Some(d) = state.locate_pick.as_mut() else { return };
         state.status = match d.half.take() {
@@ -182,12 +222,23 @@ pub fn take(state: &mut State, pick: GeoSel) {
             // A ray that meets the steel first cannot reach a part face
             // inside it: say how to get there.
             None => format!(
-                "pick the part's face or point first, then {words} - hide the fixture (eye) to pick part faces hidden in it"
+                "pick the {noun}'s face or point first, then {words} - hide the fixture (eye) to pick {noun} faces hidden in it"
             ),
         };
         return;
     }
     let Some(d) = state.locate_pick.as_mut() else { return };
+    if body == LocateBody::Stock {
+        state.status = if stock.is_empty() {
+            "the fixture's setup has no stock - set the stock first, or choose to locate the part".to_owned()
+        } else if pick.entity != stock {
+            format!("'{}' is neither the stock '{stock}' nor the fixture '{fixture}' - pick a stock face or point", pick.entity)
+        } else {
+            d.half = Some(pick);
+            format!("{words} - now pick the {fixture} face or point it sits on")
+        };
+        return;
+    }
     state.status = if !is_part {
         format!("'{}' is neither the part nor the fixture '{fixture}'", pick.entity)
     } else if !d.part.is_empty() && d.part != pick.entity && !d.mates.is_empty() {
@@ -205,12 +256,12 @@ pub fn take(state: &mut State, pick: GeoSel) {
 pub fn next_hint(d: &LocateDraft, check: &Result<(), String>) -> String {
     match (d.half.as_ref(), d.mates.len(), check) {
         (Some(_), _, _) => format!("pick the {} face or point it sits on", d.fixture),
-        (None, 0, _) => "pick a part face or point in the viewport (the floor mate first)".into(),
+        (None, 0, _) => format!("pick a {} face or point in the viewport (the floor mate first)", noun(d)),
         (None, _, Err(w)) if w == STILL => {
             "located - edit Offset or Turn to adjust (one more undo step), pick another mate, or Stop locating".into()
         }
         (None, _, Err(why)) => format!("not yet - {why}; Remove last and re-pick"),
-        (None, n, Ok(())) if n >= MAX_MATES => "the part is fully located - Apply".into(),
+        (None, n, Ok(())) if n >= MAX_MATES => format!("the {} is fully located - Apply", noun(d)),
         (None, 1, Ok(())) => {
             "Apply (one face mate sets height and tilt only), or pick the next mate (the fixed jaw) to place X / Y".into()
         }

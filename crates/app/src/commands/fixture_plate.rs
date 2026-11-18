@@ -72,6 +72,8 @@ impl InsertPlate {
             note: None,
             datum: Location { pos: Point3::ZERO, rot: IDENTITY_Q },
             facets,
+            step_source: None,
+            profile: None,
         };
         let inner = InsertFixture::new(world, &entry, setup, pick)?.with_plate(def);
         Ok(Self { inner })

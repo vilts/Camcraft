@@ -21,7 +21,7 @@ use serde_json::{json, Value};
 use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, ImportModel, SetStock};
 use camcraft_app::geo2d::Point2;
 use camcraft_app::geometry::feature::FaceKind;
-use camcraft_app::geometry::{Mesh, Point3, quat_from_yaw};
+use camcraft_app::geometry::{Mesh, Point3};
 use camcraft_app::mcp::Server;
 use camcraft_app::model;
 use camcraft_app::operation::{FeatureSel, GeoSel, Height, OpParams, SrcRef};
@@ -50,8 +50,9 @@ fn pocket_block() -> Mesh {
 }
 
 /// [`pocket_block`] as "part", and its stock: axis-aligned, or the same box
-/// turned a quarter about Z (the same footprint, but a rotation the
-/// program sim refuses to model).
+/// turned [`pocket_support::OBLIQUE`] about Z (the same footprint within
+/// 1e-4 mm, but a turn the program sim refuses to model). #2177: a
+/// quarter turn is no such device - the sim judges a square-turned box.
 fn job(rotated: bool) -> (World, History) {
     let world = new_world();
     let mut h = History::default();
@@ -59,16 +60,16 @@ fn job(rotated: bool) -> (World, History) {
     h.execute(&world, AddTool::new(&world, TOOL, tool).expect("tool"));
     h.execute(&world, ImportModel::from_mesh("part", pocket_block()));
     // A box stock stands centred on its place, so pos at the origin
-    // puts [-20, 20]^2 over the part and a quarter turn about Z keeps
-    // the footprint.
-    let rot = if rotated { quat_from_yaw(std::f64::consts::FRAC_PI_2) } else { Location::default().rot };
-    let at = Location { pos: Point3::new(0.0, 0.0, 0.0), rot };
+    // puts [-20, 20]^2 over the part and a turn about Z keeps the
+    // footprint.
+    let at = Location { pos: Point3::new(0.0, 0.0, 0.0), rot: pocket_support::stock_turn(rotated) };
     h.execute(&world, SetStock::new(&world, StockShape::Box { dx: 40.0, dy: 40.0, dz: 8.0 }, at).expect("stock"));
     let b = model::stock_world_aabb_for(&world, None).expect("stock box");
-    let on = |v: f64, want: f64| (v - want).abs() < 1e-9;
+    // The oblique turn moves the corners by 20 * sqrt(2) * 1e-6 mm.
+    let (on, on_z) = (|v: f64, want: f64| (v - want).abs() < 1e-4, |v: f64, want: f64| (v - want).abs() < 1e-9);
     assert!(
-        on(b.min.x, -20.0) && on(b.min.y, -20.0) && on(b.min.z, 0.0)
-            && on(b.max.x, 20.0) && on(b.max.y, 20.0) && on(b.max.z, 8.0),
+        on(b.min.x, -20.0) && on(b.min.y, -20.0) && on_z(b.min.z, 0.0)
+            && on(b.max.x, 20.0) && on(b.max.y, 20.0) && on_z(b.max.z, 8.0),
         "stock at {:?}..{:?}",
         b.min,
         b.max
@@ -135,9 +136,10 @@ fn gouges(w: &[Warning]) -> usize {
 #[test]
 fn a_picked_circle_cut_below_its_floor_gouges_and_never_posts_where_the_sim_cannot_judge() {
     // Bottom Z 1 under a floor at Z 4: the rings sink 3 mm into the
-    // part. With the stock turned, the program sim refuses to model it,
-    // so the operation's own verdict is the only judge - before #1550 it
-    // was empty (law None) and the overcut could post.
+    // part. With the stock turned off the axes, the program sim refuses
+    // to model it, so the operation's own verdict is the only judge -
+    // before #1550 it was empty (law None) and the overcut could post.
+    // #2177: a quarter turn is judged by the sim, so it is no device.
     let (world, mut h) = job(true);
     let src = floor_pick(&world);
     let warns = warnings_of(&world, &mut h, src, circular(1.0));
@@ -148,6 +150,7 @@ fn a_picked_circle_cut_below_its_floor_gouges_and_never_posts_where_the_sim_cann
     assert!(err.contains("post blocked"), "{err}");
     // Held by the operation's own gouge, not only by some other finding.
     assert!(err.contains("C1: move") && err.contains("cuts past the finish surface"), "{err}");
+    assert!(pocket_support::oblique_refused(&world), "the device holds: the program sim does not judge this stock");
     assert!(!nc.exists(), "blocked output is never written");
 }
 
@@ -245,14 +248,15 @@ fn fixture_stock_covers_the_part_in_both_cases() {
     for rotated in [false, true] {
         let (world, _) = job(rotated);
         let b = model::stock_world_aabb_for(&world, None).expect("stock box");
-        let on = |v: f64, want: f64| (v - want).abs() < 1e-9;
+        // The oblique turn moves the corners by 20 * sqrt(2) * 1e-6 mm.
+        let (on, on_z) = (|v: f64, want: f64| (v - want).abs() < 1e-4, |v: f64, want: f64| (v - want).abs() < 1e-9);
         assert!(
             on(b.min.x, -20.0)
                 && on(b.min.y, -20.0)
-                && on(b.min.z, 0.0)
+                && on_z(b.min.z, 0.0)
                 && on(b.max.x, 20.0)
                 && on(b.max.y, 20.0)
-                && on(b.max.z, 8.0),
+                && on_z(b.max.z, 8.0),
             "rotated {rotated}: stock at {:?}..{:?}",
             b.min,
             b.max

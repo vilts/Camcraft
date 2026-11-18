@@ -1,10 +1,5 @@
-; HSMW-CL v1 scale=0.001mm moves=14
+; HSMW-CL v1 scale=0.001mm moves=9
 START 0 0 5000
-Rapid 0 0 2000
-Plunge 0 0 0 F100000
-Feed 60000 0 0 F500000
-Rapid 60000 0 5000
-Rapid 0 0 5000
 Rapid 0 0 2000
 Plunge 0 0 -3000 F100000
 Feed 60000 0 -3000 F500000

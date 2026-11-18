@@ -74,6 +74,7 @@ fn contour_params() -> OpParams {
 
 fn drill_params(hole: camcraft_app::drilling::Hole, top_z: f64, clearance_z: f64) -> OpParams {
     OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(clearance_z),
         retract_z: None,
         top_z: Height::fixed(top_z),
@@ -680,7 +681,7 @@ fn the_built_in_is_the_default_post_and_needs_no_choice() {
     let (label, cps) = posting::script_source(&world).expect("the built-in always resolves");
     assert_eq!(
         cps,
-        posting::BUILTINS[0].1,
+        camcraft_app::posting::shipped_posts().expect("the shipped posts read")[0].1,
         "the built-in is the shipped script text"
     );
     assert!(label.contains("built-in"));

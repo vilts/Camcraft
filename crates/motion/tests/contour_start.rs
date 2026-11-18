@@ -4,7 +4,8 @@
 //! case the first slice does not certify is refused by name. #1473: the
 //! exit point - the ring cut all the way round and on to the pick's
 //! projection, the lead-out there - and the picks no lead fits at,
-//! refused by name rather than moved.
+//! refused by name rather than moved. A picked start with tabs: the tab
+//! windows measured from the pick, every level entering there.
 //!
 //! Gate map (M4.4): covers camcraft_motion::machining2d (contour,
 //! contour_start, contour_chain), camcraft_motion::approach.
@@ -14,6 +15,7 @@ use camcraft_motion::entry::Entry3D;
 use camcraft_motion::geo2d::{Loop, Point2, Region};
 use camcraft_motion::links::{Approach, Compensation, Links};
 use camcraft_motion::machining2d::{contour, contour_along_chain, ContourParams, Lead, Side};
+use camcraft_motion::verify::{crossed_pairs, verify, Mode, ToolGeom, VerifyContext, Warning};
 
 fn square() -> Region {
     let pts = [(0.0, 0.0), (40.0, 0.0), (40.0, 40.0), (0.0, 40.0)];
@@ -113,14 +115,117 @@ fn a_non_finite_pick_is_refused_before_any_move() {
 }
 
 #[test]
-fn tabs_and_control_compensation_with_a_pick_are_refused_by_name() {
+fn control_compensation_with_a_pick_is_refused_by_name() {
     let pick = Some(Point2::new(44.0, 20.0));
-    let tabs = refusal(&ContourParams { tab_count: 2, tab_width: 4.0, tab_height: 1.0, ..params(pick) });
-    assert!(tabs.contains("with tabs"), "{tabs}");
     let mut p = params(pick);
     p.links.approach.compensation = Compensation::Control;
     let comp = refusal(&p);
     assert!(comp.contains("compensation"), "{comp}");
+}
+
+/// Does a feed move at level `z` pass over the point `w`?
+fn cut_at(t: &Toolpath, z: f64, w: Point2) -> bool {
+    t.moves.iter().any(|m| {
+        m.kind == MoveKind::Feed && m.from.z == z && m.to.z == z && {
+            let (a, b) = (Point2::new(m.from.x, m.from.y), Point2::new(m.to.x, m.to.y));
+            let cross = (b.x - a.x) * (w.y - a.y) - (b.y - a.y) * (w.x - a.x);
+            let dot = (w.x - a.x) * (b.x - a.x) + (w.y - a.y) * (b.y - a.y);
+            let ll = (b.x - a.x).powi(2) + (b.y - a.y).powi(2);
+            cross.abs() < 1e-6 && dot >= -1e-9 && dot <= ll + 1e-9
+        }
+    })
+}
+
+fn tabbed(pick: Option<Point2>) -> ContourParams {
+    // The -4 level stands below the 1 mm tab top; -2 stands above it.
+    ContourParams { tab_count: 2, tab_width: 4.0, tab_height: 1.0, ..params(pick) }
+}
+
+#[test]
+fn a_picked_start_with_tabs_enters_every_level_at_its_projection() {
+    // #1473: the tab windows are measured from the pick, so the tabbed
+    // level's first window begins at the pick's foot as well.
+    let t = contour(&square(), &tabbed(Some(Point2::new(44.0, 20.0)))).unwrap();
+    let starts = ring_starts(&t);
+    assert!(starts.len() >= 2, "every level, the tabbed one too: {starts:?} {:?}", t.notes);
+    for s in &starts {
+        assert!((s.x - 43.0).abs() < 1e-9 && (s.y - 20.0).abs() < 1e-9, "starts at the pick's foot: {s:?}");
+    }
+    // Climb walks the outside ring clockwise: down the right wall from
+    // the pick. The last tab ends on the seam, so the 4 mm just above
+    // the pick stand uncut at the tabbed level and are cut above it.
+    assert!(cut_at(&t, -4.0, Point2::new(43.0, 18.0)), "the first window cuts on from the pick");
+    assert!(!cut_at(&t, -4.0, Point2::new(43.0, 22.0)), "the tab before the pick stands");
+    assert!(cut_at(&t, -2.0, Point2::new(43.0, 22.0)), "the untabbed level cuts the whole ring");
+}
+
+#[test]
+fn a_picked_start_with_tabs_refuses_a_linear_lead_in() {
+    let mut p = tabbed(Some(Point2::new(44.0, 20.0)));
+    p.lead = Lead::Linear { length: 5.0 };
+    p.links.approach.lead_out = Some(Lead::None);
+    let why = refusal(&p);
+    assert!(why.contains("start point (44.000, 20.000)") && why.contains("tabs") && why.contains("lead-in"), "{why}");
+}
+
+#[test]
+fn a_picked_start_with_tabs_refuses_an_independent_linear_lead_out() {
+    let mut p = tabbed(Some(Point2::new(44.0, 20.0)));
+    p.links.approach.lead_out = Some(Lead::Linear { length: 5.0 });
+    let why = refusal(&p);
+    assert!(why.contains("start point (44.000, 20.000)") && why.contains("tabs") && why.contains("lead-out"), "{why}");
+}
+
+#[test]
+fn a_picked_start_with_tabs_refuses_arc_and_tangential_leads() {
+    for shape in [Lead::Arc { radius: 2.0 }, Lead::Tangential { radius: 2.0 }] {
+        for incoming in [true, false] {
+            let mut p = tabbed(Some(Point2::new(44.0, 20.0)));
+            if incoming {
+                p.lead = shape;
+                p.links.approach.lead_out = Some(Lead::None);
+            } else {
+                p.links.approach.lead_out = Some(shape);
+            }
+            let why = refusal(&p);
+            let name = if incoming { "lead-in" } else { "lead-out" };
+            assert!(why.contains("start point") && why.contains("tabs") && why.contains(name), "{why}");
+        }
+    }
+}
+
+#[test]
+fn a_picked_start_with_tabs_refuses_extensions_even_without_leads() {
+    for lead in [Lead::None, Lead::Perpendicular { length: 5.0 }] {
+        for incoming in [true, false] {
+            let mut p = tabbed(Some(Point2::new(44.0, 20.0)));
+            p.lead = lead;
+            if incoming {
+                p.links.approach.ext_in = 5.0;
+            } else {
+                p.links.approach.ext_out = 5.0;
+            }
+            let why = refusal(&p);
+            assert!(why.contains("start point") && why.contains("tabs") && why.contains("extension"), "{why}");
+        }
+    }
+}
+
+#[test]
+fn a_picked_start_with_tabs_without_leads_keeps_the_tab() {
+    let mut p = tabbed(Some(Point2::new(44.0, 20.0)));
+    p.lead = Lead::None;
+    let t = contour(&square(), &p).unwrap();
+    assert!(!cut_at(&t, -4.0, Point2::new(43.0, 22.0)), "the tab before the pick stands");
+}
+
+#[test]
+fn tabs_without_a_pick_keep_their_automatic_windows() {
+    let base = contour(&square(), &ContourParams { links: Links::PLANAR, ..tabbed(None) }).unwrap();
+    let unset = contour(&square(), &tabbed(None)).unwrap();
+    assert_eq!(base.moves, unset.moves, "an unset start point leaves the tab windows as they were");
+    let picked = contour(&square(), &tabbed(Some(Point2::new(44.0, 20.0)))).unwrap();
+    assert_ne!(base.moves, picked.moves, "the pick moved the tab windows");
 }
 
 #[test]
@@ -257,4 +362,59 @@ fn a_picked_exit_no_lead_out_fits_at_is_refused_not_moved() {
         Err(e) => e.to_string(),
     };
     assert!(why.contains("exit point (20.000, 3.000)") && why.contains("no lead-out fits"), "{why}");
+}
+
+fn plate() -> Region {
+    let pts = [(-30.0, -20.0), (30.0, -20.0), (30.0, 20.0), (-30.0, 20.0)];
+    Region::new(vec![Loop::new(pts.iter().map(|&(x, y)| Point2::new(x, y)).collect()).unwrap()]).unwrap()
+}
+
+fn assert_no_crossings_or_gouges(region: &Region, p: &ContourParams) -> Toolpath {
+    let path = contour(region, p).unwrap();
+    let pairs = crossed_pairs(&path, 0.01);
+    assert!(pairs.is_empty(), "expected no XY feed crossings, got {pairs:?}");
+    let tool = ToolGeom { radius: 3.0, nose_radius: 0.0, flute_len: 20.0, shank_radius: 3.0, shank_len: 10.0, holder_radius: 15.0, holder_len: 30.0 };
+    let cx = VerifyContext { region, tool: &tool, mode: Mode::Boundary, stock_top_z: p.top_z, clearance_z: p.clearance_z, gouge_tol: 0.01, z_tol: 0.05, ..VerifyContext::default() };
+    let bad: Vec<Warning> = verify(&path, &cx).into_iter().filter(|w| matches!(w, Warning::Crossing { .. } | Warning::Gouge { .. })).collect();
+    assert!(bad.is_empty(), "expected no Crossing/Gouge warnings, got {bad:?}");
+    path
+}
+
+#[test]
+fn an_exit_past_a_rounded_corner_retraces_the_corner_arc_with_no_crossing() {
+    let reg = plate();
+    let p = ContourParams { top_z: 10.0, bottom_z: 7.0, stepdown: 3.0, clearance_z: 15.0, retract_z: 12.0, lead: Lead::Linear { length: 8.0 }, ..with_exit(Some(Point2::new(30.0, 0.0)), Point2::new(0.0, -20.0)) };
+    let t = assert_no_crossings_or_gouges(&reg, &p);
+    let corner_arcs: Vec<_> = t.moves.iter().filter(|m| m.kind == MoveKind::Feed && m.arc.is_some_and(|a| (a.center.x - 30.0).abs() < 1e-3 && (a.center.y + 20.0).abs() < 1e-3)).collect();
+    let mut zs: Vec<f64> = corner_arcs.iter().map(|m| m.to.z).collect();
+    zs.dedup();
+    assert!(!zs.is_empty() && corner_arcs.len() == 2 * zs.len(), "each level cuts the (30,-20) corner once per lap as one arc: {corner_arcs:?}");
+    let last_feed = t.moves.iter().rfind(|m| m.kind == MoveKind::Feed).unwrap();
+    assert!((last_feed.from.x - 0.0).abs() < 1e-6 && (last_feed.from.y + 23.0).abs() < 1e-6, "lead-out leaves at exit projection (0,-23): {last_feed:?}");
+}
+
+#[test]
+fn an_exit_inside_a_rounded_corner_arc_splits_both_laps_with_no_crossing() {
+    let reg = plate();
+    let p = ContourParams { top_z: 10.0, bottom_z: 7.0, stepdown: 3.0, clearance_z: 15.0, retract_z: 12.0, ..with_exit(Some(Point2::new(30.0, 0.0)), Point2::new(32.5, -21.5)) };
+    let t = assert_no_crossings_or_gouges(&reg, &p);
+    let last_feed = t.moves.iter().rfind(|m| m.kind == MoveKind::Feed).unwrap();
+    let r = (last_feed.from.x - 30.0).hypot(last_feed.from.y + 20.0);
+    assert!((r - 3.0).abs() < 1e-4, "lead-out starts on the r=3 corner arc (r={r}): {last_feed:?}");
+
+    // Also a full circle (tessellated 96-gon, fitted into half-turn arcs) with an interior exit angle.
+    let circle_pts: Vec<Point2> = (0..96).map(|i| {
+        let a = std::f64::consts::TAU * (i as f64) / 96.0;
+        Point2::new(20.0 * a.cos(), 20.0 * a.sin())
+    }).collect();
+    let disk = Region::new(vec![Loop::new(circle_pts).unwrap()]).unwrap();
+    assert_no_crossings_or_gouges(&disk, &with_exit(Some(Point2::new(20.0, 0.0)), Point2::new(13.0, -15.0)));
+}
+
+#[test]
+fn an_exit_on_an_oblique_wall_and_across_a_blended_corner_has_no_crossing() {
+    let oblique_pts = [(30.0, 0.0), (10.0, 35.0), (-30.0, 15.0), (-10.0, -25.0)];
+    let poly = Region::new(vec![Loop::new(oblique_pts.iter().map(|&(x, y)| Point2::new(x, y)).collect()).unwrap()]).unwrap();
+    assert_no_crossings_or_gouges(&poly, &with_exit(Some(Point2::new(20.0, 18.0)), Point2::new(10.0, -13.0)));
+    assert_no_crossings_or_gouges(&square(), &ContourParams { blend_turns: true, ..with_exit(Some(Point2::new(44.0, 20.0)), Point2::new(20.0, -4.0)) });
 }

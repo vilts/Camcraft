@@ -52,9 +52,14 @@ fn the_post_page_radio_gives_the_setup_its_own_options() {
     crate::actions::target(&mut harness.state_mut().state, UiTarget::SetupNode("Setup1".into(), SetupPage::Post));
     harness.run_steps(2);
     assert!(harness.query_by_label("Use the document's post options").is_some());
+    // Post rows can extend below the viewport; exercise the real scroll path.
+    harness.get_by_label("This setup has its own post options").scroll_to_me();
+    harness.run_steps(10);
     harness.get_by_label("This setup has its own post options").click();
     harness.run_steps(2);
     assert!(setup_post_options::own(&harness.state().state.world, Some("Setup1")).is_some());
+    harness.get_by_label("Skip pauses and homes").scroll_to_me();
+    harness.run_steps(10);
     harness.get_by_label("Skip pauses and homes").click();
     harness.run_steps(2);
     let world = &harness.state().state.world;
@@ -174,4 +179,23 @@ fn explain_on_the_setup_post_page_leaves_other_setups_unchanged() {
     assert_eq!(setup_post_options::own(&h.state().state.world, Some("Setup2")), None);
     run(&mut h.state_mut().state, CommandKind::Redo);
     assert!(setup_post_options::of(&h.state().state.world, Some("Setup2")).explain);
+}
+
+#[test]
+fn wcs_rotation_on_the_document_post_page_is_undoable() {
+    use camcraft_app::schema::WcsRotationOutput;
+    let mut h = Harness::builder()
+        .with_size(Vec2::new(1280.0, 1100.0))
+        .build_ui_state(frame, ShellUi::seeded());
+    crate::actions::target(&mut h.state_mut().state, UiTarget::SetupNode(String::new(), SetupPage::Post));
+    h.run_steps(3);
+    assert!(h.query_by_label("WCS rotation").is_some(), "document post page shows WCS rotation picker");
+    assert_eq!(setup_post_options::document(&h.state().state.world).wcs_rotation, WcsRotationOutput::Bake);
+
+    super::setup_mount_pages::pick(&mut h, "Bake into XY", "Control rotation (G68 / ROT)");
+    assert_eq!(setup_post_options::document(&h.state().state.world).wcs_rotation, WcsRotationOutput::Control);
+
+    run(&mut h.state_mut().state, CommandKind::Undo);
+    h.run_steps(2);
+    assert_eq!(setup_post_options::document(&h.state().state.world).wcs_rotation, WcsRotationOutput::Bake);
 }

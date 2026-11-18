@@ -1,8 +1,9 @@
 //! The MCP built-in accessory tools (#789): place a generic workholding
 //! accessory (parallels, a 1-2-3 block, a step block, a strap clamp, a
 //! soft jaw, a rotary subplate - #821, a 3-jaw, 4-jaw or collet lathe
-//! chuck - #1442) into a setup - at a pose, or parallels fitted under the
-//! stock inside a built-in vise - and resize a placed one. Each is the
+//! chuck - #1442; its grip direction and stepped jaws - #1468) into a
+//! setup - at a pose, a chuck fitted on the stock, or parallels fitted
+//! under the stock inside a built-in vise - and resize a placed one. Each is the
 //! very undoable command the Fixtures page queues (`InsertAccessory`,
 //! `SetAccessory`), one History step, so `undo` takes it back.
 //!
@@ -21,11 +22,12 @@ use crate::script::{Env, fnum};
 use serde_json::{Map, Value, json};
 
 pub(super) const TOOLS: &[Tool] = &[
-    Tool { name: "add_accessory", description: "Place a built-in workholding accessory as a fixture of a setup (the active one by default): parallels (a pair), block (1-2-3 block), step_block, strap_clamp (strap, stud and heel block; the toe tip at the frame origin on the table, the strap running +X, its underside at clamp_height), soft_jaw or rotary_subplate (#821: the base plate a 4th axis is bolted to - generic default figures, enter your own; its frame's origin on the first pin bore at the underside, +X toward the second; it lands fixed, then goes on a fixture plate's dowel pair with place_on_plate, and its thickness - with every plate under it - raises the rotary's centerline for the index-swing check; its height over the machine table counts too, the larger winning, so one placed on a plate by position is never judged on its own thickness alone), three_jaw_chuck, four_jaw_chuck or collet_chuck (#1442: a lathe chuck - body, jaws or collet nose - its frame's z = 0 the face the work stands on, +Z the spindle axis out of it, the body below; it turns with the part, so the lathe holder law reads it as revolved steel). Either at a position/rotation of its frame (z = 0 its underside), or - a chuck only - fit_to_stock: the chuck closes on the setup's round stock (standing on a vertical axis) at its underside, the grip or collet bore set to the stock's diameter, or - parallels only - under_stock_in_vise: the parallels' height is set so the stock's top stands `above` mm over that built-in vise's jaws, and the vise drops to suit. Optional dimension overrides in mm. One undoable step; nonsense dimensions are refused by name.", schema: s_add, run: add_accessory },
-    Tool { name: "set_accessory", description: "Resize a placed built-in accessory: dimension overrides in mm (and steps for a step block). The mesh is regenerated; one undoable step.", schema: s_set, run: set_accessory },
+    Tool { name: "add_accessory", description: "Place a built-in workholding accessory as a fixture of a setup (the active one by default): parallels (a pair), block (1-2-3 block), step_block, strap_clamp (strap, stud and heel block; the toe tip at the frame origin on the table, the strap running +X, its underside at clamp_height), soft_jaw or rotary_subplate (#821: the base plate a 4th axis is bolted to - generic default figures, enter your own; its frame's origin on the first pin bore at the underside, +X toward the second; it lands fixed, then goes on a fixture plate's dowel pair with place_on_plate, and its thickness - with every plate under it - raises the rotary's centerline for the index-swing check; its height over the machine table counts too, the larger winning, so one placed on a plate by position is never judged on its own thickness alone), three_jaw_chuck, four_jaw_chuck or collet_chuck (#1442: a lathe chuck - body, jaws or collet nose - its frame's z = 0 the face the work stands on, +Z the spindle axis out of it, the body below; it turns with the part, so the lathe holder law reads it as revolved steel; #1468: a jaw chuck's `grip` is outside - the jaws close on the work - or inside - they open into its bore, jaw_length running inward from the grip diameter; step_height with step_depth makes stepped jaws, the work sitting on the step). Either at a position/rotation of its frame (z = 0 its underside), or - a chuck only - fit_to_stock: the chuck closes on the setup's round stock (standing on a vertical axis) at its underside, the grip or collet bore set to the stock's diameter (stepped jaws: the stock on the step; an inside grip is refused - place it by position), or - parallels only - under_stock_in_vise: the parallels' height is set so the stock's top stands `above` mm over that built-in vise's jaws, and the vise drops to suit. Optional dimension overrides in mm. One undoable step; nonsense dimensions are refused by name.", schema: s_add, run: add_accessory },
+    Tool { name: "set_accessory", description: "Resize a placed built-in accessory: dimension overrides in mm (steps for a step block; grip - outside or inside - for a jaw chuck). The mesh is regenerated; one undoable step.", schema: s_set, run: set_accessory },
 ];
 
-/// `a` with every dimension `args.dimensions` names (and `steps`) set.
+/// `a` with every dimension `args.dimensions` names (`steps` and `grip`
+/// too) set.
 fn with_dims(mut a: Accessory, args: &Map<String, Value>) -> Result<Accessory, String> {
     if let Some(d) = args.get("dimensions") {
         let d = d.as_object().ok_or("\"dimensions\" must be an object of mm lengths")?;
@@ -39,6 +41,9 @@ fn with_dims(mut a: Accessory, args: &Map<String, Value>) -> Result<Accessory, S
         let kind = a.label();
         *a.steps_mut().ok_or_else(|| format!("a {kind} has no steps"))? = n;
     }
+    if let Some(g) = args.get("grip").filter(|v| !v.is_null()) {
+        a = a.with_grip(g.as_str().ok_or("\"grip\" must be \"outside\" or \"inside\"")?)?;
+    }
     Ok(a)
 }
 
@@ -50,6 +55,9 @@ fn view(a: &Accessory) -> Value {
     }
     if let Accessory::StepBlock { steps, .. } = a {
         out.insert("steps".into(), json!(steps));
+    }
+    if let Some(g) = a.grip() {
+        out.insert("grip".into(), json!(g.key()));
     }
     Value::Object(out)
 }
@@ -105,7 +113,7 @@ fn set_accessory(env: &mut Env, args: &Map<String, Value>) -> Result<Value, Stri
 
 fn dims_schema() -> Value {
     json!({ "type": "object", "additionalProperties": { "type": "number" },
-        "description": "Dimension overrides, mm. parallels: height, thickness, length, spacing. block: length, width, height. step_block: rise, run, width. strap_clamp: strap_length, strap_width, strap_thickness, stud_diameter, stud_height (above the strap), stud_offset (toe to stud centre), heel_length, clamp_height. soft_jaw: width, height, thickness. rotary_subplate: length, width, thickness, bore_spacing, bore_x (first bore from the -X end), bore_y (bores from the -Y edge), bore_diameter. three_jaw_chuck, four_jaw_chuck: body_diameter, body_length, bore_diameter (through bore), grip_diameter (the work diameter the jaws close on), jaw_length (radial), jaw_width, jaw_height (above the face). collet_chuck: body_diameter, body_length, nose_diameter, nose_length, collet_bore." })
+        "description": "Dimension overrides, mm. parallels: height, thickness, length, spacing. block: length, width, height. step_block: rise, run, width. strap_clamp: strap_length, strap_width, strap_thickness, stud_diameter, stud_height (above the strap), stud_offset (toe to stud centre), heel_length, clamp_height. soft_jaw: width, height, thickness. rotary_subplate: length, width, thickness, bore_spacing, bore_x (first bore from the -X end), bore_y (bores from the -Y edge), bore_diameter. three_jaw_chuck, four_jaw_chuck: body_diameter, body_length, bore_diameter (through bore), grip_diameter (the work diameter the jaws close on), jaw_length (radial: outward from the grip, inward for an inside grip), jaw_width, jaw_height (above the face), step_height and step_depth (stepped jaws: the step the work sits on, its height over the face and its radial reach under the work; both 0 for plain jaws). collet_chuck: body_diameter, body_length, nose_diameter, nose_length, collet_bore." })
 }
 
 fn s_add() -> Value {
@@ -121,6 +129,7 @@ fn s_add() -> Value {
             "fit_to_stock": { "type": "boolean", "description": "Lathe chucks only: close the chuck on the setup's round stock (ignores position/rotation and the grip or collet bore)." },
             "above": { "type": "number", "description": "With under_stock_in_vise: how far the stock's top stands over the jaws, mm (default 6.35)." },
             "steps": { "type": "integer", "minimum": 1, "description": "step_block: the step count." },
+            "grip": { "type": "string", "enum": accessory::chuck::Grip::KEYS, "description": "three_jaw_chuck, four_jaw_chuck: outside (default; the jaws close on the work) or inside (they open into the work's bore; grip_diameter is that bore)." },
             "dimensions": dims_schema()
         }),
         &["kind"],
@@ -132,6 +141,7 @@ fn s_set() -> Value {
         json!({
             "name": { "type": "string", "description": "A built-in accessory fixture's name." },
             "steps": { "type": "integer", "minimum": 1, "description": "step_block: the step count." },
+            "grip": { "type": "string", "enum": accessory::chuck::Grip::KEYS, "description": "three_jaw_chuck, four_jaw_chuck: outside (default; the jaws close on the work) or inside (they open into the work's bore; grip_diameter is that bore)." },
             "dimensions": dims_schema()
         }),
         &["name"],

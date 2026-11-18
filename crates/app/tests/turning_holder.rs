@@ -326,6 +326,7 @@ fn a_lathe_body_on_a_bar_refuses_a_milling_op_by_name() {
     history.execute(&world, SetToolBody::lathe(&world, "BR-1000", Some(body("bar.stp", cuboid([-4.0, -1.5, 1.0], [-0.5, 1.5, 80.0])))).expect("a sane bar"));
     let hole = camcraft_app::drilling::Hole { xy: camcraft_app::geo2d::Point2::new(0.0, 0.0), radius: 5.0, entry_z: 50.0, floor_z: -16.0, through: false, stepped: false };
     let params = OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(60.0),
         retract_z: None,
         top_z: Height::fixed(50.0),

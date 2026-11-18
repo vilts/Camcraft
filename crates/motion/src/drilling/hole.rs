@@ -134,6 +134,10 @@ pub struct CycleParams<'a> {
     pub plunge_feed: f64,
     pub tool: &'a Tool,
     pub holes: &'a [Hole],
+    /// How far past a through hole's floor the tip runs (#1557): the
+    /// operation's stated break-through, [`THROUGH_CLEAR`] by default.
+    /// Read only where a hole is through and no `bottom_z` overrides it.
+    pub through_clear: f64,
 }
 
 /// A spot drill's dimple depth below the entry plane, unless the floor

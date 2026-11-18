@@ -9,6 +9,24 @@
 use camcraft_app::geometry::{Mesh, Point3, Triangle};
 use std::path::Path;
 
+/// The stock turn that makes the program sim refuse: [`OBLIQUE`] rad
+/// about Z when `rotated`, else none. The same device as
+/// `area_support::stock_turn`. #2177: a quarter turn is no such device -
+/// the sim judges a square-turned box.
+pub fn stock_turn(rotated: bool) -> [f64; 4] {
+    if rotated { camcraft_app::geometry::quat_from_yaw(OBLIQUE) } else { camcraft_app::schema::Location::default().rot }
+}
+
+/// A turn about Z off the machine axes (rad); a point 40 mm from the
+/// turn's centre moves 4e-5 mm.
+pub const OBLIQUE: f64 = 1e-6;
+
+/// The device holds: the program sim refuses this stock by name
+/// (`stock_follow::OBLIQUE_STOCK`).
+pub fn oblique_refused(world: &flecs_ecs::prelude::World) -> bool {
+    camcraft_app::stock_sim::simulate_document(world).is_err_and(|e| e.contains(camcraft_app::stock_follow::OBLIQUE_STOCK))
+}
+
 /// One facet, wound so its normal agrees with `n`; a sliver is dropped.
 fn tri(out: &mut Vec<Triangle>, a: Point3, b: Point3, c: Point3, n: [f64; 3]) {
     let (u, v) = (b - a, c - a);
@@ -103,6 +121,19 @@ pub fn block_with_pocket(big_a: f64, big_b: f64, ring: &[(f64, f64)], floor: f64
         tri(&mut f, p3((0.0, 0.0), floor), p3(a, floor), p3(b, floor), [0.0, 0.0, 1.0]);
     }
     Mesh::from_facets(f)
+}
+
+/// The 40 x 40 x `top` block on [-20, 20]^2 with a radius-`rp` round
+/// pocket (128 chords) sunk to `floor` - the #1585 / #1593 / #1595
+/// fixture.
+pub fn round_pocket_block(rp: f64, floor: f64, top: f64) -> Mesh {
+    let ring: Vec<(f64, f64)> = (0..128)
+        .map(|i| {
+            let a = std::f64::consts::TAU * f64::from(i) / 128.0;
+            (rp * a.cos(), rp * a.sin())
+        })
+        .collect();
+    block_with_pocket(20.0, 20.0, &ring, floor, top)
 }
 
 /// An axis-aligned height field: cell `(i, j)` spans `xs[i]..xs[i+1]` x

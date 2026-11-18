@@ -171,7 +171,7 @@ fn written(dir: &std::path::Path) -> Vec<String> {
 }
 
 fn haas() -> &'static str {
-    posting::BUILTINS.iter().find(|(n, _)| *n == "Haas").map(|(_, t)| *t).expect("Haas ships")
+    posting::builtin_post_text("Haas").expect("Haas ships")
 }
 
 /// The refusal names the setup, its op, the post and the machine's kind.
@@ -261,7 +261,7 @@ fn an_edm_mount_refuses_a_cutting_program_by_name() {
 }
 
 fn lathe_post() -> &'static str {
-    posting::BUILTINS.iter().find(|(n, _)| *n == "Fanuc Lathe").map(|(_, t)| *t).expect("Fanuc Lathe ships")
+    posting::builtin_post_text("Fanuc Lathe").expect("Fanuc Lathe ships")
 }
 
 /// #1266: a user's own script states the kinds it serves (`serves`).

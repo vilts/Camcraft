@@ -13,7 +13,7 @@ fn recipe() -> WaterjetCutData {
 }
 
 fn row() -> CuttingRow {
-    CuttingRow { material: WorkMaterial::MildSteel, rpm: 0.0, feed: 100.0, waterjet: Some(recipe()) }
+    CuttingRow { material: Some(WorkMaterial::MildSteel), rpm: 0.0, feed: 100.0, stepdown: None, stepover: None, waterjet: Some(recipe()) }
 }
 
 #[test]
@@ -94,7 +94,7 @@ fn waterjet_rows_require_complete_recipe_zero_rpm_and_valid_feed() {
 fn waterjet_recipe_selection_requires_material_and_exact_thickness() {
     let thin = row();
     let thick = CuttingRow { waterjet: Some(WaterjetCutData { thickness: 8.0, ..recipe() }), feed: 50.0, ..row() };
-    let brass = CuttingRow { material: WorkMaterial::Brass, ..row() };
+    let brass = CuttingRow { material: Some(WorkMaterial::Brass), ..row() };
     let rows = [thin, thick, brass];
     assert!(refusal_for_kind(&rows, ToolKind::Waterjet).is_none());
     assert!(refusal_for_kind(&[thin, thin], ToolKind::Waterjet).unwrap().contains("twice"));

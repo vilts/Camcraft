@@ -122,7 +122,7 @@ fn the_combined_program_still_numbers_o0001_and_is_unchanged_by_the_split() {
     let (world, _h) = two_faces(["Face1", "Face2"]);
     let records = posting::stream_records(&world).expect("streams");
     let text = camcraft_app::post::cnc::serialize(&records);
-    let out = camcraft_app::post::post(posting::BUILTINS[0].1, &posting::machine_value(&world), &text).expect("runs");
+    let out = camcraft_app::post::post(camcraft_app::posting::shipped_posts().expect("the shipped posts read")[0].1, &posting::machine_value(&world), &text).expect("runs");
     assert_eq!(out.program.lines().nth(1).map(|l| l.starts_with("O0001")), Some(true), "{}", out.program);
     let joined: usize = posting::op_streams(&world).expect("per op").iter().map(|(_, r)| r.len()).sum();
     assert_eq!(joined, records.len(), "the combined stream is the op streams joined");
@@ -221,7 +221,7 @@ fn the_output_option_round_trips_and_old_files_load_one_program() {
 
 #[test]
 fn the_lathe_post_numbers_its_programs_the_same_way() {
-    let lathe = posting::BUILTINS
+    let lathe = camcraft_app::posting::shipped_posts().expect("the shipped posts read")
         .iter()
         .find(|(n, _)| n.to_lowercase().contains("lathe"))
         .map(|(_, s)| *s)

@@ -88,6 +88,7 @@ pub fn tap_drill_for(radius: f64) -> f64 {
 
 pub fn thread(radius: f64, pitch: Option<f64>, hand: ThreadHand, climb: bool) -> OpParams {
     OpParams::Thread {
+        break_through: None,
         clearance_z: Height::fixed(TOP + 10.0),
         retract_z: None,
         top_z: Height::fixed(TOP),
@@ -109,6 +110,7 @@ pub fn thread(radius: f64, pitch: Option<f64>, hand: ThreadHand, climb: bool) ->
 pub fn drill(radius: f64, floor: f64) -> OpParams {
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius, entry_z: TOP, floor_z: floor, through: false, stepped: false };
     OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(TOP + 10.0),
         retract_z: None,
         top_z: Height::fixed(TOP),

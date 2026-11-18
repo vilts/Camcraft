@@ -12,6 +12,10 @@ fn wire_page() -> Harness<'static, State> {
     let mut st = super::super::dialog_tests::opened(super::super::dialog_tests::face());
     let machine = camcraft_app::machine::parse_mch(include_str!("../../../app/tests/edm/wire-iso-fixture.mch")).expect("fixture");
     st.pending.push_back(CommandKind::EditMachineApply { path: "wire-test.mch".into(), machine: Box::new(machine) });
+    st.pending.push_back(CommandKind::AddTool {
+        name: "EDM-W025".into(),
+        tool: camcraft_app::wire_tools::wire_tool(0.25),
+    });
     st.drain_actions();
     let kind = camcraft_app::operation::KindInfo::ALL.iter().position(|k| k.label == "Wire Contour").expect("wire kind");
     crate::actions::add_operation(&mut st, kind);
@@ -110,7 +114,7 @@ fn wire_skim_apply_shows_each_named_refusal() {
         (vec![""], "skim 1 of the Wire Contour names no EDM condition"),
         (vec!["S31", "S21"], "cut past the finished profile"),
         (vec!["S21", "C110", "S31"], "cut only air"),
-        (vec!["W20"], "one threading cuts every pass with one wire"),
+        (vec!["W20"], "expects wire diameter 0.2 mm"),
     ] {
         let mut h = wire_page();
         for (i, id) in ids.iter().enumerate() {

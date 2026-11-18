@@ -199,12 +199,6 @@ fn the_refusal_names_a_fitting_catalog_entry() {
     let (world, _h) = world_with(None, &[]);
     let cat = catalog();
     for info in camcraft_app::operation::KindInfo::ALL {
-        // #532: a kind that mounts no library tool (the wire EDM's) is
-        // never refused for an empty rack - it needs no tool to exist.
-        if !info.mounts_tool() {
-            assert_eq!(tool_gate::create_refusal(&world, info), None, "{}", info.label);
-            continue;
-        }
         let why = tool_gate::create_refusal(&world, info).expect("an empty rack refuses every kind that mounts a tool");
         assert!(why.starts_with("No "), "{why}");
         let named = why
@@ -229,6 +223,7 @@ fn the_refusal_names_a_fitting_catalog_entry() {
         (OpType::Pocket, "'EM-0600-4FL' (6 mm flat end mill)"),
         (OpType::Finish3D, "'BN-0600' (6 mm ball-nose)"),
         (OpType::FormTurning, "'FG-0600-04' (4 mm form gauge)"),
+        (OpType::WireContour, "'EDM-W025' (0.25 mm wire)"),
     ] {
         let why = tool_gate::create_refusal(&world, ty.info()).expect("empty rack");
         assert!(why.contains(&format!("add {want} from the catalog?")), "{why}");

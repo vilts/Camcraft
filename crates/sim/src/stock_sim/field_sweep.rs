@@ -67,7 +67,7 @@ impl Sweep {
     /// runs one way, from the tip UP the axis (M7.3: a flank never
     /// reaches below its own tip); the ball's path is its center
     /// path, so its solid is the path dilated by `r` and nothing more.
-    fn reach(&self) -> (f64, f64) {
+    pub(super) fn reach(&self) -> (f64, f64) {
         match self {
             // The revolved solid's reach is its own window (`window_of`
             // reads the annulus directly); the nose is its dilation.
@@ -85,7 +85,7 @@ impl Sweep {
 
     /// The path endpoints the solid rides (tip path, or center path
     /// for the ball).
-    fn path(&self) -> (Point3, Point3) {
+    pub(super) fn path(&self) -> (Point3, Point3) {
         match self {
             Sweep::Ball { c0, c1, .. } | Sweep::Shanked { c0, c1, .. } => (*c0, *c1),
             Sweep::Revolve { a, b, .. } => (*a, *b),

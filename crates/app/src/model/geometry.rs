@@ -27,10 +27,73 @@ thread_local! {
 /// Feature topology (faces, loops, feature edges) of a model's LOCAL
 /// facets, memoized by content. `None` only for a facet-less entity;
 /// garbage facets still return complete (degenerate-tagged) features.
+///
+/// #2235: the per-frame callers (one or more per selected chain, every
+/// frame) hit [`features_of_shared`]'s allocation-keyed memo first, so
+/// a frame without a new facet landing hashes no facets.
 #[must_use]
 pub fn features_of(world: &World, entity: &Entity) -> Option<std::sync::Arc<Features>> {
     let tris = facets_of(world, entity)?;
-    Some(features_of_local(&tris))
+    Some(features_of_shared(&tris))
+}
+
+/// How many live meshes [`features_of_shared`] remembers.
+const SHARED_CAP: usize = 32;
+
+/// One allocation-keyed entry: the mesh (weak) and its features.
+type SharedEntry = (std::sync::Weak<[Triangle]>, std::sync::Arc<Features>);
+
+thread_local! {
+    /// Features keyed by the facet allocation itself (#2235), the law of
+    /// `pick::feature_graph_shared`: an entity's `Facets` is an immutable
+    /// `Arc<[Triangle]>` that every landing replaces, and the held `Weak`
+    /// keeps the allocation's address from being reused, so a live entry
+    /// at the same address IS the same bytes. Pure fuel: a miss falls
+    /// back to the content-digest cache.
+    static SHARED_FEATURES: std::cell::RefCell<Vec<SharedEntry>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+    /// Content digests taken by [`features_of_local`] - the counter the
+    /// #2235 pins read (a frame without a landing takes none).
+    static DIGESTS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// [`features_of_local`] memoized by the facet allocation: no content
+/// hash on a hit. The answer is the same `Features` the digest path
+/// gives for these bytes.
+#[must_use]
+pub fn features_of_shared(tris: &std::sync::Arc<[Triangle]>) -> std::sync::Arc<Features> {
+    if tris.is_empty() {
+        return std::sync::Arc::new(Features::default());
+    }
+    let key = std::sync::Arc::downgrade(tris);
+    let hit = SHARED_FEATURES.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        cache.retain(|(w, _)| w.strong_count() > 0);
+        let i = cache.iter().position(|(w, _)| w.ptr_eq(&key))?;
+        let entry = cache.remove(i);
+        let f = entry.1.clone();
+        cache.push(entry); // MRU bump
+        Some(f)
+    });
+    if let Some(f) = hit {
+        return f;
+    }
+    let f = features_of_local(tris);
+    SHARED_FEATURES.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() >= SHARED_CAP {
+            cache.remove(0);
+        }
+        cache.push((key, f.clone()));
+    });
+    f
+}
+
+/// How many content digests [`features_of_local`] took on this thread
+/// (#2235 pins: a frame with no facet landing takes none).
+#[must_use]
+pub fn feature_digests() -> u64 {
+    DIGESTS.with(std::cell::Cell::get)
 }
 
 /// The cache chokepoint, exposed for callers already holding the facets.
@@ -39,6 +102,7 @@ pub fn features_of_local(tris: &[Triangle]) -> std::sync::Arc<Features> {
     if tris.is_empty() {
         return std::sync::Arc::new(Features::default());
     }
+    DIGESTS.with(|n| n.set(n.get().saturating_add(1)));
     let key = feature::digest_of(tris);
     FEATURES_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();

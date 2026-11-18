@@ -87,7 +87,7 @@ pub(crate) fn encode(
         match se.prepare(device, queue, encoder, fv, &state.cam, &mvp, (ew, eh)) {
             Ok(t) => traced = t,
             Err(err) => {
-                state.status += &format!(" | traced stock: {err} - the sheet stands");
+                state.say_once(&format!("the cut stock cannot be drawn, the uncut stock shows: {err}"));
             }
         }
     }
@@ -139,7 +139,7 @@ pub(crate) fn state_redraw_delay(
     redraw_delay(
         egui_delay,
         followup || !state.pending.is_empty() || state.layout_request.is_some(),
-        state.import_in_progress(),
+        state.import_in_progress() || state.gen_jobs.busy(),
         state.sim.is_some_and(|sim| sim.playing),
         state.field_play.as_ref().is_some_and(|play| play.needs_poll()),
     )

@@ -164,6 +164,54 @@ pub fn after_fixture_shape(world: &World, fixture: &str, facets: &[Triangle], at
     join(warnings)
 }
 
+/// How near (mm) a body's box must come to a fixture's box to count as
+/// held by it (#2174): mated faces touch, float dust must not part them.
+pub const HELD_MM: f64 = 0.1;
+
+/// The parts and the setup's stock that the fixture `fixture`, standing
+/// at `at`, holds or carries (#2174): each body whose box meets the
+/// fixture's box within [`HELD_MM`]. Box contact is the conservative
+/// reading - a body near the steel is named even when the steel only
+/// stands beside it, never missed when it rests on it. Name-sorted, the
+/// stock last.
+#[must_use]
+pub fn held_by(world: &World, fixture: &str, at: Location) -> Vec<String> {
+    let Some(fe) = model::find_by_name(world, fixture) else { return Vec::new() };
+    let Some(own) = model::facets_of(world, &fe) else { return Vec::new() };
+    let steel: Vec<Triangle> = own.iter().map(|t| place(*t, at)).collect();
+    let Some(sb) = bounds(&steel) else { return Vec::new() };
+    let ctx = crate::fixture::def_of(world, &fe).and_then(|d| d.setup);
+    let meets = |body: &[Triangle]| {
+        bounds(body).is_some_and(|(lo, hi)| (0..3).all(|i| lo[i] <= sb.1[i] + HELD_MM && sb.0[i] <= hi[i] + HELD_MM))
+    };
+    let mut out: Vec<String> = model::model_entities(world)
+        .into_iter()
+        .filter(|(n, pe)| n != fixture && setup_align::is_part(world, pe))
+        .filter(|(_, pe)| setup_align::facets_in(world, pe, ctx.as_deref()).is_some_and(|b| meets(&b)))
+        .map(|(n, _)| n)
+        .collect();
+    out.sort();
+    let stock = crate::setup::stock_entity_name(world, ctx.as_deref());
+    if model::find_by_name(world, &stock).and_then(|e| model::world_facets(world, &e)).is_some_and(|b| meets(&b)) {
+        out.push(stock);
+    }
+    out
+}
+
+/// The axis-aligned bounds of `tris` as (min, max), `None` when empty or
+/// not finite.
+fn bounds(tris: &[Triangle]) -> Option<([f64; 3], [f64; 3])> {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for p in tris.iter().flat_map(|t| [t.a, t.b, t.c]) {
+        for (i, v) in [p.x, p.y, p.z].into_iter().enumerate() {
+            lo[i] = lo[i].min(v);
+            hi[i] = hi[i].max(v);
+        }
+    }
+    (lo.iter().chain(hi.iter()).all(|v| v.is_finite())).then_some((lo, hi))
+}
+
 /// A sample of `body` sunk inside the closed `other`, if any.
 fn sunk(body: &[Triangle], other: &[Triangle]) -> Option<[f64; 3]> {
     let mesh = match camcraft_sim::fixture_mesh::FixtureMesh::build(other) {

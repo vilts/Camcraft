@@ -238,6 +238,7 @@ fn own_post_options_round_trip_and_old_files_follow_the_document() {
         smoothing: true,
         explain: false,
         between_setups: Default::default(),
+        wcs_rotation: Default::default(),
     };
     h.execute(&world, SetSetupPostOptions::new(&world, "Setup2", Some(own)).expect("own options"));
     let text = saved(&world, "rt");
@@ -375,4 +376,56 @@ fn smoothing_follows_each_ops_own_setup_not_the_active_one() {
     // The document turning it on reaches Setup2 (which follows it) too.
     h.execute(&world, SetPostOptions::new(&world, on).expect("document smooths"));
     assert_eq!(smoothed(&world), 2);
+}
+
+#[test]
+fn wcs_rotation_option_round_trips_and_omits_default_key() {
+    let (world, mut h) = doc(2);
+    let plain_json = saved(&world, "wcs-rot-default");
+    assert!(!plain_json.contains("wcs_rotation"), "default Bake omits optional key:\n{plain_json}");
+
+    let doc_ctl = PostOptions { wcs_rotation: camcraft_app::schema::WcsRotationOutput::Control, ..PostOptions::default() };
+    h.execute(&world, SetPostOptions::new(&world, doc_ctl).expect("doc Control"));
+    let s1_bake = PostOptions { wcs_rotation: camcraft_app::schema::WcsRotationOutput::Bake, ..PostOptions::default() };
+    h.execute(&world, SetSetupPostOptions::new(&world, "Setup1", Some(s1_bake)).expect("Setup1 Bake"));
+
+    let mut path = std::env::temp_dir();
+    path.push(format!("camcraft-760-po-rt-{}.json", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    project::save(&world, &path).expect("save");
+    let text = std::fs::read_to_string(&path).expect("read");
+    assert!(text.contains("\"wcs_rotation\": \"control\""), "{text}");
+    let loaded = new_world();
+    project::load(&loaded, &path).expect("load");
+    let _ = std::fs::remove_file(&path);
+
+    assert_eq!(setup_post_options::document(&loaded).wcs_rotation, camcraft_app::schema::WcsRotationOutput::Control);
+    assert_eq!(setup_post_options::of(&loaded, Some("Setup1")).wcs_rotation, camcraft_app::schema::WcsRotationOutput::Bake);
+    assert_eq!(setup_post_options::of(&loaded, Some("Setup2")).wcs_rotation, camcraft_app::schema::WcsRotationOutput::Control);
+}
+
+#[test]
+fn wcs_rotation_and_script_options_persist_together_and_independently() {
+    use std::collections::BTreeMap;
+    use camcraft_app::commands::SetPostScriptOptions;
+    use camcraft_app::post::options::OptionValue;
+    use camcraft_app::schema::{PostRef, WcsRotationOutput};
+
+    for (rotation, script) in [(true, false), (false, true), (true, true)] {
+        let world = new_world();
+        let mut h = History::default();
+        if rotation {
+            let opts = PostOptions { wcs_rotation: WcsRotationOutput::Control, ..Default::default() };
+            h.execute(&world, SetPostOptions::new(&world, opts).expect("rotation"));
+        }
+        if script {
+            let overrides = BTreeMap::from([("writeMachine".to_owned(), OptionValue::Bool(true))]);
+            h.execute(&world, SetPostScriptOptions::for_post(&world, &PostRef::Builtin, overrides).expect("script"));
+        }
+        let text = project::save_text(&world).expect("save");
+        let loaded = new_world();
+        project::open(&loaded, &text).expect("load");
+        assert_eq!(setup_post_options::document(&loaded), setup_post_options::document(&world), "rotation={rotation}, script={script}");
+        assert_eq!(setup_post_options::script_document(&loaded), setup_post_options::script_document(&world), "rotation={rotation}, script={script}");
+    }
 }

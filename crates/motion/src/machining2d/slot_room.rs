@@ -311,6 +311,44 @@ impl SlotBound {
         }
         Ok(())
     }
+
+    /// Rigid XY rotation of this room by `angle_rad` about `origin`, keeping
+    /// the slot frame directions and face loops aligned to the target axes.
+    ///
+    /// # Errors
+    /// The rotated loops fail 2D validation (only possible for non-finite input).
+    pub fn rotated_xy(&self, origin: Point2, angle_rad: f64) -> Result<Self, GenError> {
+        let (s, c) = angle_rad.sin_cos();
+        let rot_vec = |v: Point2| Point2::new(v.x * c - v.y * s, v.x * s + v.y * c);
+        let rot_pt = |p: Point2| {
+            let v = rot_vec(Point2::new(p.x - origin.x, p.y - origin.y));
+            Point2::new(origin.x + v.x, origin.y + v.y)
+        };
+        let u = rot_vec(self.u);
+        let n = rot_vec(self.n);
+        let ds = dot(origin, u) - dot(origin, self.u);
+        let dt = dot(origin, n) - dot(origin, self.n);
+        let room = match &self.room {
+            Room::Edges => Room::Edges,
+            Room::Face(region) => {
+                let loops = region
+                    .loops()
+                    .iter()
+                    .map(|l| crate::geo2d::Loop::new(l.points().iter().copied().map(rot_pt).collect()))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Room::Face(Region::new(loops)?)
+            }
+        };
+        Ok(Self {
+            room,
+            u,
+            n,
+            s0: self.s0 + ds,
+            s1: self.s1 + ds,
+            t0: self.t0 + dt,
+            t1: self.t1 + dt,
+        })
+    }
 }
 
 /// A refusal's sentence without the error's own prefix.

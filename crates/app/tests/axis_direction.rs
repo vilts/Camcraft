@@ -133,7 +133,7 @@ fn a_reversed_rotary_refuses_and_other_rotary_shapes_are_not_read() {
 
 #[test]
 fn every_shipped_machine_stays_standard() {
-    for (name, text) in posting::MACHINES {
+    for (name, text) in camcraft_app::posting::shipped_machines().expect("the shipped machines read") {
         let m = parse_mch(text).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert!(m.inverted_axes().is_empty(), "{name} states no inverted axis");
         assert_eq!(m.inverted_post_refusal(), None, "{name}");

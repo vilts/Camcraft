@@ -136,7 +136,7 @@ pub(crate) fn first_body(world: &World, setup: Option<&str>, dex: Dexel) -> Resu
     let name = crate::setup::stock_entity_name(world, setup);
     let e = model::find_by_name(world, &name).ok_or_else(|| format!("no stock '{name}' to carry"))?;
     let shape = model::stock_def_of(world, &e).ok_or("the stock entity lost its shape")?;
-    let loc = model::transform_of(world, &e).unwrap_or_default();
+    let (shape, loc) = crate::stock_follow::sim_frame(&shape, model::transform_of(world, &e).unwrap_or_default())?;
     Ok(match shape {
         StockShape::FromModel { .. } => Body::on_mesh(dex, &model::world_facets(world, &e).unwrap_or_default()),
         _ => Body::on_floor(dex, loc.pos.z),
@@ -150,7 +150,7 @@ fn first_field(world: &World, setup: Option<&str>, dex: &Dexel, band: u32) -> Re
     let name = crate::setup::stock_entity_name(world, setup);
     let e = model::find_by_name(world, &name).ok_or_else(|| format!("no stock '{name}' to carry"))?;
     let shape = model::stock_def_of(world, &e).ok_or("the stock entity lost its shape")?;
-    let loc = model::transform_of(world, &e).unwrap_or_default();
+    let (shape, loc) = crate::stock_follow::sim_frame(&shape, model::transform_of(world, &e).unwrap_or_default())?;
     let lat = lattice_of_grid(dex);
     match shape {
         StockShape::Box { .. } => FieldBody::block(lat, loc.pos.z, dex.stock_z, band),

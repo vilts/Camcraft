@@ -35,7 +35,7 @@ fn read(rel: &str) -> String {
 }
 
 fn cps() -> &'static str {
-    camcraft_app::posting::BUILTINS.iter().find(|(n, _)| *n == PLASMA).map(|(_, s)| *s).expect("registered")
+    camcraft_app::posting::builtin_post_text(PLASMA).expect("registered")
 }
 
 /// The shipped 1300PL file (inch), or its metric twin.

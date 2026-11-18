@@ -127,6 +127,7 @@ pub(crate) fn kind_name(k: ToolKind) -> &'static str {
         ToolKind::Electrode => "sinker electrode",
         ToolKind::ThreadMill => "thread mill",
         ToolKind::ThreadMillSingle => "single-form thread mill",
+        ToolKind::Wire => "EDM wire",
     }
 }
 

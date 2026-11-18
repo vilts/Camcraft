@@ -14,7 +14,7 @@ use crate::geometry::Point3;
 use crate::links::{Link, LinkTally, Links, NOT_PROVED, TOO_LONG};
 
 use super::arcs::Seg;
-use super::descent::{Cuts, Lvl, feed_down, plan, push, restart, start};
+use super::descent::{Cuts, Lvl, entry_restart, feed_down, plan, push, restart, start};
 use crate::plunge_law;
 use super::levels::{Cert, Motion};
 
@@ -171,13 +171,19 @@ pub(super) fn pass_link(b: &mut PathBuilder, lv: &LevelWalk, m: &Motion, cert: O
     // plunge into solid enters a pass start its neighbours have not
     // cleared like a level - the helix onto it, else the ramp along the
     // pass - or the op is refused by name (`plunge_law`).
-    if !m.links.approach.center_cutting
+    // #2265: a centre-cutting tool whose user asked for a helix, ramp or
+    // arc entry enters a solid pass start (a second piece of the area, a
+    // ring its neighbours have not cleared) by that entry too; where it
+    // cannot, the stand-in is named with the site, the level and why.
+    let cc = m.links.approach.center_cutting;
+    let asked = !cc || (m.solid_restart && m.entry != Entry3D::Plunge);
+    if asked
         && plunge_law::into_solid(b, e, z, mat_top, m.tool_r())
         && let Some(cen) = cert
     {
         let l = Lvl { cen, passes, pass: lv.pass, walk: lv.walk, mat_top };
         let from = (mat_top + m.links.approach.plunge_height).min(plane);
-        let d = restart(&l, at, z, from, m);
+        let d = if cc { entry_restart(&l, at, z, from, m) } else { restart(&l, at, z, from, m) };
         st.level.extend(push(b, &d, &l, z, plane, m));
         return;
     }

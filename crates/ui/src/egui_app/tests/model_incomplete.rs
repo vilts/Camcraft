@@ -62,10 +62,18 @@ fn incomplete_model_page_and_import_status_name_the_hole_and_post_refusal() {
         );
     }
     let imported = format!("imported {name}");
+    // #1953: the status strip's node is the one that shows the status
+    // line itself (an alert line gets a "! " marker), found by its text,
+    // not by where the strip sits.
+    let line = h.state().state.status.clone();
     let status_node = h
         .query_all_by_label_contains(&imported)
-        .find(|node| node.rect().min.y > 600.0)
-        .expect("the real import status is accessible in the bottom strip");
+        .find(|node| {
+            node.accesskit_node()
+                .value()
+                .is_some_and(|v| v.trim_start_matches("! ") == line)
+        })
+        .expect("the real import status is accessible in the status strip");
     let status = status_node.accesskit_node().value().expect("status text");
     for said in [
         "Incomplete: closed shell #17 (5 faces) meshes open",

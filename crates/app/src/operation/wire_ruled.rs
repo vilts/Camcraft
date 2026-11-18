@@ -93,7 +93,7 @@ fn profile(world: &World, g: &GeoSel) -> Result<Picked, GenError> {
             (ring.verts.iter().filter_map(|&vi| features.verts.get(vi as usize)).map(place).collect(), true)
         }
         FeatureSel::Chain(cid) => {
-            let c = feature::resolve_chain(&features, cid).ok_or_else(gone)?;
+            let c = crate::model::resolve_chain(&features, cid).ok_or_else(gone)?;
             (feature::chain_points(&features, &c).iter().map(place).collect(), c.closed)
         }
         _ => {

@@ -1,6 +1,6 @@
 //! Split from `finishing3d.rs` by M5.0.1; structure only.
 
-use crate::cl::{MoveKind, PathBuilder, Toolpath};
+use crate::cl::{lattice, MoveKind, PathBuilder, Toolpath};
 use crate::geo2d::{Loop, Point2};
 use crate::geometry::{Point3, Triangle};
 use crate::machining2d::{fit_arcs, GenError};
@@ -9,6 +9,9 @@ use super::ladder::levels;
 use super::params::{BLEND_MZ, Finish3DParams, FinishPattern, SPLIT_MZ, TOUCH_EPS, dirs, validate};
 use super::scan::{level_region, push_walk};
 use super::support::{Sup, build_sups, closest_pt_tri, column_clear, dist2_pt_tri};
+
+#[path = "rings_overhang.rs"]
+mod overhang;
 
 /// The contact normal at a tangent center: the unit vector from the
 /// nearest facet point toward the center. `None` when the nearest
@@ -133,36 +136,31 @@ fn touches_steep(sups: &[Sup], c: Point3, r: f64, tol: f64, band: bool) -> bool 
 /// open runs, each entered and exited by the same hop-and-plunge
 /// choreography a ring always used, because a run of one level is
 /// a ring of one level.
-fn ring_runs(
-    order: &[Point2],
-    sups: &[Sup],
-    cz: f64,
-    r: f64,
-    tol: f64,
-    band: bool,
-) -> Vec<(Vec<Point2>, bool)> {
-    let n = order.len();
-    let flags: Vec<bool> = order
-        .iter()
-        .map(|q| touches_steep(sups, Point3::new(q.x, q.y, cz), r, tol, band))
-        .collect();
+fn split_true_runs(pts: &[Point2], flags: &[bool], closed: bool) -> Vec<(Vec<Point2>, bool)> {
+    let n = pts.len();
+    if n < 2 || flags.len() != n {
+        return Vec::new();
+    }
     if flags.iter().all(|f| *f) {
-        return vec![(order.to_vec(), true)];
+        return vec![(pts.to_vec(), closed)];
     }
     if !flags.iter().any(|f| *f) {
         return Vec::new();
     }
-    // A circular split always has a transition; start the linear
-    // walk just after one so no run wraps around the seam.
-    let start = (0..n)
-        .find(|&i| flags[i] != flags[(i + n - 1) % n])
-        .unwrap_or(0);
+    let start = if closed {
+        (0..n).find(|&i| flags[i] != flags[(i + n - 1) % n]).unwrap_or(0)
+    } else {
+        0
+    };
     let mut runs: Vec<(Vec<Point2>, bool)> = Vec::new();
     let mut cur: Vec<Point2> = Vec::new();
     for k in 0..n {
         let i = (start + k) % n;
         if flags[i] {
-            cur.push(order[i]);
+            let p = pts[i];
+            if cur.last().is_none_or(|q| lattice(q.x) != lattice(p.x) || lattice(q.y) != lattice(p.y)) {
+                cur.push(p);
+            }
         } else if cur.len() >= 2 {
             runs.push((std::mem::take(&mut cur), false));
         } else {
@@ -175,6 +173,29 @@ fn ring_runs(
     runs
 }
 
+/// One ring level's loop split into the ladder's OWN runs: maximal
+/// arcs of steep tangency, as `(points, closed)` pairs. An
+/// all-steep loop passes through whole and closed - the waterline's
+/// exact geometry, unchanged; an all-shallow loop yields nothing
+/// (the raster rides it); a mixed loop breaks at the border into
+/// open runs, each entered and exited by the same hop-and-plunge
+/// choreography a ring always used, because a run of one level is
+/// a ring of one level.
+fn ring_runs(
+    order: &[Point2],
+    sups: &[Sup],
+    cz: f64,
+    r: f64,
+    tol: f64,
+    band: bool,
+) -> Vec<(Vec<Point2>, bool)> {
+    let flags: Vec<bool> = order
+        .iter()
+        .map(|q| touches_steep(sups, Point3::new(q.x, q.y, cz), r, tol, band))
+        .collect();
+    split_true_runs(order, &flags, true)
+}
+
 /// The ring ladder proper: one pass of the levels loop, appended to
 /// `b`. `last` is the tip-Z of the path's last cut (or `None` when
 /// the builder has never cut) - the choreography reads it exactly
@@ -184,12 +205,28 @@ fn ring_runs(
 pub(super) fn emit_rings(
     b: &mut PathBuilder,
     p: &Finish3DParams,
-    r: f64,
+    _r: f64,
     facets: &[Triangle],
     zs: &[f64],
     ds: &[(f64, f64)],
     last: &mut Option<f64>,
 ) -> Result<bool, GenError> {
+    emit_rings_with_trim(b, p, facets, zs, ds, last, true)
+}
+
+/// [`emit_rings`] with control over whether vertical-column overhang trimming
+/// runs along ring paths. 3-axis passes trim so no move passes beneath a canopy;
+/// 5-axis swarf tilts the tool off +Z later and keeps under-equator rings.
+pub(super) fn emit_rings_with_trim(
+    b: &mut PathBuilder,
+    p: &Finish3DParams,
+    facets: &[Triangle],
+    zs: &[f64],
+    ds: &[(f64, f64)],
+    last: &mut Option<f64>,
+    trim_columns: bool,
+) -> Result<bool, GenError> {
+    let r = p.tool_diameter * 0.5;
     let hop = p.retract_z.unwrap_or(p.clearance_z).min(p.clearance_z);
     // The partition's eyes (M2.5 A): SteepShallow is the one pattern
     // that reads tangency before it rides a ring. Every other
@@ -229,6 +266,14 @@ pub(super) fn emit_rings(
         // hops between them) and discards unreachable wavefronts.
         let mut loops: Vec<&Loop> = region.loops().iter().filter(|l| l.is_ccw()).collect();
         loops.sort_by(|a, b| b.area().abs().total_cmp(&a.area().abs()));
+        let col_top = p.clearance_z.max(z_tip) + r;
+        let col_strict = r - p.tolerance.min(0.005);
+        let col_lim = if p.tolerance <= 0.05 {
+            col_strict
+        } else {
+            r - p.tolerance
+        };
+        let cz_lvl = z_tip + r;
         for l in loops {
             let stored: &[Point2] = l.points();
             if stored.len() < 2 {
@@ -242,11 +287,32 @@ pub(super) fn emit_rings(
             // The partition (M2.5 A) breaks the loop at the border
             // into runs the ladder owns; every other pattern rides
             // the whole loop, as it always did.
-            let runs: Vec<(Vec<Point2>, bool)> = if steep || band {
-                ring_runs(&order, &sups, z_tip + r, r, p.tolerance, band)
+            let raw_runs: Vec<(Vec<Point2>, bool)> = if steep || band {
+                ring_runs(&order, &sups, cz_lvl, r, p.tolerance, band)
             } else {
                 vec![(order, true)]
             };
+            let mut runs: Vec<(Vec<Point2>, bool)> = Vec::new();
+            if trim_columns {
+                let law = overhang::ColumnLaw {
+                    cz: cz_lvl,
+                    top: col_top,
+                    wall_lim: col_lim,
+                    strict_lim: col_strict,
+                    r,
+                    sups: &sups,
+                };
+                for (run_pts, was_closed) in raw_runs {
+                    let (clear_runs, trimmed) =
+                        overhang::trim_blocked_columns(&run_pts, was_closed, &law);
+                    if trimmed {
+                        refused += 1;
+                    }
+                    runs.extend(clear_runs);
+                }
+            } else {
+                runs = raw_runs;
+            }
             for (mut poly, closed) in runs {
                 if closed {
                     poly.push(poly[0]); // close the ring for the fitter

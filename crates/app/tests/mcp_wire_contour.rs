@@ -106,16 +106,17 @@ fn wire_job(tag: &str) -> Client {
     let mut c = Client { server: Server::new(), next: 1 };
     c.ok("load_machine", json!({ "path": mch.display().to_string() }));
     c.ok("import_model", json!({ "path": stl.display().to_string() }));
+    c.ok("add_tool", json!({ "catalog": "EDM-W025", "holder": "none" }));
     c
 }
 
 fn wire_args(condition: &str) -> Value {
-    json!({ "kind": "Wire Contour", "name": "W", "source": "slug",
+    json!({ "kind": "Wire Contour", "name": "W", "tool": "EDM-W025", "source": "slug",
         "params": { "condition": condition, "side": "die", "start": [0.0, 0.0] } })
 }
 
 #[test]
-fn wire_contour_is_added_without_a_tool_edited_generated_undone_and_redone() {
+fn wire_contour_is_added_with_a_wire_tool_edited_generated_undone_and_redone() {
     let mut c = wire_job("flow");
     let added = c.ok("add_operation", wire_args("C110"));
     assert_eq!(added["kind"], json!("Wire Contour"));
@@ -152,12 +153,13 @@ fn wire_contour_is_added_without_a_tool_edited_generated_undone_and_redone() {
 #[test]
 fn wire_contour_refusals_arrive_as_tool_errors_in_the_commands_words() {
     let mut c = wire_job("refuse");
-    let with_tool = c.refused("add_operation", {
+    c.ok("add_tool", json!({ "catalog": "EM-0600-4FL", "holder": "none" }));
+    let wrong_tool = c.refused("add_operation", {
         let mut a = wire_args("C110");
         a["tool"] = json!("EM-0600-4FL");
         a
     });
-    assert!(with_tool.contains("mounts no library tool"), "{with_tool}");
+    assert!(wrong_tool.contains("cuts with a wire"), "{wrong_tool}");
     let unknown = c.refused("add_operation", wire_args("NOPE"));
     assert!(unknown.contains("NOPE"), "{unknown}");
     let nogap = c.refused("add_operation", wire_args("S9"));
@@ -171,13 +173,13 @@ fn wire_contour_refusals_arrive_as_tool_errors_in_the_commands_words() {
 }
 
 #[test]
-fn list_operation_types_says_the_wire_kind_mounts_no_tool() {
+fn list_operation_types_says_the_wire_kind_mounts_a_wire_tool() {
     let mut c = Client { server: Server::new(), next: 1 };
     let types = c.ok("list_operation_types", json!({}));
     let kinds = types["kinds"].as_array().cloned().unwrap_or_default();
     let wire = kinds.iter().find(|k| k["label"] == json!("Wire Contour")).expect("kind listed");
-    assert_eq!(wire["mounts_tool"], json!(false));
-    assert!(wire["note"].as_str().unwrap_or_default().contains("no library tool"));
+    assert_eq!(wire["mounts_tool"], json!(true));
+    assert_eq!(wire["tool_kinds"], json!(["Wire"]));
     let face = kinds.iter().find(|k| k["label"] == json!("Face")).expect("face");
     assert_eq!(face["mounts_tool"], json!(true));
     assert!(face.get("note").is_none());

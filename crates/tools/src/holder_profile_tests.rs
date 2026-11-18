@@ -207,3 +207,19 @@ fn a_floor_with_no_cylinder_leaves_the_body_as_drawn() {
     let g = ToolGeom { holder_radius: f64::NAN, ..t.geom() };
     assert_eq!(real.floored(&g), real);
 }
+
+#[test]
+fn a_band_touching_only_the_shank_top_does_not_widen_the_judged_shank() {
+    let t = em4();
+    let shank_top = t.flute_len + t.shank_len;
+    let pts = vec![
+        crate::spun::SpunPoint::line(shank_top, 0.0),
+        crate::spun::SpunPoint::line(shank_top, 10.0),
+        crate::spun::SpunPoint::line(shank_top + 20.0, 30.0),
+        crate::spun::SpunPoint::line(shank_top + 20.0, 0.0),
+    ];
+    let p = crate::spun::SpunProfile::new(pts).expect("sane cone").holder_profile();
+    let e = p.enclose(&t).expect("clears the flutes");
+    assert_eq!(e.shank_d, t.shank_d, "band starts at shank_top, so shank_d stays {}", t.shank_d);
+    assert!(e.holder_d >= 60.0 - 1e-9, "holder_d encloses the r30 top: {}", e.holder_d);
+}

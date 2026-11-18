@@ -198,9 +198,9 @@ fn run(reg: &Region, strategy: PocketStrategy, cell: f64) -> (Toolpath, PathQual
     spec.cell = cell;
     // The acceptance law reads breaks past 5 degrees in cut.
     spec.break_deg = 5.0;
-    // The stock stands one stepdown above Top: the ladder's first level
-    // (at Top) is a real cut, not the zero-depth skin.
-    let Ok(mut dex) = stock_for(reg, 5.0, BOTTOM, 1.0, &spec) else { panic!("stock") };
+    // The stock top is Top Z: the ladder's one level (one stepdown under
+    // Top, #2004) is a real cut of the full stepdown.
+    let Ok(mut dex) = stock_for(reg, 0.0, BOTTOM, 1.0, &spec) else { panic!("stock") };
     let q = measure(&path, &mut dex, &spec).unwrap();
     if let Ok(dir) = std::env::var("HSM_DUMP") {
         dump(&dir, reg, &path, &q, strategy);
@@ -329,8 +329,9 @@ fn judge(name: &str, reg: &Region, (cell, tol): (f64, f64), print: bool) -> Vec<
         }
         return bad;
     }
-    if new.descents != 2 {
-        bad.push(format!("{name}: {} descents into stock for 2 levels", new.descents));
+    // #2004: one level (Z -5); the old air level at Top Z 0 is gone.
+    if new.descents != 1 {
+        bad.push(format!("{name}: {} descents into stock for 1 level", new.descents));
     }
     if new.slot_len > 0.0 {
         bad.push(format!("{name}: {:.1} mm of slotting", new.slot_len));
@@ -436,10 +437,13 @@ fn the_channel_names_the_trochoid_fallback_before_the_rings() {
 }
 
 /// The merged-batch gate's case (`level_links`, M11.2): a 60 x 40
-/// Adaptive pocket, Helix entry at a 1 mm radius, three levels - the
-/// verifier silent (the HSM path never crosses itself) and exactly one
-/// helix per level, at the asked radius. The verifier carries the solid
-/// law (b2) against the part ([`part`]).
+/// Adaptive pocket, Helix entry at a 1 mm radius, two levels (-2, -4) -
+/// the verifier silent (the HSM path never crosses itself) and exactly
+/// one helix per level, at the asked radius, landing on that level. The
+/// verifier carries the solid law (b2) against the part ([`part`]).
+/// Issue #2004 changed the reading from three helices to two: the old
+/// first level at Top Z 0 cut air and is gone (the debug twin
+/// `level_links::the_helix_entry_is_one_continuous_descent` reads the same).
 #[test]
 #[ignore = "heavy lane: HSM adaptive generation"]
 fn a_small_helix_rectangle_never_crosses_itself() {
@@ -455,16 +459,30 @@ fn a_small_helix_rectangle_never_crosses_itself() {
     assert!(w.is_empty(), "{} {:?}", warn_kinds(&w), t.notes);
     let mut helices = 0;
     let mut inside = false;
+    let mut landed: Vec<f64> = Vec::new();
+    let mut last_z = 0.0;
     for m in &t.moves {
         let down_arc = m.arc.is_some() && m.to.z < m.from.z;
         if down_arc {
             let c = m.arc.map(|a| a.center).unwrap_or_default();
             assert!(((m.from.x - c.x).hypot(m.from.y - c.y) - 1.0).abs() < 1e-3, "the asked radius");
+            last_z = m.to.z;
+        } else if inside {
+            landed.push(last_z);
         }
         helices += usize::from(down_arc && !inside);
         inside = down_arc;
     }
-    assert_eq!(helices, 3, "one helix per level: {:?}", t.notes);
+    if inside {
+        landed.push(last_z);
+    }
+    // #2004: two levels, one stepdown under Top Z 0 and the floor; no
+    // helix for an air level at Top Z.
+    assert_eq!(helices, 2, "one helix per level: {:?}", t.notes);
+    assert_eq!(landed.len(), 2, "each helix ends: {landed:?}");
+    for (z, want) in landed.iter().zip([-2.0, -4.0]) {
+        assert!((z - want).abs() < 1e-6, "the helices land on -2 and -4: {landed:?}");
+    }
 }
 
 /// Debug aid: one fixture (`HSM_ONE=<name prefix>`), HSM only.

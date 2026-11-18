@@ -193,3 +193,24 @@ fn apply_hint_says_why_apply_is_dark_and_which_field_is_bad() {
     let why = camcraft_ui::feedback::apply_hint(Some(&live), &bad, false).expect("refusal ahead");
     assert!(why.contains("plunge feed"), "names the field: {why}");
 }
+
+#[test]
+fn apply_hint_names_tilt_limits_and_a0_b180_remedy() {
+    let live = face_params();
+    let mut bad = face_params();
+    if let OpParams::Face { tilt, .. } = &mut bad {
+        *tilt = Some(camcraft_app::operation::Tilt {
+            basis_version: 1,
+            a_deg: 180.0,
+            b_deg: 0.0,
+            origin: [0.0; 3],
+        });
+    }
+    let why = camcraft_ui::feedback::apply_hint(Some(&live), &bad, false).expect("tilt refusal ahead");
+    assert!(why.contains("Tool axis A"), "must name Tool axis A: {why}");
+    assert!(why.contains("-90..90"), "must give A limits: {why}");
+    assert!(
+        why.contains("A 0") && why.contains("B 180"),
+        "must name A 0 B 180 remedy: {why}"
+    );
+}

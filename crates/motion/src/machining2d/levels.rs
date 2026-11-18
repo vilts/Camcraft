@@ -68,9 +68,30 @@ fn dist_to_seg(p: Point2, a: Point2, b: Point2) -> f64 {
     let t = (((p.x - a.x) * d.x + (p.y - a.y) * d.y) / dd).clamp(0.0, 1.0);
     (p.x - a.x - t * d.x).hypot(p.y - a.y - t * d.y)
 }
-/// Cut levels from `top` down to `bottom`, snapped so the last level is
+/// Cut levels below `top` down to `bottom`, snapped so the last level is
 /// `bottom` exactly. Shared by depth-stepping operations.
-pub(crate) fn cut_levels(top: f64, bottom: f64, stepdown: f64) -> Result<Vec<f64>, GenError> {
+///
+/// `top` is the top of the material the ladder cuts (the operation's
+/// Top Z), so it is never a level itself: a plane there removes nothing
+/// (#2004). The first level is `top - stepdown`; a stepdown that spans
+/// the whole depth is the one level at `bottom`. `top 20, bottom 0,
+/// step 5` gives `[15, 10, 5, 0]`; `top 13, bottom 0, step 50` gives
+/// `[0]`. The last step keeps the remainder (`top 20, bottom 2, step 5`
+/// gives `[15, 10, 5, 2]`). A span of zero or less is the one plane at
+/// `bottom`; a stepdown that is not positive, or that needs more than
+/// [`super::MAX_PASSES`] levels, is refused.
+pub fn cut_levels(top: f64, bottom: f64, stepdown: f64) -> Result<Vec<f64>, GenError> {
+    cut_levels_under(top, None, bottom, stepdown)
+}
+
+/// [`cut_levels`] with the material's top stated (#2004): `stock_top`
+/// above `top` means the stock stands over Top Z, so Top Z cuts material
+/// and stays the first level (`top 10, material 13, step 5` gives `[10,
+/// 5, 0]` - each bite at most one stepdown under Top Z, the pre-#2004
+/// ladder byte for byte). `None`, or a material top at or under `top`,
+/// is [`cut_levels`]'s law: Top Z is the material top and never a level
+/// (`top 13, material 12, step 5` gives `[8, 3, 0]`).
+pub fn cut_levels_under(top: f64, stock_top: Option<f64>, bottom: f64, stepdown: f64) -> Result<Vec<f64>, GenError> {
     let span = top - bottom;
     if span <= 0.0 {
         return Ok(vec![bottom]);
@@ -78,13 +99,24 @@ pub(crate) fn cut_levels(top: f64, bottom: f64, stepdown: f64) -> Result<Vec<f64
     super::face::pass_budget("stepdown", span, stepdown)?;
     let tol = span * 1e-9;
     let mut zs = Vec::new();
-    let mut z = top;
+    // Material over Top Z: the plane at Top Z bites it, so it is cut.
+    let over = stock_over(top, stock_top, tol);
+    // The same subtraction chain as before #2004 (one step on when Top Z
+    // is the material top): every level below the first is the same
+    // float it always was.
+    let mut z = if over { top } else { top - stepdown };
     while z > bottom + tol {
         zs.push(z);
         z -= stepdown;
     }
     zs.push(bottom);
     Ok(zs)
+}
+
+/// Stock stands over Top Z (#2004): `stock_top` is over `top` by more
+/// than `tol` (at least 1e-9), so a plane at Top Z cuts stock.
+pub(super) fn stock_over(top: f64, stock_top: Option<f64>, tol: f64) -> bool {
+    stock_top.is_some_and(|m| m > top + tol.max(1e-9))
 }
 
 /// The motion envelope a depth-stepping generator shares with
@@ -126,6 +158,10 @@ pub(super) struct Motion {
     /// ramp entry zig-zags along the first cut at the ramp angle, and a
     /// zig-zag ramp rides the ring's arcs.
     pub(super) ring_zig: bool,
+    /// #2265: a pass start inside a level that is still solid takes the
+    /// user's entry (helix, ramp, arc), not a silent plunge - the pocket
+    /// family opts in (`with_solid_restart`).
+    pub(super) solid_restart: bool,
 }
 
 impl Motion {
@@ -152,7 +188,14 @@ impl Motion {
             xy_arc: false,
             holes: Vec::new(),
             ring_zig: false,
+            solid_restart: false,
         }
+    }
+
+    /// #2265: enter a solid pass start by the entry arm (the pocket).
+    pub(super) fn with_solid_restart(mut self) -> Self {
+        self.solid_restart = true;
+        self
     }
 
     /// Every pass is a ring of arcs (#1558): ramps ride them.

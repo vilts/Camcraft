@@ -52,7 +52,12 @@ fn save_from_the_prompt_saves_then_quits_and_a_failed_save_stays_open() {
     // cannot be written.
     harness.state_mut().state.project_path = Some(path.join("nested.camproj"));
     quit(&mut harness);
-    harness.get_by_label("Save").click();
+    let prompt_top = harness.get_by_label("Unsaved changes").rect().top();
+    harness
+        .get_all_by_role_and_label(egui::accesskit::Role::Button, "Save")
+        .find(|n| n.rect().top() > prompt_top)
+        .expect("Unsaved changes Save button")
+        .click();
     harness.run();
     let st = &harness.state().state;
     assert!(!st.request_quit, "a failed save must keep the app open");
@@ -61,7 +66,12 @@ fn save_from_the_prompt_saves_then_quits_and_a_failed_save_stays_open() {
 
     harness.state_mut().state.project_path = Some(path.clone());
     quit(&mut harness);
-    harness.get_by_label("Save").click();
+    let prompt_top = harness.get_by_label("Unsaved changes").rect().top();
+    harness
+        .get_all_by_role_and_label(egui::accesskit::Role::Button, "Save")
+        .find(|n| n.rect().top() > prompt_top)
+        .expect("Unsaved changes Save button")
+        .click();
     harness.run();
     let st = &harness.state().state;
     let written = path.exists();

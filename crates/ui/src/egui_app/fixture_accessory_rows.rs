@@ -20,7 +20,7 @@ pub(super) fn sizes(ui: &mut Ui, state: &mut State, name: &str) {
     let u = state.units();
     ui.label(format!("Built-in {}", live.label().to_lowercase()));
     let id = format!("accessory-sizes-{name}");
-    super::fixture_accessory_dialog::dims_grid(ui, u, &id, state.accessory_size_draft(name, &live), false);
+    super::fixture_accessory_dialog::dims_grid(ui, u, &id, state.accessory_size_draft(name, &live), None);
     ui.horizontal(|ui| {
         ui.add_space(12.0);
         if ui.small_button("Apply sizes").clicked() {

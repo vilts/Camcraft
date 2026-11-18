@@ -70,7 +70,8 @@ pub(super) fn picker(ui: &mut Ui, state: &mut State, setup: &str) {
     let table = camcraft_app::setup::work_offset_names(&state.world, Some(setup));
     let mut chosen = current;
     ui.horizontal(|ui| {
-        ui.label("    Work offset");
+        // #1648: no indent - the row now sits in its own titled group on the WCS page.
+        ui.label("Work offset");
         ComboBox::from_id_salt(("setup_wcs", setup))
             .selected_text(entry_text(&table, current))
             .show_ui(ui, |ui| {

@@ -45,7 +45,14 @@ fn block(
     let facets = params.mesh().map_err(CommandError::Invalid)?;
     let m = PlateMount { plate: plate.to_owned(), at: MountAt::Hole(at.to_owned()), yaw_deg };
     let pose = seat(&def, &plate_mesh, plate_at, &params.base_name(), &facets, &m)?;
-    let entry = FixtureEntry { name: params.base_name(), note: None, datum: Location { pos: Point3::ZERO, rot: IDENTITY_Q }, facets };
+    let entry = FixtureEntry {
+        name: params.base_name(),
+        note: None,
+        datum: Location { pos: Point3::ZERO, rot: IDENTITY_Q },
+        facets,
+        step_source: None,
+        profile: None,
+    };
     Ok(InsertFixture::new(world, &entry, setup, pose)?.with_mod_jaw(params).with_mount(m))
 }
 

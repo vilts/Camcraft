@@ -24,12 +24,13 @@ ARGS:
     <output>          program file to write
 
 OPTIONS:
-    --machine <mch>   machine definition (.mch JSON)
-    --log <file>      write the warning list here instead of stderr
-    --trace <file>    write the block-by-block trace here (stage D)
-    --units <mm|inch> the program's unit (#902; default mm)
-    -h, --help        print this text
-    --version         print the version
+    --machine <mch>        machine definition (.mch JSON)
+    --log <file>           write the warning list here instead of stderr
+    --trace <file>         write the block-by-block trace here (stage D)
+    --units <mm|inch>      the program's unit (#902; default mm)
+    --option <key=value>   set a declared post option (repeatable)
+    -h, --help             print this text
+    --version              print the version
 ";
 
 fn main() -> ExitCode {
@@ -38,6 +39,7 @@ fn main() -> ExitCode {
     let mut log: Option<String> = None;
     let mut trace: Option<String> = None;
     let mut units: Option<String> = None;
+    let mut options: Vec<String> = Vec::new();
     let mut positional: Vec<String> = Vec::new();
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -50,6 +52,13 @@ fn main() -> ExitCode {
                 println!("post {} (boa_engine)", env!("CARGO_PKG_VERSION"));
                 return ExitCode::SUCCESS;
             }
+            "--option" => match it.next() {
+                Some(v) => options.push(v.clone()),
+                None => {
+                    eprintln!("post: --option needs a key=value argument");
+                    return ExitCode::FAILURE;
+                }
+            },
             "--machine" | "--log" | "--trace" | "--units" => {
                 let slot = match a.as_str() {
                     "--machine" => &mut machine,
@@ -76,15 +85,16 @@ fn main() -> ExitCode {
         eprintln!("post: expected exactly three paths (try --help)");
         return ExitCode::FAILURE;
     }
-    run(
-        &positional[0],
-        &positional[1],
-        &positional[2],
-        machine.as_deref(),
-        log.as_deref(),
-        trace.as_deref(),
-        units.as_deref(),
-    )
+    run(RunArgs {
+        config: &positional[0],
+        input: &positional[1],
+        output: &positional[2],
+        machine: machine.as_deref(),
+        log: log.as_deref(),
+        trace: trace.as_deref(),
+        units: units.as_deref(),
+        option_specs: &options,
+    })
 }
 
 /// The machine value the engine posts with (#996): a vendor kinematics
@@ -107,15 +117,28 @@ fn die(msg: String) -> ExitCode {
     ExitCode::FAILURE
 }
 
-fn run(
-    config: &str,
-    input: &str,
-    output: &str,
-    machine: Option<&str>,
-    log: Option<&str>,
-    trace: Option<&str>,
-    units: Option<&str>,
-) -> ExitCode {
+struct RunArgs<'a> {
+    config: &'a str,
+    input: &'a str,
+    output: &'a str,
+    machine: Option<&'a str>,
+    log: Option<&'a str>,
+    trace: Option<&'a str>,
+    units: Option<&'a str>,
+    option_specs: &'a [String],
+}
+
+fn run(args: RunArgs<'_>) -> ExitCode {
+    let RunArgs {
+        config,
+        input,
+        output,
+        machine,
+        log,
+        trace,
+        units,
+        option_specs,
+    } = args;
     let cps = match std::fs::read_to_string(config) {
         Ok(s) => s,
         Err(e) => return die(format!("cannot read {config}: {e}")),
@@ -153,7 +176,28 @@ fn run(
     };
     // #902: the document's unit, stated the way the app states it; the
     // engine refuses a word that is not mm or inch by name.
-    let options = units.map_or(Value::Null, |u| serde_json::json!({ "Units": u }));
+    let schema = match post::options::declared_options(&cps) {
+        Ok(s) => s,
+        Err(e) => return die(format!("{e}")),
+    };
+    let mut overrides = std::collections::BTreeMap::new();
+    for spec in option_specs {
+        match post::options::parse_cli_override(&schema, spec) {
+            Ok((k, v)) => {
+                overrides.insert(k, v);
+            }
+            Err(e) => return die(e),
+        }
+    }
+    let base_options = units.map_or(Value::Null, |u| serde_json::json!({ "Units": u }));
+    let options = if schema.is_empty() && overrides.is_empty() {
+        base_options
+    } else {
+        match post::options::merge_post_options(&schema, &base_options, &overrides) {
+            Ok(v) => v,
+            Err(e) => return die(e),
+        }
+    };
     match engine::run_with(&cps, &mch, &stream, &options) {
         Ok(out) => {
             if let Err(e) = std::fs::write(Path::new(output), &out.program) {

@@ -103,7 +103,10 @@ fn collect(world: &World, name: &str, with_moves: bool, keep: impl Fn(&Option<St
         let probe = tool.as_ref().is_some_and(|t| {
             matches!(
                 t.kind,
-                crate::tools::ToolKind::Probe | crate::tools::ToolKind::Torch | crate::tools::ToolKind::Electrode
+                crate::tools::ToolKind::Probe
+                    | crate::tools::ToolKind::Torch
+                    | crate::tools::ToolKind::Electrode
+                    | crate::tools::ToolKind::Wire
             )
         });
         let (cut, sig, moves) = if probe {

@@ -46,15 +46,32 @@ const TOOL: &str = "EM-0600-4FL";
 const STUB: &str = "EM-0600-STUB";
 
 /// A 40 x 40 x `thick` plate as "part" (Z 0..thick) in a stock of its
-/// own size: axis-aligned, or turned a quarter about Z (the same
-/// footprint, but a rotation the program sim refuses to model).
+/// own size: axis-aligned, or turned [`OBLIQUE`] about Z (the same
+/// footprint within 1e-4 mm, but a turn the program sim refuses to
+/// model).
 fn job(thick: f64, rotated: bool) -> (World, History) {
-    job_of(cube(Point3::new(-20.0, -20.0, 0.0), Point3::new(20.0, 20.0, thick)), thick, rotated)
+    job_of(cube(Point3::new(-20.0, -20.0, 0.0), Point3::new(20.0, 20.0, thick)), thick, turn(rotated))
+}
+
+/// A turn about Z off the machine axes (rad). The program sim refuses
+/// such a stock by name (`stock_follow::OBLIQUE_STOCK`), so the
+/// operation's own verdict is the only judge of the post. #2177: a
+/// quarter turn is no such device - the sim judges a square-turned box.
+const OBLIQUE: f64 = 1e-6;
+
+/// The device holds: the program sim refuses this stock by name.
+fn oblique_refused(world: &World) -> bool {
+    stock_sim::simulate_document(world).is_err_and(|e| e.contains(camcraft_app::stock_follow::OBLIQUE_STOCK))
+}
+
+/// The stock's turn: [`OBLIQUE`] when `rotated`, else none.
+fn turn(rotated: bool) -> [f64; 4] {
+    if rotated { quat_from_yaw(OBLIQUE) } else { Location::default().rot }
 }
 
 /// [`job`] with `part` as the part: its plate is Z 0..`thick`, and the
 /// stock is that plate's box.
-fn job_of(part: Mesh, thick: f64, rotated: bool) -> (World, History) {
+fn job_of(part: Mesh, thick: f64, rot: [f64; 4]) -> (World, History) {
     let world = new_world();
     let mut h = History::default();
     let tool = catalog().into_iter().find(|(n, _)| *n == TOOL).map(|(_, t)| t).expect("tool");
@@ -63,13 +80,14 @@ fn job_of(part: Mesh, thick: f64, rotated: bool) -> (World, History) {
     h.execute(&world, AddTool::new(&world, TOOL, tool).expect("tool"));
     h.execute(&world, AddTool::new(&world, STUB, stub).expect("stub tool"));
     h.execute(&world, ImportModel::from_mesh("part", part));
-    let rot = if rotated { quat_from_yaw(std::f64::consts::FRAC_PI_2) } else { Location::default().rot };
     let at = Location { pos: Point3::new(0.0, 0.0, 0.0), rot };
     h.execute(&world, SetStock::new(&world, StockShape::Box { dx: 40.0, dy: 40.0, dz: thick }, at).expect("stock"));
     let b = model::stock_world_aabb_for(&world, None).expect("stock box");
-    let on = |v: f64, want: f64| (v - want).abs() < 1e-9;
+    // The oblique turn moves the corners by 20 * sqrt(2) * 1e-6 mm.
+    let on = |v: f64, want: f64| (v - want).abs() < 1e-4;
+    let level = |v: f64, want: f64| (v - want).abs() < 1e-9;
     assert!(
-        on(b.min.x, -20.0) && on(b.min.y, -20.0) && on(b.min.z, 0.0) && on(b.max.x, 20.0) && on(b.max.y, 20.0) && on(b.max.z, thick),
+        on(b.min.x, -20.0) && on(b.min.y, -20.0) && level(b.min.z, 0.0) && on(b.max.x, 20.0) && on(b.max.y, 20.0) && level(b.max.z, thick),
         "stock at {:?}..{:?}",
         b.min,
         b.max
@@ -155,9 +173,10 @@ fn a_cut_through_a_thin_plate_gouges_and_never_posts_on_either_stock() {
             );
             let err = post(&world, &format!("through-{kind:?}-{rotated}")).expect_err("a through-cut blocks the post");
             assert!(err.contains("post blocked"), "{kind:?} rotated {rotated}: {err}");
-            // Turned, the op's own gouge is the only judge.
+            // Turned off the axes, the op's own gouge is the only judge.
             if rotated {
                 assert!(err.contains("E1: move") && err.contains("cuts past the finish surface"), "{kind:?}: {err}");
+                assert!(oblique_refused(&world), "{kind:?}: the program sim judged the oblique stock");
             }
         }
     }
@@ -210,6 +229,29 @@ fn the_program_sim_never_credits_a_cut_through_the_plate() {
 }
 
 #[test]
+fn a_quarter_turned_stock_is_judged_by_the_program_sim() {
+    // #2177: the 2 mm plate's stock turned a quarter about Z is the same
+    // box square to the axes. The program sim judges it: a cut through
+    // the plate is convicted by the sim, and a legal mark is credited.
+    let plate = || cube(Point3::new(-20.0, -20.0, 0.0), Point3::new(20.0, 20.0, 2.0));
+    let quarter = quat_from_yaw(std::f64::consts::FRAC_PI_2);
+    for kind in KINDS {
+        let (world, mut h) = job_of(plate(), 2.0, quarter);
+        let (warns, _, _) = generated(&world, &mut h, TOOL, cut(kind, 2.0, -0.9));
+        assert!(gouges(&warns) > 0, "{kind:?}: convicted on the op: {warns:?}");
+        let through = stock_sim::simulate_document(&world).expect("a quarter-turned box is judged").dev;
+        assert!(through.gouge_cells > 0 && through.max_gouge >= MARK_FLOOR - 1e-6, "{kind:?}: {} cell(s), worst {}", through.gouge_cells, through.max_gouge);
+        let err = post(&world, &format!("quarter-through-{kind:?}")).expect_err("a through-cut blocks the post");
+        assert!(err.contains("post blocked"), "{kind:?}: {err}");
+        let (world, mut h) = job_of(plate(), 2.0, quarter);
+        generated(&world, &mut h, TOOL, cut(kind, 2.0, 1.7));
+        let legal = stock_sim::simulate_document(&world).expect("a quarter-turned box is judged").dev;
+        assert_eq!(legal.gouge_cells, 0, "{kind:?}: worst {} at {:?}", legal.max_gouge, legal.max_gouge_at);
+        post(&world, &format!("quarter-legal-{kind:?}")).unwrap_or_else(|e| panic!("{kind:?}: a legal mark posts: {e}"));
+    }
+}
+
+#[test]
 fn a_shank_in_the_kerf_is_judged_against_the_part_as_it_stands() {
     // An 8 mm block, 2.5 mm deep with 2 mm of flute: the edge is within
     // its 2.5 mm mark, the shank stands 0.5 mm inside the part. Judged
@@ -251,6 +293,7 @@ fn a_stock_source_cut_through_the_plate_meets_the_same_floor() {
                 let err = post(&world, &format!("stock-{tag}-{kind:?}-{rotated}")).expect_err("a through-cut off the stock blocks the post");
                 if rotated {
                     assert!(err.contains("E1: move") && err.contains("cuts past the finish surface"), "{kind:?}: {err}");
+                    assert!(oblique_refused(&world), "{kind:?}: the program sim judged the oblique stock");
                 }
             }
             let (world, mut h) = job(2.0, rotated);
@@ -282,7 +325,7 @@ fn a_retract_into_an_overhang_of_the_part_is_convicted_on_the_lift_and_never_pos
     assert!(reach > 0.0 && 8.0 + reach < 120.0, "the slab stands over the holder's top: reach {reach}");
     for kind in KINDS {
         for rotated in [false, true] {
-            let (world, mut h) = job_of(roofed(), 8.0, rotated);
+            let (world, mut h) = job_of(roofed(), 8.0, turn(rotated));
             let (warns, _, _) = generated(&world, &mut h, TOOL, cut_under(kind, 8.0, 7.7, 150.0));
             let e = model::find_by_name(&world, "E1").expect("op");
             let moves = model::toolpath_of(&world, &e).expect("cached path").path.moves.clone();

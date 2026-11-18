@@ -122,12 +122,32 @@ impl ChatTurn {
         }
     }
 
-    /// Finalize this turn's terminal status and close its undo depth span.
-    pub(super) fn finish(&mut self, status: TurnFinish, current_done_len: usize) -> Option<String> {
+    /// True when every executed command in this turn still sits contiguously
+    /// at the top of `history` and can be committed as one [`BatchCommand`].
+    #[must_use]
+    pub(super) fn can_commit_group(&self, history: &History) -> bool {
+        self.change_count > 0
+            && self.document_id == history.identity()
+            && self.expected_entries.as_ref() == Some(&history.done_entry_ids())
+            && history.done_len() == self.start_depth + self.change_count
+    }
+
+    /// Finalize this turn's terminal status and fold contiguous commands into one batch step.
+    pub(super) fn finish(&mut self, status: TurnFinish, history: &mut History) -> Option<String> {
+        let contiguous = self.can_commit_group(history);
+        if contiguous && history.in_group() {
+            let _ = history.commit_group();
+        } else {
+            let _ = history.cancel_group();
+        }
         // Only record an undo span when every post-turn command belongs to this turn contiguously.
-        self.end_depth = (self.change_count > 0
-            && current_done_len == self.start_depth + self.change_count)
-            .then_some(current_done_len);
+        if contiguous {
+            self.end_depth = Some(history.done_len());
+            self.expected_entries = Some(history.done_entry_ids());
+        } else {
+            self.end_depth = None;
+            self.expected_entries = None;
+        }
         match status {
             TurnFinish::Completed => {
                 self.status = TurnStatus::Completed;
@@ -156,13 +176,16 @@ impl ChatTurn {
                 "cannot undo AI turn: later document edits exist or turn already undone".to_owned(),
             );
         }
-        let steps = self.change_count;
-        for _ in 0..steps {
+        let undo_steps = self
+            .end_depth
+            .unwrap_or(self.start_depth)
+            .saturating_sub(self.start_depth);
+        for _ in 0..undo_steps {
             let _ = history.undo(world);
         }
         self.undone = true;
         *doc_version += 1;
-        Ok(format!("undid AI turn ({steps} changes)"))
+        Ok(format!("undid AI turn ({} changes)", self.change_count))
     }
 }
 

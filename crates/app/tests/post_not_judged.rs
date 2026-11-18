@@ -175,10 +175,10 @@ fn tilted_world() -> World {
         ImportModel::from_mesh("part", cube(Point3::new(0.0, 0.0, -20.0), Point3::new(10.0, 30.0, -10.0))),
     );
     stock_at(&world, &mut history, StockShape::Box { dx: 40.0, dy: 30.0, dz: 10.0 }, Point3::new(20.0, 15.0, -20.0));
-    let params = OpParams::Pocket {
+    let params = OpParams::Pocket { rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
-        tilt: Some(Tilt { a_deg: 0.0, b_deg: 90.0, origin: [-25.0, 0.0, -15.0] }),
+        tilt: Some(Tilt { basis_version: 1, a_deg: 0.0, b_deg: 90.0, origin: [-25.0, 0.0, -15.0] }),
         stepover: 3.0,
         stock_to_leave: 0.0,
         clearance_z: Height::fixed(80.0),

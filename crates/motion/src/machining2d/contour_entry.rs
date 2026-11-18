@@ -88,11 +88,14 @@ pub(super) fn wall_arc(
     let lift = cur.z.max(hop_z);
     b.push(MoveKind::Rapid, Point3::new(cur.x, cur.y, lift), None);
     b.push(MoveKind::Rapid, Point3::new(s.x, s.y, lift), None);
-    let air = z_top.max(p.top_z).min(lift);
+    // #1559: over carried stock the rapid stops at the plunge height
+    // above it; the plunge below feeds the rest.
+    let over = if a.carries_stock(p.top_z) { p.entry_top() + a.plunge_height } else { p.top_z };
+    let air = z_top.max(over).min(lift);
     b.push(MoveKind::Rapid, Point3::new(s.x, s.y, air), None);
     // The axial part of the drop (to the arc's top, under a sweep cap
     // lower still) answers the one plunge law (`plunge_law`).
-    super::contour_link::guard(b, p, s, arc.top.min(z_top), p.top_z, "the arc entry's axial drop");
+    super::contour_link::guard(b, p, s, arc.top.min(z_top), p.entry_top(), "the arc entry's axial drop");
     if z_top < air {
         b.push(MoveKind::Plunge, Point3::new(s.x, s.y, z_top), Some(p.plunge_feed));
     }

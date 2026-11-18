@@ -28,6 +28,8 @@ pub struct ImportModel {
     /// `import::Graded::open`): the model lands incomplete, every
     /// operation on it refused at the post by name. `None` for a whole mesh.
     pub hole: Option<String>,
+    /// Raw STEP text kept on entities imported from STEP (#744).
+    pub step_source: Option<String>,
 }
 
 impl ImportModel {
@@ -78,6 +80,7 @@ impl ImportModel {
         cmd.facet_budget = step_budget::recorded(facet_budget);
         cmd.notes = graded.notes;
         cmd.hole = graded.open;
+        cmd.step_source = graded.step_source;
         cmd
     }
 
@@ -89,6 +92,7 @@ impl ImportModel {
             facet_budget: None,
             notes: Vec::new(),
             hole: None,
+            step_source: None,
         }
     }
 
@@ -152,6 +156,7 @@ impl Command for ImportModel {
         crate::model_fidelity::set(world, &entity, self.coarse_mm);
         crate::model_fidelity::set_budget(world, &entity, self.facet_budget);
         crate::mesh_open::set(world, &entity, self.hole.as_deref());
+        crate::step_source::set(world, &entity, self.step_source.as_deref());
     }
 
     fn invert(&self, world: &World) {

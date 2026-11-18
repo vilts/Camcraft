@@ -34,6 +34,11 @@
 //!   puts the stamp's inputs back (Ok again). A moved fixture never
 //!   stales a toolpath (the live-gate law, `crate::fixture`): the
 //!   collision check re-judges at the new placement.
+//! - **The stock can be the held body (#2173).** Its faces mate the
+//!   fixture; the part moves and the stock follows it, so the part keeps
+//!   its place in the blank. A follow that leaves a picked stock face off
+//!   its mate plane (a cylinder re-fitted upright round a turned part) or
+//!   a picked stock corner off its mate is refused by name.
 
 use flecs_ecs::prelude::World;
 
@@ -85,6 +90,10 @@ impl LocatePart {
             PartWrite::Move(c) => c.moved_stock(world),
             PartWrite::Align(c) => c.moved_stock(),
         };
+        // #2173: a stock locate lands only where its stock meets the mates.
+        if spec.body == fixture_locate::LocateBody::Stock {
+            fixture_locate::stock_lands(world, spec, &plan, &stocks).map_err(invalid)?;
+        }
         let warning = fixture_locate::join_warnings(
             fixture_locate::interpenetration(world, spec, &plan),
             fixture_locate::stock_interpenetration(world, spec, &plan, &stocks),

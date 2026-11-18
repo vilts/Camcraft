@@ -24,7 +24,7 @@ mod pocket_support;
 
 use area_support::*;
 use camcraft_app::commands::GenerateOperation;
-use camcraft_app::geometry::{quat_from_yaw, Mesh, Triangle};
+use camcraft_app::geometry::{Mesh, Triangle};
 use camcraft_app::mcp::Server;
 use camcraft_app::posting;
 use camcraft_app::verify::Warning;
@@ -58,21 +58,22 @@ fn block_with_boss() -> Mesh {
 const SIDE: f64 = 50.0;
 
 /// `part` (when given) in the 50 x 50 x 20 stock: axis-aligned, or the
-/// same box turned a quarter about Z (the same footprint, but a rotation
-/// the program sim refuses to model).
+/// same box turned [`OBLIQUE`] about Z (the same footprint within 1e-4
+/// mm, but a turn the program sim refuses to model). #2177: a quarter
+/// turn is no such device - the sim judges a square-turned box.
 fn job(part: Option<Mesh>, rotated: bool) -> (World, History) {
     let world = new_world();
     let mut h = History::default();
     if let Some(m) = part {
         h.execute(&world, ImportModel::from_mesh("part", m));
     }
-    // A box stock stands centred on its place, so a quarter turn about
-    // Z leaves the footprint where it was.
-    let rot = if rotated { quat_from_yaw(std::f64::consts::FRAC_PI_2) } else { Location::default().rot };
-    let at = Location { pos: Point3::new(0.0, 0.0, 0.0), rot };
+    // A box stock stands centred on its place, so a turn about Z leaves
+    // the footprint where it was.
+    let at = Location { pos: Point3::new(0.0, 0.0, 0.0), rot: stock_turn(rotated) };
     h.execute(&world, SetStock::new(&world, StockShape::Box { dx: SIDE, dy: SIDE, dz: 20.0 }, at).expect("stock"));
     let ((lo, hi), half) = (stock_box(&world), SIDE / 2.0);
-    let on = |v: f64, want: f64| (v - want).abs() < 1e-9;
+    // The oblique turn moves the corners by 25 * sqrt(2) * 1e-6 mm.
+    let on = |v: f64, want: f64| (v - want).abs() < 1e-4;
     assert!(on(lo.x, -half) && on(lo.y, -half) && on(hi.x, half) && on(hi.y, half), "stock at {lo:?}..{hi:?}");
     let tool = catalog().into_iter().find(|(n, _)| *n == TOOL).map(|(_, t)| t).expect("catalog");
     h.execute(&world, AddTool::new(&world, TOOL, tool).expect("tool"));
@@ -146,6 +147,7 @@ fn assert_post_refused(world: &World, tag: &str, by_op: bool) {
     assert!(err.contains("post blocked"), "{tag}: {err}");
     if by_op {
         assert!(err.contains("P1: move") && err.contains("cuts past the finish surface"), "{tag}: {err}");
+        assert!(oblique_refused(world), "{tag}: the device holds: the program sim does not judge this stock");
     }
     assert!(!out.exists(), "{tag}: blocked output is never written");
 }

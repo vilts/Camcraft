@@ -33,6 +33,10 @@ pub const FORMAT: &str = "camcraft-tools";
 pub const VERSION: u64 = 1;
 /// Older readers must refuse libraries containing left-hand taps.
 pub const LEFT_HAND_VERSION: u64 = 2;
+/// #2015: older readers must refuse a library whose cutting data holds
+/// an `unknown` row or a stepdown / stepover (they would drop or refuse
+/// it); a library with neither keeps the older number.
+pub const CUTTING_STEPS_VERSION: u64 = 3;
 /// The extension the file dialogs offer.
 pub const EXTENSION: &str = "camtools";
 
@@ -80,7 +84,10 @@ pub fn export_tool_library(world: &World) -> Result<String, String> {
         if t.kind == crate::tools::ToolKind::Tap
             && t.thread_hand == camcraft_tools::thread_hand::ThreadHand::Left
         {
-            version = LEFT_HAND_VERSION;
+            version = version.max(LEFT_HAND_VERSION);
+        }
+        if needs_steps_version(&t) {
+            version = version.max(CUTTING_STEPS_VERSION);
         }
         let mut def = project::tool_to_json(&t);
         if let Some(b) = tool_body::body_of(world, &e) {
@@ -116,8 +123,8 @@ pub fn parse_tool_library(text: &str) -> Result<Vec<LibraryTool>, String> {
                 None => return Err(format!("not a tool library: no \"format\": \"{FORMAT}\"")),
             }
             match o.get("version").and_then(Value::as_u64) {
-                Some(VERSION | LEFT_HAND_VERSION) => {}
-                Some(v) => return Err(format!("tool library version {v} is not supported (this build reads {VERSION} or {LEFT_HAND_VERSION})")),
+                Some(VERSION | LEFT_HAND_VERSION | CUTTING_STEPS_VERSION) => {}
+                Some(v) => return Err(format!("tool library version {v} is not supported (this build reads {VERSION} to {CUTTING_STEPS_VERSION})")),
                 None => return Err("not a tool library: no \"version\"".into()),
             }
             if let Some(u) = o.get("units").and_then(Value::as_str)
@@ -160,6 +167,17 @@ pub fn parse_tool_library(text: &str) -> Result<Vec<LibraryTool>, String> {
         return Err("the tool library holds no tools".into());
     }
     Ok(out)
+}
+
+/// #2015: does `t` write cutting data a version-1/2 reader cannot keep:
+/// an `Unknown` row that is not just its own rpm / feed, or a row's
+/// stepdown / stepover?
+fn needs_steps_version(t: &Tool) -> bool {
+    t.cutting.iter().any(|r| {
+        (r.is_unknown() && !camcraft_tools::cutting_rows::is_derived_unknown(r, t.rpm, t.feed))
+            || r.stepdown.is_some()
+            || r.stepover.is_some()
+    })
 }
 
 /// #889: a definition's `body`, judged as the project loader judges it

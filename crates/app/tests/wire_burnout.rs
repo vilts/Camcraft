@@ -23,7 +23,7 @@ use camcraft_app::geometry::{Mesh, Point3, Triangle};
 use camcraft_app::machine::parse_mch;
 use camcraft_app::model;
 use camcraft_app::operation::{Height, OpParams, SrcRef, WireContourOp, WireSide};
-use camcraft_app::posting::{self, BUILTINS};
+use camcraft_app::posting;
 use camcraft_app::schema::Location;
 use camcraft_app::stock::StockShape;
 use camcraft_app::world::new_world;
@@ -32,7 +32,7 @@ const FIXTURE: &str = include_str!("edm/wire-iso-fixture.mch");
 const GOLDEN: &str = "tests/golden/nc/wire-iso/wire_burnout_pocket.nc";
 
 fn cps() -> &'static str {
-    BUILTINS.iter().find(|(n, _)| *n == "Generic ISO Wire EDM").map(|(_, s)| *s).expect("registered")
+    camcraft_app::posting::builtin_post_text("Generic ISO Wire EDM").expect("registered")
 }
 
 /// The 10 x 6 pocket from z = 0 to 12, centred on the origin.
@@ -73,6 +73,11 @@ fn doc(dz: f64) -> (World, History) {
     let mut h = History::default();
     let m = parse_mch(FIXTURE).expect("the fixture parses");
     h.execute(&world, LoadMachine::new(&world, "wire-iso.mch".into(), Some(m)).expect("mount"));
+    h.execute(
+        &world,
+        camcraft_app::commands::AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25))
+            .expect("wire"),
+    );
     h.execute(&world, ImportModel::from_mesh("pocket", pocket()));
     let stock = SetStock::new(&world, StockShape::Box { dx: 30.0, dy: 30.0, dz }, Location::default()).expect("stock");
     h.execute(&world, stock);
@@ -81,7 +86,7 @@ fn doc(dz: f64) -> (World, History) {
 
 fn burn(world: &World, h: &mut History, clearance: f64) {
     let op = OpParams::WireContour(burnout(Some(clearance)));
-    let c = CreateOperation::new(world, "Burn1", "", SrcRef::Entity("pocket".into()), op).expect("op");
+    let c = CreateOperation::new(world, "Burn1", "EDM-W025", SrcRef::Entity("pocket".into()), op).expect("op");
     h.execute(world, c);
     h.execute(world, GenerateOperation::new(world, "Burn1").expect("generates"));
 }
@@ -128,9 +133,9 @@ fn the_burnout_posts_its_golden_with_no_slug() {
 fn a_clearance_below_the_kerf_is_refused_and_the_field_is_undoable() {
     let (world, mut h) = doc(12.0);
     let low = OpParams::WireContour(burnout(Some(0.1)));
-    let err = CreateOperation::new(&world, "Low", "", SrcRef::Entity("pocket".into()), low).err().expect("refused");
+    let err = CreateOperation::new(&world, "Low", "EDM-W025", SrcRef::Entity("pocket".into()), low).err().expect("refused");
     assert!(err.to_string().contains("wall clearance 0.1000 mm is below the kerf offset 0.1650 mm"), "{err}");
-    let op = CreateOperation::new(&world, "Burn1", "", SrcRef::Entity("pocket".into()), OpParams::WireContour(burnout(None))).expect("op");
+    let op = CreateOperation::new(&world, "Burn1", "EDM-W025", SrcRef::Entity("pocket".into()), OpParams::WireContour(burnout(None))).expect("op");
     h.execute(&world, op);
     let low = EditOperationParams::new(&world, "Burn1", OpParams::WireContour(burnout(Some(0.1))));
     assert!(low.is_err(), "the edit door refuses it too");

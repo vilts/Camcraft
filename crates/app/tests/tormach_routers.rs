@@ -18,7 +18,6 @@ use camcraft_app::geometry::{IDENTITY_Q, Point3, cube};
 use camcraft_app::machine::{Machine, check_document, parse_mch};
 use camcraft_app::operation::{Height, OpParams, SrcRef};
 use camcraft_app::post::{engine, machine};
-use camcraft_app::posting::MACHINES;
 use camcraft_app::schema::Location;
 use camcraft_app::stock::StockShape;
 use camcraft_app::tools::catalog;
@@ -28,11 +27,8 @@ use std::path::Path;
 const IN: f64 = 25.4;
 
 fn shipped(name: &str) -> Machine {
-    let text = MACHINES
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(_, t)| *t)
-        .unwrap_or_else(|| panic!("{name} is not a shipped machine"));
+    let text = camcraft_app::posting::builtin_machine_text(name)
+        .unwrap_or_else(|why| panic!("{name} is not a shipped machine: {why}"));
     parse_mch(text).unwrap_or_else(|e| panic!("{name}: {e}"))
 }
 

@@ -22,7 +22,7 @@ use flecs_ecs::prelude::World;
 const PROBE: &str = "PRB-0400";
 
 fn tormach_770mx() -> camcraft_app::machine::Machine {
-    let (_, text) = posting::MACHINES.iter().find(|(n, _)| *n == "Tormach 770MX").expect("shipped 770MX");
+    let (_, text) = camcraft_app::posting::shipped_machines().expect("the shipped machines read").iter().find(|(n, _)| *n == "Tormach 770MX").expect("shipped 770MX");
     let m = parse_mch(text).expect("parses");
     assert!(m.spindle_min.is_some_and(|lo| lo > 1.0), "the 770MX states a spindle minimum: {:?}", m.spindle_min);
     m

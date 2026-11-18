@@ -302,7 +302,7 @@ pub(super) fn ring_link(
         b.push(MoveKind::Rapid, Point3::new(e2.x, e2.y, p.clearance_z), None);
     }
     b.push(MoveKind::Rapid, Point3::new(e2.x, e2.y, hop_z), None);
-    guard(b, p, e2, z, p.top_z, "the ring-to-ring dive at the lead-in");
+    guard(b, p, e2, z, p.entry_top(), "the ring-to-ring dive at the lead-in");
     b.push(MoveKind::Plunge, Point3::new(e2.x, e2.y, z), Some(p.plunge_feed));
 }
 

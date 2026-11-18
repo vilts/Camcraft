@@ -130,7 +130,10 @@ fn one_block_op(params: &OpParams) -> Operation {
 fn assert_same_cut(across: &Toolpath, single: &Toolpath) {
     let (za, zs) = (feed_levels(across), feed_levels(single));
     assert_eq!(za.len(), zs.len(), "the same levels: {za:?} vs {zs:?}");
-    assert!(za.len() >= 2, "the one-block ring cuts more than its top level: {zs:?}");
+    // #2004: Top Z 10 is the part top and the stepdown is the full
+    // height, so the ladder is the one level Z 0 (the air level at Z 10
+    // is gone). The one-block ring must cut below its top.
+    assert!(!za.is_empty() && za.iter().all(|z| *z < 10.0 - EPS), "the one-block ring cuts below its top: {zs:?}");
     for (a, s) in za.iter().zip(&zs) {
         assert!((a - s).abs() < EPS, "level for level: {za:?} vs {zs:?}");
         let (fa, fs) = (level_feeds(across, *a), level_feeds(single, *s));
@@ -220,8 +223,10 @@ fn a_self_touching_single_body_still_stops_at_its_top_level() {
     assert!(err.contains("non-manifold"), "the mesh is named as the cause: {err}");
     assert!(!err.contains("set Side") && !err.contains("stands in the part material"), "the side is not blamed: {err}");
     // And the one-block reference cuts below it.
+    // #2004: the ladder is the one level Z 0 (no air level at Z 10).
     let (single, _) = run(&block_world(), &one_block_op(&params)).expect("cut");
-    assert!(feed_levels(&single).len() >= 2, "{:?}", feed_levels(&single));
+    let zs = feed_levels(&single);
+    assert!(!zs.is_empty() && zs.iter().all(|z| *z < 10.0 - EPS), "{zs:?}");
 }
 
 fn feed_length_at(t: &Toolpath, z: f64) -> f64 {

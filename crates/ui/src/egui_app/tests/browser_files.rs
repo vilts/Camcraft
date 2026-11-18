@@ -156,3 +156,16 @@ fn a_file_button_is_greyed_with_its_reason_in_the_browser() {
     assert!(h.get_by_label("Load machine (.mch)").accesskit_node().is_disabled(), "greyed in the browser");
     assert!(!h.get_by_label("Built-in").accesskit_node().is_disabled(), "a live button stays live");
 }
+
+#[test]
+fn browser_shell_initializes_app_logging_and_repaints_pending_cpu_eye() {
+    let src = include_str!("../shell_web.rs");
+    assert!(
+        src.contains("camcraft_app::logging::init()"),
+        "shell_web must initialize camcraft_app logging so app tracing reaches the browser console"
+    );
+    assert!(
+        src.contains("cpu_pending"),
+        "shell_web must request a repaint while StockEye has a CPU march pending"
+    );
+}

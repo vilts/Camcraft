@@ -17,7 +17,12 @@
 #[macro_use]
 pub mod diag;
 
+pub mod cli_options;
+#[cfg(test)]
+mod cli_options_tests;
+
 pub mod actions;
+pub mod play_precalc;
 pub mod align_pick_viz;
 pub(crate) mod machine_modes;
 mod axis_note;
@@ -34,19 +39,24 @@ pub mod pick_ink;
 pub mod feature_click;
 pub mod egui_app;
 pub mod feedback;
+pub mod gen_worker;
 pub mod file_dialog;
 pub mod file_pick;
+pub mod frame_cost;
+pub mod frame_memo;
 pub mod incoming_view;
 pub mod headless_gpu;
 pub mod interact;
 pub mod locate_pick;
 pub mod machined;
 mod setup_display;
+mod floor;
 mod work_envelope;
 pub mod view_frame;
 pub mod mcp_host;
 pub mod operations;
 pub mod path_lines;
+pub mod pick_line_memo;
 pub(crate) mod refusal_ghost;
 pub mod post_file;
 pub mod plane_pick;
@@ -55,6 +65,7 @@ pub mod axis_pick;
 pub mod cylinder_pick;
 pub mod origin_pick;
 pub mod points_pick;
+pub mod start_exit_pick;
 pub mod wire_sync_pick;
 pub mod wcs_pick;
 pub mod shortcut_keys;
@@ -81,6 +92,8 @@ mod helix_view_tests;
 #[cfg(test)]
 mod field_view_tests;
 #[cfg(test)]
+mod play_precalc_tests;
+#[cfg(test)]
 mod machined_tests;
 #[cfg(test)]
 mod play_bench_tests;
@@ -104,11 +117,34 @@ mod axis_note_tests;
 /// at M-g and there is nothing left to select.
 /// Provenance: our own shell, specced from public CAM workflow conventions.
 pub fn run(args: &[String]) -> i32 {
+    // #2082: help, version and unknown options are settled before any
+    // window, GPU device or server is made.
+    match cli_options::parse(args) {
+        Ok(cli_options::Parsed::Help) => {
+            diag::info(&cli_options::help_text());
+            return 0;
+        }
+        Ok(cli_options::Parsed::Version) => {
+            diag::info(&cli_options::version_text());
+            return 0;
+        }
+        Ok(cli_options::Parsed::Run) => {}
+        Err(err) => {
+            diag_warn!("{err}");
+            return 2;
+        }
+    }
     let mut it = args.iter();
     while let Some(a) = it.next() {
-        if a == "--ui" {
-            match it.next().map(String::as_str) {
-                None => {
+        // Both `--ui value` and `--ui=value` give the same result.
+        let value = if a == "--ui" {
+            Some(it.next().map(String::as_str))
+        } else {
+            a.strip_prefix("--ui=").map(Some)
+        };
+        if let Some(value) = value {
+            match value {
+                None | Some("") => {
                     diag_warn!("--ui needs a value: egui is the only shell (imgui retired at M1.4.2 M-g)");
                     return 2;
                 }

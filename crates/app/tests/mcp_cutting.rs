@@ -3,7 +3,7 @@
 //! without a write, applied as one undo step (op feed and tool rpm), and
 //! every refusal named.
 //!
-//! Gate map (M4.4): covers app::mcp::cutting_tools.
+//! Gate map (M4.4): covers app::mcp::cutting_tools, app::mcp::tools.
 
 use camcraft_app::mcp::Server;
 
@@ -107,4 +107,20 @@ fn cutting_data_is_stated_suggested_applied_and_undone_over_mcp() {
     assert_eq!(c.ok("get_job", json!({}))["work_material"], Value::Null);
     c.ok("redo", json!({}));
     assert_eq!(c.ok("get_job", json!({}))["work_material"], json!("aluminium_6061"));
+}
+
+#[test]
+fn add_tool_schema_keeps_unknown_steps_and_weldon_descriptions() {
+    let mut c = Client::new();
+    let reply = c.request("tools/list", json!({}));
+    let add = reply["result"]["tools"]
+        .as_array().expect("tools")
+        .iter().find(|t| t["name"] == "add_tool").expect("add_tool");
+    let properties = &add["inputSchema"]["properties"];
+    let definition = properties["definition"]["description"].as_str().expect("definition description");
+    for required in ["stepdown?", "stepover?", "or unknown", "each missing one from the unknown row"] {
+        assert!(definition.contains(required), "missing {required}: {definition}");
+    }
+    let holder = properties["holder"]["description"].as_str().expect("holder description");
+    assert!(holder.contains("BT40 Weldon") && holder.contains("bore for the tool's shank"), "{holder}");
 }

@@ -286,3 +286,73 @@ fn a_plain_selection_pick_is_untouched_when_the_group_is_not_collecting() {
     assert!(matches!(state.pending.back(), Some(CommandKind::SetOperationGeometry { items, .. }) if *items == vec![n]));
     assert!(state.op_ui.area.is_default());
 }
+
+#[test]
+fn extend_to_loop_button_uses_the_operations_aligned_setup() {
+    use camcraft_app::commands::{ActivateSetup, AlignPartToSetup, CreateOperation, CreateSetup};
+    use camcraft_app::geometry::feature;
+
+    let mut state = State::new();
+    state.pending.push_back(CommandKind::SetStock {
+        shape: StockShape::Box { dx: 60.0, dy: 60.0, dz: 60.0 },
+        pos: [0.0, 0.0, -25.0],
+        yaw_deg: 0.0,
+    });
+    let tool = catalog().into_iter().find(|(n, _)| *n == "EM-0400-2FL").map(|(_, t)| t).expect("tool");
+    state.pending.push_back(CommandKind::AddTool { name: "EM-0400-2FL".into(), tool });
+    state.drain_actions();
+    state.history.execute(
+        &state.world,
+        ImportModel::from_mesh("part", cube(Point3::new(-20.0, -10.0, 0.0), Point3::new(20.0, 10.0, 10.0))),
+    );
+    state.history.execute(&state.world, CreateSetup::new(&state.world, None, None).expect("Setup1"));
+    state.history.execute(&state.world, CreateSetup::new(&state.world, None, None).expect("Setup2"));
+    state.history.execute(&state.world, ActivateSetup::new(&state.world, Some("Setup2")).expect("Setup2 active"));
+    state.pending.push_back(CommandKind::SetStock {
+        shape: StockShape::Box { dx: 60.0, dy: 60.0, dz: 60.0 },
+        pos: [0.0, 0.0, -25.0],
+        yaw_deg: 0.0,
+    });
+    state.drain_actions();
+    state.history.execute(
+        &state.world,
+        AlignPartToSetup::angles(&state.world, "Setup2", [90.0, 0.0, 0.0]).expect("align Setup2"),
+    );
+    state.history.execute(
+        &state.world,
+        CreateOperation::new(&state.world, "Face2", "EM-0400-2FL", SrcRef::Stock, face_params()).expect("op"),
+    );
+    // Activate Setup1 (unaligned) while editing Face2 (owned by aligned Setup2).
+    state.history.execute(&state.world, ActivateSetup::new(&state.world, Some("Setup1")).expect("Setup1 active"));
+    let e = model::find_by_name(&state.world, "Face2").expect("op");
+    let op = model::operation_of(&state.world, &e).expect("op");
+    state.op_ui = OpUi::from_op("Face2", &op);
+
+    // Pick the shared edge between z=10 (40x20) and y=10 (40x10).
+    let part = model::find_by_name(&state.world, "part").expect("part");
+    let f = model::features_of(&state.world, &part).expect("features");
+    let edge = feature::chains(&f)
+        .into_iter()
+        .find(|c| {
+            let p = feature::chain_points(&f, c);
+            !c.closed && p.len() >= 2 && p.iter().all(|q| (q[1] - 10.0).abs() < 1e-9 && (q[2] - 10.0).abs() < 1e-9)
+        })
+        .map(|c| GeoSel { entity: "part".into(), feature: FeatureSel::Chain(c.id) })
+        .expect("shared edge");
+    state.boundary_pick = Some(BoundaryPick::Include);
+    queue_boundary_pick(&mut state, edge, PLAIN);
+    boundary_draft::extend(&mut state, EntryRef::Extra(0)).expect("extend closes");
+
+    // In Setup2 (rotated 90 deg about X), y=10 is horizontal so the selected loop
+    // has edges on model y=10 (never y=-10, which belongs to the z=10 face).
+    let BoundaryShape::Picks(ref picks) = state.op_ui.area.extra[0].shape else {
+        panic!("expected picks");
+    };
+    assert_eq!(picks.len(), 4);
+    for g in picks {
+        let FeatureSel::Chain(id) = g.feature else { panic!("chain expected") };
+        let c = feature::resolve_chain(&f, id).expect("chain");
+        let pts = feature::chain_points(&f, &c);
+        assert!(pts.iter().all(|q| (q[1] - 10.0).abs() < 1e-6), "selected y=10 loop, got {pts:?}");
+    }
+}

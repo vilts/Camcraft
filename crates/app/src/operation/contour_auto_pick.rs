@@ -23,7 +23,7 @@ fn pick_span(
         let Some(features) = model::features_of(world, &entity) else { continue };
         let loc = opframe.pose_in_setup(world, &entity).unwrap_or_default();
         let verts: Vec<[f64; 3]> = match g.feature {
-            FeatureSel::Chain(cid) => match feature::resolve_chain(&features, cid) {
+            FeatureSel::Chain(cid) => match crate::model::resolve_chain(&features, cid) {
                 Some(c) if c.closed || stitched.contains_key(&gi) => feature::chain_points(&features, &c),
                 _ => Vec::new(),
             },

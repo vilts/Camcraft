@@ -1,7 +1,7 @@
 //! #763 Phase 2: picked features (faces, closed chains, stitched open runs)
 //! read through OpFrame in an aligned setup for the four verified kinds
-//! (Face, 2D Contour, 2D Pocket, 2D Adaptive), while Tilt x picks,
-//! unverified kinds, and area controls stay refused by name.
+//! (Face, 2D Contour, 2D Pocket, 2D Adaptive), while Tilt x picks and
+//! unverified kinds stay refused by name (area controls pass, #2210).
 //!
 //! Provenance: our own fixtures over plain re-clamp and two-sided step
 //! machining practice; no vendor material consulted.
@@ -141,7 +141,7 @@ fn face_params(cut: Height, clearance: f64) -> OpParams {
 }
 
 fn pocket_params(top: Height, bottom: Height, stepdown: f64) -> OpParams {
-    OpParams::Pocket {
+    OpParams::Pocket { rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
@@ -361,14 +361,14 @@ fn aligned_stitched_open_runs_and_stamp_staleness() {
 }
 
 #[test]
-fn tilt_times_picks_and_unverified_and_area_stay_refused_in_phase_two() {
+fn tilt_times_picks_and_unverified_stay_refused_and_area_passes_in_phase_two() {
     let (world, mut h) = setup_world("block", cube(Point3::ZERO, Point3::new(20.0, 20.0, 10.0)), 40.0, 40.0, 30.0, -5.0);
     let top = face_by_normal_and_offset(&world, "block", [0.0, 0.0, 1.0], 10.0);
     let sel = SrcRef::Selection(vec![top]);
 
     let mut tilted_face = face_params(Height::fixed(9.0), 25.0);
     if let OpParams::Face { tilt, .. } = &mut tilted_face {
-        *tilt = Some(Tilt { a_deg: 30.0, b_deg: 0.0, origin: [0.0; 3] });
+        *tilt = Some(Tilt { basis_version: 1, a_deg: 30.0, b_deg: 0.0, origin: [0.0; 3] });
     }
     h.execute(&world, CreateOperation::new(&world, "TiltedPick", TOOL, sel.clone(), tilted_face).expect("create"));
     let err = generate(&world, &op_of(&world, "TiltedPick"), "TiltedPick").expect_err("tilt x picks refuses");
@@ -378,14 +378,22 @@ fn tilt_times_picks_and_unverified_and_area_stay_refused_in_phase_two() {
     let err = generate(&world, &op_of(&world, "TiltedPick"), "TiltedPick").expect_err("aligned tilt x picks refuses");
     assert!(err.to_string().contains("tilted plane is not supported yet in an aligned setup"), "{err}");
 
-    let offset = (KindInfo::ALL[OpType::Offset2D.ordinal()].seed)(&Carried::of(&face_params(Height::fixed(9.0), 25.0)));
-    h.execute(&world, CreateOperation::new(&world, "OffsetPick", TOOL, sel, offset).expect("create offset pocket"));
-    let err = generate(&world, &op_of(&world, "OffsetPick"), "OffsetPick").expect_err("unverified kind refuses");
+    // #2276 / #2283: 2D Offset, Circular and 2D Chamfer are verified
+    // now; Deburr still waits for proof (the op keeps its old name).
+    let circular = (KindInfo::ALL[OpType::Deburr.ordinal()].seed)(&Carried::of(&face_params(Height::fixed(9.0), 25.0)));
+    let cm = catalog().into_iter().find(|(n, _)| *n == "CM-0600-90").map(|(_, t)| t).expect("chamfer mill");
+    h.execute(&world, AddTool::new(&world, "CM-0600-90", cm).expect("add chamfer mill"));
+    h.execute(&world, CreateOperation::new(&world, "CircularPick", "CM-0600-90", sel, circular).expect("create the Deburr"));
+    let err = generate(&world, &op_of(&world, "CircularPick"), "CircularPick").expect_err("unverified kind refuses");
     assert!(err.to_string().contains("not supported yet in an aligned setup"), "{err}");
 
     let mut area_op = op_of(&world, "TiltedPick");
     area_op.params = face_params(Height::fixed(5.0), 25.0);
     area_op.area = AreaControls { offset: 1.0, ..Default::default() };
-    let err = generate(&world, &area_op, "AreaPick").expect_err("area controls refuse aligned");
-    assert!(err.to_string().contains("area controls are not supported yet in an aligned setup"), "{err}");
+    // #2210: the 2D kinds' area controls resolve in the setup frame now;
+    // the aligned door passes them (`setup_align_2d_area` pins the cut).
+    assert_eq!(camcraft_app::setup_align::generation_problem(&world, &area_op), None);
+    if let Err(err) = generate(&world, &area_op, "AreaPick") {
+        assert!(!err.to_string().contains("aligned setup"), "{err}");
+    }
 }

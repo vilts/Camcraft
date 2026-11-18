@@ -5,7 +5,11 @@
 //! holder's bands (#93)), spun about the tool axis into a display mesh.
 //! What is drawn is what is checked: a modelled body's own facets (flats,
 //! slots, its turn about the axis) are not what any law reads, so the
-//! simulation draws the envelope instead; a necked tool's shank is
+//! simulation draws the envelope instead. A drawn (spun) holder (#2176)
+//! is the one body drawn as drawn - its tapers and arcs, not the stepped
+//! bands - and only after a check that each drawn point lies inside a
+//! band the laws read at its height, so the picture is never wider
+//! than the check (`JudgedOutline::with_drawn`); a necked tool's shank is
 //! drawn as its drawn neck's bands (#852), the very bands the laws
 //! read. A solid of revolution from its
 //! meridian is elementary geometry; our own design, no vendor file or
@@ -45,6 +49,7 @@ pub enum OutlineError {
     RunsBack,
     NoRadius,
     TooLarge,
+    PastJudged,
 }
 
 impl core::fmt::Display for OutlineError {
@@ -55,6 +60,7 @@ impl core::fmt::Display for OutlineError {
             Self::RunsBack => "the tool outline runs back down the axis (it would cross itself)",
             Self::NoRadius => "the tool outline has no radius or no length - nothing to draw",
             Self::TooLarge => "the tool outline is larger than any tool a spindle carries",
+            Self::PastJudged => "the drawn holder reaches past the bands the collision checks read",
         })
     }
 }
@@ -70,10 +76,17 @@ pub struct JudgedOutline {
     /// record, whose breakpoints are the bands the shank laws sweep; a
     /// necked tool's shank is its neck's bands instead (#852), the very
     /// `HolderStack::shank_bands` the laws read.
+    /// With a drawn holder (#2176) it is the stored record's instead,
+    /// never wider than the judged one ([`JudgedOutline::with_drawn`]).
     pub cutter: Vec<(f64, f64)>,
     /// What stands above the shank, bottom-up: exactly the bands
     /// `tool_body::stack` hands the fixture laws (empty bands dropped).
     pub holder: Vec<HolderBand>,
+    /// #2176: a drawn (spun) holder's own outline, `(z, r)` bottom-up
+    /// from the axis to the axis, as `SpunProfile::outline` gives it -
+    /// what the simulation draws in place of the bands it lies inside.
+    /// Empty for every other body: the bands are drawn.
+    pub drawn: Vec<(f64, f64)>,
 }
 
 impl JudgedOutline {
@@ -94,7 +107,7 @@ impl JudgedOutline {
         if cutter.windows(2).any(|w| w[1].0 < w[0].0 - EPS) || holder.windows(2).any(|w| w[1].above < w[0].above + w[0].len - EPS) {
             return Err(OutlineError::RunsBack);
         }
-        let out = Self { cutter, holder };
+        let out = Self { cutter, holder, drawn: Vec::new() };
         let (top, wide) = (out.top(), out.max_radius());
         if wide <= EPS || top <= EPS {
             return Err(OutlineError::NoRadius);
@@ -139,13 +152,70 @@ impl JudgedOutline {
         m
     }
 
+    /// #2176: draw `drawn` (a drawn holder's outline, tool frame) in
+    /// place of the bands, and `stored` (the stored record's cutter and
+    /// shank, `JudgedOutline::new(stored tool, ..).cutter`) in place of
+    /// the judged one as a defensive guard. `HolderProfile::enclose`
+    /// uses strict interior bounds: a band that only touches the shank
+    /// top does not widen it. Refuses an outline that is not finite, runs back
+    /// down the axis, or has a point outside every band at its height,
+    /// and a `stored` cutter wider or longer than the judged one
+    /// ([`OutlineError::PastJudged`]): the picture is never wider than
+    /// what the laws read.
+    pub fn with_drawn(mut self, drawn: Vec<(f64, f64)>, stored: Vec<(f64, f64)>) -> Result<Self, OutlineError> {
+        if !drawn.iter().chain(&stored).all(|p| p.0.is_finite() && p.1.is_finite()) {
+            return Err(OutlineError::NonFinite);
+        }
+        if drawn.iter().chain(&stored).any(|p| p.0 < -EPS || p.1 < 0.0) {
+            return Err(OutlineError::Negative);
+        }
+        if drawn.windows(2).chain(stored.windows(2)).any(|w| w[1].0 < w[0].0 - EPS) {
+            return Err(OutlineError::RunsBack);
+        }
+        if drawn.iter().any(|&(z, r)| r > EPS && !self.holder.iter().any(|b| holds(b, z, r))) {
+            return Err(OutlineError::PastJudged);
+        }
+        let reach = |c: &[(f64, f64)]| c.iter().fold((0.0_f64, 0.0_f64), |(z, r), p| (z.max(p.0), r.max(p.1)));
+        let ((sz, sr), (jz, jr)) = (reach(&stored), reach(&self.cutter));
+        if sz > jz + EPS || sr > jr + EPS {
+            return Err(OutlineError::PastJudged);
+        }
+        if !stored.is_empty() {
+            self.cutter = stored;
+        }
+        self.drawn = drawn;
+        Ok(self)
+    }
+
+    /// The holder as the simulation draws it: the bands' meridian, or
+    /// with a drawn holder the bands wholly under its foot (the gap
+    /// band up from the shank) and then the drawn outline itself.
+    #[must_use]
+    pub fn holder_shown(&self) -> Vec<(f64, f64)> {
+        let Some(&(foot, _)) = self.drawn.first() else { return self.holder_meridian() };
+        let under = Self { cutter: Vec::new(), holder: self.holder.iter().copied().filter(|b| b.above + b.len <= foot + EPS).collect(), drawn: Vec::new() };
+        let mut m = under.holder_meridian();
+        m.extend_from_slice(&self.drawn);
+        m
+    }
+
     /// The outline spun about +Z, tool frame.
     #[must_use]
     pub fn mesh(&self) -> Vec<Triangle> {
         let mut tris = tool_body_view::revolve(&self.cutter);
-        tris.extend(tool_body_view::revolve(&self.holder_meridian()));
+        tris.extend(tool_body_view::revolve(&self.holder_shown()));
         tris
     }
+}
+
+/// Slack (mm) on the drawn-inside-the-bands check: the bands are read
+/// off the same polyline, so only float dust separates them.
+const HOLD_SLACK: f64 = 1e-6;
+
+/// Does band `b` hold the drawn point `(z, r)` - `z` within its length,
+/// `r` within its radius?
+fn holds(b: &HolderBand, z: f64, r: f64) -> bool {
+    z >= b.above - HOLD_SLACK && z <= b.above + b.len + HOLD_SLACK && r <= b.r + HOLD_SLACK
 }
 
 /// `profile` (the judged record's cutter and shank) with its shank read
@@ -193,9 +263,20 @@ pub fn for_operation(world: &World, op: &str) -> Result<Option<JudgedOutline>, S
     // `operation::generate`): the judged record, then its stack.
     // #852: and the drawn neck, judged against the stored record.
     let neck = crate::tool_cutter::neck_of(world, &te, &tool);
-    let (judged, body) = tool_body::judged(world, &te, tool).map_err(|e| format!("tool {name}: {e}"))?;
+    let (judged, body) = tool_body::judged(world, &te, tool.clone()).map_err(|e| format!("tool {name}: {e}"))?;
     let stack = tool_body::stack(&judged.geom(), body.as_ref()).with_neck(neck);
-    JudgedOutline::new(&judged, &stack).map(Some).map_err(|e| format!("tool {name}: {e}"))
+    let outline = JudgedOutline::new(&judged, &stack).map_err(|e| format!("tool {name}: {e}"))?;
+    // #2176: a drawn holder is drawn as drawn, inside those bands. A
+    // machine-default one is judged floored at the tool's own holder
+    // cylinder (#828), so it keeps the bands that are judged.
+    let drawn = tool_body::body_of(world, &te)
+        .filter(|b| !b.machine_default && matches!(b.frame, tool_body::BodyFrame::Spindle { .. }))
+        .and_then(|b| b.spun.map(|s| s.outline()));
+    let Some(d) = drawn else { return Ok(Some(outline)) };
+    // Keep the stored-cutter guard. With strict interior enclosure, a
+    // holder that only touches the shank top leaves this cutter unchanged.
+    let stored = JudgedOutline::new(&tool, &stack).map(|o| o.cutter).unwrap_or_default();
+    outline.with_drawn(d, stored).map(Some).map_err(|e| format!("tool {name}: {e}"))
 }
 
 /// The revolved mesh of the one tool at the playhead. Keyed by the

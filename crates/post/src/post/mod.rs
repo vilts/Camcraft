@@ -32,22 +32,30 @@ pub mod cnc_thread;
 pub mod cnc_torch;
 mod coolant;
 pub mod dialect;
+pub mod end_units;
 pub mod engine;
 pub mod explain;
+pub mod g93;
 pub mod invert;
 pub mod js;
 pub mod machine;
+mod machine_rotary;
 pub mod nose_tip;
+pub mod options;
+mod options_parse;
 pub mod probe_rec;
 mod program;
 pub mod rotary_cap;
+pub mod section_mode;
 pub mod work_offset;
 pub mod units;
+pub mod wcs_rotate;
 
 pub use after_op::AfterOperation;
 pub use coolant::CoolantMode;
 pub use engine::{LineInfo, PostOutput, TraceBlock};
 pub use js::ProgramId;
+pub use section_mode::{read_section_mode, set_section_mode, SectionMode, SectionModeError};
 
 use crate::cl::{MoveKind, Toolpath};
 use cnc::{CycleRec, MoveRec, Record};
@@ -108,9 +116,19 @@ pub struct Dump<'a> {
     /// the engine refuses it by name.
     pub wcs: u32,
     pub origin: [f64; 3],
+    /// #760: Z-axis WCS rotation in degrees (`Some` only when `|rad| > 1e-9`;
+    /// `None` writes nothing so unrotated streams stay byte-identical).
+    pub wcs_yaw: Option<f64>,
+    /// #760: true when this section posts in `Control` mode (`G68` / `ROT`).
+    pub wcs_rotation_control: bool,
     /// Stock bounds in mm: left, right, front, back (XY), plus top Z.
     pub stock: [f64; 4],
     pub stock_top_z: f64,
+    /// #1666: the radius the stock sweeps about the spindle axis (the
+    /// world Z line through `origin`), in mm - a round bar's radius, a
+    /// square bar's half-diagonal. Stated for turning machines only;
+    /// None writes no PARAM, so a mill stream stays as it was.
+    pub stock_turn_radius: Option<f64>,
     /// Verification warnings attached to the path (the gate's
     /// evidence, riding the stream).
     pub warnings: Vec<String>,
@@ -203,8 +221,11 @@ impl<'a> Default for Dump<'a> {
             top_z: 0.0,
             wcs: 1,
             origin: [0.0; 3],
+            wcs_yaw: None,
+            wcs_rotation_control: false,
             stock: [0.0; 4],
             stock_top_z: 0.0,
+            stock_turn_radius: None,
             warnings: Vec::new(),
             part_load: None,
             part_unload: false,
@@ -257,6 +278,13 @@ pub fn dump(t: &Toolpath, d: &Dump) -> Vec<Record> {
     out.push(Record::Param { name: "OriginX".into(), value: json!(d.origin[0]) });
     out.push(Record::Param { name: "OriginY".into(), value: json!(d.origin[1]) });
     out.push(Record::Param { name: "OriginZ".into(), value: json!(d.origin[2]) });
+    if let Some(yaw) = d.wcs_yaw.filter(|y| y.is_finite() && y.to_radians().abs() > 1e-9) {
+        out.push(Record::Param { name: "WcsYaw".into(), value: json!(yaw) });
+        out.push(Record::Param {
+            name: "WcsRotationMode".into(),
+            value: json!(if d.wcs_rotation_control { "control" } else { "bake" }),
+        });
+    }
     out.push(Record::Param { name: "ClearancePlane".into(), value: json!(d.clearance_z) });
     out.push(Record::Param { name: "RetractPlane".into(), value: json!(d.retract_z) });
     out.push(Record::Param { name: "TopOfStock".into(), value: json!(d.top_z) });
@@ -265,6 +293,9 @@ pub fn dump(t: &Toolpath, d: &Dump) -> Vec<Record> {
     out.push(Record::Param { name: "StockXYFront".into(), value: json!(d.stock[2]) });
     out.push(Record::Param { name: "StockXYBack".into(), value: json!(d.stock[3]) });
     out.push(Record::Param { name: "StockZTop".into(), value: json!(d.stock_top_z) });
+    if let Some(r) = d.stock_turn_radius.filter(|r| r.is_finite() && *r > 0.0) {
+        out.push(Record::Param { name: "StockTurnRadius".into(), value: json!(r) });
+    }
     if let Some(word) = d.coolant.param_word() {
         out.push(Record::Param { name: "Coolant".into(), value: json!(word) });
     }

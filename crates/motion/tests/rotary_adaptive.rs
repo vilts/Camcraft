@@ -55,10 +55,10 @@ fn adaptive_plans_the_developed_levels_under_the_load_and_kink_laws() {
     };
     assert!(dev.is_chained() && dev.all_finite());
     // The measuring stock is the clamped bar itself, developed: its top
-    // the r7 skin. The ladder's first level stands ON that skin (zero
-    // depth); the levels below it cut real stock, each read from the
-    // skin above it - round 1's r6.2 stock left only the skin level to
-    // the planner and its 0% reading proved nothing.
+    // the r7 skin. The ladder takes no level on that skin (#2004); each
+    // level cuts real stock, read from the skin above it - round 1's
+    // r6.2 stock left only the skin level to the planner and its 0%
+    // reading proved nothing.
     let reads = read_levels(&dev, 7.0, 0.0, p.stepdown);
     for r in &reads {
         println!(
@@ -220,7 +220,9 @@ fn a_window_too_narrow_for_the_helix_is_refused_by_name_before_planning() {
     assert!(dev.is_chained() && dev.all_finite());
     println!("narrow window notes: {:?}", dev.notes);
     assert!(!dev.notes.iter().any(|n| n.contains("does not fit the area")), "the planner narrowed a helix: {:?}", dev.notes);
-    let tag = ring_tag(7.0);
+    // #2004: the r7 skin level is gone (its tip stood on the stock skin,
+    // air); the 5.0 level is the same band and carries the refusal.
+    let tag = ring_tag(5.0);
     assert!(
         dev.notes.iter().any(|n| n.contains(NARROW_HELIX) && n.contains("radius 1.000 asked, 0.900 fits") && n.ends_with(&tag)),
         "the skin band is refused for the narrowed helix, by name: {:?}",
@@ -232,7 +234,8 @@ fn a_window_too_narrow_for_the_helix_is_refused_by_name_before_planning() {
     for r in &reads {
         println!("radius {:.3}: {} planar moves ({} arcs), rings {}", r.rho, r.moves, r.arcs, r.ringed(7.0));
     }
-    assert!(reads.iter().any(|r| (r.rho - 7.0).abs() < 1e-6 && r.moves > 0 && r.arcs == 0), "rings cut the band");
+    assert!(reads.iter().any(|r| (r.rho - 5.0).abs() < 1e-6 && r.moves > 0 && r.arcs == 0), "rings cut the band");
+    assert!(!reads.iter().any(|r| (r.rho - 7.0).abs() < 1e-6 && r.moves > 0), "no level on the r7 skin (#2004)");
     assert_refusals_named(&reads, 7.0);
 }
 
@@ -256,7 +259,7 @@ fn a_window_too_narrow_for_the_helix_is_refused_by_name_before_planning() {
 /// spread (`adaptive::conform`); they read 20.3 % D and 3 breaks
 /// before. ~3 min debug: heavy lane.
 #[test]
-#[ignore = "heavy lane: release --ignored (three HSM plans over the r6.2 bar, ~3 min debug)"]
+#[ignore = "heavy lane: release --ignored (two HSM plans over the r6.2 bar, ~3 min debug)"]
 fn the_r62_neck_levels_are_hsm_planned_on_microlift_returns() {
     let (f, st) = (bar(), stock(6.2, -16.0, 16.0));
     let p = params(PocketStrategy::Adaptive);
@@ -283,7 +286,10 @@ fn the_r62_neck_levels_are_hsm_planned_on_microlift_returns() {
     // Each neck level says how it is kept in cut.
     let lifted = dev.notes.iter().filter(|n| n.contains("microlift returns") && n.contains("replace")).count();
     assert!(lifted >= 2, "both neck levels are cut on microlift returns: {:?}", dev.notes);
-    assert!(reads.iter().any(|r| (r.rho - 6.2).abs() < 1e-6 && r.arcs > 0), "the skin level stays HSM-planned");
+    // #2004: the ladder takes no level on the r6.2 stock skin (the bar is
+    // r6 at most, so that level cut air); the two neck levels under it
+    // are the whole program.
+    assert!(!reads.iter().any(|r| (r.rho - 6.2).abs() < 1e-6 && r.moves > 0), "no level on the r6.2 skin (#2004)");
     assert_refusals_named(&reads, 6.2);
     let over = planner_overloads(&dev.notes);
     assert!(over.is_empty(), "the planner's own load reading broke the law: {over:?}");
@@ -320,6 +326,15 @@ fn offset_rings_on_the_wrap_are_the_program_they_always_were() {
         Ok(t) => t,
         Err(e) => panic!("rings: {e}"),
     };
+    // #2004: no cut stands on the r6.2 stock skin (the bar is r6 at
+    // most, so that level was air); the levels under it are unchanged.
+    let on_skin = t
+        .moves
+        .iter()
+        .filter(|m| m.kind != camcraft_motion::cl::MoveKind::Rapid)
+        .filter(|m| (m.to.x.hypot(m.to.y) - 6.2).abs() < 1e-6)
+        .count();
+    assert_eq!(on_skin, 0, "a cut on the r6.2 skin is air");
     let got = digest(&t);
     println!("rings digest {got:?}");
     assert_eq!(got, GOLDEN_RINGS, "the OffsetRings wrap program moved");
@@ -331,7 +346,9 @@ fn offset_rings_on_the_wrap_are_the_program_they_always_were() {
 /// round 1's patched build.) Re-pinned on the 1e-6 lattice in the review
 /// round: the bitwise digest (5263, 2919766036457321567) still matched
 /// on the same build, so the lattice is the only change.
-const GOLDEN_RINGS: (usize, u64) = (5263, 11_592_310_142_122_113_043);
+/// Issue #2004: re-pinned without the air level on the r6.2 skin (the
+/// program was (5263, 11592310142122113043) with it).
+const GOLDEN_RINGS: (usize, u64) = (2363, 10_359_925_331_182_573_356);
 
 /// Issue #983: the level reader reads the ladder's own planes only. A
 /// microlift on the 5.0 level lifts to 5.6 and its down ramp passes a

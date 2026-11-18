@@ -80,35 +80,58 @@ fn yaw90() -> [f64; 4] {
     quat_from_euler(0.0, 0.0, 90f64.to_radians())
 }
 
+fn roll30() -> [f64; 4] {
+    quat_from_euler(30f64.to_radians(), 0.0, 0.0)
+}
+
 #[test]
-fn the_post_stream_carries_no_offset_rotation() {
-    // The defect's evidence, kept as a law: the stream is the same for
-    // a turned G54 as for a square one at the same spot - the rotation
-    // never reaches the script, which is why the gate must refuse.
+fn the_post_stream_carries_z_offset_rotation() {
+    // #760: a pure Z-rotated G54 carries its WcsYaw and Bake mode in the stream.
     let (world, mut h) = faced_block();
     place_g54(&world, &mut h, IDENTITY_Q);
     let square = posting::stream_records(&world).expect("stream");
     place_g54(&world, &mut h, yaw90());
+    h.execute(&world, GenerateOperation::new(&world, "Face1").expect("regenerate"));
     let turned = posting::stream_records(&world).expect("stream");
-    assert_eq!(format!("{square:?}"), format!("{turned:?}"), "rotation is dropped by the stream");
+    let text = camcraft_app::post::cnc::serialize(&turned);
+    assert!(text.contains("PARAM WcsYaw 90.000000"), "{text}");
+    assert!(text.contains("PARAM WcsRotationMode bake"), "{text}");
+    assert_ne!(format!("{square:?}"), format!("{turned:?}"));
 }
 
 #[test]
-fn a_rotated_work_offset_is_refused_by_name() {
+fn a_tilted_work_offset_is_refused_by_name() {
     let (world, mut h) = faced_block();
-    place_g54(&world, &mut h, yaw90());
+    place_g54(&world, &mut h, roll30());
     let path = tmp_nc("refused");
-    let err = posting::post_setup(&world, &path).expect_err("a turned G54 must not post");
+    let err = posting::post_setup(&world, &path).expect_err("a tilted G54 must not post");
     assert!(!path.exists(), "a refusal leaves no file");
     assert!(
-        err.contains("the WCS (G54) is rotated 90.000 deg about Z")
-            && err.contains("posting a rotated work offset is not supported yet")
-            && err.contains("re-align it without rotation or post from an unrotated setup")
+        err.contains("the WCS (G54) is rotated 30.000 deg about X")
+            && err.contains("posting a tilted work offset is not supported")
+            && err.contains("align WCS Z to machine +Z (use Part alignment on the Setup page)")
             && err.contains("(operations: Face1)"),
         "named refusal, got: {err}"
     );
     let report = posting::verification_report(&world);
-    assert_eq!(report.problems.len(), 1, "one line per offset: {:?}", report.problems);
+    assert_eq!(report.problems.len(), 2, "both live-source and offset refusals: {:?}", report.problems);
+    assert_eq!(
+        report.problems.iter().filter(|problem| {
+            problem.contains("the WCS (G54) is rotated 30.000 deg about X")
+                && problem.contains("(operations: Face1)")
+        }).count(),
+        1,
+        "one named offset refusal: {:?}", report.problems
+    );
+    assert_eq!(
+        report.problems.iter().filter(|problem| {
+            problem.contains("Face1: the parts beside its source cannot be read again")
+                && problem.contains("the WCS (G54) has its Z axis tilted 30.000 deg")
+                && problem.contains("regenerate it")
+        }).count(),
+        1,
+        "main's live-source check still refuses the tilted WCS: {:?}", report.problems
+    );
 }
 
 #[test]
@@ -138,8 +161,8 @@ fn an_unrotated_offset_posts_exactly_as_before() {
     let again = std::fs::read_to_string(&path).expect("written");
     let _ = std::fs::remove_file(&path);
     assert_eq!(exact, again, "byte-identical program");
-    // Undo back to the turned offset refuses again; undo to identity posts.
-    place_g54(&world, &mut h, yaw90());
+    // Undo back to a tilted offset refuses again; undo to identity posts.
+    place_g54(&world, &mut h, roll30());
     assert!(posting::post_setup(&world, &path).is_err());
     assert!(h.undo(&world));
     posting::post_setup(&world, &path).expect("undo restores the postable offset");
@@ -242,7 +265,7 @@ fn the_setup_sheet_states_the_offset_rotation() {
     place_g54(&world, &mut h, yaw90());
     let turned = setup_sheet::render(&world, None).expect("sheet");
     assert!(
-        turned.contains("rotated 90.000 deg about Z - the post refuses a rotated offset"),
+        turned.contains("rotated 90.000 deg about Z (baked into XY)"),
         "the rotation is on the sheet:\n{turned}"
     );
     poke_g54(&world, Location { pos: Point3::new(10.0, 5.0, 1.0), rot: [f64::NAN, 0.0, 0.0, 1.0] });

@@ -252,30 +252,71 @@ pub(super) fn start(lvl: &LevelCtx, a: &Ask, leg: Point2) -> Point2 {
     }
 }
 
+fn probe_helix(b: &PathBuilder, lvl: &LevelCtx, a: &Ask, h: &Hel, z0: f64) -> Option<(f64, f64)> {
+    let ap = &lvl.p.links.approach;
+    let z_hel = lvl.tip(h.start, h.r * 2.0);
+    let pitch = if a.transition { lvl.p.links.helix_pitch } else { ap.entry_pitch(h.r) };
+    let turns = helix_turns(z0 - z_hel, h.r, pitch).unwrap_or(h.turns);
+    let mut probe = PathBuilder::new(Point3::new(h.start.x, h.start.y, z0));
+    helix_about(&mut probe, h.start, h.center, z0, z_hel, turns, ap.descent_feed(lvl.p.feed), !ap.helix_cw);
+    (!crate::machining2d::moves_cross_prior(probe.moves(), b.moves())).then_some((z_hel, turns))
+}
+
+fn find_clear_helix(b: &PathBuilder, lvl: &LevelCtx, a: &Ask, z0: f64) -> Option<(Hel, f64, f64)> {
+    let ap = &lvl.p.links.approach;
+    let crosses_lifted = |c: Point2| matches!((lvl.field, a.prev_cut), (Some(_), Some(pz)) if bore_meets_lifted_leg(lvl, pz, c));
+    for r in ap.helix_radii(lvl.p.helix_radius) {
+        let pitch = if a.transition { lvl.p.links.helix_pitch } else { ap.entry_pitch(r) };
+        let Some(t) = helix_turns(z0 - lvl.z, r, pitch) else { continue };
+        for q in std::iter::once(a.entry).chain(along_pass(lvl, a)) {
+            for k in 0..8 {
+                let (sn, cs) = (f64::from(k) * std::f64::consts::FRAC_PI_4).sin_cos();
+                let c = Point2::new(lattice(q.x + r * cs), lattice(q.y + r * sn));
+                let cand = Hel { start: q, center: c, turns: t, r };
+                if disc_clears(lvl.cen, c, r + 1e-3) && !crosses_lifted(c)
+                    && let Some((z_hel, turns)) = probe_helix(b, lvl, a, &cand, z0)
+                {
+                    return Some((cand, z_hel, turns));
+                }
+            }
+        }
+        if let Some(c) = dive_room(lvl.cen, r + 1e-3).filter(|&c| !crosses_lifted(c)) {
+            let s = Point2::new(lattice(c.x - r), lattice(c.y));
+            let cand = Hel { start: s, center: Point2::new(lattice(s.x + r), lattice(s.y)), turns: t, r };
+            if let Some((z_hel, turns)) = probe_helix(b, lvl, a, &cand, z0) {
+                return Some((cand, z_hel, turns));
+            }
+        }
+    }
+    None
+}
+
 /// Post a helix and its link (if it did not close on the pass start).
 fn push_helix(b: &mut PathBuilder, lvl: &LevelCtx, a: &Ask, h: &Hel) -> Option<Point2> {
     let p = lvl.p;
     let ap = &p.links.approach;
     let z0 = from(lvl, a, false);
-    traverse(b, lvl, h.start);
-    if h.r < p.helix_radius {
+    let (chosen, z_hel, turns) = match probe_helix(b, lvl, a, h, z0) {
+        Some((zh, t)) => (Hel { start: h.start, center: h.center, turns: h.turns, r: h.r }, zh, t),
+        None => match find_clear_helix(b, lvl, a, z0) {
+            Some(found) => found,
+            None => return fallback(b, lvl, a, "the shell lifts legs the bore would cross", true),
+        },
+    };
+    traverse(b, lvl, chosen.start);
+    if chosen.r < p.helix_radius {
         b.note_once(&format!(
             "entry: the helix fits only under its radius - flown at {:.3} mm, within the minimum radius",
-            h.r
+            chosen.r
         ));
     }
-    b.push(MoveKind::Rapid, Point3::new(h.start.x, h.start.y, z0), None);
-    // The turns count the drop the orbit really makes (to the shell tip,
-    // the legacy law's own span).
-    let z_hel = lvl.tip(h.start, h.r * 2.0);
-    let pitch = if a.transition { p.links.helix_pitch } else { ap.entry_pitch(h.r) };
-    let turns = helix_turns(z0 - z_hel, h.r, pitch).unwrap_or(h.turns);
-    helix_about(b, h.start, h.center, z0, z_hel, turns, ap.descent_feed(p.feed), !ap.helix_cw);
-    if h.start.x == a.entry.x && h.start.y == a.entry.y {
+    b.push(MoveKind::Rapid, Point3::new(chosen.start.x, chosen.start.y, z0), None);
+    helix_about(b, chosen.start, chosen.center, z0, z_hel, turns, ap.descent_feed(p.feed), !ap.helix_cw);
+    if chosen.start.x == a.entry.x && chosen.start.y == a.entry.y {
         return None;
     }
-    dive_link(b, lvl, h.start, a.entry);
-    Some(h.start)
+    dive_link(b, lvl, chosen.start, a.entry);
+    Some(chosen.start)
 }
 
 fn push_zig3(b: &mut PathBuilder, lvl: &LevelCtx, a: &Ask, pre: &[Point2], n: usize, zf: f64) {

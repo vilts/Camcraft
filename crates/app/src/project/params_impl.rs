@@ -113,6 +113,7 @@ impl ParamsDto {
                 optimal_load,
                 blend_turns,
                 blend_radius,
+                rest,
                 tilt,
             } => ParamsDto::Pocket {
                 links: links_to_dto(links, &p.default_links()),
@@ -146,6 +147,7 @@ impl ParamsDto {
                 optimal_load: Some(*optimal_load),
                 blend_turns: *blend_turns,
                 blend_radius: *blend_radius,
+                rest: (*rest).map(Into::into),
                 tilt: (*tilt).map(Into::into),
             },
             // The twins drop the strategy tag - the variant itself
@@ -1142,7 +1144,9 @@ impl ParamsDto {
                 plunge_feed,
                 holes,
                 cross,
+                break_through,
             } => ParamsDto::Drill {
+                break_through: *break_through,
                 clearance_z: (*clearance_z).into(),
                 retract_z: (*retract_z).map(Into::into),
                 top_z: (*top_z).into(),
@@ -1181,7 +1185,9 @@ impl ParamsDto {
                 climb,
                 tolerance,
                 holes,
+                break_through,
             } => ParamsDto::Bore {
+                break_through: *break_through,
                 links: links_to_dto(links, &p.default_links()),
                 clearance_z: (*clearance_z).into(),
                 retract_z: (*retract_z).map(Into::into),
@@ -1209,7 +1215,9 @@ impl ParamsDto {
                 hand,
                 external,
                 passes,
+                break_through,
             } => ParamsDto::Thread {
+                break_through: *break_through,
                 external: *external,
                 passes: (*passes).into(),
                 pitch: *pitch,
@@ -1347,6 +1355,7 @@ impl ParamsDto {
                 optimal_load,
                 blend_turns,
                 blend_radius,
+                rest,
                 tilt,
             } => OpParams::Pocket {
                 links: links_from_dto(links.as_ref(), crate::links::Links::PLANAR),
@@ -1379,6 +1388,7 @@ impl ParamsDto {
                 optimal_load: load_from_file(*optimal_load, *max_engagement),
                 blend_turns: *blend_turns,
                 blend_radius: *blend_radius,
+                rest: (*rest).map(Into::into),
                 tilt: (*tilt).map(Into::into),
             },
             ParamsDto::Adaptive2D {
@@ -2357,7 +2367,9 @@ impl ParamsDto {
                 plunge_feed,
                 holes,
                 cross,
+                break_through,
             } => OpParams::Drill {
+                break_through: *break_through,
                 clearance_z: (*clearance_z).into(),
                 retract_z: (*retract_z).map(Into::into),
                 top_z: (*top_z).into(),
@@ -2396,7 +2408,9 @@ impl ParamsDto {
                 climb,
                 tolerance,
                 holes,
+                break_through,
             } => OpParams::Bore {
+                break_through: *break_through,
                 links: links_from_dto(links.as_ref(), crate::links::Links::PLANAR),
                 clearance_z: (*clearance_z).into(),
                 retract_z: retract_z.map(Into::into),
@@ -2424,7 +2438,9 @@ impl ParamsDto {
                 hand,
                 external,
                 passes,
+                break_through,
             } => OpParams::Thread {
+                break_through: *break_through,
                 external: *external,
                 passes: (*passes).into(),
                 pitch: *pitch,

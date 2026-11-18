@@ -5,7 +5,9 @@
 //! is not the part, so an Engrave, Trace, Slot, Trochoidal slot,
 //! Circular, Contour or Face cut off the stock and into the part had 0
 //! findings - with the stock aligned the program sim held the post, with
-//! it turned (the sim refuses to judge) the post went out. Now Engrave
+//! it turned off the machine axes (the sim refuses to judge) the post
+//! went out. (#2177: a quarter turn is square to the axes, and the sim
+//! judges it.) Now Engrave
 //! and Trace take the mark law against the setup's parts (and the sim
 //! credits that mark), the other kinds the solid law: a cut into the
 //! part is a blocking `Warning::Gouge` on the operation on both stocks;
@@ -21,8 +23,8 @@
 //! Gate map: covers app::operation::keep_law (parts_in_stock,
 //! is_stock_kept_kind), app::operation::mark_law (budget_of),
 //! app::operation::generate (the stock-source keep and mark laws),
-//! app::stock_sim (marks), app::posting, app::posting_sim, app::mcp
-//! (add_operation, verify).
+//! app::stock_sim (marks), app::posting, app::posting_sim. The MCP
+//! parity is in `stock_source_law_mcp`.
 
 mod area_support;
 mod pocket_support;
@@ -31,12 +33,10 @@ use area_support::*;
 use camcraft_app::commands::GenerateOperation;
 use camcraft_app::geo2d::Point2;
 use camcraft_app::geometry::{quat_from_yaw, Mesh};
-use camcraft_app::mcp::Server;
 use camcraft_app::posting;
 use camcraft_app::schema::STOCK_NAME;
 use camcraft_app::machining2d::TrochoidReturn;
 use camcraft_app::verify::Warning;
-use serde_json::{json, Value};
 
 /// A 6 mm end mill: the mark budget's cap is its 3 mm radius.
 const CUTTER: &str = "EM-0600-4FL";
@@ -45,23 +45,22 @@ const RP: f64 = 15.0;
 const FLOOR: f64 = 4.0;
 const TOP: f64 = 8.0;
 
-/// The 40 x 40 x 8 block with a radius-[`RP`] round pocket (128 chords)
-/// sunk to [`FLOOR`] - the #1585 / #1593 / #1595 fixture.
+/// The 40 x 40 x 8 block with a radius-[`RP`] round pocket sunk to
+/// [`FLOOR`] - the #1585 / #1593 / #1595 fixture.
 fn pocket_block() -> Mesh {
-    let ring: Vec<(f64, f64)> = (0..128)
-        .map(|i| {
-            let a = std::f64::consts::TAU * f64::from(i) / 128.0;
-            (RP * a.cos(), RP * a.sin())
-        })
-        .collect();
-    pocket_support::block_with_pocket(20.0, 20.0, &ring, FLOOR, TOP)
+    pocket_support::round_pocket_block(RP, FLOOR, TOP)
 }
 
 /// The block as "part" (when `part`) in a 40 x 40 x `dz` box stock on
-/// [-20, 20]^2 x [0, dz]: axis-aligned, or the same box turned a quarter
-/// about Z (the same footprint, but a rotation the program sim refuses
-/// to model).
+/// [-20, 20]^2 x [0, dz]: axis-aligned, or the same box turned
+/// [`OBLIQUE`] about Z (the same footprint within 1e-4 mm, but a turn the
+/// program sim refuses to model).
 fn job(part: bool, rotated: bool, dz: f64) -> (World, History) {
+    job_turned(part, stock_turn(rotated), dz)
+}
+
+/// [`job`] with the stock turned by `rot` about its place.
+fn job_turned(part: bool, rot: [f64; 4], dz: f64) -> (World, History) {
     let world = new_world();
     let mut h = History::default();
     let tool = catalog().into_iter().find(|(n, _)| *n == CUTTER).map(|(_, t)| t).expect("tool");
@@ -69,13 +68,14 @@ fn job(part: bool, rotated: bool, dz: f64) -> (World, History) {
     if part {
         h.execute(&world, ImportModel::from_mesh("part", pocket_block()));
     }
-    let rot = if rotated { quat_from_yaw(std::f64::consts::FRAC_PI_2) } else { Location::default().rot };
     let at = Location { pos: Point3::new(0.0, 0.0, 0.0), rot };
     h.execute(&world, SetStock::new(&world, StockShape::Box { dx: 40.0, dy: 40.0, dz }, at).expect("stock"));
     let (lo, hi) = stock_box(&world);
-    let on = |v: f64, want: f64| (v - want).abs() < 1e-9;
+    // The oblique turn moves the corners by 20 * sqrt(2) * 1e-6 mm.
+    let on = |v: f64, want: f64| (v - want).abs() < 1e-4;
+    let level = |v: f64, want: f64| (v - want).abs() < 1e-9;
     assert!(
-        on(lo.x, -20.0) && on(lo.y, -20.0) && on(hi.x, 20.0) && on(hi.y, 20.0) && on(lo.z, 0.0) && on(hi.z, dz),
+        on(lo.x, -20.0) && on(lo.y, -20.0) && on(hi.x, 20.0) && on(hi.y, 20.0) && level(lo.z, 0.0) && level(hi.z, dz),
         "stock at {lo:?}..{hi:?}"
     );
     (world, h)
@@ -197,6 +197,7 @@ fn assert_post_refused(world: &World, tag: &str, by_op: bool) {
     assert!(err.contains("post blocked"), "{tag}: {err}");
     if by_op {
         assert!(err.contains("S1: move") && err.contains("cuts past the finish surface"), "{tag}: {err}");
+        assert!(oblique_refused(world), "{tag}: the program sim judged the oblique stock");
     }
     assert!(!out.exists(), "{tag}: blocked output is never written");
 }
@@ -225,7 +226,8 @@ fn refused_on_both_stocks(label: &str, params: &OpParams, picked: bool) {
 fn engrave_and_trace_off_the_stock_down_the_part_wall_gouge_and_never_post() {
     // The issue's probe: Top 8, Bottom 1 along the stock's outline - the
     // part's own outside wall - 7 mm under its top on a 3 mm budget.
-    // Before #1607: 0 findings; aligned the sim held it, turned it POSTED.
+    // Before #1607: 0 findings; aligned the sim held it, turned off the
+    // axes it POSTED.
     for trace in [false, true] {
         for picked in [false, true] {
             refused_on_both_stocks(if trace { "trace" } else { "engrave" }, &mark(trace, TOP, 1.0), picked);
@@ -262,6 +264,28 @@ fn a_face_of_a_stock_lower_than_the_part_cuts_the_part_and_never_posts() {
         assert!(gouges(&warns) > 0, "rotated {rotated}: the face cuts the part: {warns:?}");
         assert_post_refused(&world, &format!("low-stock-face-{rotated}"), rotated);
     }
+}
+
+#[test]
+fn a_quarter_turned_stock_is_judged_by_the_program_sim() {
+    // #2177: the stock turned a quarter about Z is the same box square
+    // to the axes. The program sim judges it: an Engrave off the stock
+    // down the part wall, and a Face of a stock lower than the part, are
+    // convicted by the sim; a legal stock-source mark is credited.
+    let quarter = quat_from_yaw(std::f64::consts::FRAC_PI_2);
+    for (label, dz, params) in [("engrave", TOP, mark(false, TOP, 1.0)), ("low-stock-face", 6.0, face(5.5))] {
+        let (world, mut h) = job_turned(true, quarter, dz);
+        let (warns, _) = generated(&world, &mut h, SrcRef::Stock, params);
+        assert!(gouges(&warns) > 0, "{label}: convicted on the op: {warns:?}");
+        let dev = camcraft_app::stock_sim::simulate_document(&world).expect("a quarter-turned box is judged").dev;
+        assert!(dev.gouge_cells > 0 && dev.max_gouge > 0.5, "{label}: the sim convicts the cut: {} cell(s), worst {}", dev.gouge_cells, dev.max_gouge);
+        assert_post_refused(&world, &format!("quarter-{label}"), false);
+    }
+    let (world, mut h) = job_turned(true, quarter, TOP);
+    generated(&world, &mut h, SrcRef::Stock, mark(false, TOP, 7.7));
+    let dev = camcraft_app::stock_sim::simulate_document(&world).expect("a quarter-turned box is judged").dev;
+    assert_eq!(dev.gouge_cells, 0, "a legal mark is credited: worst {} at {:?}", dev.max_gouge, dev.max_gouge_at);
+    assert_posts(&world, "quarter-legal-engrave");
 }
 
 #[test]
@@ -336,59 +360,3 @@ fn a_stock_source_cut_answers_for_every_part_in_the_stock() {
         }
     }
 }
-
-// ---- MCP parity -----------------------------------------------------
-
-fn call(s: &mut Server, id: &mut i64, name: &str, args: Value) -> Value {
-    *id += 1;
-    let msg = json!({ "jsonrpc": "2.0", "id": *id, "method": "tools/call",
-        "params": { "name": name, "arguments": args } });
-    let reply = s.handle(&msg).expect("a request gets a response");
-    let result = &reply["result"];
-    assert_ne!(result["isError"], json!(true), "{name} refused: {}", result["content"][0]["text"]);
-    result["structuredContent"].clone()
-}
-
-/// The pocket block over MCP: a stock-source `kind` with `params`;
-/// verify's reply.
-fn mcp_verify(tag: &str, kind: &str, params: Value) -> Value {
-    let dir = std::env::temp_dir().join(format!("camcraft-stock-source-law-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("temp dir");
-    let stl = dir.join("part.stl");
-    pocket_support::write_stl(&pocket_block(), &stl);
-    let (mut s, mut id) = (Server::new(), 0);
-    let _ = s.handle(&json!({ "jsonrpc": "2.0", "id": 0, "method": "initialize", "params": {} }));
-    call(&mut s, &mut id, "import_model", json!({ "name": "part", "path": stl.display().to_string() }));
-    call(&mut s, &mut id, "set_stock", json!({ "box": { "dx": 40.0, "dy": 40.0, "dz": TOP } }));
-    call(&mut s, &mut id, "add_tool", json!({ "catalog": CUTTER }));
-    call(&mut s, &mut id, "add_operation", json!({ "kind": kind, "tool": CUTTER, "source": "stock", "name": "S1", "params": params }));
-    let g = call(&mut s, &mut id, "generate", json!({}));
-    assert_eq!(g["generated"][0]["status"], json!("ok"), "{g}");
-    let ver = call(&mut s, &mut id, "verify", json!({}));
-    let _ = std::fs::remove_dir_all(&dir);
-    ver
-}
-
-/// The operation's own blocking gouge findings (not the program gate's).
-fn op_gouges(ver: &Value) -> usize {
-    ver["findings"]
-        .as_array()
-        .map_or(0, |f| f.iter().filter(|x| x["kind"] == json!("gouge") && x["op"] == json!("S1") && x["blocks_post"] == json!(true)).count())
-}
-
-#[test]
-fn over_mcp_a_stock_source_cut_answers_for_the_part_the_same() {
-    for kind in ["Engrave", "Trace"] {
-        let deep = mcp_verify(&format!("deep-{kind}"), kind, json!({ "top_z": TOP, "bottom_z": 1.0, "stepdown": 10.0 }));
-        assert!(op_gouges(&deep) > 0, "{kind}: the operation's own gouge: {deep}");
-        assert_eq!(deep["ok"], json!(false), "{kind}: {deep}");
-        let good = mcp_verify(&format!("legal-{kind}"), kind, json!({ "top_z": TOP, "bottom_z": 7.7, "stepdown": 10.0 }));
-        assert_eq!(op_gouges(&good), 0, "{kind}: {good}");
-        assert_eq!(good["ok"], json!(true), "{kind}: a legal mark off the stock verifies ok: {good}");
-    }
-    let face = mcp_verify("face", "Face", json!({ "cut_z": 5.0 }));
-    assert!(op_gouges(&face) > 0, "a face into the part is the op's own gouge: {face}");
-    assert_eq!(face["ok"], json!(false), "{face}");
-}
-

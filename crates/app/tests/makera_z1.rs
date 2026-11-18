@@ -23,7 +23,7 @@ use camcraft_app::world::new_world;
 const Z1: &str = "Makera Z1";
 
 fn z1() -> Machine {
-    let text = posting::MACHINES.iter().find(|(n, _)| *n == Z1).map(|(_, t)| *t).expect("Z1 is shipped");
+    let text = posting::builtin_machine_text(Z1).expect("Z1 is shipped");
     parse_mch(text).expect("the Z1 parses")
 }
 
@@ -85,7 +85,7 @@ fn a_default_op_on_the_z1_posts_m7_m9_through_the_carvera_post() {
         .expect("op");
     assert_eq!(op.coolant, CoolantMode::Air);
     assert!(posting::verification_gate(&world).is_empty(), "{:?}", posting::verification_gate(&world));
-    let script = posting::BUILTINS.iter().find(|(n, _)| *n == "Makera Carvera").map(|(_, s)| *s).expect("post");
+    let script = posting::builtin_post_text("Makera Carvera").expect("post");
     let records = posting::stream_records(&world).expect("streams");
     let out = post::post(script, &posting::machine_value(&world), &cnc::serialize(&records)).expect("runs");
     assert!(out.warnings.is_empty(), "{:?}\n{}", out.warnings, out.program);

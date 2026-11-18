@@ -1995,7 +1995,7 @@ fn pocket_refuses_an_open_run() {
     let op = Operation {
         tool: "EM-0600-4FL".into(),
         src: sel("part", open),
-        params: OpParams::Pocket {
+        params: OpParams::Pocket { rest: None,
             blend_radius: None,
             links: camcraft_app::links::Links::PLANAR,
             tilt: None,
@@ -2243,9 +2243,10 @@ fn an_open_run_contours_on_its_air_side() {
     };
     let ends = [off(a), off(b)];
     let near = |x: f64, y: f64, e: (f64, f64)| (x - e.0).hypot(y - e.1) < 1e-6;
-    // contour_params: 5.0 -> 0.0 at 2.5 - three levels, one plunge each,
-    // Lead::None so the plunge lands exactly on the offset start.
-    let levels = [5.0, 2.5, 0.0];
+    // contour_params: 5.0 -> 0.0 at 2.5 - two levels, one plunge each,
+    // Lead::None so the plunge lands exactly on the offset start. #2004:
+    // Top Z 5 is the part top (no stock), so the air level at Z 5 is gone.
+    let levels = [2.5, 0.0];
     let plunges: Vec<_> = path
         .moves
         .iter()
@@ -2660,8 +2661,9 @@ fn a_mixed_pick_list_cuts_boundary_then_run_and_says_what_overlap_means() {
             .iter()
             .filter(|m| m.kind == MoveKind::Plunge)
             .count(),
-        6,
-        "three levels of boundary, three of run"
+        // #2004: Top Z 5 is the part top (no stock): no air level there.
+        4,
+        "two levels of boundary, two of run"
     );
     // The run's edge lies on the face's own wall. Before #1777 the cutter
     // rode the edge on its centre and half-cut the finished boundary; now
@@ -3562,12 +3564,17 @@ fn contour_outside_forces_outside_on_bore() {
     // The explicit Outside stands as asked - and on a bore it puts the
     // Ø6 cutter on the ring at r 15, IN the plate around the Ø24 bore:
     // the old path cut that groove silently. The part-solid depth law
-    // refuses it by name instead (the silent-gouge fix).
+    // refuses it by name instead (the silent-gouge fix). #2004: with no
+    // air level at Top Z the ring walks no level, and the picked-ring
+    // law (#1927) now speaks first: the same refusal, with the side
+    // named as the cause and Inside advised - the right advice on a bore.
     let err = GenerateOperation::new(&world, "BoreO")
         .err()
         .expect("an Outside ring around a bore stands in the plate - refused");
-    assert!(err.to_string().contains("cuts into the part"), "{err}");
-    assert!(err.to_string().contains("not walked at any level"), "{err}");
+    let err = err.to_string();
+    assert!(err.contains("meets its wall at no level below the part top"), "{err}");
+    assert!(err.contains("the cutter Outside this ring stands in the part material"), "{err}");
+    assert!(err.contains("set Side to Inside"), "{err}");
 }
 
 #[test]
@@ -3816,6 +3823,7 @@ fn drilled_block() -> camcraft_app::geometry::Mesh {
 
 fn drill_params(holes: Vec<Hole>, top_z: f64, clearance_z: f64) -> OpParams {
     OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(clearance_z),
         retract_z: None,
         top_z: Height::fixed(top_z),

@@ -51,6 +51,7 @@ fn world_with_tool() -> (World, History) {
 
 fn params(cycle: CycleChoice, dwell: f64) -> OpParams {
     OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(TOP + 10.0),
         retract_z: None,
         top_z: Height::fixed(TOP),

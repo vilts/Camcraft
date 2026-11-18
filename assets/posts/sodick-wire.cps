@@ -5,7 +5,9 @@
 // (manualslib.com/manual/2816797/Sodick-A320d.html) - its program
 // example (G54, G90, C condition, T91, G01, G40, M02), its word list (X Y
 // decimal point, I J incremental arc centre, C three-digit condition) and
-// its G, T and M code tables; and RS-274 / ISO 6983 for the motion words.
+// its G, T and M code tables (T84 / T85 high / low pressure flushing,
+// T94 / T89 submersed / non-submersed machining; the order T84, T94, C
+// is its Program Example 1); and RS-274 / ISO 6983 for the motion words.
 // No other CAM product's post, post library or output was read, and no
 // program posted by one (the sample attached to #617 included). NOT RUN
 // ON A SODICK CONTROL: check the output at the machine before cutting.
@@ -15,11 +17,14 @@
 // point, T91 (thread the wire) and T90 (cut the wire) on a machine with
 // automatic threading, the C condition word, G40 on the G00 to the
 // threading point (before any motion of the section), G01,
-// G02 / G03 with I J, M00 / M01, M02.
+// G02 / G03 with I J, M00 / M01, M02; and, only when the machine file
+// states them (#1499, edm.flushing / edm.tank), T84 / T85 and T94 / T89
+// after each threading, before the C word.
 // Never written (each a named refusal or an operator's task): taper
 // (G50-G52, A), 4-axis (G74 / G75, U V), the control's wire offset
 // (G41 / G42, H - the path is the wire-centre path with the kerf in it),
-// G92 and G29, the tank, flushing and wire-drive T codes, M03, M33 / M43.
+// G92 and G29, the tank fill / drain, flushing pump and wire-drive T codes
+// (T80-T83, T86 / T87, T96 / T97), M03, M33 / M43.
 description = "Sodick wire EDM, 2-axis (Mark 21 / EX21 words from the 1998 operation manual; not verified on a control)";
 vendor = "Camcraft";
 legal = "Original clean-room work; public documentation only";
@@ -46,6 +51,8 @@ var threaded = false;      // the wire is threaded through the work
 var compOff = false;       // the section's first cut has been written
 var cutZ = null;           // the section's one programmed plane (2-axis)
 var awt = false;
+var tankWord = "";         // #1499: T94 / T89 from edm.tank ("": not stated)
+var flushWord = "";        // #1499: T84 / T85 from edm.flushing ("": not stated)
 var taper = 0;             // the section's stated taper, degrees (0: vertical)
 var angleWord = false;    // WireAngle is unsupported, including a stated zero
 var controlOffset = false; // a COMP record refuses this section, even before SECTION
@@ -98,11 +105,51 @@ function machineOk() {
     return false;
   }
   awt = !!(m.edm && m.edm.awt === true);
+  if (!dielectricOk(m.edm || {})) return false;
   if (m.rotaries && m.rotaries.length > 0) {
     refuse("rotary", "machine " + machineName() + " states a rotary axis - the Sodick wire post writes a 2-axis wire cut only");
     return false;
   }
   return true;
+}
+
+// #1499: the machine file's tank and flushing, as the manual's T words.
+// Unstated writes nothing (the operator sets it at the control); a word
+// this post does not know is refused by name, never guessed.
+function dielectricOk(e) {
+  var ok = true;
+  if (e.tank !== undefined && e.tank !== null) {
+    if (e.tank === "submerged") tankWord = "T94";
+    else if (e.tank === "non-submerged") tankWord = "T89";
+    else {
+      refuse("tank", "machine " + machineName() + ": edm.tank " + JSON.stringify(e.tank) + " is not submerged or non-submerged - the Sodick wire post writes T94 or T89 only");
+      ok = false;
+    }
+  }
+  if (e.flushing !== undefined && e.flushing !== null) {
+    if (e.flushing === "high") flushWord = "T84";
+    else if (e.flushing === "low") flushWord = "T85";
+    else {
+      refuse("flushing", "machine " + machineName() + ": edm.flushing " + JSON.stringify(e.flushing) + " is not high or low - the Sodick wire post writes T84 or T85 only");
+      ok = false;
+    }
+  }
+  return ok;
+}
+
+// The header's word on tank and flushing: what is programmed, what is
+// left to the operator. Neither stated: the line it always wrote.
+function dielectricNotes() {
+  if (tankWord === "" && flushWord === "") {
+    note("TANK FILL AND FLUSHING ARE NOT PROGRAMMED - SET THEM AT THE CONTROL");
+    return;
+  }
+  if (tankWord === "T94") note("T94 SUBMERGED MACHINING AFTER THREADING - NO FILL OR DRAIN WORD IS WRITTEN - CHECK THE TANK IS FULL");
+  else if (tankWord === "T89") note("T89 NON-SUBMERGED MACHINING AFTER THREADING");
+  else note("TANK IS NOT PROGRAMMED - SET IT AT THE CONTROL");
+  if (flushWord === "T84") note("T84 HIGH-PRESSURE FLUSHING AFTER THREADING");
+  else if (flushWord === "T85") note("T85 LOW-PRESSURE FLUSHING AFTER THREADING");
+  else note("FLUSHING IS NOT PROGRAMMED - SET IT AT THE CONTROL");
 }
 
 // -------------------------------------------------------------- header
@@ -115,7 +162,7 @@ function onOpen() {
   note("SODICK MARK 21 WORDS - NOT VERIFIED ON A CONTROL - CHECK BEFORE CUTTING");
   note("WIRE NOT THREADED AT START");
   note("WORK OFFSET SET AT THE CONTROL - NO G92 IS WRITTEN");
-  note("TANK FILL AND FLUSHING ARE NOT PROGRAMMED - SET THEM AT THE CONTROL");
+  dielectricNotes();
   note("WIRE-CENTRE PATH - NO WIRE OFFSET G41 G42 IS USED");
   note("EACH C CONDITION NAMED BELOW MUST EXIST IN THE CONTROL CONDITION TABLE BEFORE START");
   block([inch ? "G20" : "G21"]);
@@ -241,6 +288,11 @@ function startCut(p) {
     note(openRun() ? "THREAD THE WIRE AT THE RUN-IN POINT OUTSIDE THE STOCK" : "THREAD THE WIRE AT THE START HOLE");
     block(["M00"]);
   }
+  // #1499: flushing, then the tank, then the condition - the manual's
+  // Program Example 1 order (T84, T94, C451) - with the wire threaded.
+  // Each is written only when the machine file states it.
+  if (flushWord !== "") block([flushWord]);
+  if (tankWord !== "") block([tankWord]);
   block([condition]);
   threaded = true;
   cutZ = has(p.StartZ) ? p.StartZ : null;

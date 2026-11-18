@@ -58,7 +58,36 @@ fn contour() -> OpParams {
     }
 }
 
-/// The box under the contour in a block `stock_dz` tall (Z 0..dz).
+/// A slot beside the box (y -8..-2): top 5, clearance 10, retract 8 -
+/// its plunge-height rapid lands at Z 7. The rapid law's fixture since
+/// #1559: a contour now enters over the stock standing above its top
+/// (`carried_stock_entry.rs`), so it no longer dives into the block; a
+/// slot is not carried and still does.
+fn slot() -> OpParams {
+    OpParams::Slot {
+        links: camcraft_app::links::Links::PLANAR,
+        a: camcraft_app::geo2d::Point2::new(-6.0, -5.0),
+        b: camcraft_app::geo2d::Point2::new(16.0, -5.0),
+        width: 6.0,
+        stock_to_leave: 0.0,
+        clearance_z: Height::fixed(10.0),
+        retract_z: Some(Height::fixed(8.0)),
+        top_z: Height::fixed(5.0),
+        bottom_z: Height::fixed(0.0),
+        stepdown: 2.5,
+        stepover: 4.0,
+        feed: 800.0,
+        plunge_feed: 200.0,
+        climb: true,
+        entry: camcraft_app::machining3d::Entry3D::Plunge,
+        helix_radius: 1.0,
+        tilt: None,
+        extend_start: 0.0,
+        extend_end: 0.0,
+    }
+}
+
+/// The box beside the slot in a block `stock_dz` tall (Z 0..dz).
 fn world_with(stock_dz: f64) -> (World, Vec<Warning>, Vec<camcraft_app::cl::Move>) {
     let world = camcraft_app::world::new_world();
     let mut history = History::default();
@@ -67,17 +96,17 @@ fn world_with(stock_dz: f64) -> (World, Vec<Warning>, Vec<camcraft_app::cl::Move
     let tool = catalog().into_iter().find(|(n, _)| *n == "EM-0600-4FL").map(|(_, t)| t).expect("catalog");
     history.execute(&world, AddTool::new(&world, "EM-0600-4FL", tool).expect("tool"));
     history.execute(&world, ImportModel::from_mesh("part", cube(Point3::ZERO, Point3::new(10.0, 10.0, 5.0))));
-    let cmd = CreateOperation::new(&world, "Contour1", "EM-0600-4FL", SrcRef::Entity("part".into()), contour());
-    history.execute(&world, cmd.expect("create contour"));
-    history.execute(&world, GenerateOperation::new(&world, "Contour1").expect("generate"));
-    let e = model::find_by_name(&world, "Contour1").expect("op");
+    let cmd = CreateOperation::new(&world, "Slot1", "EM-0600-4FL", SrcRef::Stock, slot());
+    history.execute(&world, cmd.expect("create slot"));
+    history.execute(&world, GenerateOperation::new(&world, "Slot1").expect("generate"));
+    let e = model::find_by_name(&world, "Slot1").expect("op");
     let cache = model::toolpath_of(&world, &e).expect("cache");
     (world, cache.warnings.clone(), cache.path.moves.clone())
 }
 
 #[test]
 fn a_vertical_rapid_into_a_taller_block_is_named_and_blocks_the_post() {
-    // The 10 mm block stands 5 mm over the contour's top: the rapid
+    // The 10 mm block stands 5 mm over the slot's top: the rapid
     // straight down from clearance to the plunge height (Z 7) beside
     // the box crosses 3 mm of uncut stock.
     let (world, warns, moves) = world_with(10.0);
@@ -110,7 +139,7 @@ fn a_vertical_rapid_into_a_taller_block_is_named_and_blocks_the_post() {
 }
 
 #[test]
-fn the_same_contour_over_stock_to_its_top_is_silent() {
+fn the_same_slot_over_stock_to_its_top_is_silent() {
     let (world, warns, _) = world_with(5.0);
     assert!(warns.is_empty(), "{warns:?}");
     let out = tmp_nc("clean");
@@ -137,10 +166,10 @@ fn face(cut: f64) -> OpParams {
     }
 }
 
-/// The 10 mm block, a face of it to `face_cut`, then the contour -
+/// The 10 mm block, a face of it to `face_cut`, then the slot -
 /// both generated in program order (the names sort the face first,
-/// `setup::operation_order`): the contour's verdict and the post's.
-fn face_then_contour(face_cut: f64, tag: &str) -> (Vec<Warning>, Vec<Warning>, Result<(), String>) {
+/// `setup::operation_order`): the slot's verdict and the post's.
+fn face_then_slot(face_cut: f64, tag: &str) -> (Vec<Warning>, Vec<Warning>, Result<(), String>) {
     let world = camcraft_app::world::new_world();
     let mut history = History::default();
     let cmd = SetStock::new(&world, StockShape::Box { dx: 100.0, dy: 100.0, dz: 10.0 }, Default::default());
@@ -150,10 +179,10 @@ fn face_then_contour(face_cut: f64, tag: &str) -> (Vec<Warning>, Vec<Warning>, R
     history.execute(&world, ImportModel::from_mesh("part", cube(Point3::ZERO, Point3::new(10.0, 10.0, 5.0))));
     let cmd = CreateOperation::new(&world, "Op1Face", "EM-0600-4FL", SrcRef::Stock, face(face_cut));
     history.execute(&world, cmd.expect("create face"));
-    let cmd = CreateOperation::new(&world, "Op2Contour", "EM-0600-4FL", SrcRef::Entity("part".into()), contour());
-    history.execute(&world, cmd.expect("create contour"));
+    let cmd = CreateOperation::new(&world, "Op2Slot", "EM-0600-4FL", SrcRef::Stock, slot());
+    history.execute(&world, cmd.expect("create slot"));
     history.execute(&world, GenerateOperation::new(&world, "Op1Face").expect("generate face"));
-    history.execute(&world, GenerateOperation::new(&world, "Op2Contour").expect("generate contour"));
+    history.execute(&world, GenerateOperation::new(&world, "Op2Slot").expect("generate slot"));
     let warns = |name: &str| {
         let e = model::find_by_name(&world, name).expect("op");
         model::toolpath_of(&world, &e).expect("cache").warnings
@@ -161,16 +190,16 @@ fn face_then_contour(face_cut: f64, tag: &str) -> (Vec<Warning>, Vec<Warning>, R
     let out = tmp_nc(tag);
     let posted = posting::post_setup(&world, &out).map(|_| ());
     let _ = std::fs::remove_file(&out);
-    (warns("Op1Face"), warns("Op2Contour"), posted)
+    (warns("Op1Face"), warns("Op2Slot"), posted)
 }
 
 #[test]
 fn a_dive_into_stock_an_earlier_face_removed_posts() {
     // Review of #105: the face takes the 10 mm block down to Z 5, so
-    // the contour's rapid 10 -> 7 beside the box falls through air the
+    // the slot's rapid 10 -> 7 beside the box falls through air the
     // program ahead of it already cut. The verdict reads the setup's
     // prior stock, not the raw block.
-    let (face_w, contour_w, posted) = face_then_contour(5.0, "faced");
+    let (face_w, contour_w, posted) = face_then_slot(5.0, "faced");
     assert!(face_w.is_empty(), "the face itself is clean: {face_w:?}");
     assert!(contour_w.is_empty(), "the faced block acquits the dive: {contour_w:?}");
     assert!(posted.is_ok(), "{posted:?}");
@@ -180,7 +209,7 @@ fn a_dive_into_stock_an_earlier_face_removed_posts() {
 fn a_dive_into_stock_no_earlier_op_removed_is_still_convicted() {
     // The face stops at Z 8: the dive to Z 7 still crosses 1 mm the
     // program never cut - named, and the post refuses it.
-    let (_, contour_w, posted) = face_then_contour(8.0, "half-faced");
+    let (_, contour_w, posted) = face_then_slot(8.0, "half-faced");
     assert!(
         contour_w.iter().any(|w| matches!(w, Warning::RapidInStock { .. })),
         "the dive under the face's floor went unnamed: {contour_w:?}"
@@ -315,7 +344,7 @@ fn a_posed_op_keeps_its_stamp_when_the_program_ahead_moves() {
     let (world, mut history) = faced_world();
     let mut posed = face(5.0);
     if let OpParams::Face { tilt, .. } = &mut posed {
-        *tilt = Some(camcraft_app::operation::Tilt { a_deg: 90.0, b_deg: 0.0, origin: [0.0; 3] });
+        *tilt = Some(camcraft_app::operation::Tilt { basis_version: 1, a_deg: 90.0, b_deg: 0.0, origin: [0.0; 3] });
     }
     let cmd = CreateOperation::new(&world, "Op3Posed", "EM-0600-4FL", SrcRef::Stock, posed);
     history.execute(&world, cmd.expect("create posed face"));

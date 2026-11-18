@@ -15,9 +15,13 @@ use crate::schema::{
 };
 use crate::stock::StockShape;
 
+mod chain_memo;
+mod patch_memo;
 mod geometry;
 
-pub use geometry::{features_of, features_of_local, geometry_signature};
+pub use chain_memo::{chain_walks, resolve_chain};
+pub use patch_memo::{patch_builds, patch_rings, patches};
+pub use geometry::{feature_digests, features_of, features_of_local, features_of_shared, geometry_signature};
 use crate::tools::Tool;
 
 /// Create a named model entity at the origin with no geometry yet.
@@ -117,6 +121,13 @@ pub fn operation_meta_of(world: &World, entity: &Entity) -> OperationMeta {
 #[must_use]
 pub fn operation_label(world: &World, key: &str, entity: &Entity) -> String {
     operation_meta_of(world, entity).label.unwrap_or_else(|| key.to_owned())
+}
+
+/// `operation_label` for an entity held across frames: `None` once it is
+/// deleted, so a reader never touches a dead entity (#2257).
+#[must_use]
+pub fn live_operation_label(world: &World, key: &str, entity: &Entity) -> Option<String> {
+    world.is_alive(*entity).then(|| operation_label(world, key, entity))
 }
 
 /// All named entities, sorted by name - the serializer's iteration order.

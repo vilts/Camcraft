@@ -194,7 +194,11 @@ fn a_never_generated_prior_contributes_only_its_marker() {
     generate(&world, &mut history, "B");
     assert_eq!(status(&world, "B"), OpStatus::Ok);
     let zs = planar_z(&cache(&world, "B").expect("B cache"));
-    assert!(zs.contains(&20.0), "unmasked B skims the top: {zs:?}");
+    // #2004: the stock top is Top Z 20, so the first level is Z 15 (one
+    // stepdown under it), not an air skim at Z 20. Z 15 is the marker of
+    // an unmasked B: A's cut at 15 and 12 clears it.
+    assert!(!zs.contains(&20.0), "no air level at the stock top: {zs:?}");
+    assert!(zs.contains(&15.0), "unmasked B cuts its first level: {zs:?}");
     assert!(zs.contains(&10.0), "and cuts its own floor: {zs:?}");
     let op_b = model::operation_of(&world, &model::find_by_name(&world, "B").expect("B"))
         .expect("operation");
@@ -324,8 +328,8 @@ fn a_params_edit_converges_in_one_regenerate_all() {
     assert_eq!(status(&world, "B"), OpStatus::Ok);
     let zs = planar_z(&cache(&world, "B").expect("B"));
     assert!(
-        !zs.contains(&20.0) && zs.contains(&10.0),
-        "masked to A's widened skim, floor kept: {zs:?}"
+        !zs.contains(&20.0) && !zs.contains(&15.0) && zs.contains(&10.0),
+        "masked to A's widened cut, floor kept: {zs:?}"
     );
 }
 
@@ -340,7 +344,9 @@ fn program_order_is_the_creation_order_not_the_name_order() {
     create(&world, &mut history, "Operation10", pocket(10.0)); // made second
     generate(&world, &mut history, "Operation10");
     let zs = planar_z(&cache(&world, "Operation10").expect("op10 cache"));
-    assert!(zs.contains(&20.0), "Operation2 is still Never: a full path");
+    // #2004: the full path's first level is Z 15 (one stepdown under the
+    // stock top Z 20), not an air skim at Z 20.
+    assert!(zs.contains(&15.0), "Operation2 is still Never: a full path: {zs:?}");
     generate(&world, &mut history, "Operation2");
     assert_eq!(
         status(&world, "Operation2"),
@@ -366,8 +372,8 @@ fn program_order_is_the_creation_order_not_the_name_order() {
     assert_eq!(status(&world, "Operation10"), OpStatus::Ok);
     let zs = planar_z(&cache(&world, "Operation10").expect("op10 re-cached"));
     assert!(
-        !zs.contains(&20.0),
-        "now masked by Operation2's skim: {zs:?}"
+        !zs.contains(&20.0) && !zs.contains(&15.0),
+        "now masked by Operation2's cut: {zs:?}"
     );
 }
 
@@ -397,6 +403,6 @@ fn a_rotated_stock_refuses_rather_than_guessing() {
         Ok(_) => panic!("a rotated stock must refuse, never guess"),
         Err(e) => e.to_string(),
     };
-    assert!(msg.contains("rotation"), "{msg}");
+    assert!(msg.contains("turned off the machine axes"), "{msg}");
     assert_eq!(status(&world, "B"), OpStatus::Never);
 }

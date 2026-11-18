@@ -70,12 +70,18 @@ pub(super) fn wp2(h: &mut std::hash::DefaultHasher, p: Point2) {
 
 /// The 3+2 index (M5.1 stage B): a tilt changes every move the
 /// generator makes, so it changes the digest. Presence first, then the
-/// two letters and the anchor - the same shape the optional scalars
-/// use.
+/// basis version (omitted for legacy version 0), then the two letters
+/// and the anchor. A basis change invalidates an incompatible cache.
 pub(super) fn wt(h: &mut std::hash::DefaultHasher, t: Option<Tilt>) {
     match t {
         Some(t) => {
             h.write_u8(1);
+            // Legacy tilts keep their original digest and frame. A corrected
+            // basis must never accept a cache made under the legacy rule.
+            if t.basis_version != 0 {
+                h.write_u8(0xB1);
+                h.write_u8(t.basis_version);
+            }
             w(h, t.a_deg);
             w(h, t.b_deg);
             for v in t.origin {

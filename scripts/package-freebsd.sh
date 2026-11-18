@@ -38,6 +38,7 @@ done
 for asset in posts machines ui scripts themes; do
     cp -R "assets/$asset" "$stage/assets/$asset"
 done
+cp -R examples "$stage/examples"
 install -m 644 RELEASE_NOTES.md TESTING.md LICENSE NOTICE README.md "$stage/"
 tar -C "$work" -czf "$dist/$name.tar.gz" "$name"
 echo "FreeBSD package: $dist/$name.tar.gz"

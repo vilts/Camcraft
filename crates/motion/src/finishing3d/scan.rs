@@ -11,6 +11,153 @@ use crate::machining2d::{GenError, Seg};
 /// when the facet's height band misses the plane, or if every
 /// direction somehow came up candidate-free (the band test makes that
 /// impossible; the fallback keeps the law total without an expect).
+fn push_support_dir(
+    v: &[Point3; 3],
+    cz: f64,
+    r: f64,
+    r2: f64,
+    ux: f64,
+    uy: f64,
+    pts: &mut Vec<Point2>,
+) -> bool {
+    // The argmax candidates for this direction: in-band vertices,
+    // plus each non-horizontal edge's stationary point when it
+    // lands inside the segment. Six at most, no allocation.
+    let mut cand = [v[0]; 6];
+    let mut nc = 0usize;
+    for &q in v {
+        if (cz - q.z).abs() <= r {
+            cand[nc] = q;
+            nc += 1;
+        }
+    }
+    for e in 0..3 {
+        let (q0, q1) = (v[e], v[(e + 1) % 3]);
+        let ez = q1.z - q0.z;
+        if ez == 0.0 {
+            continue; // horizontal edge: its endpoints own the max
+        }
+        // g'(t) = 0 along the edge means w* = -a*r*sign(ez) /
+        // sqrt(ez^2 + a^2) with a = E_xy.u; |w*| <= r by
+        // inspection, so t* is inside the height band whenever
+        // it is inside the segment.
+        let a = (q1.x - q0.x) * ux + (q1.y - q0.y) * uy;
+        let wst = -a * r * ez.signum() / (ez * ez + a * a).sqrt();
+        let t = (cz - q0.z - wst) / ez;
+        if t > 0.0 && t < 1.0 && nc < cand.len() {
+            let qz = q0.z + ez * t;
+            if (cz - qz).abs() <= r {
+                cand[nc] = Point3::new(q0.x + (q1.x - q0.x) * t, q0.y + (q1.y - q0.y) * t, qz);
+                nc += 1;
+            }
+        }
+    }
+    if nc == 0 {
+        return false;
+    }
+    let mut best: Option<(f64, Point2)> = None;
+    for q in &cand[..nc] {
+        let rho = (r2 - (cz - q.z) * (cz - q.z)).max(0.0).sqrt();
+        // M4.2b: the scan point lands on the grid the geo2d bridge
+        // rounds onto the moment it is born, so every argument it
+        // is used in stays independent of platform libm rounding.
+        let p = Point2::new(lattice(q.x + rho * ux), lattice(q.y + rho * uy));
+        let s = lattice(p.x * ux + p.y * uy);
+        if best.is_none_or(|(b, _)| s > b) {
+            best = Some((s, p));
+        }
+    }
+    match best {
+        Some((_, p)) => {
+            pts.push(p);
+            true
+        }
+        None => false,
+    }
+}
+
+/// Sample extra tangency points along shallow Z-sloped edges where the XY
+/// ellipse chord between adjacent angles of `ds` would exceed `MAX_CHORD`.
+fn push_shallow_edge_supports(
+    v: &[Point3; 3],
+    cz: f64,
+    r: f64,
+    dtheta_ds: f64,
+    dtheta_max: f64,
+    pts: &mut Vec<Point2>,
+) {
+    const MAX_CHORD: f64 = 0.006;
+    for e in 0..3 {
+        let (q0, q1) = (v[e], v[(e + 1) % 3]);
+        let ez = q1.z - q0.z;
+        let (dx, dy) = (q1.x - q0.x, q1.y - q0.y);
+        let l_xy = dx.hypot(dy);
+        if ez == 0.0 || l_xy <= 1e-9 || ez.abs() >= l_xy {
+            continue;
+        }
+        let z_lo = q0.z.min(q1.z).max(cz - r);
+        let z_hi = q0.z.max(q1.z).min(cz + r);
+        if z_lo >= z_hi {
+            continue;
+        }
+        let theta_lo = ((cz - z_hi) / r).clamp(-1.0, 1.0).asin();
+        let theta_hi = ((cz - z_lo) / r).clamp(-1.0, 1.0).asin();
+        let span = theta_hi - theta_lo;
+        if span <= 1e-9 {
+            continue;
+        }
+        // Maximum XY radius of curvature of the edge-swept ball ellipse on
+        // [theta_lo, theta_hi]: R_curv(theta) = r * (L^2 / ez^2) * cos^3(theta).
+        let theta_min = if theta_lo <= 0.0 && 0.0 <= theta_hi {
+            0.0
+        } else {
+            theta_lo.abs().min(theta_hi.abs())
+        };
+        let cos_min = theta_min.cos();
+        let len2 = l_xy * l_xy + ez * ez;
+        let r_curv_max = r * (len2 / (ez * ez)) * cos_min * cos_min * cos_min;
+        let sag_est = r_curv_max * (1.0 - (0.5 * dtheta_ds).cos());
+        if sag_est <= MAX_CHORD {
+            continue;
+        }
+        let steps = (span / dtheta_max).ceil().max(1.0) as usize;
+        let (ex, ey) = (dx / l_xy, dy / l_xy);
+        let (px, py) = (-ey, ex);
+        let mut emit_theta = |theta: f64| {
+            if theta.abs() >= std::f64::consts::FRAC_PI_2 - 1e-6 {
+                return;
+            }
+            let u_e = (-ez / l_xy) * theta.tan();
+            if u_e.abs() >= 1.0 - 1e-9 {
+                return;
+            }
+            let (sin_t, cos_t) = theta.sin_cos();
+            let t = (cz - q0.z - r * sin_t) / ez;
+            if t <= 0.0 || t >= 1.0 {
+                return;
+            }
+            let qx = q0.x + dx * t;
+            let qy = q0.y + dy * t;
+            let rho = r * cos_t;
+            let u_p = (1.0 - u_e * u_e).sqrt();
+            let ux1 = ex * u_e + px * u_p;
+            let uy1 = ey * u_e + py * u_p;
+            let ux2 = ex * u_e - px * u_p;
+            let uy2 = ey * u_e - py * u_p;
+            pts.push(Point2::new(lattice(qx + rho * ux1), lattice(qy + rho * uy1)));
+            pts.push(Point2::new(lattice(qx + rho * ux2), lattice(qy + rho * uy2)));
+        };
+        for k in 0..=steps {
+            emit_theta(theta_lo + span * (k as f64 / steps as f64));
+        }
+        // Explicitly emit the z = cz slice crossing (theta = 0) so flat wall
+        // edges keep both tying crossings regardless of ds tie-breaking.
+        if theta_lo < 0.0 && 0.0 < theta_hi {
+            emit_theta(0.0);
+        }
+    }
+}
+
 pub(super) fn facet_polygon(f: &Triangle, r: f64, cz: f64, ds: &[(f64, f64)]) -> Vec<Point2> {
     let v = [f.a, f.b, f.c];
     let zmin = v[0].z.min(v[1].z).min(v[2].z);
@@ -21,64 +168,13 @@ pub(super) fn facet_polygon(f: &Triangle, r: f64, cz: f64, ds: &[(f64, f64)]) ->
     let r2 = r * r;
     let mut pts = Vec::with_capacity(ds.len());
     for &(ux, uy) in ds {
-        // The argmax candidates for this direction: in-band vertices,
-        // plus each non-horizontal edge's stationary point when it
-        // lands inside the segment. Six at most, no allocation.
-        let mut cand = [f.a; 6];
-        let mut nc = 0usize;
-        for q in v {
-            if (cz - q.z).abs() <= r {
-                cand[nc] = q;
-                nc += 1;
-            }
-        }
-        for e in 0..3 {
-            let (q0, q1) = (v[e], v[(e + 1) % 3]);
-            let ez = q1.z - q0.z;
-            if ez == 0.0 {
-                continue; // horizontal edge: its endpoints own the max
-            }
-            // g'(t) = 0 along the edge means w* = -a*r*sign(ez) /
-            // sqrt(ez^2 + a^2) with a = E_xy.u; |w*| <= r by
-            // inspection, so t* is inside the height band whenever
-            // it is inside the segment.
-            let a = (q1.x - q0.x) * ux + (q1.y - q0.y) * uy;
-            let wst = -a * r * ez.signum() / (ez * ez + a * a).sqrt();
-            let t = (cz - q0.z - wst) / ez;
-            if t > 0.0 && t < 1.0 && nc < cand.len() {
-                let qz = q0.z + ez * t;
-                if (cz - qz).abs() <= r {
-                    cand[nc] = Point3::new(
-                        q0.x + (q1.x - q0.x) * t,
-                        q0.y + (q1.y - q0.y) * t,
-                        qz,
-                    );
-                    nc += 1;
-                }
-            }
-        }
-        let mut best: Option<(f64, Point2)> = None;
-        for q in &cand[..nc] {
-            let rho = (r2 - (cz - q.z) * (cz - q.z)).max(0.0).sqrt();
-            // M4.2b: the scan point lands on the grid the geo2d bridge
-            // rounds onto the moment it is born, so every argument it
-            // is used in - the hull's cross products, the bridge's
-            // rounding, the union's topology - happens in exact
-            // integers on every platform. A glibc-vs-CRT last bit in
-            // `rho * ux` could otherwise choose which integer the
-            // bridge sees (the dome rings' fused-sliver drift) and
-            // how many vertices one facet's loop keeps.
-            let p = Point2::new(lattice(q.x + rho * ux), lattice(q.y + rho * uy));
-            let s = lattice(p.x * ux + p.y * uy);
-            if best.is_none_or(|(b, _)| s > b) {
-                best = Some((s, p));
-            }
-        }
-        match best {
-            Some((_, p)) => pts.push(p),
-            None => return Vec::new(),
+        if !push_support_dir(&v, cz, r, r2, ux, uy, &mut pts) {
+            return Vec::new();
         }
     }
+    let dtheta_ds = if ds.is_empty() { 0.05 } else { std::f64::consts::TAU / ds.len() as f64 };
+    let dtheta_max = dtheta_ds.min(2.0 * (2.0 * 0.004 / r).sqrt());
+    push_shallow_edge_supports(&v, cz, r, dtheta_ds, dtheta_max, &mut pts);
     convex_hull(&pts)
 }
 

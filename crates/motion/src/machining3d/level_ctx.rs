@@ -85,6 +85,36 @@ impl LevelCtx<'_> {
     }
 }
 
+fn hop_over_leg(b: &mut PathBuilder, lvl: &LevelCtx, q: Point2, zq: f64) {
+    let at = b.at();
+    b.push(MoveKind::Rapid, Point3::new(at.x, at.y, lvl.hop_z), None);
+    b.push(MoveKind::Rapid, Point3::new(q.x, q.y, lvl.hop_z), None);
+    let h = lvl.p.links.approach.plunge_height;
+    let top = lvl.p.top_z;
+    let hz = (top + h).min(lvl.hop_z.max(top));
+    if h > 0.0 && hz.is_finite() && hz < b.at().z && hz > zq {
+        b.push(MoveKind::Rapid, Point3::new(q.x, q.y, hz), None);
+    }
+    // Crossing an earlier leg does not prove the destination column clear.
+    // Refuse an unsafe axial re-entry just as `plunge_from_top` does.
+    plunge_law::guard(
+        b,
+        lvl.p.links.approach.center_cutting,
+        lvl.p.tool_diameter * 0.5,
+        q,
+        zq,
+        top,
+        "a crossing hop",
+    );
+    b.push(MoveKind::Plunge, Point3::new(q.x, q.y, zq), Some(lvl.p.plunge_feed));
+    let left = lvl.settle.get();
+    if left > 0.0 && !left.is_nan() && zq >= at.z - 1e-9 {
+        let d = (q.x - at.x).hypot(q.y - at.y);
+        let rest = if d.is_finite() { (left - d).max(0.0) } else { 0.0 };
+        lvl.settle.set(if rest > 1e-6 { rest } else { 0.0 });
+    }
+}
+
 /// Feed from the builder's current point to `to`: with no shell, the
 /// plain ladder's single move at the level plane; with the shell, the
 /// leg split into chords of at most ℓ with every vertex landing on
@@ -113,7 +143,12 @@ pub(super) fn feed_leg(b: &mut PathBuilder, lvl: &LevelCtx, to: Point2, extra: f
         let t = i as f64 / n as f64;
         let q = Point2::new(at.x + (to.x - at.x) * t, at.y + (to.y - at.y) * t);
         let zq = lvl.tip(q, if i == n { extra } else { 0.0 });
-        cut(b, lvl, q, zq, false);
+        let cur = b.at();
+        if crate::machining2d::seg_crosses_prior(Point2::new(cur.x, cur.y), q, cur.z, zq, b.moves()) {
+            hop_over_leg(b, lvl, q, zq);
+        } else {
+            cut(b, lvl, q, zq, false);
+        }
     }
 }
 

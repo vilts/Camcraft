@@ -47,4 +47,13 @@ impl State {
         let prefs = view::ViewPrefs { show_gizmo_names: on };
         let _ = view::save(&path, &prefs);
     }
+
+    /// #2177: add `line` to the status line once - a refusal that every
+    /// document edit asks again is not said a second time while the
+    /// status line still shows it.
+    pub(crate) fn say_once(&mut self, line: &str) {
+        if !self.status.contains(line) {
+            self.status += &format!(" | {line}");
+        }
+    }
 }

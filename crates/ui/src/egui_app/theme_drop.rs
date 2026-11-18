@@ -109,10 +109,13 @@ pub(super) fn show(
                     p.hline(r.x_range(), r.top(), egui::Stroke::new(1.0, pal.border));
                 }
                 let text = if current { format!("{label}  (current)") } else { label };
+                let checked = matches!(row, ThemeRow::Theme(_, Some(_)) | ThemeRow::Vision(_))
+                    .then_some(current);
+                super::painted::menu_item(&resp, text.trim(), live, checked);
                 p.text(
                     r.left_center() + Vec2::new(8.0, 0.0),
                     egui::Align2::LEFT_CENTER,
-                    text,
+                    &text,
                     egui::FontId::proportional(pal.font_row),
                     if live && !current { pal.text } else { pal.text_faint },
                 );

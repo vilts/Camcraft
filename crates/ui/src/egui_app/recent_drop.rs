@@ -191,7 +191,7 @@ fn show(
                 }
                 let resp = ui.interact(*r, id.with(("recent-row", k)), Sense::click());
                 let (label, live) = (row.label(), row.live());
-                resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, live, &label));
+                super::painted::menu_item(&resp, &label, live, None);
                 if resp.hovered() && live {
                     p.rect_filled(*r, 0.0, pal.field_hover);
                 }

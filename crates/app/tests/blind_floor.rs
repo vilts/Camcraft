@@ -246,10 +246,11 @@ fn a_blind_hole_ring_ends_at_its_floor_and_the_outer_wall_goes_to_the_bottom() {
         let (world, mut h) = world_with(block_with_hole(Some(10.0)), "EM-1200-2FL");
         let (t, w) = run(&world, &mut h, "C1", "EM-1200-2FL", contour_op(4.0, leave));
         assert_eq!(w, Vec::new(), "leave {leave}: {:?}", t.notes);
-        // Levels 20, 16, 12 walk the ring; 8 is under the floor, so the
-        // floor itself (plus the leave) is the ring's last level.
-        assert_eq!(levels_where(&t, in_hole), [20.0, 16.0, 12.0, 10.0 + leave], "leave {leave}");
-        assert_eq!(levels_where(&t, outside_block), [20.0, 16.0, 12.0, 8.0, 4.0, 0.0, -2.0]);
+        // Levels 16, 12 walk the ring; 8 is under the floor, so the
+        // floor itself (plus the leave) is the ring's last level. Top Z
+        // 20 is the stock top: no level there (#2004).
+        assert_eq!(levels_where(&t, in_hole), [16.0, 12.0, 10.0 + leave], "leave {leave}");
+        assert_eq!(levels_where(&t, outside_block), [16.0, 12.0, 8.0, 4.0, 0.0, -2.0]);
         let deepest = t.moves.iter().filter(|m| in_hole(m.to.x, m.to.y)).map(|m| m.to.z).fold(f64::INFINITY, f64::min);
         assert_eq!(deepest, 10.0 + leave, "nothing in the hole column goes below the floor");
         let notes = t.notes.join(" | ");
@@ -263,7 +264,8 @@ fn a_through_hole_ring_keeps_every_level() {
     let (world, mut h) = world_with(block_with_hole(None), "EM-1200-2FL");
     let (t, w) = run(&world, &mut h, "C1", "EM-1200-2FL", contour_op(4.0, 0.0));
     assert_eq!(w, Vec::new(), "{:?}", t.notes);
-    let all = [20.0, 16.0, 12.0, 8.0, 4.0, 0.0, -2.0];
+    // Top Z 20 is the stock top: no level there (#2004).
+    let all = [16.0, 12.0, 8.0, 4.0, 0.0, -2.0];
     assert_eq!(levels_where(&t, in_hole), all);
     assert_eq!(levels_where(&t, outside_block), all);
     assert!(!t.notes.iter().any(|n| n.starts_with("depth:")), "{:?}", t.notes);
@@ -308,8 +310,27 @@ fn random_stepdowns_and_floors_never_cut_below_a_floor() {
     }
 }
 
+/// #2004 round 7: a blind hole shallower than one stepdown. The first
+/// level (Top Z 20 - 5 = 15) is already under the floor at 17, so the
+/// ring's one level is its floor - never dropped (it cut air at Top Z and
+/// then the floor before #2004; to drop it leaves 3 mm of wall uncut).
+#[test]
+fn a_blind_hole_shallower_than_one_stepdown_is_cut_at_its_floor() {
+    let m = block_with_hole(Some(17.0));
+    let region = top_section(&m);
+    for leave in [0.0, 0.5] {
+        let t = contour_on_part(&region, &m.facets, &direct_params(5.0, leave)).expect("contour");
+        assert_eq!(gouges(&depth_verify(&t, &region, Some(&m.facets), leave)), 0, "leave {leave}");
+        assert_eq!(levels_where(&t, in_hole), [17.0 + leave], "leave {leave}: {:?}", t.notes);
+        assert_eq!(levels_where(&t, outside_block), [15.0, 10.0, 5.0, 0.0, -2.0], "leave {leave}");
+        let notes = t.notes.join(" | ");
+        assert!(notes.contains(&format!("ends at its floor Z {:.3}", 17.0 + leave)), "{notes}");
+    }
+}
+
 fn drill_op(bottom: Option<f64>) -> OpParams {
     OpParams::Drill {
+        break_through: None,
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(22.0),

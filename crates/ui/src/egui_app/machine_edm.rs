@@ -1,5 +1,6 @@
 //! The machine editor's wire EDM section (#535, part of #290): the
-//! `edm` keys (guide planes, taper, wire diameters, AWT), the control's
+//! `edm` keys (guide planes, taper, wire diameters, AWT, tank and
+//! flushing), the control's
 //! words (`edm.codes`) and the condition table, each value drawn with
 //! its "not stated" face - a checkbox decides whether a value
 //! participates, as everywhere in the machine editor. Edits are on the
@@ -9,7 +10,7 @@
 //! Provenance: our own UI over our own machine model (#290 D4/D5,
 //! `camcraft_post::machine::{edm, edm_codes}`); no vendor text.
 
-use camcraft_app::machine::{Condition, Edm, CONDITION_ROLES};
+use camcraft_app::machine::{Condition, Edm, Flushing, Tank, CONDITION_ROLES};
 use camcraft_app::units::Unit;
 use egui::{ComboBox, TextEdit, Ui};
 
@@ -81,6 +82,7 @@ fn keys(ui: &mut Ui, u: Unit, e: &mut Edm) {
         });
         fields::named(cb.response, "Automatic wire threading");
     });
+    dielectric(ui, e);
     ui.label("wire diameters the machine takes");
     if e.wire_diameters.is_empty() {
         ui.label("not stated");
@@ -100,6 +102,34 @@ fn keys(ui: &mut Ui, u: Unit, e: &mut Edm) {
     if ui.button("add wire diameter").clicked() {
         e.wire_diameters.push(0.25);
     }
+}
+
+/// #1499: the tank and the flushing pressure the job runs with. "not
+/// stated" leaves both to the operator at the control (the post writes
+/// no word for them).
+fn dielectric(ui: &mut Ui, e: &mut Edm) {
+    ui.horizontal(|ui| {
+        ui.label("tank");
+        let shown = e.tank.map_or("not stated", Tank::word);
+        let cb = ComboBox::from_id_salt("edm_tank").selected_text(shown).show_ui(ui, |ui| {
+            ui.selectable_value(&mut e.tank, None, "not stated");
+            for t in [Tank::Submerged, Tank::NonSubmerged] {
+                ui.selectable_value(&mut e.tank, Some(t), t.word());
+            }
+        });
+        fields::named(cb.response, "Tank");
+    });
+    ui.horizontal(|ui| {
+        ui.label("flushing");
+        let shown = e.flushing.map_or("not stated", Flushing::word);
+        let cb = ComboBox::from_id_salt("edm_flushing").selected_text(shown).show_ui(ui, |ui| {
+            ui.selectable_value(&mut e.flushing, None, "not stated");
+            for f in [Flushing::High, Flushing::Low] {
+                ui.selectable_value(&mut e.flushing, Some(f), f.word());
+            }
+        });
+        fields::named(cb.response, "Flushing");
+    });
 }
 
 fn codes(ui: &mut Ui, codes: &mut std::collections::BTreeMap<String, String>) {

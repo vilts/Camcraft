@@ -155,3 +155,9 @@ function rotaryFeedWord(v, inch) {
   return "F" + s;
 }
 "#;
+
+/// Shared Rust G93 inverse-time solver re-exported alongside the G94 JS rotary cap.
+pub use super::g93::{
+    format_g93_feed_word, solve_g93_segment, solve_g93_segment_in_units, solve_g93_solved_moves,
+    AxisSpeedLimits, G93Decision, G93Error, G93Options, G93SegmentInput, G93Timing, LinearUnit,
+};

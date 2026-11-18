@@ -65,6 +65,8 @@ pub enum FixtureLibDialog {
     Plate(super::PlateDraft),
     /// #789: "Add accessory…".
     Accessory(super::AccessoryDraft),
+    /// #744: "Add profile / DXF fixture…".
+    Profile(super::FixtureProfileDraft),
 }
 
 fn declared(setup: &str) -> Option<&str> {

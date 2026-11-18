@@ -142,7 +142,8 @@ fn undo_turn_reverts_multi_tool_turn_changes_in_one_click_and_guards_later_edits
     submit_prompt(&mut h, "Set stock and add Face op");
     pump_until_idle(&mut h);
 
-    assert_eq!(h.state().state.history.done_len(), pre_depth + 3);
+    // #1942: multi-call AI turn commits as one BatchCommand entry while reporting 3 changes.
+    assert_eq!(h.state().state.history.done_len(), pre_depth + 1);
     assert!(has_op_row(&h.state().state, "Face1"));
     assert!(
         h.query_all_by_label_contains("3 changes").next().is_some()
@@ -276,3 +277,231 @@ fn prompt_json_fallback_gates_mutating_proposals_behind_allow_deny() {
             .is_some()
     );
 }
+
+#[test]
+fn one_ctrl_z_reverts_multi_call_ai_chat_turn() {
+    let mut h = blank_harness();
+    h.run();
+    toggle_ai_chat_via_view_door(&mut h);
+
+    let transport = ScriptedTransport::new(vec![
+        Ok(TransportOutput::AssistantResponse {
+            text: String::new(),
+            envelope: json!({
+                "content": [
+                    { "type": "tool_use", "id": "b1", "name": "set_stock", "input": { "box": { "dx": 80.0, "dy": 80.0, "dz": 20.0 } } }
+                ]
+            }),
+            fallback_override: None,
+        }),
+        Ok(TransportOutput::AssistantResponse {
+            text: String::new(),
+            envelope: json!({
+                "content": [
+                    { "type": "tool_use", "id": "b2", "name": "add_tool", "input": { "catalog": "EM-0400-2FL" } },
+                    { "type": "tool_use", "id": "b3", "name": "add_operation", "input": { "kind": "Face", "tool": "EM-0400-2FL" } }
+                ]
+            }),
+            fallback_override: None,
+        }),
+        Ok(TransportOutput::AssistantResponse {
+            text: "Ready.".to_owned(),
+            envelope: json!({
+                "content": [{ "type": "text", "text": "Ready." }]
+            }),
+            fallback_override: None,
+        }),
+    ]);
+    h.state_mut().state.ai_chat.set_transport(transport);
+    let pre_depth = h.state().state.history.done_len();
+
+    submit_prompt(&mut h, "Set stock, add tool, and add Face op");
+    pump_until_idle(&mut h);
+
+    assert_eq!(
+        h.state().state.history.done_len(),
+        pre_depth + 1,
+        "a multi-call AI chat turn must commit as one batch undo step"
+    );
+    assert!(has_op_row(&h.state().state, "Face1"));
+
+    h.input_mut()
+        .events
+        .push(super::super::Event::ModifiersChanged(super::super::Modifiers::COMMAND));
+    h.input_mut().events.push(super::super::Event::Key {
+        key: super::super::Key::Z,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: super::super::Modifiers::COMMAND,
+    });
+    h.run_steps(2);
+
+    assert_eq!(
+        h.state().state.history.done_len(),
+        pre_depth,
+        "one Ctrl+Z must revert the whole multi-call AI turn"
+    );
+    assert!(!has_op_row(&h.state().state, "Face1"));
+    assert!(
+        camcraft_app::model::find_by_name(&h.state().state.world, "EM-0400-2FL").is_none(),
+        "Ctrl+Z must also revert the tool added in the same chat turn"
+    );
+    assert!(
+        camcraft_app::setup::stock_entity(&h.state().state.world, None)
+            .and_then(|e| camcraft_app::model::stock_def_of(&h.state().state.world, &e))
+            .is_none(),
+        "Ctrl+Z must also revert the stock set in the same chat turn"
+    );
+
+    // One Ctrl+Y brings the whole batch turn back.
+    h.input_mut()
+        .events
+        .push(super::super::Event::ModifiersChanged(super::super::Modifiers::COMMAND));
+    h.input_mut().events.push(super::super::Event::Key {
+        key: super::super::Key::Y,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: super::super::Modifiers::COMMAND,
+    });
+    h.run_steps(2);
+    assert_eq!(h.state().state.history.done_len(), pre_depth + 1);
+    assert!(has_op_row(&h.state().state, "Face1"));
+}
+
+#[test]
+fn get_selection_mcp_tool_reads_ui_geo_picks_pick_mode_and_selected_entities() {
+    let mut h = super::super::shell_harness();
+    h.run();
+    {
+        let st = &mut h.state_mut().state;
+        st.run(CommandKind::Select(Some("Block".to_owned())));
+        st.geo_pick = super::super::GeoPick::Face;
+        st.op_ui.geo = vec![camcraft_app::operation::GeoSel {
+            entity: "Block".to_owned(),
+            feature: super::super::FeatureSel::Face(0x1234),
+        }];
+    }
+
+    let req_line = json!({
+        "jsonrpc": "2.0",
+        "id": 77,
+        "method": "tools/call",
+        "params": { "name": "get_selection", "arguments": {} }
+    })
+    .to_string();
+    let (req, rx) = camcraft_app::mcp::Request::pair(req_line);
+    h.state_mut()
+        .state
+        .mcp
+        .get_or_insert_with(|| {
+            let (tx, inbox) = camcraft_app::mcp::Inbox::channel();
+            tx.send(req).expect("send");
+            inbox
+        });
+    crate::mcp_host::pump(&mut h.state_mut().state);
+
+    let reply_line = rx.try_recv().expect("reply").expect("jsonrpc line");
+    let reply: Value = serde_json::from_str(&reply_line).expect("json");
+    assert_eq!(reply["result"]["isError"], json!(false), "{reply}");
+    let sc = &reply["result"]["structuredContent"];
+    assert_eq!(sc["pick_mode"], json!("face"));
+    assert_eq!(sc["selected_entities"], json!(["Block"]));
+    assert_eq!(
+        sc["geometry_picks"],
+        json!([{ "model": "Block", "id": "face:0x0000000000001234" }])
+    );
+}
+
+#[test]
+fn machine_and_limit_edits_require_confirmation_and_unapproved_live_dispatch_blocks() {
+    let mut h = blank_harness();
+    h.run();
+    seed_postable_face_job(&mut h);
+    toggle_ai_chat_via_view_door(&mut h);
+
+    let transport = ScriptedTransport::new(vec![
+        Ok(TransportOutput::AssistantResponse {
+            text: String::new(),
+            envelope: json!({
+                "content": [{ "type": "tool_use", "id": "m1", "name": "load_machine", "input": { "builtin": "VMC 3-axis" } }]
+            }),
+            fallback_override: None,
+        }),
+        Ok(TransportOutput::AssistantResponse {
+            text: "Machine change cancelled.".to_owned(),
+            envelope: json!({
+                "content": [{ "type": "text", "text": "Machine change cancelled." }]
+            }),
+            fallback_override: None,
+        }),
+        Ok(TransportOutput::AssistantResponse {
+            text: String::new(),
+            envelope: json!({
+                "content": [{ "type": "tool_use", "id": "m2", "name": "load_machine", "input": { "builtin": "VMC 3-axis" } }]
+            }),
+            fallback_override: None,
+        }),
+        Ok(TransportOutput::AssistantResponse {
+            text: "Machine loaded after approval.".to_owned(),
+            envelope: json!({
+                "content": [{ "type": "text", "text": "Machine loaded after approval." }]
+            }),
+            fallback_override: None,
+        }),
+    ]);
+    h.state_mut().state.ai_chat.set_transport(transport);
+
+    submit_prompt(&mut h, "Load VMC 3-axis");
+    pump_until_confirm(&mut h);
+    assert!(h.query_by_label("Tool: load_machine").is_some());
+    assert!(camcraft_app::machine::document_of(&h.state().state.world).1.is_none());
+
+    h.get_by_role_and_label(Role::Button, "Deny").click();
+    pump_until_idle(&mut h);
+    assert!(camcraft_app::machine::document_of(&h.state().state.world).1.is_none());
+
+    submit_prompt(&mut h, "Load VMC 3-axis again");
+    pump_until_confirm(&mut h);
+    h.get_by_role_and_label(Role::Button, "Allow").click();
+    pump_until_idle(&mut h);
+    assert!(camcraft_app::machine::document_of(&h.state().state.world).1.is_some());
+
+    // Even if a request arrives directly on ai_mcp_inbox while a turn is active without
+    // user confirmation in the UI, the live permission gate at answer_live must block it.
+    let tmp_dir = std::env::temp_dir().join(format!("camcraft-ai-live-bypass-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+    std::fs::create_dir_all(&tmp_dir).expect("temp dir");
+    let nc_path = tmp_dir.join("bypass.nc");
+
+    let started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let saw_cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let blocking = Arc::new(super::BlockingTransport {
+        started: Arc::clone(&started),
+        saw_cancel: Arc::clone(&saw_cancel),
+    });
+    h.state_mut().state.ai_chat.set_transport(blocking);
+    submit_prompt(&mut h, "Hold turn open");
+
+    let bypass_line = json!({
+        "jsonrpc": "2.0",
+        "id": 999,
+        "method": "tools/call",
+        "params": { "name": "post", "arguments": { "output": nc_path.display().to_string() } }
+    })
+    .to_string();
+    let (req, rx) = camcraft_app::mcp::Request::pair(bypass_line);
+    h.state().state.ai_mcp_tx.send(req).expect("send");
+    crate::mcp_host::pump(&mut h.state_mut().state);
+
+    let reply_line = rx.try_recv().expect("reply").expect("jsonrpc");
+    let reply: Value = serde_json::from_str(&reply_line).expect("json");
+    assert_eq!(reply["result"]["isError"], json!(true), "unapproved live post must be blocked: {reply}");
+    assert!(!nc_path.exists(), "blocked bypass must not write NC file");
+
+    h.state_mut().state.ai_chat.cancel();
+    pump_until_idle(&mut h);
+    let _ = std::fs::remove_dir_all(&tmp_dir);
+}
+

@@ -4,7 +4,8 @@
 //! them. The mesh's meridian is exactly that outline, it follows a
 //! tilted tool axis, a degenerate outline draws nothing (never a panic),
 //! and the cached mesh is dropped with its tool, its operation or a
-//! change of outline. Our own tests.
+//! change of outline. Our own tests. A drawn (spun) holder is drawn as
+//! drawn inside those bands (#2176): `sim_tool_drawn_holder.rs`.
 //!
 //! Gate map (M4.4): covers app::sim_tool_body, app::tool_body, app::tool_body_view.
 
@@ -16,7 +17,6 @@ use camcraft_app::model;
 use camcraft_app::operation::{Height, OpParams, SrcRef};
 use camcraft_app::schema::Location;
 use camcraft_app::sim_tool_body::{self as sim_body, JudgedOutline, OutlineError, SimToolCache};
-use camcraft_app::spun::SpunPoint;
 use camcraft_app::stock::StockShape;
 use camcraft_app::tool_body;
 use camcraft_app::tools::{catalog, Tool};
@@ -103,7 +103,7 @@ fn has(points: &[(f64, f64)], z: f64, r: f64) -> bool {
 /// an outline vertex, and every outline vertex is in the mesh.
 fn assert_mesh_is_outline(outline: &JudgedOutline, tris: &[Triangle]) {
     let mut want = outline.cutter.clone();
-    want.extend(outline.holder_meridian());
+    want.extend(outline.holder_shown());
     let got = meridian_of(tris);
     assert!(!got.is_empty(), "a body is drawn");
     for &(z, r) in &got {
@@ -157,22 +157,6 @@ fn a_modelled_body_is_drawn_as_its_judged_envelope_not_its_facets() {
     let band_r = stack.bands.last().expect("a band").r;
     assert!(rim.iter().all(|r| (r - band_r).abs() < 1e-9), "every rim vertex at the judged radius {band_r}");
     assert!(band_r >= 20.0, "never smaller than the solid");
-}
-
-#[test]
-fn a_drawn_cone_is_drawn_as_the_stepped_bands_the_laws_judge() {
-    let (world, mut history) = face_world();
-    let z0 = shank_top();
-    // A cone from r = 10 to r = 30 over 20 mm: judged as one band at 30.
-    let cone = vec![SpunPoint::line(z0, 0.0), SpunPoint::line(z0, 10.0), SpunPoint::line(z0 + 20.0, 30.0), SpunPoint::line(z0 + 20.0, 0.0)];
-    history.execute(&world, SetToolBody::spun(&world, TOOL, Some(cone)).expect("a sane profile"));
-    let (_, stack) = judged_stack(&world);
-    assert_eq!(stack.bands, vec![HolderBand { above: z0, len: 20.0, r: 30.0 }], "the law's reading of the cone");
-    let outline = sim_body::for_operation(&world, OP).expect("no refusal").expect("draws");
-    assert_eq!(outline.holder, stack.bands);
-    let tris = outline.mesh();
-    assert_mesh_is_outline(&outline, &tris);
-    assert!(has(&meridian_of(&tris), z0, 30.0), "the foot is drawn at the judged 30, not the drawn 10");
 }
 
 #[test]

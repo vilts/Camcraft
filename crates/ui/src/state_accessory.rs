@@ -18,7 +18,8 @@ use super::{ErrorScope, FixtureLibDialog, State};
 pub const DEFAULT_ABOVE: f64 = 6.35;
 
 /// "Add accessory…": the picked kind, its (editable) figures, and where
-/// it goes - at a typed pose, or (parallels) under the stock in a vise.
+/// it goes - at a typed pose, (parallels) under the stock in a vise, or
+/// (a lathe chuck, #1468) fitted to the stock.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AccessoryDraft {
     /// The Fixtures node's setup (`""` - the implicit setup).
@@ -30,6 +31,9 @@ pub struct AccessoryDraft {
     pub in_vise: Option<String>,
     /// The stock's top over the jaws, mm (the parallels fit).
     pub above: f64,
+    /// A lathe chuck: fit it to the setup's stock (`false` - by pose).
+    /// Opens ticked when the setup's stock is round.
+    pub on_stock: bool,
     /// The accessory frame's origin, mm.
     pub pos: [f64; 3],
     pub yaw_deg: f64,
@@ -46,6 +50,13 @@ impl AccessoryDraft {
         }
     }
 
+    /// Is this a lathe chuck the Place button fits to the stock? An
+    /// inside grip never is: the stock's box does not give its bore.
+    #[must_use]
+    pub fn fits_stock(&self) -> bool {
+        self.on_stock && accessory::chuck::is_chuck(&self.params) && self.params.grip() != Some(accessory::chuck::Grip::Inside)
+    }
+
     /// Where the Place button puts it.
     #[must_use]
     pub fn placement(&self) -> AccessoryPlacement {
@@ -53,6 +64,7 @@ impl AccessoryDraft {
             (Accessory::Parallels { .. }, Some(vise)) => {
                 AccessoryPlacement::UnderStockInVise { vise: vise.clone(), above: self.above }
             }
+            _ if self.fits_stock() => AccessoryPlacement::OnStock,
             _ => AccessoryPlacement::At(Location {
                 pos: Point3::new(self.pos[0], self.pos[1], self.pos[2]),
                 rot: quat_from_euler(0.0, 0.0, self.yaw_deg.to_radians()),
@@ -86,12 +98,14 @@ impl State {
             height: 25.4,
         });
         let in_vise = vises.first().cloned();
+        let on_stock = model::stock_world_aabb_for(&self.world, declared).is_some_and(|b| accessory::chuck::stock_is_round(&b));
         self.fixture_lib = Some(FixtureLibDialog::Accessory(AccessoryDraft {
             setup,
             params,
             vises,
             in_vise,
             above: DEFAULT_ABOVE,
+            on_stock,
             pos: [0.0; 3],
             yaw_deg: 0.0,
             error: None,

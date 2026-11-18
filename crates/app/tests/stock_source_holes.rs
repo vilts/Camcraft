@@ -4,7 +4,8 @@
 //! these four stayed at `DepthLaw::None`, so a drill, bar, thread mill or
 //! chamfer cone cut off the stock and into the part had 0 findings - with
 //! the stock aligned the program sim held the post, with it turned (the
-//! sim refuses to judge) the post went out.
+//! sim refuses to judge) the post went out. #2177: the device is a turn
+//! off the machine axes; the sim judges a quarter-turned box.
 //!
 //! Now the hole kinds take their own containment law against the setup's
 //! parts: a hole may enter a part only through the hole the part models
@@ -173,6 +174,7 @@ fn a_part_added_under_a_stock_source_drill_is_judged_at_the_post_by_the_hole_law
         let (world, mut h) = job(Model::hole(3.0, 8.0), HALF, true);
         let warns = hole_op(&world, &mut h, Kind::Drill, Cut::at(25.0, 0.0, 3.0, 10.0));
         assert!(warns.iter().all(|w| !w.blocks_post()), "{label}: a clean generation: {warns:?}");
+        assert!(pocket_support::oblique_refused(&world), "{label}: the device holds: the program sim does not judge this stock");
         assert_posts(&world, &format!("added-{label}-before"));
         let mut f = Vec::new();
         let ring = common::solid_part::circle((25.0, 0.0), 3.0, 32);
@@ -201,6 +203,7 @@ fn stock_source_chamfer_refusal_names_cause_and_part_as_source_workaround() {
             "generate rotated {rotated}: expected cause + workaround in warnings: {hints:?}"
         );
         if rotated {
+            assert!(pocket_support::oblique_refused(&world), "the device holds: the program sim does not judge this stock");
             assert_not_posted(&world, "chamfer-hint-rotated", "chamfer with the part as source");
         }
 
@@ -252,7 +255,7 @@ fn framed_stock_chamfer_live_refusal_keeps_hint_without_local_move_number() {
     let (world, mut h) = job_without_part(HALF);
     let mut params = chamfer(1.0);
     if let OpParams::Chamfer2D { tilt, .. } = &mut params {
-        *tilt = Some(Tilt { a_deg: 0.0, b_deg: 10.0, origin: [0.0; 3] });
+        *tilt = Some(Tilt { basis_version: 1, a_deg: 0.0, b_deg: 10.0, origin: [0.0; 3] });
     }
     let warns = generated(&world, &mut h, CHAMFER, params);
     assert!(warns.iter().all(|w| !w.blocks_post()), "previously clear chamfer: {warns:?}");

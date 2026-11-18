@@ -302,3 +302,29 @@ fn a_frame_keeps_a_stated_spindle_c_on_every_move_it_maps() {
         assert_spindle_c(&f.world_path(&c_live(), 0.001), &[-90.5, -450.25]);
     }
 }
+
+#[test]
+fn a0_b180_frame_keeps_plane_x_on_machine_x() {
+    // Regression (#2133): sin(180 deg) float dust (~1.22e-16) must not make
+    // TiltedFrame::new pick machine Y as plane X on the face opposite the top.
+    for b in [180.0, -180.0] {
+        let f = TiltedFrame::from_angles(Point3::ZERO, 0.0, b).expect("A0 B+-180 frame");
+        assert!(
+            f.u[0] > 1.0 - 1e-12 && f.u[1].abs() < 1e-12 && f.u[2].abs() < 1e-12,
+            "plane X at B={b} must stay on machine +X, got u={:?}",
+            f.u
+        );
+        assert!(
+            (f.v[1] + 1.0).abs() < 1e-12 && f.v[0].abs() < 1e-12 && f.v[2].abs() < 1e-12,
+            "plane Y at B={b} must be machine -Y, got v={:?}",
+            f.v
+        );
+        let local = f.to_local(p(-19.05, 0.0, -9.525));
+        assert!(
+            (local.x + 19.05).abs() < 1e-9
+                && local.y.abs() < 1e-9
+                && (local.z - 9.525).abs() < 1e-9,
+            "point along -X on bottom face mapped to {local:?}"
+        );
+    }
+}

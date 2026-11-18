@@ -143,7 +143,14 @@ mod open_band;
 mod run_out;
 use run_out::*;
 mod area;
+#[cfg(test)]
+mod stock_top_frame;
+use camcraft_motion::stock_top_frame::stock_top_in_frame;
 use area::*;
+mod pocket_memo;
+pub use pocket_memo::pocket_slices;
+mod selection_memo;
+pub use selection_memo::{contour_auto_side_fresh, selection_account_fresh, selection_walks};
 mod boundary;
 pub use boundary::AreaCtx;
 use boundary::AreaApplied;
@@ -163,7 +170,8 @@ mod finish_entry;
 mod boundary_ctx;
 mod boundary_picks;
 pub use boundary_picks::{
-    PickShape, area_pick_issue, area_refusal, boundary_pick_shape, extend_to_loop, run_pick, toggle_run,
+    PickShape, area_pick_issue, area_refusal, boundary_pick_shape, extend_to_loop,
+    extend_to_loop_in, run_pick, toggle_run,
 };
 pub use boundary_ctx::op_stamp;
 use boundary_ctx::*;
@@ -171,6 +179,7 @@ use boundary_ctx::*;
 // operation's world reads and CL wrap (part_alignment x Tilt).
 mod frame;
 pub use frame::OpFrame;
+mod wcs_yaw;
 mod job;
 pub use job::*;
 mod generate;
@@ -184,13 +193,19 @@ mod cross_spindle;
 mod cross_stock;
 mod drill_reach;
 mod bore_reach;
+use camcraft_motion::break_through;
 pub use bore_reach::DetectedHoles;
+pub use break_through::BELOW_STOCK_NOTE;
 mod drill_prior;
 mod carried_stock;
 pub use carried_stock::{CARRIED_OUTSIDE_DECLARED, CARRIED_OUTSIDE_NOTED, carried_problems};
 pub(crate) use drill_prior::reads_prior;
 mod plunge_solid;
 mod predrilled_entry;
+pub mod rest_op;
+pub use rest_op::REST_PREDRILLED;
+#[cfg(test)]
+mod rest_op_tests;
 #[cfg(test)]
 mod predrilled_entry_tests;
 #[cfg(test)]
@@ -216,7 +231,7 @@ mod stock_top_law;
 // #266: a tap judged at its thread's core.
 mod tap_core;
 pub use clearance_stock::{CLEARANCE_STOCK_WARNING, creation_advice as clearance_in_stock_advice};
-pub use top_stock::TOP_STOCK_WARNING;
+pub use top_stock::{CARRIED_STOCK_NOTE, TOP_STOCK_WARNING};
 mod turning_credit;
 mod turning_axis;
 mod turning_feeds;

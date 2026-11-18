@@ -80,11 +80,7 @@ impl SetSetupMachine {
     /// Mount a shipped library machine by NAME (the `LoadMachine::builtin`
     /// law: a stale name refuses, never mounts another machine).
     pub fn builtin(world: &World, setup: &str, name: &str) -> Result<Self, CommandError> {
-        let text = crate::posting::MACHINES
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, t)| *t)
-            .ok_or_else(|| CommandError::Invalid(format!("machine {name} is not in the built-in library")))?;
+        let text = crate::posting::builtin_machine_text(name).map_err(CommandError::Invalid)?;
         let m = crate::machine::parse_mch(text).map_err(CommandError::Invalid)?;
         Self::new(world, setup, Some((crate::posting::builtin_path(name), Some(m))))
     }

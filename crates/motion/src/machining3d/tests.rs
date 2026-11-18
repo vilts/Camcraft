@@ -4,6 +4,9 @@ use crate::geo2d::Point2;
 use crate::stock_sim::{Columns, Dexel};
 use super::*;
 
+#[path = "crossing_hop_tests.rs"]
+mod crossing_hop_tests;
+
 #[test]
 fn a_chord_over_a_step_reads_half_engagement() {
     // The chord law at its plainest: travel along a wall, half the

@@ -106,8 +106,8 @@ impl Client {
 }
 
 /// The box's feature ids by what they are: a face by its bounds (a
-/// face row's `normal` is the plane's canonical one, not its outward
-/// side - the top and bottom both read +Z), an edge by its two ends, a
+/// face row's `normal` is outward since #956; bounds stay the plain key),
+/// an edge by its two ends, a
 /// vertex by its point.
 struct Ids(Value);
 

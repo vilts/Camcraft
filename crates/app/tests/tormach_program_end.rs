@@ -12,7 +12,6 @@
 
 use camcraft_app::machine::{Kind, kind, parse_mch};
 use camcraft_app::post::{engine, machine};
-use camcraft_app::posting::MACHINES;
 use serde_json::{Value, json};
 use std::path::Path;
 
@@ -54,7 +53,7 @@ fn after_final_retract(nc: &str) -> Vec<&str> {
 }
 
 fn tormach_mills() -> Vec<(&'static str, &'static str)> {
-    let mills: Vec<_> = MACHINES
+    let mills: Vec<_> = camcraft_app::posting::shipped_machines().expect("the shipped machines read")
         .iter()
         .copied()
         .filter(|(name, text)| {
@@ -104,7 +103,7 @@ fn a_stated_safe_z_ends_at_that_z_with_no_g30() {
 /// run: not wanted) and no G30 that would swing it.
 #[test]
 fn a_fourth_axis_program_ends_without_returning_a() {
-    let (name, text) = MACHINES
+    let (name, text) = camcraft_app::posting::shipped_machines().expect("the shipped machines read")
         .iter()
         .copied()
         .find(|(n, _)| *n == "Tormach 770MX + microARC 4")

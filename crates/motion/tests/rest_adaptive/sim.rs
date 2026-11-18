@@ -26,7 +26,15 @@ pub const BOTTOM: f64 = -4.0;
 /// concave corner stands in more wall the coarser the grid is (the same
 /// paths read up to 17.4% of D on the default D/80 grid, 12.5 to 14.7%
 /// on this one - the planner's own numbers to a tenth of a percent).
+/// Pinned on a D/240 grid too (`on_a_fine_grid_...`).
 pub const LOAD_SLACK: f64 = 0.05;
+
+/// The ceiling on the default measuring grid (D/80, `QualitySpec::new`):
+/// optimal x 1.2. Its rim, a cell and a half outside the cutter, stands
+/// in more wall in a concave corner (issue 2113: the corner fixtures read
+/// 14.6% and 16.7% of D there, against 13.1% and 14.7% on D/120 and
+/// 14.2% on D/240 (the same 60 x 40 pocket) - optimal 14.6%).
+pub const LOAD_CEILING_D80: f64 = 0.2;
 
 pub fn poly(pts: &[(f64, f64)]) -> Region {
     Region::new(vec![Loop::new(pts.iter().map(|&(x, y)| Point2::new(x, y)).collect()).unwrap()]).unwrap()
@@ -95,6 +103,12 @@ impl Sim {
         // the floor, the way `quality::stock_for` builds it; the grid is
         // the planner's, see `LOAD_SLACK`.)
         let spec = QualitySpec { wall_below: Some(BOTTOM - 0.5), cell: TOOL_D / 120.0, ..QualitySpec::new(TOOL_D) };
+        Sim { dex: stock_for(region, TOP, BOTTOM, 1.0, &spec).unwrap(), spec }
+    }
+
+    /// The pocket's stock on a measuring grid of `cell` mm.
+    pub fn on_grid(region: &Region, cell: f64) -> Sim {
+        let spec = QualitySpec { wall_below: Some(BOTTOM - 0.5), cell, ..QualitySpec::new(TOOL_D) };
         Sim { dex: stock_for(region, TOP, BOTTOM, 1.0, &spec).unwrap(), spec }
     }
 
@@ -222,6 +236,9 @@ pub struct Reading {
     /// Stock left standing above the bottom inside the tool's reach (mm^2).
     pub left: f64,
     pub plunges: usize,
+    /// Planar feed in material and feed in air (mm).
+    pub cut: f64,
+    pub air: f64,
 }
 
 /// The laws every rest Adaptive path is held to: the verifier passes;
@@ -273,14 +290,26 @@ pub fn read_leaving(path: &Toolpath, region: &Region, sim: &mut Sim, leave: f64)
         .collect();
     // In reach: what a 4 mm tool's edge gets to, a tenth short of it.
     let reach = region.offset(-(R + leave)).unwrap().offset(R - 0.1).unwrap();
-    Reading { load, left: rest_area(&sim.dex, &reach, BOTTOM).unwrap(), plunges }
+    Reading {
+        load,
+        left: rest_area(&sim.dex, &reach, BOTTOM).unwrap(),
+        plunges,
+        cut: q.cut_len,
+        air: q.air_len + q.lift_len,
+    }
 }
 
 pub fn assert_load_held(r: &Reading) {
+    assert_load_within(r, LOAD_SLACK);
+}
+
+/// Every depth cut something, and its worst load is at most the
+/// optimal load times `1 + slack`.
+pub fn assert_load_within(r: &Reading, slack: f64) {
     for &(z, load) in &r.load {
         assert!(load > 0.02, "Z{z}: nothing was cut (worst load {:.1}% of D)", load * 100.0);
         assert!(
-            load <= DEFAULT_OPTIMAL_LOAD * (1.0 + LOAD_SLACK),
+            load <= DEFAULT_OPTIMAL_LOAD * (1.0 + slack),
             "Z{z}: the measured load {:.1}% of D is past the optimal {:.1}%",
             load * 100.0,
             DEFAULT_OPTIMAL_LOAD * 100.0

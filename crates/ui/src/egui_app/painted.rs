@@ -108,7 +108,18 @@ pub fn cell(
         galley,
         ink,
     );
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, toggled, label));
     resp
+}
+
+/// Attach an AccessKit `MenuItem` node to a custom-painted dropdown row.
+pub(super) fn menu_item(resp: &Response, label: &str, enabled: bool, checked: Option<bool>) {
+    resp.widget_info(|| match checked {
+        Some(on) => egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, on, label),
+        None => egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label),
+    });
+    resp.ctx
+        .accesskit_node_builder(resp.id, |b| b.set_role(egui::accesskit::Role::MenuItem));
 }
 
 /// Lay `label` out on one line at the largest whole size from `start_px`

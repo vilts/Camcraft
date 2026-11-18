@@ -71,7 +71,7 @@ fn choose(world: &World, h: &mut History, b: BetweenSetups) {
 }
 
 fn cps(name: &str) -> &'static str {
-    posting::BUILTINS.iter().find(|(n, _)| *n == name).map(|(_, t)| *t).expect("built-in post")
+    posting::builtin_post_text(name).expect("built-in post")
 }
 
 fn tmp(tag: &str) -> std::path::PathBuf {
@@ -246,5 +246,123 @@ fn the_mcp_post_tool_takes_the_choice_through_the_undoable_command() {
     let (refused, body) = mcp(&mut server, "post", json!({ "output": out, "post": "Fanuc", "between_setups": "file-per-setup" }));
     assert!(!refused, "{body}");
     assert_eq!(body["files"].as_array().map(Vec::len), Some(2), "one file per setup: {body}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn mcp_post_with_per_op_writes_standalone_files_and_never_drops_setup_stop() {
+    use serde_json::json;
+    let dir = tmp("mcp-per-op");
+    let mut server = camcraft_app::mcp::Server::new();
+    let init = json!({ "jsonrpc": "2.0", "id": 0, "method": "initialize", "params": { "protocolVersion": "2025-06-18" } });
+    server.handle(&init).expect("the server answers");
+    for (name, args) in [
+        ("load_machine", json!({ "builtin": "VMC 3-axis" })),
+        ("add_setup", json!({ "name": "S1" })),
+        ("set_stock", json!({ "box": { "dx": 60, "dy": 40, "dz": 10 } })),
+        ("add_tool", json!({ "catalog": "EM-1000-4FL" })),
+        ("add_tool", json!({ "catalog": "EM-0600-4FL" })),
+        ("add_operation", json!({ "kind": "face", "tool": "EM-1000-4FL", "name": "F1" })),
+        ("add_operation", json!({ "kind": "face", "tool": "EM-0600-4FL", "name": "F2" })),
+        ("add_setup", json!({ "name": "S2", "datum_from": "S1" })),
+        ("add_operation", json!({ "kind": "face", "tool": "EM-1000-4FL", "name": "F3" })),
+        ("generate", json!({})),
+    ] {
+        let (refused, body) = mcp(&mut server, name, args);
+        assert!(!refused, "{name} refused: {body}");
+    }
+    let (refused, ver) = mcp(&mut server, "verify", json!({}));
+    assert!(!refused && ver["ok"] == json!(true), "{ver}");
+    let (refused, body) = mcp(&mut server, "set_post_options", json!({ "per_op": true }));
+    assert!(!refused, "{body}");
+
+    let out_nc = dir.join("perop.nc");
+    let (refused, body) = mcp(
+        &mut server,
+        "post",
+        json!({ "output": out_nc.to_string_lossy(), "post": "Fanuc" }),
+    );
+    assert!(!refused, "{body}");
+    assert!(!out_nc.exists(), "must never write one combined program when per_op is enabled");
+    let files: Vec<String> = body["files"]
+        .as_array()
+        .expect("files array")
+        .iter()
+        .map(|v| v.as_str().expect("path string").to_owned())
+        .collect();
+    assert_eq!(files.len(), 3, "three standalone files expected: {body}");
+    assert!(files[0].ends_with("perop_01_F1.nc"), "{files:?}");
+    assert!(files[1].ends_with("perop_02_F2.nc"), "{files:?}");
+    assert!(files[2].ends_with("perop_03_F3.nc"), "{files:?}");
+    let g1 = std::fs::read_to_string(&files[0]).expect("F1 file");
+    let g2 = std::fs::read_to_string(&files[1]).expect("F2 file");
+    let g3 = std::fs::read_to_string(&files[2]).expect("F3 file");
+    assert!(g1.contains("(SETUP: S1)") && g1.contains("(OPERATION: F1 - FACE") && !g1.contains("(OPERATION: F2") && !g1.contains("(OPERATION: F3") && g1.contains("M30"), "{g1}");
+    assert!(g2.contains("(SETUP: S1)") && g2.contains("(OPERATION: F2 - FACE") && !g2.contains("(OPERATION: F1") && !g2.contains("(OPERATION: F3") && g2.contains("M30"), "{g2}");
+    assert!(g3.contains("(SETUP: S2)") && g3.contains("(OPERATION: F3 - FACE") && !g3.contains("(OPERATION: F1") && !g3.contains("(OPERATION: F2") && g3.contains("M30"), "{g3}");
+
+    // Document default post without explicit `post` also writes one file per op.
+    let def_nc = dir.join("perop-default.nc");
+    let (refused, def_body) = mcp(&mut server, "post", json!({ "output": def_nc.to_string_lossy() }));
+    assert!(!refused, "{def_body}");
+    assert!(!def_nc.exists(), "must not write combined default program");
+    assert_eq!(def_body["files"].as_array().map(Vec::len), Some(3), "{def_body}");
+
+    // Disagreement across setups refuses by name and writes nothing.
+    let (refused, body) = mcp(&mut server, "set_post_options", json!({ "setup": "S2", "per_op": false }));
+    assert!(!refused, "{body}");
+    let mismatch_nc = dir.join("mismatch.nc");
+    let (refused, why) = mcp(
+        &mut server,
+        "post",
+        json!({ "output": mismatch_nc.to_string_lossy(), "post": "Fanuc" }),
+    );
+    assert!(refused && why.as_str().is_some_and(|w| w.contains("S2") && w.contains("output")), "{why}");
+    assert!(!mismatch_nc.exists(), "mismatch must write nothing");
+
+    // Switching per_op back off posts one combined program with the setup-change stop restored.
+    let (refused, body) = mcp(&mut server, "undo", json!({}));
+    assert!(!refused, "{body}");
+    let (refused, body) = mcp(&mut server, "set_post_options", json!({ "per_op": false }));
+    assert!(!refused, "{body}");
+    let combined_nc = dir.join("combined.nc");
+    let (refused, body) = mcp(
+        &mut server,
+        "post",
+        json!({ "output": combined_nc.to_string_lossy(), "post": "Fanuc" }),
+    );
+    assert!(!refused, "{body}");
+    let combined = std::fs::read_to_string(&combined_nc).expect("combined");
+    assert!(combined.contains("(SETUP CHANGE - NEXT: S2)"), "{combined}");
+    assert!(between(&combined, "(OPERATION: F3").contains("M0"), "{combined}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn combined_post_apis_refuse_when_per_op_is_enabled() {
+    use camcraft_app::commands::SetSetupPost;
+    use camcraft_app::schema::PostRef;
+    let (world, mut h) = doc();
+    let per_op = PostOptions { per_op: true, ..posting::post_options(&world) };
+    h.execute(&world, SetPostOptions::new(&world, per_op).expect("enable per_op"));
+    let dir = tmp("combined-refused");
+    let nc = dir.join("prog.nc");
+    for (label, res) in [
+        ("post_setup", posting::post_setup(&world, &nc).map(|_| ())),
+        ("post_script", posting::post_script(&world, &nc, cps("Fanuc")).map(|_| ())),
+        ("post_setup_unwritten", posting::post_setup_unwritten(&world).map(|_| ())),
+        ("post_mounts", posting::post_mounts(&world, &nc).map(|_| ())),
+        ("post_mounts_script", posting::post_mounts_script(&world, &nc, cps("Fanuc")).map(|_| ())),
+        ("stream_records", posting::stream_records(&world).map(|_| ())),
+    ] {
+        let err = res.expect_err(&format!("{label} must refuse when per_op is enabled"));
+        assert!(err.contains("One file per operation"), "{label}: {err}");
+        assert!(!nc.exists(), "{label} must write nothing");
+    }
+    // Multi-mount programs also refuse via post_mounts_with rather than writing per-mount files.
+    h.execute(&world, SetSetupPost::new(&world, "Setup2", Some(PostRef::Named("Haas".into()))).expect("Haas on Setup2"));
+    let err = posting::post_mounts(&world, &nc).expect_err("multi-mount post_mounts must refuse when per_op is enabled");
+    assert!(err.contains("One file per operation"), "multi-mount post_mounts: {err}");
+    assert!(!dir.join("prog_01_Setup1.nc").exists() && !dir.join("prog_02_Setup2.nc").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }

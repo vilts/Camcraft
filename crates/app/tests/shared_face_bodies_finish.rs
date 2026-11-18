@@ -11,7 +11,7 @@
 //!
 //! Gate map: covers app::operation::material (from_slice), app::mcp's
 //! generate / verify, through camcraft_geometry::geometry::slice's union
-//! fallback and camcraft_motion::machining3d.
+//! fallback, camcraft_motion::finishing3d and camcraft_motion::machining3d.
 //!
 //! Provenance: the issue's own MCP reproduction (#1407), cut into bands
 //! as issue #1715 asks.
@@ -58,15 +58,13 @@ fn model(name: &str) -> String {
 }
 
 /// The as-imported job of `shared_face_bodies.rs::sample_job(false)`: the
-/// sample, stock from the model, a ball 3D Finish S1 and a flat 3D Pocket
-/// R1 (kept so the program is the same; R1 is never generated here).
+/// sample, stock from the model, and the ball 3D Finish S1 (#1840 removed
+/// ungenerated R1 so verify judges the program instead of skipping the gate).
 fn sample_job() -> Client {
     let mut c = Client::new();
     c.ok("import_model", json!({ "path": model("sample_ap214.step") }));
     c.ok("set_stock", json!({ "from_model": "sample_ap214" }));
     c.ok("add_tool", json!({ "catalog": "BN-0600" }));
-    c.ok("add_tool", json!({ "catalog": "EM-0600-4FL" }));
-    c.ok("add_operation", json!({ "kind": "pocket3d", "tool": "EM-0600-4FL", "name": "R1", "source": "sample_ap214" }));
     c.ok("add_operation", json!({ "kind": "finish3d", "tool": "BN-0600", "name": "S1", "source": "sample_ap214" }));
     c
 }
@@ -109,10 +107,9 @@ fn band_heights(k: u32) -> Value {
     json!({ "top_z": top, "bottom_z": bottom })
 }
 
-/// The old whole-span test's asserts, over band `k`: S1 alone generates
-/// ok, and the verify gate names no gouge. #1840: R1 is never generated,
-/// so the gate is skipped and its problem list is empty; the assert is
-/// kept exactly as the old test had it until #1840 makes it real.
+/// Asserts band `k` generates ok, runs the full verify gate (`gate.skipped` and
+/// `gate.not_judged` absent) with no gouge, and pins S1's true `shank_hit`
+/// finding (catalog BN-0600's 15 mm flute / 55 mm reach on 118 mm stock).
 fn the_3d_finish_band_generates_with_no_gouge(k: u32) {
     let mut c = sample_job();
     c.ok("edit_operation", json!({ "name": "S1", "params": band_heights(k) }));
@@ -123,7 +120,17 @@ fn the_3d_finish_band_generates_with_no_gouge(k: u32) {
         assert_eq!(status, "ok", "band {k}: {name}: {row}");
     }
     let v = c.ok("verify", json!({}));
+    assert!(v["gate"]["skipped"].is_null(), "band {k}: verify gate skipped: {v}");
+    assert!(v["gate"]["not_judged"].is_null(), "band {k}: stock sim did not judge: {v}");
     assert!(gate_problems(&v).iter().all(|p| !p.starts_with("gouge")), "band {k}: {v}");
+    assert_eq!(v["gate"]["ok"], json!(true), "band {k}: {v}");
+    let findings = v["findings"].as_array().expect("findings array");
+    assert!(
+        findings.iter().any(|f| f["kind"] == "shank_hit" && f["blocks_post"] == json!(true)),
+        "band {k}: expected true shank_hit collision for BN-0600 on 118 mm stock: {v}"
+    );
+    assert_eq!(v["ok"], json!(false), "band {k}: shank_hit holds post: {v}");
+    assert_eq!(v["held_by"], json!(["S1"]), "band {k}: {v}");
 }
 
 macro_rules! band {

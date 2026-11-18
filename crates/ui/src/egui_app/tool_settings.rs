@@ -6,28 +6,30 @@ use crate::state::{CommandKind, ErrorScope, State};
 use camcraft_app::{model, tools, units};
 use egui::{TextEdit, Ui};
 
-/// Tool kind labels, same order as `ToolKind` (mirrors the tool page).
-const TOOL_KINDS: [&str; 17] = [
-    "End mill",
-    "Ball nose",
-    "Bull nose",
-    "Drill",
-    "Tap",
-    "Bore",
-    "Turning insert",
-    "Grooving blade",
-    "Threading insert",
-    "Form gauge",
-    "Chamfer mill",
-    "Touch probe",
+/// Tool kind labels, same order as `ToolKind` (mirrors `ToolUi::from_tool`).
+const TOOL_KINDS: [(tools::ToolKind, &str); 18] = [
+    (tools::ToolKind::EndMill, "End mill"),
+    (tools::ToolKind::BallNose, "Ball nose"),
+    (tools::ToolKind::BullNose, "Bull nose"),
+    (tools::ToolKind::Drill, "Drill"),
+    (tools::ToolKind::Tap, "Tap"),
+    (tools::ToolKind::Bore, "Bore"),
+    (tools::ToolKind::Turning, "Turning insert"),
+    (tools::ToolKind::Groove, "Grooving blade"),
+    (tools::ToolKind::Thread, "Threading insert"),
+    (tools::ToolKind::Form, "Form gauge"),
+    (tools::ToolKind::Taper, "Chamfer mill"),
+    (tools::ToolKind::Probe, "Touch probe"),
     // #670: the kerf is its diameter; it turns no spindle.
-    "Plasma torch",
+    (tools::ToolKind::Torch, "Plasma torch"),
     // #541: diameter = X size, width = Y size; it turns no spindle.
-    "Sinker electrode",
+    (tools::ToolKind::Electrode, "Sinker electrode"),
     // #894: rows of teeth at one pitch / one row over a pitch range.
-    "Thread mill",
-    "Single-form thread mill",
-    "Waterjet nozzle",
+    (tools::ToolKind::ThreadMill, "Thread mill"),
+    (tools::ToolKind::ThreadMillSingle, "Single-form thread mill"),
+    (tools::ToolKind::Waterjet, "Waterjet nozzle"),
+    // #2011: diameter = wire diameter in mm; it turns no spindle.
+    (tools::ToolKind::Wire, "EDM wire"),
 ];
 
 pub(crate) fn page(ui: &mut Ui, state: &mut State, name: &str) {
@@ -71,9 +73,20 @@ pub(super) fn contents(ui: &mut Ui, state: &mut State, wide: bool) {
             }
             field(ui, "Type");
             let before = state.tool_ui.kind;
-            let mut k = state.tool_ui.kind.min(TOOL_KINDS.len() - 1);
-            combo(ui, "tool_kind", &mut k, &TOOL_KINDS);
-            state.tool_ui.kind = k.min(TOOL_KINDS.len() - 1);
+            let offered: Vec<usize> = TOOL_KINDS
+                .iter()
+                .enumerate()
+                .filter(|&(i, (kind, _))| {
+                    crate::machine_modes::tool_kind_offered(&state.world, *kind) || (exists && i == before)
+                })
+                .map(|(i, _)| i)
+                .collect();
+            let labels: Vec<&str> = offered.iter().map(|&i| TOOL_KINDS[i].1).collect();
+            let mut sel = offered.iter().position(|&i| i == before).unwrap_or(0);
+            combo(ui, "tool_kind", &mut sel, &labels);
+            if let Some(&chosen) = offered.get(sel) {
+                state.tool_ui.kind = chosen;
+            }
             if state.tool_ui.kind != before {
                 // A draft inherited from a mill carries every
                 // specialty field inert (0.0); moving to a kind
@@ -151,16 +164,37 @@ pub(super) fn contents(ui: &mut Ui, state: &mut State, wide: bool) {
                 super::tool_thread_mill_row::seed(&mut state.tool_ui);
                 // The torch (#670): no spindle, no corner - a
                 // kerf. Leaving it, a spinning kind needs an rpm.
-                // The sinker electrode (#541) turns none either.
-                if matches!(state.tool_ui.tool_kind(), tools::ToolKind::Torch | tools::ToolKind::Waterjet | tools::ToolKind::Electrode) {
+                // The sinker electrode (#541) and EDM wire (#2011) turn none either.
+                if matches!(
+                    state.tool_ui.tool_kind(),
+                    tools::ToolKind::Torch | tools::ToolKind::Waterjet | tools::ToolKind::Electrode | tools::ToolKind::Wire
+                ) {
                     state.tool_ui.rpm = 0.0;
                     state.tool_ui.corner_r = 0.0;
-                } else if matches!(before, 12 | 13 | 16) && (state.tool_ui.rpm.is_nan() || state.tool_ui.rpm <= 0.0) {
+                } else if matches!(before, 12 | 13 | 16 | 17) && (state.tool_ui.rpm.is_nan() || state.tool_ui.rpm <= 0.0) {
                     state.tool_ui.rpm = 10000.0;
+                }
+                if state.tool_ui.tool_kind() == tools::ToolKind::Wire {
+                    if state.tool_ui.diameter.is_nan()
+                        || !(camcraft_app::wire_tools::MIN_WIRE_MM..=camcraft_app::wire_tools::MAX_WIRE_MM)
+                            .contains(&state.tool_ui.diameter)
+                    {
+                        state.tool_ui.diameter = 0.25;
+                    }
+                    if state.tool_ui.shank_d.is_nan() || state.tool_ui.shank_d > camcraft_app::wire_tools::MAX_WIRE_MM {
+                        state.tool_ui.shank_d = state.tool_ui.diameter;
+                    }
+                    if !exists && (state.tool_ui.material_group.is_empty() || state.tool_ui.material_group == "aluminum") {
+                        state.tool_ui.material_group = "brass".into();
+                    }
+                    if !exists {
+                        state.tool_ui.cutting.clear();
+                    }
                 }
             }
             let torch = matches!(state.tool_ui.tool_kind(), tools::ToolKind::Torch | tools::ToolKind::Waterjet);
             let electrode = state.tool_ui.tool_kind() == tools::ToolKind::Electrode;
+            let wire = state.tool_ui.tool_kind() == tools::ToolKind::Wire;
             if electrode {
                 // #541: the burning face's two sides.
                 field(ui, "Electrode X size");
@@ -174,6 +208,10 @@ pub(super) fn contents(ui: &mut Ui, state: &mut State, wide: bool) {
                 field(ui, "Kerf width");
                 num(ui, u, &mut state.tool_ui.diameter);
                 ui.label("the cut's width; confirm it with a test cut");
+            } else if wire {
+                field(ui, "Wire diameter");
+                num(ui, u, &mut state.tool_ui.diameter);
+                ui.label("the wire diameter in mm; matched against the machine's edm.wire_diameters");
             } else {
                 field(ui, "Diameter");
                 num(ui, u, &mut state.tool_ui.diameter);
@@ -250,7 +288,13 @@ pub(super) fn contents(ui: &mut Ui, state: &mut State, wide: bool) {
                 ui.label("half the diameter - a ball nose's whole tip is its ball");
             } else if !matches!(
                 state.tool_ui.tool_kind(),
-                tools::ToolKind::Tap | tools::ToolKind::Torch | tools::ToolKind::Waterjet | tools::ToolKind::Electrode | tools::ToolKind::ThreadMill | tools::ToolKind::ThreadMillSingle
+                tools::ToolKind::Tap
+                    | tools::ToolKind::Torch
+                    | tools::ToolKind::Waterjet
+                    | tools::ToolKind::Electrode
+                    | tools::ToolKind::Wire
+                    | tools::ToolKind::ThreadMill
+                    | tools::ToolKind::ThreadMillSingle
             ) {
                 field(ui, "Corner radius");
                 num(ui, u, &mut state.tool_ui.corner_r);
@@ -271,13 +315,15 @@ pub(super) fn contents(ui: &mut Ui, state: &mut State, wide: bool) {
                     .desired_width(140.0),
             );
             super::tool_catalog_rows::catalog_rows(ui, &mut state.tool_ui);
-            if !torch && !electrode {
+            if !torch && !electrode && !wire {
                 field(ui, "Spindle rpm");
                 num_plain(ui, &mut state.tool_ui.rpm);
             }
             field(ui, &format!("Feed ({})", u.feed_suffix()));
             num_feed(ui, u, &mut state.tool_ui.feed);
-            super::tool_cutting_rows::cutting_rows(ui, &mut state.tool_ui, u, torch);
+            if !wire {
+                super::tool_cutting_rows::cutting_rows(ui, &mut state.tool_ui, u, torch);
+            }
             // M11.3: an entry may plunge into solid only with a
             // centre-cutting tool; otherwise it helixes, ramps,
             // or the operation is refused by name.

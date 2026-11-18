@@ -10,7 +10,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::schema::{BetweenSetups, EndUnits, PostOptions, ThreadingOutput};
+use crate::schema::{BetweenSetups, EndUnits, PostOptions, ThreadingOutput, WcsRotationOutput};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SetupPostOptionsDto {
@@ -34,6 +34,10 @@ pub struct SetupPostOptionsDto {
     /// files written before it read the same.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub between_setups: Option<String>,
+    /// #760's rotated-WCS output mode: absent is the default bake, so
+    /// files written before it read the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wcs_rotation: Option<String>,
 }
 
 impl SetupPostOptionsDto {
@@ -54,6 +58,7 @@ impl SetupPostOptionsDto {
             smoothing: o.smoothing,
             explain: o.explain,
             between_setups: (o.between_setups != BetweenSetups::default()).then(|| o.between_setups.word().to_owned()),
+            wcs_rotation: (o.wcs_rotation != WcsRotationOutput::default()).then(|| o.wcs_rotation.word().to_owned()),
         }
     }
 
@@ -76,6 +81,11 @@ impl SetupPostOptionsDto {
             Some(w) => BetweenSetups::from_word(w)
                 .ok_or_else(|| format!("setup '{setup}' names an unknown between-setups choice {w:?}"))?,
         };
+        let wcs_rotation = match self.wcs_rotation.as_deref() {
+            None => WcsRotationOutput::default(),
+            Some(w) => WcsRotationOutput::from_word(w)
+                .ok_or_else(|| format!("setup '{setup}' names an unknown wcs_rotation choice {w:?}"))?,
+        };
         Ok(PostOptions {
             threading,
             skip_stops: self.skip_stops,
@@ -84,6 +94,7 @@ impl SetupPostOptionsDto {
             smoothing: self.smoothing,
             explain: self.explain,
             between_setups,
+            wcs_rotation,
         })
     }
 }

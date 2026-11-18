@@ -27,7 +27,7 @@ use camcraft_app::machine::{Machine, parse_mch};
 use camcraft_app::machining3d::Entry3D;
 use camcraft_app::operation::{Height, OpParams, SrcRef, Tilt};
 use camcraft_app::plate::{self, MountAt};
-use camcraft_app::posting::{MACHINES, index_swing::MARGIN_MM, verification_gate};
+use camcraft_app::posting::{index_swing::MARGIN_MM, verification_gate};
 use camcraft_app::rotary_stack::{self, Rise, UNLINKED};
 use camcraft_app::schema::{Location, PostRef};
 use camcraft_app::stock::StockShape;
@@ -46,7 +46,7 @@ fn ok<T, E: std::fmt::Debug>(r: Result<T, E>, what: &str) -> T {
 }
 
 fn arc4() -> Machine {
-    let text = MACHINES.iter().find(|(n, _)| *n == "Tormach 770MX + microARC 4").map(|(_, t)| *t).expect("shipped");
+    let text = camcraft_app::posting::builtin_machine_text("Tormach 770MX + microARC 4").expect("shipped");
     parse_mch(text).expect("parses")
 }
 
@@ -85,7 +85,7 @@ fn doc_on(m: Machine) -> (World, History) {
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
         links: camcraft_app::links::Links::PLANAR,
-        tilt: Some(Tilt { a_deg: 90.0, b_deg: 0.0, origin: [0.0; 3] }),
+        tilt: Some(Tilt { basis_version: 1, a_deg: 90.0, b_deg: 0.0, origin: [0.0; 3] }),
         extend_start: 0.0,
         extend_end: 0.0,
     };

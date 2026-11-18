@@ -111,9 +111,9 @@ pub(crate) fn ask(state: &State, mods: Mods) -> Ask {
             AxisBy::Edge => PickKinds::EDGES,
             AxisBy::Points => PickKinds { centres: true, ..PickKinds::POINTS }, // #692
         }
-    } else if crate::wcs_pick::collecting(state) {
-        // #701: the role draft takes faces, edges, corners and walls alike -
-        // the toolbar's pick mode stays the user's own.
+    } else if crate::wcs_pick::collecting(state) || crate::start_exit_pick::collecting(state) {
+        // #701 / #1448: accept faces, edges and vertices while keeping the
+        // toolbar's own pick mode untouched.
         PickKinds { faces: true, edges: true, points: true, centres: false }
     } else if state.boundary_pick.is_some() {
         // #1727: an armed boundary row takes faces AND edges whatever the
@@ -150,7 +150,16 @@ pub(crate) fn query_at(state: &State, p: [f32; 2], ask: Ask) -> Option<PickQuery
 /// The one pick under a viewport point, and the selection it stands for.
 pub(crate) fn feature_at(state: &State, p: [f32; 2], ask: Ask) -> Option<(FeaturePick, Option<FeatureSel>)> {
     let q = query_at(state, p, ask)?;
-    pick::pick_selection(&state.world, &q, ask.unit, |name| state.hidden_in_view(name))
+    // #2173: models beat stock at any depth, so while a locate holds the
+    // stock the parts inside it are passed over - else no stock face
+    // round a part could ever be picked.
+    let past_parts = state.locate_pick.as_ref().is_some_and(|d| d.body == camcraft_app::fixture_locate::LocateBody::Stock);
+    pick::pick_selection(&state.world, &q, ask.unit, |name| {
+        state.hidden_in_view(name)
+            || (past_parts
+                && camcraft_app::model::find_by_name(&state.world, name)
+                    .is_some_and(|e| camcraft_app::setup_align::is_part(&state.world, &e)))
+    })
 }
 
 fn hover_of(pick: &FeaturePick, sel: Option<FeatureSel>) -> HoverHit {
@@ -182,6 +191,10 @@ pub(crate) fn click(state: &mut State, p: [f32; 2], mods: Mods) {
     };
     // Mirror the pick in the hover so highlight and click agree.
     state.hover = Some(hover_of(&found, sel));
+    if crate::start_exit_pick::collecting(state) {
+        crate::start_exit_pick::take(state, &found);
+        return;
+    }
     let Some(feature) = sel else {
         state.status = format!("the pick on '{}' names no feature - try beside it", found.entity);
         return;

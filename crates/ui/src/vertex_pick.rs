@@ -85,8 +85,21 @@ pub fn queue_origin_at_face(state: &mut State, entity: &str, sel: FeatureSel, z_
 /// Queue the 3-2-1 alignment (#187) of the open operation's picks onto the
 /// active setup's WCS: position and angles both from the app's frame, through
 /// the same undoable `SetWcs` command as the origin chips.
+/// Result of 3-2-1 WCS alignment from the active operation's picks, refusing
+/// any face tilt on a mill setup where the tool axis stays machine +Z (#760).
+pub fn wcs_321_checked(state: &State) -> Result<camcraft_app::pick::Alignment, String> {
+    let aligned = camcraft_app::pick::align_321(&state.world, &state.op_ui.geo)?;
+    let active = camcraft_app::setup::active(&state.world);
+    if let Some(why) =
+        camcraft_app::setup_wcs_tilt::align_321_tilt_problem(&state.world, active.as_deref(), aligned.z)
+    {
+        return Err(why);
+    }
+    Ok(aligned)
+}
+
 pub fn queue_wcs_321(state: &mut State) {
-    let a = match camcraft_app::pick::align_321(&state.world, &state.op_ui.geo) {
+    let a = match wcs_321_checked(state) {
         Ok(a) => a,
         Err(why) => {
             state.status = format!("WCS not aligned: {why}");

@@ -170,7 +170,7 @@ fn a_rotated_stock_is_refused_not_resampled() {
     // axis-aligned law - the refusal the user sees, not the gate's.
     history.execute(&world, GenerateOperation::new(&world, "Face1").expect("regenerate rotated"));
     let err = simulate_document(&world).expect_err("a rotated stock cannot be judged");
-    assert!(err.contains("axis-aligned"), "{err}");
+    assert!(err.contains("turned off the machine axes"), "{err}");
 }
 
 #[test]

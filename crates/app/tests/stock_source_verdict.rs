@@ -81,6 +81,7 @@ fn part() -> Mesh {
 /// A milled bore of a 16 mm hole at the origin, from the mouth to `floor`.
 fn bore(floor: f64) -> OpParams {
     OpParams::Bore {
+        break_through: None,
         links: camcraft_app::links::Links::PLANAR,
         clearance_z: Height::fixed(40.0),
         retract_z: None,

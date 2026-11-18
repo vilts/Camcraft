@@ -221,7 +221,7 @@ pub(super) fn orientation_editor(ui: &mut Ui, u: Unit, tilt: &mut Option<Tilt>) 
         }
     });
     if g.toggled {
-        *tilt = if armed { Some(Tilt { a_deg: 0.0, b_deg: 0.0, origin: [0.0; 3] }) } else { None };
+        *tilt = if armed { Some(Tilt { basis_version: 1, a_deg: 0.0, b_deg: 0.0, origin: [0.0; 3] }) } else { None };
     }
 }
 

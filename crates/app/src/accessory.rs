@@ -84,7 +84,8 @@ pub enum Accessory {
         bore_y: f64,
         bore_diameter: f64,
     },
-    /// A self-centring 3-jaw lathe chuck (#1442).
+    /// A self-centring 3-jaw lathe chuck (#1442; inside grip and stepped
+    /// jaws #1468).
     ThreeJawChuck(JawChuck),
     /// A 4-jaw lathe chuck (#1442), its jaws closed evenly.
     FourJawChuck(JawChuck),
@@ -236,7 +237,10 @@ impl Accessory {
     /// Refusals name the accessory and the dimension.
     pub fn check(&self) -> Result<(), String> {
         let what = self.label();
-        for (_, label, v) in self.dims() {
+        for (key, label, v) in self.dims() {
+            if chuck::MAY_BE_ZERO.contains(&key) && chuck::is_chuck(self) {
+                continue; // #1468: zero is plain jaws; the jaws' law reads them.
+            }
             let label = label.to_lowercase();
             if !v.is_finite() {
                 return Err(format!("{what} {label} must be a finite length (got {v})"));

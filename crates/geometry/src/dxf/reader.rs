@@ -3,7 +3,8 @@ use super::Units;
 use super::entities::{layer_name, simple};
 use super::pairs::{Pairs, Record, integer};
 use super::polyline::{legacy, lightweight};
-use super::types::{Document, DxfError, Layer, Limits, State, error};
+use super::types::{Document, DxfError, Layer, Limits, State, TextAnnotation, error};
+use crate::geo2d::Point2;
 use std::collections::BTreeSet;
 
 pub fn parse(bytes: &[u8]) -> Result<Document, DxfError> {
@@ -132,6 +133,21 @@ fn entities(input: &mut Pairs<'_>, state: &mut State) -> Result<(), DxfError> {
             "POLYLINE" => legacy(record, input, state)?,
             "TEXT" | "MTEXT" | "DIMENSION" | "HATCH" => {
                 record.validate()?;
+                if matches!(record.kind, "TEXT" | "MTEXT") {
+                    let layer = record.field(8)?.unwrap_or("0");
+                    layer_name(layer, record.kind)?;
+                    if let Some(text) = record.field(1)? {
+                        let x = record.number(10, Some(0.0))?;
+                        let y = record.number(20, Some(0.0))?;
+                        if x.is_finite() && y.is_finite() {
+                            state.doc.annotations.push(TextAnnotation {
+                                layer: layer.into(),
+                                text: text.trim().to_owned(),
+                                pos: Point2::new(x, y),
+                            });
+                        }
+                    }
+                }
                 *state
                     .doc
                     .summary

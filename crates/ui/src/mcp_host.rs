@@ -30,11 +30,24 @@ pub fn pump(state: &mut State) {
 
 fn answer_request(state: &mut State, request: camcraft_app::mcp::Request, track_ai_turn: bool) {
     let before_entries = state.history.done_entry_ids();
-    let answer = camcraft_app::mcp::answer_live(
+    let approved = if track_ai_turn {
+        state.ai_chat.take_approved_call()
+    } else {
+        None
+    };
+    let options = camcraft_app::mcp::LiveOptions {
+        gate: camcraft_app::mcp::LiveGate {
+            approved,
+            auto_approve_non_critical: false,
+        },
+        selection: Some(state.selection_context()),
+    };
+    let answer = camcraft_app::mcp::answer_live_with(
         &state.world,
         &mut state.history,
         state.project_path.as_deref(),
         request.line(),
+        &options,
     );
     if track_ai_turn {
         state.ai_chat.note_mcp_execution(&before_entries, &state.history);

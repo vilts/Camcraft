@@ -19,7 +19,7 @@ the property table there is the vocabulary, this file is the grammar.
 
 Manifest: top-level assignments only — `description`, `vendor`, `legal`,
 `certificationLevel`, `minimumRevision`, `extension`, `setCodePage`,
-`capabilities`, `serves`, `coolantModes`, `programUnits`, `liveTooling`, `afterModes`, `axisInversion`, `probeAxisInversion`, `threadHands`, `workOffsetIndex`, `workOffsetMax`. All but `serves` and the last eight are
+`capabilities`, `serves`, `coolantModes`, `programUnits`, `endUnits`, `liveTooling`, `afterModes`, `axisInversion`, `probeAxisInversion`, `threadHands`, `workOffsetIndex`, `workOffsetMax`. All but `serves` and the last nine are
 text the engine reads none of; `serves = ["plasma"];` (#1266; one word or a list of kind words: mill, lathe, mill-turn, plasma, wire_edm, sinker_edm) names the machine kinds a script of the user's own posts to - the app refuses it by name on any other kind, and a script that states none is accepted only on a mill (non-turning dialect), a lathe (turning) or a mill-turn, never on a plasma table or an EDM; shipped posts are judged by registry name and need no `serves`; `programUnits = "mm inch"` (#902) says
 the script writes the program in the document's unit -
 `postOptions.Units`, `"mm"` or `"inch"`, absent = mm: the dialect's
@@ -27,7 +27,12 @@ unit word (G21 / G20, the 840D's G710 / G700) before any motion, every
 length / 25.4 at four decimals and every feed in in/min, angles,
 seconds and rpm as they come - and an inch document on a script whose
 `programUnits` lacks `inch` (Carvera and Heidenhain say `"mm"`) is
-refused by name before any hook runs; `explains = "paren"` or `"semi"`
+refused by name before any hook runs; `endUnits = "G20 G21"` (or
+`"G700 G710"`, or `"note"` when a dialect cannot switch units at program
+end and notes the ask once instead, #2189) states how the script handles
+`postOptions.EndUnits` (`"inch"` / `"mm"`) - a script without `endUnits`
+is refused by name when `EndUnits` is set, and the UI offers the picker
+only when two unit words are declared; `explains = "paren"` or `"semi"`
 (#1386, optionally `commentMax`, the longest comment the control keeps,
 delimiters included, 60 when unstated) says the script's `block()`
 appends `explain(words)` after its words - the PRELUDE helper that
@@ -99,8 +104,12 @@ argument semantics in `docs/CNC-INTERMEDIATE.md`):
 | `onComment(text)` | per `WARN` (the PRELUDE default echoes it verbatim) |
 | `onRadiusCompensation(side)` | per `COMP` (M13.11): `"left"` / `"right"` engage G41 / G42 on the NEXT motion record (a straight lead at least a radius long, by the generator's law; `properties.CompensationRadius` is the register's radius), `"off"` cancels (G40) on the next one. The records between are the PART contour - or, when `properties.CompensationType` is `"wear"` (#38), the cutter-centre path with the register holding only the wear delta - so a post that cannot write the words must `message()` a refusal — the engine refuses a script that lacks the hook outright |
 | `onPlasma` / `onTorchOn` / `onTorchOff` | per `PLASMA` header / `TORCH ON` / `TORCH OFF` (#671): a plasma section's kerf and stated heights (`PlasmaKerf`, `PierceHeight`, ... - absent = the controller's AutoFS), then the torch struck before the next motion record and put out after the previous. The engine refuses a script lacking either torch hook when a header arrives, and keeps the torch law (no torch without a header, no ON while lit, no rapid while lit, nothing left lit) - only `tormach-plasma.cps` defines them |
-| `onThreadCycle` / `onThreadCycleEnd` | per `THREAD` / `THREAD END` (issue #34): a threading cycle's numbers bracket its explicit passes; a script that writes the cycle (G76) skips the passes itself, one that does not define the hooks posts them. `postOptions` (global) carries the document's post options |
+| `onThreadCycle` / `onThreadCycleEnd` | per `THREAD` / `THREAD END` (issue #34): a threading cycle's numbers bracket its explicit passes; a script that writes the cycle (G76) skips the passes itself, one that does not define the hooks posts them. `postOptions` (global) carries the document's post options plus resolved `declaredOptions` |
 | `onClose` | once, after all records (retract + `%`-end here) |
+
+### Declared options (`declaredOptions`) and `programTools` (#258)
+
+A script may define a top-level `declaredOptions` map so the host renders typed per-post properties and validates CLI / MCP / script overrides by name and range. Each entry declares `type` (`"boolean"`, `"integer"`, `"number"`, `"string"`, `"enum"`), required matching `default`, optional `title`, `description`, `group`, bounds (`min`/`max`), and non-empty `choices` (`string` or `{ id, title }`) for `"enum"`. Built-in host keys (`Units`, `Threading`, `Smoothing`, `EndUnits`, `Explain`, `BetweenSetups`) are reserved. Defaults must preserve existing golden output byte-for-byte. Before `onOpen`, the engine also publishes `programTools`, an array of `{ number, name, diameter, kind }` for tools in the stream, so header tool-list comments can summarize every tool up front.
 
 Output is only what `writeln`/`write`/`writeBlock` push into `OUT`;
 `message(s)` is a COUNTED WARNING, not text — in-app it blocks the
@@ -263,8 +272,12 @@ the header and each section tell the operator it must exist in the
 control's condition table), `G40` rides the `G00` to the threading point, a coordinate always carries its decimal point,
 `M02` ends. It reads no `edm.codes`. It writes a vertical 2-axis cut
 only: taper, 4-axis, a missing G54-G59 and an arc as the first cut are
-refused by name; G92, the tank and flushing T codes and G41 / G42 are
-never written. It was not run on a control; what is unconfirmed is in
+refused by name; G92 and G41 / G42 are never written. The machine's
+`edm.flushing` / `edm.tank` (#1499), when stated, post T84 / T85 and
+T94 / T89 after each threading, before the C word (the manual's Program
+Example 1 order); unstated, nothing is written and the header says so.
+The tank fill / drain, flushing pump and wire-drive T codes are never
+written. It was not run on a control; what is unconfirmed is in
 `docs/decisions/617-sodick-wire-post.md`. Its golden rides under
 `nc/sodick-wire/` (`sodick_wire_post.rs`).
 

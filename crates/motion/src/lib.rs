@@ -22,8 +22,10 @@
 #[cfg(test)]
 extern crate self as camcraft_motion;
 
+pub mod stock_top_frame;
 pub mod approach;
 pub mod drilling;
+pub mod break_through;
 pub mod entry;
 pub mod entry_arc;
 pub mod links;
