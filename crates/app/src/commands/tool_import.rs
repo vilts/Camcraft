@@ -139,8 +139,8 @@ impl ImportReport {
 
 /// One planned change of an import, applied in order, inverted in reverse.
 enum Step {
-    /// A new tool, with the body it lands with (#889).
-    Add(String, Tool, Option<ToolBody>),
+    /// A new tool, its body (#889), and its assigned T/H number (#2442).
+    Add(String, Tool, Option<ToolBody>, u32),
     /// Same entity, new definition; the controller number stays. `body`
     /// is `(document body before, file body)` when the file's lands.
     Change { name: String, prev: Tool, next: Tool, body: Option<Box<(Option<ToolBody>, ToolBody)>> },
@@ -182,6 +182,17 @@ fn change_refusal(world: &World, name: &str, prev: &Tool, next: &Tool, landing: 
     None
 }
 
+fn take_free_number(taken: &mut Vec<u32>) -> Result<u32, CommandError> {
+    let n = crate::tool_numbers::next_free_from(taken).ok_or_else(|| {
+        CommandError::Invalid(format!(
+            "no free tool numbers remain ({})",
+            crate::tool_numbers::RANGE_TEXT
+        ))
+    })?;
+    taken.push(n);
+    Ok(n)
+}
+
 impl ImportTools {
     /// The original import: [`ImportMode::Add`], holders taken.
     pub fn new(world: &World, library: Vec<LibraryTool>) -> Result<Self, CommandError> {
@@ -213,16 +224,17 @@ impl ImportTools {
     ) -> Result<Self, CommandError> {
         let mut steps: Vec<Step> = Vec::with_capacity(library.len());
         let mut added: Vec<(String, Tool)> = Vec::new();
+        let mut taken_numbers: Vec<u32> =
+            crate::tool_numbers::numbers(world).into_iter().map(|(_, n)| n).collect();
         let mut report = ImportReport::default();
         let names: Vec<String> = library.iter().map(|l| l.name.clone()).collect();
         for LibraryTool { name, tool, body } in library {
             if let Some(err) = reserved(world, &name) {
                 return Err(err);
             }
-            if !tool.is_sane() {
-                return Err(CommandError::Invalid(format!(
-                    "tool '{name}': parameters must be finite and positive"
-                )));
+            // #1186: the rule the tool breaks, by name.
+            if let Some(why) = tool.why_not_sane() {
+                return Err(CommandError::Invalid(format!("tool '{name}': {why}")));
             }
             if steps.iter().any(|s| matches!(s, Step::Add(n, ..) if *n == name)) || report_has(&report, &name) {
                 return Err(CommandError::Invalid(format!("tool '{name}' appears twice in the library")));
@@ -252,9 +264,10 @@ impl ImportTools {
             let body_same = body.is_none() || body_key(doc_body.as_ref()) == body_key(body.as_ref());
             match (existing, current) {
                 (None, _) => {
+                    let number = take_free_number(&mut taken_numbers)?;
                     report.added.push(name.clone());
                     added.push((name.clone(), tool.clone()));
-                    steps.push(Step::Add(name, tool, body));
+                    steps.push(Step::Add(name, tool, body, number));
                 }
                 (Some(_), Some(prev)) if prev == tool && body_same => {
                     if body.is_some() {
@@ -282,9 +295,10 @@ impl ImportTools {
                     let Some(free) = (2..=9999u32).map(|i| format!("{name} ({i})")).find(|c| !taken(c)) else {
                         return Err(CommandError::NameConflict(name));
                     };
+                    let number = take_free_number(&mut taken_numbers)?;
                     report.renamed.push((name, free.clone()));
                     added.push((free.clone(), tool.clone()));
-                    steps.push(Step::Add(free, tool, body));
+                    steps.push(Step::Add(free, tool, body, number));
                 }
             }
         }
@@ -345,12 +359,14 @@ impl Command for ImportTools {
     fn apply(&self, world: &World) {
         for step in &self.steps {
             match step {
-                Step::Add(name, tool, body) => {
+                Step::Add(name, tool, body, number) => {
                     let entity = match model::find_by_name(world, name) {
                         Some(entity) => entity,
                         None => model::spawn(world, name),
                     };
-                    entity.entity_view(world).set(ToolDef { tool: tool.clone(), number: None });
+                    entity
+                        .entity_view(world)
+                        .set(ToolDef { tool: tool.clone(), number: Some(*number) });
                     tool_body::set_body(world, &entity, body.as_ref());
                 }
                 Step::Change { name, next, body, .. } => {

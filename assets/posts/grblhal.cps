@@ -733,7 +733,9 @@ function onCycle() {
     if ((p.CycleType === "PECK" || p.CycleType === "DEEP") && has(p.Q) && p.Q > 0) {
       words.push(w("Q", p.Q));
     }
-    if (dwell > 0 && (g === "G82" || g === "G86" || g === "G89")) words.push("P" + secs(dwell));
+    // #2362: LinuxCNC / grblHAL requires a non-negative P on the first
+    // G86 block of a cycle, even when the dwell is 0 (P0).
+    if (g === "G86" || (dwell > 0 && (g === "G82" || g === "G89"))) words.push("P" + secs(dwell));
     words.push(fw(p.FeedRate));
     block(words);
     cycleSig = sig;

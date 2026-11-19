@@ -155,6 +155,7 @@ fn a_drill_cycle_with_a_tool_that_is_not_centre_cutting_is_refused_by_name() {
     let (world, _h) = world_with("DR-0400");
     let drill = OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(22.0),

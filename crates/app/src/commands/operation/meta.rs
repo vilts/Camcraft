@@ -129,3 +129,45 @@ impl Command for ReorderOperation {
         }
     }
 }
+
+/// Clear migration `needs_review` notes once an operation has been reviewed (#1517).
+pub struct MarkOperationReviewed {
+    key: String,
+    before: OperationMeta,
+    after: OperationMeta,
+}
+
+impl MarkOperationReviewed {
+    pub fn new(world: &World, key: &str) -> Result<Self, CommandError> {
+        let entity = model::find_by_name(world, key)
+            .ok_or_else(|| CommandError::NotFound(key.to_owned()))?;
+        if !model::is_operation(world, &entity) {
+            return Err(CommandError::Invalid(format!("'{key}' is not an operation")));
+        }
+        let before = model::operation_meta_of(world, &entity);
+        if before.needs_review.is_empty() {
+            return Err(CommandError::Invalid(format!(
+                "operation '{key}' is not marked as needing review"
+            )));
+        }
+        let after = OperationMeta {
+            needs_review: Vec::new(),
+            ..before.clone()
+        };
+        Ok(Self { key: key.to_owned(), before, after })
+    }
+}
+
+impl Command for MarkOperationReviewed {
+    fn apply(&self, world: &World) {
+        if let Some(e) = model::find_by_name(world, &self.key) {
+            e.entity_view(world).set(self.after.clone());
+        }
+    }
+
+    fn invert(&self, world: &World) {
+        if let Some(e) = model::find_by_name(world, &self.key) {
+            e.entity_view(world).set(self.before.clone());
+        }
+    }
+}

@@ -144,20 +144,24 @@ fn flat_face(world: &World, g: &GeoSel, pose: PoseOf) -> Result<Option<Plane>, S
 /// A planar face's outward unit normal, placed by `pose`; `None` when the
 /// face is not planar (or the pick is not a face). Refused by name when
 /// the face's body is inside-out, open, non-manifold or mixed (#366).
-pub(crate) fn outward_normal(world: &World, g: &GeoSel, pose: PoseOf) -> Result<Option<[f64; 3]>, String> {
+pub(crate) fn outward_normal(
+    world: &World,
+    g: &GeoSel,
+    pose: impl FnOnce(&World, &Entity) -> Option<Location>,
+) -> Result<Option<[f64; 3]>, String> {
     let FeatureSel::Face(fid) = g.feature else { return Ok(None) };
-    let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(g))?;
-    let features = model::features_of(world, &e).ok_or_else(|| gone(g))?;
-    let f = features.faces.iter().find(|f| f.id == fid).ok_or_else(|| gone(g))?;
+    let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(world, g))?;
+    let features = model::features_of(world, &e).ok_or_else(|| gone(world, g))?;
+    let f = features.faces.iter().find(|f| f.id == fid).ok_or_else(|| gone(world, g))?;
     if f.kind != feature::FaceKind::Planar {
         return Ok(None);
     }
-    let tris = model::facets_of(world, &e).ok_or_else(|| gone(g))?;
+    let tris = model::facets_of(world, &e).ok_or_else(|| gone(world, g))?;
     // #366: the winding is only the outside when the face's body is closed
     // and wound outward; anything else is refused by name, never guessed.
     let verdict = super::winding::verdict_for(&super::winding::winding_of(&tris), &f.facets);
     if let Some(why) = super::winding::refusal(verdict) {
-        return Err(format!("{} of '{}' {why}", g.feature, g.entity));
+        return Err(format!("{} {why}", super::geo_label(world, g)));
     }
     let mut wind = Point3::new(0.0, 0.0, 0.0);
     for &i in &f.facets {
@@ -177,7 +181,7 @@ pub(crate) fn outward_normal(world: &World, g: &GeoSel, pose: PoseOf) -> Result<
     let wn = [wn.x, wn.y, wn.z];
     let l = norm(wn);
     if !(l.is_finite() && l > 0.0) {
-        return Err(format!("{} of '{}' has no usable plane - re-pick it", g.feature, g.entity));
+        return Err(format!("{} has no usable plane - re-pick it", super::geo_label(world, g)));
     }
     Ok(Some(scale(wn, 1.0 / l)))
 }
@@ -186,7 +190,7 @@ pub(crate) fn outward_normal(world: &World, g: &GeoSel, pose: PoseOf) -> Result<
 fn curved_center(world: &World, g: &GeoSel) -> Result<[f64; 3], String> {
     face_origin(world, &g.entity, g.feature)
         .map(|c| c.centroid)
-        .map_err(|why| format!("{} of '{}': {why}", g.feature, g.entity))
+        .map_err(|why| format!("{}: {why}", super::geo_label(world, g)))
 }
 
 /// A picked vertex's world position (#771: the setup's origin point).
@@ -200,11 +204,11 @@ pub(crate) fn vertex_with_pose(
     g: &GeoSel,
     pose: impl FnOnce(&World, &Entity) -> Option<Location>,
 ) -> Result<[f64; 3], String> {
-    let FeatureSel::Vertex(id) = g.feature else { return Err(gone(g)) };
-    let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(g))?;
-    let features = model::features_of(world, &e).ok_or_else(|| gone(g))?;
-    let vi = feature::resolve_vertex(&features, id).ok_or_else(|| gone(g))?;
-    let v = features.verts.get(vi as usize).ok_or_else(|| gone(g))?;
+    let FeatureSel::Vertex(id) = g.feature else { return Err(gone(world, g)) };
+    let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(world, g))?;
+    let features = model::features_of(world, &e).ok_or_else(|| gone(world, g))?;
+    let vi = feature::resolve_vertex(&features, id).ok_or_else(|| gone(world, g))?;
+    let v = features.verts.get(vi as usize).ok_or_else(|| gone(world, g))?;
     let loc = pose(world, &e).unwrap_or_default(); // #326: the caller's frame
     let w = transform_point(Point3::new(v[0], v[1], v[2]), loc.pos, loc.rot);
     Ok([w.x, w.y, w.z])
@@ -218,12 +222,12 @@ pub(super) fn straight_edge(
     pose: PoseOf,
     role: &str,
 ) -> Result<([f64; 3], [f64; 3]), String> {
-    let FeatureSel::Chain(cid) = g.feature else { return Err(gone(g)) };
-    let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(g))?;
-    let features = model::features_of(world, &e).ok_or_else(|| gone(g))?;
-    let c = crate::model::resolve_chain(&features, cid).ok_or_else(|| gone(g))?;
+    let FeatureSel::Chain(cid) = g.feature else { return Err(gone(world, g)) };
+    let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(world, g))?;
+    let features = model::features_of(world, &e).ok_or_else(|| gone(world, g))?;
+    let c = crate::model::resolve_chain(&features, cid).ok_or_else(|| gone(world, g))?;
     if c.closed {
-        return Err(format!("{} of '{}' is a closed loop - pick one straight edge {role}", g.feature, g.entity));
+        return Err(format!("{} is a closed loop - pick one straight edge {role}", super::geo_label(world, g)));
     }
     let loc = pose(world, &e).unwrap_or_default(); // #326: the caller's frame
     let pts: Vec<[f64; 3]> = feature::chain_points(&features, &c)
@@ -234,26 +238,26 @@ pub(super) fn straight_edge(
         })
         .collect();
     let (Some(&a), Some(&b)) = (pts.first(), pts.last()) else {
-        return Err(format!("{} of '{}' holds no points - re-pick it", g.feature, g.entity));
+        return Err(format!("{} holds no points - re-pick it", super::geo_label(world, g)));
     };
     let d = sub(b, a);
     let len = norm(d);
     if !(len.is_finite() && len > 0.0) {
-        return Err(format!("{} of '{}' has no length - re-pick it", g.feature, g.entity));
+        return Err(format!("{} has no length - re-pick it", super::geo_label(world, g)));
     }
     let u = scale(d, 1.0 / len);
     let tol = STRAIGHT_TOL_MM.max(len * STRAIGHT_TOL_REL);
     for p in &pts {
         let v = sub(*p, a);
         if norm(sub(v, scale(u, dot(v, u)))) > tol {
-            return Err(format!("{} of '{}' is not straight - pick a straight edge {role}", g.feature, g.entity));
+            return Err(format!("{} is not straight - pick a straight edge {role}", super::geo_label(world, g)));
         }
     }
     Ok((a, b))
 }
 
-pub(super) fn gone(g: &GeoSel) -> String {
-    format!("{} of '{}' is no longer in the model - re-pick it", g.feature, g.entity)
+pub(super) fn gone(world: &World, g: &GeoSel) -> String {
+    format!("{} is no longer in the model - re-pick it", super::geo_label(world, g))
 }
 
 /// Unit quaternion `[x, y, z, w]` whose rotation takes the world axes onto

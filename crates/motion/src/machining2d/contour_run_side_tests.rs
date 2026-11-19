@@ -137,3 +137,162 @@ fn a_degenerate_run_is_refused_not_ridden() {
     let nan = vec![Point2::new(f64::NAN, 1.0), Point2::new(1.0, 1.0)];
     assert!(contour_open_run(&nan, &params(), &block).is_err());
 }
+
+#[test]
+fn an_open_run_with_a_bottleneck_notch_bridges_the_mouth() {
+    // A keyhole notch whose mouth is 6 mm wide (x in 17..23) opening into
+    // a 16 mm wide room inside (x in 12..28): with a 10 mm tool (d = 5),
+    // the two-sided buffer bridges the 6 mm mouth and leaves an inner CW
+    // hole. The air-side offset must bridge the mouth instead of failing.
+    let part_poly = vec![
+        Point2::new(0.0, 0.0),
+        Point2::new(40.0, 0.0),
+        Point2::new(40.0, 30.0),
+        Point2::new(23.0, 30.0),
+        Point2::new(23.0, 22.0),
+        Point2::new(28.0, 22.0),
+        Point2::new(28.0, 8.0),
+        Point2::new(12.0, 8.0),
+        Point2::new(12.0, 22.0),
+        Point2::new(17.0, 22.0),
+        Point2::new(17.0, 30.0),
+        Point2::new(0.0, 30.0),
+    ];
+    let keyhole = move |_z: f64| -> Result<Option<Region>, GenError> {
+        Ok(Some(Region::new(vec![Loop::new(part_poly.clone())?])?))
+    };
+    let run = vec![
+        Point2::new(0.0, 30.0),
+        Point2::new(17.0, 30.0),
+        Point2::new(17.0, 22.0),
+        Point2::new(12.0, 22.0),
+        Point2::new(12.0, 8.0),
+        Point2::new(28.0, 8.0),
+        Point2::new(28.0, 22.0),
+        Point2::new(23.0, 22.0),
+        Point2::new(23.0, 30.0),
+        Point2::new(40.0, 30.0),
+    ];
+    let path = contour_open_run(&run, &params(), &keyhole).expect("bridges bottleneck mouth");
+    let f = feeds(&path);
+    assert!(!f.is_empty());
+    assert!(f.iter().all(|q| q.y >= 34.0 - 0.01), "bridges above mouth: {f:?}");
+}
+
+#[test]
+fn an_open_run_with_a_short_leg_at_an_inside_corner_stops_clear() {
+    // An L-shaped part (material in x <= 0 or y <= 0) whose bottom leg is
+    // 3 mm long while the tool radius is 5 mm: the return leg's own end
+    // normal (3, 5) sits only 3 mm from x = 0, so stopping at the corner
+    // offset cuts without gouging x = 0.
+    let l_part = |_z: f64| -> Result<Option<Region>, GenError> {
+        let poly = Loop::new(vec![
+            Point2::new(-10.0, -10.0),
+            Point2::new(3.0, -10.0),
+            Point2::new(3.0, 0.0),
+            Point2::new(0.0, 0.0),
+            Point2::new(0.0, 20.0),
+            Point2::new(-10.0, 20.0),
+        ])?;
+        Ok(Some(Region::new(vec![poly])?))
+    };
+    let run = vec![Point2::new(0.0, 20.0), Point2::new(0.0, 0.0), Point2::new(3.0, 0.0)];
+    let path = contour_open_run(&run, &params(), &l_part).expect("short inside-corner leg");
+    let f = feeds(&path);
+    assert!(!f.is_empty());
+    assert!(
+        f.iter().all(|q| q.x >= 5.0 - 1e-3 && (q.x - 3.0).hypot(q.y) >= 5.0 - 0.01),
+        "{f:?}"
+    );
+
+    // 45-degree acute inside corner with a 7.07 mm end leg (needs
+    // r * tan(67.5 deg) = 12.07 mm from the apex).
+    let v_part = |_z: f64| -> Result<Option<Region>, GenError> {
+        let poly = Loop::new(vec![
+            Point2::new(-10.0, -10.0),
+            Point2::new(15.0, -10.0),
+            Point2::new(5.0, 5.0),
+            Point2::new(0.0, 0.0),
+            Point2::new(0.0, 25.0),
+            Point2::new(-10.0, 25.0),
+        ])?;
+        Ok(Some(Region::new(vec![poly])?))
+    };
+    let v_run = vec![Point2::new(0.0, 25.0), Point2::new(0.0, 0.0), Point2::new(5.0, 5.0)];
+    let v_path = contour_open_run(&v_run, &params(), &v_part).expect("short acute inside-corner leg");
+    assert!(feeds(&v_path).iter().all(|q| q.x >= 5.0 - 1e-3), "{:?}", feeds(&v_path));
+}
+
+#[test]
+fn an_open_run_with_sharp_or_filleted_inside_corner_and_acute_turn_leaves_tool_radius() {
+    // 45-degree inside corner with long legs.
+    let acute = |_z: f64| -> Result<Option<Region>, GenError> {
+        let poly = Loop::new(vec![
+            Point2::new(-10.0, -10.0),
+            Point2::new(30.0, -10.0),
+            Point2::new(20.0, 20.0),
+            Point2::new(0.0, 0.0),
+            Point2::new(0.0, 30.0),
+            Point2::new(-10.0, 30.0),
+        ])?;
+        Ok(Some(Region::new(vec![poly])?))
+    };
+    let run = vec![Point2::new(0.0, 30.0), Point2::new(0.0, 0.0), Point2::new(20.0, 20.0)];
+    let path = contour_open_run(&run, &params(), &acute).expect("45 deg inside corner");
+    assert!(feeds(&path).iter().all(|q| q.x >= 5.0 - 1e-3), "{:?}", feeds(&path));
+
+    // Acute (>90 deg) outside corner wrapping around a sharp tip.
+    let wedge = |_z: f64| -> Result<Option<Region>, GenError> {
+        let poly = Loop::new(vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(0.0, -2.0),
+            Point2::new(10.0, 0.0),
+        ])?;
+        Ok(Some(Region::new(vec![poly])?))
+    };
+    let tip = vec![Point2::new(0.0, 0.0), Point2::new(10.0, 0.0), Point2::new(0.0, -2.0)];
+    let tip_path = contour_open_run(&tip, &params(), &wedge).expect("acute outside corner");
+    let tf = feeds(&tip_path);
+    assert!(
+        tip_path.moves.iter().any(|m| m.kind == MoveKind::Feed
+            && m.arc.as_ref().is_some_and(|a| (a.center.x - 10.0).abs() < 0.02 && a.center.y.abs() < 0.02)),
+        "wraps around sharp tip with a corner arc: {:?}",
+        tip_path.moves
+    );
+    assert!(tf.iter().any(|q| q.y < -4.0), "continues around past -90 deg: {tf:?}");
+
+    // R2 inside fillet at (0,0) between (0,20)->(0,2) and (2,0)->(20,0)
+    // cut with 10 mm tool (r = 5 > 2).
+    let mut arc = Vec::new();
+    for k in 0..=8 {
+        let a = -std::f64::consts::PI + std::f64::consts::FRAC_PI_2 * f64::from(k) / 8.0;
+        arc.push(Point2::new(2.0 + 2.0 * a.cos(), 2.0 + 2.0 * a.sin()));
+    }
+    let fillet_run: Vec<Point2> = std::iter::once(Point2::new(0.0, 20.0))
+        .chain(arc.iter().copied())
+        .chain(std::iter::once(Point2::new(20.0, 0.0)))
+        .collect();
+    let mut poly = vec![Point2::new(-10.0, -10.0), Point2::new(20.0, -10.0), Point2::new(20.0, 0.0)];
+    poly.extend(arc.into_iter().rev());
+    poly.push(Point2::new(0.0, 20.0));
+    poly.push(Point2::new(-10.0, 20.0));
+    let filleted = move |_z: f64| -> Result<Option<Region>, GenError> {
+        Ok(Some(Region::new(vec![Loop::new(poly.clone())?])?))
+    };
+    let f_path = contour_open_run(&fillet_run, &params(), &filleted).expect("R2 inside fillet with D10");
+    assert!(feeds(&f_path).iter().all(|q| q.x >= 5.0 - 1e-3 && q.y >= 5.0 - 1e-3), "{:?}", feeds(&f_path));
+
+    // Collinear seam vertex and tiny near-end collinear split must stay
+    // on the side offset without wrapping onto the end cap.
+    let col = vec![Point2::new(-20.0, 20.0), Point2::new(0.0, 20.0), Point2::new(20.0, 20.0)];
+    let c_path = contour_open_run(&col, &params(), &block).expect("collinear seam");
+    assert!(feeds(&c_path).iter().all(|q| (q.y - 25.0).abs() < 1e-3), "{:?}", feeds(&c_path));
+
+    let near_end = vec![Point2::new(-20.0, 20.0), Point2::new(19.99, 20.0), Point2::new(20.0, 20.0)];
+    let n_path = contour_open_run(&near_end, &params(), &block).expect("near-end collinear split");
+    let nf = feeds(&n_path);
+    assert!(
+        nf.iter().all(|q| (q.y - 25.0).abs() < 1e-3 && q.x >= -20.0 - 1e-3 && q.x <= 20.0 + 1e-3),
+        "must not wrap onto end cap: {nf:?}"
+    );
+}

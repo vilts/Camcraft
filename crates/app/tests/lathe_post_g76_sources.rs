@@ -36,6 +36,7 @@ fn flank_area() -> ThreadInfeed {
         finish_allowance: 0.05,
         spring_passes: 1,
         repeat_each_depth: false,
+        dips: Default::default(),
     }
 }
 

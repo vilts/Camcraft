@@ -172,6 +172,23 @@ fn floor_loop(c: &mut Client) -> (String, Vec<String>) {
     (floor["id"].as_str().expect("face id").to_owned(), chains)
 }
 
+fn expected_chain_picks(c: &mut Client, model: &str, ids: &[&str]) -> Value {
+    let feats = c.ok("list_features", json!({ "model": model, "kinds": ["chains"] }));
+    let rows = feats["chains"].as_array().expect("chains");
+    Value::Array(
+        ids.iter()
+            .map(|id| {
+                let name = rows
+                    .iter()
+                    .find(|r| r["id"] == json!(id))
+                    .and_then(|r| r["name"].as_str())
+                    .expect("listed chain");
+                json!({ "model": model, "id": id, "name": name })
+            })
+            .collect(),
+    )
+}
+
 #[test]
 fn a_picked_pocket_floor_loop_generates_verifies_and_undoes() {
     let (mut c, dir) = pocket_job("floor");
@@ -191,8 +208,10 @@ fn a_picked_pocket_floor_loop_generates_verifies_and_undoes() {
     let before = c.ok("get_operation_geometry", json!({ "operation": "P1" }));
     assert_eq!(before["source"], json!({ "model": "part" }));
     let picks: Vec<Value> = chains.iter().map(|id| json!({ "model": "part", "id": id })).collect();
+    let chain_refs: Vec<&str> = chains.iter().map(String::as_str).collect();
+    let want_picks = expected_chain_picks(&mut c, "part", &chain_refs);
     let set = c.ok("set_operation_geometry", json!({ "operation": "P1", "picks": picks }));
-    assert_eq!(set["source"]["picks"], json!(picks), "{set}");
+    assert_eq!(set["source"]["picks"], want_picks, "{set}");
     let job = c.ok("get_job", json!({}));
     assert_eq!(job["operations"][0]["source"], json!({ "selection": 4 }), "{job}");
 
@@ -219,7 +238,7 @@ fn a_picked_pocket_floor_loop_generates_verifies_and_undoes() {
     let g = c.ok("get_operation_geometry", json!({ "operation": "P1" }));
     assert_eq!(g["area"]["offset"], json!(0.0), "{g}");
     assert_eq!(g["area"]["corner"], json!("round"));
-    assert_eq!(g["source"]["picks"], json!(picks));
+    assert_eq!(g["source"]["picks"], want_picks);
 
     // Undo the generation, then the pick: the previous source is back.
     c.ok("undo", json!({}));
@@ -228,7 +247,7 @@ fn a_picked_pocket_floor_loop_generates_verifies_and_undoes() {
     assert_eq!(g["source"], json!({ "model": "part" }), "{g}");
     c.ok("redo", json!({}));
     let g = c.ok("get_operation_geometry", json!({ "operation": "P1" }));
-    assert_eq!(g["source"]["picks"], json!(picks), "{g}");
+    assert_eq!(g["source"]["picks"], want_picks, "{g}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -464,14 +483,135 @@ fn edges_set_as_the_open_boundary_ride_one_undo_step() {
     let (mut c, dir) = pocket_job("edge-bound");
     let (_, chains) = floor_loop(&mut c);
     let picks = json!([{ "model": "part", "id": chains[0] }, { "model": "part", "id": chains[2] }]);
+    let want_picks = expected_chain_picks(&mut c, "part", &[&chains[0], &chains[2]]);
     let area = json!({ "open": { "picks": picks, "side": "inside" } });
     let set = c.ok("set_operation_area", json!({ "operation": "P1", "area": area }));
-    assert_eq!(set["area"]["open"]["picks"], picks, "{set}");
+    assert_eq!(set["area"]["open"]["picks"], want_picks, "{set}");
     let g = c.ok("get_operation_geometry", json!({ "operation": "P1" }));
-    assert_eq!(g["area"]["open"]["picks"], picks, "{g}");
+    assert_eq!(g["area"]["open"]["picks"], want_picks, "{g}");
     assert_eq!(g["area"]["open"]["side"], json!("inside"));
     c.ok("undo", json!({}));
     let g = c.ok("get_operation_geometry", json!({ "operation": "P1" }));
     assert_eq!(g["area"]["open"], Value::Null, "undo takes the boundary back out: {g}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// #2403 pin: MCP tools return user-friendly names alongside internal `id`s
+/// for models and stocks, keep them consistent with `list_features`, and
+/// neither MCP refusals, app refusals, nor `FeatureSel::Display` contain hex.
+#[test]
+fn mcp_and_app_refusals_use_shared_friendly_pick_names_without_hex() {
+    use camcraft_app::operation::{FeatureSel, GeoSel};
+    use camcraft_app::pick;
+    use std::collections::HashSet;
+
+    let (mut c, dir) = pocket_job("names-pin");
+    let boss_stl = dir.join("boss.stl");
+    write_boss_stl(&boss_stl);
+    c.ok("import_model", json!({ "path": boss_stl.display().to_string() }));
+
+    // Every feature kind of part, boss, and Stock carries a non-hex friendly `name`.
+    let mut seen_by_id: std::collections::HashMap<(String, String), String> = std::collections::HashMap::new();
+    for model_name in ["part", "boss", "Stock"] {
+        let feat = c.ok("list_features", json!({ "model": model_name }));
+        for kind in ["faces", "chains", "patches", "vertices"] {
+            let rows = feat[kind].as_array().expect("feature array");
+            let mut local_names = HashSet::new();
+            for row in rows {
+                let id = row["id"].as_str().expect("id string");
+                let fname = row["name"].as_str().expect("list_features item must include friendly 'name'");
+                assert!(!fname.is_empty() && !fname.contains("0x"), "{model_name} {kind}: {fname}");
+                assert!(local_names.insert(fname.to_owned()), "duplicate {kind} name '{fname}' on {model_name}");
+                seen_by_id.insert((model_name.to_owned(), id.to_owned()), fname.to_owned());
+            }
+        }
+    }
+
+    // Set operation geometry & verify returned picks keep identical `name` beside `id`.
+    let (floor_id, chains) = floor_loop(&mut c);
+    let picks: Vec<Value> = chains.iter().map(|id| json!({ "model": "part", "id": id })).collect();
+    let set = c.ok("set_operation_geometry", json!({ "operation": "P1", "picks": picks }));
+    for p in set["source"]["picks"].as_array().expect("set picks") {
+        let id = p["id"].as_str().expect("id");
+        let got_name = p["name"].as_str().expect("set_operation_geometry pick must include 'name'");
+        assert!(!got_name.contains("0x"), "{got_name}");
+        assert_eq!(seen_by_id.get(&("part".to_owned(), id.to_owned())).map(String::as_str), Some(got_name));
+    }
+
+    // `detect_pockets` returns `floor_name` matching `list_features`.
+    let pockets = c.ok("detect_pockets", json!({ "model": "part" }));
+    let first_pocket = pockets["features"].as_array().and_then(|a| a.first()).expect("pocket");
+    assert_eq!(
+        first_pocket["floor_name"].as_str(),
+        seen_by_id.get(&("part".to_owned(), floor_id.clone())).map(String::as_str)
+    );
+
+    // `set_wcs_from_features` returns matching `name` on each pick.
+    let mut boss_faces = c.ok("list_features", json!({ "model": "part", "kinds": ["faces", "chains"] }));
+    let top_face = boss_faces["faces"]
+        .as_array()
+        .expect("faces")
+        .iter()
+        .find(|f| f["facing"] == json!("up"))
+        .and_then(|f| f["id"].as_str())
+        .expect("up face")
+        .to_owned();
+    let edge_id = boss_faces["chains"]
+        .as_array()
+        .expect("chains")
+        .iter()
+        .find(|c| {
+            c["closed"] == json!(false)
+                && c["start"][2]
+                    .as_f64()
+                    .zip(c["end"][2].as_f64())
+                    .is_some_and(|(z0, z1)| (z0 - z1).abs() < 1e-6)
+        })
+        .and_then(|c| c["id"].as_str())
+        .expect("horizontal edge")
+        .to_owned();
+    let wcs_res = c.ok(
+        "set_wcs_from_features",
+        json!({
+            "picks": [
+                { "model": "part", "id": top_face, "role": "z" },
+                { "model": "part", "id": edge_id, "role": "x" }
+            ]
+        }),
+    );
+    for p in wcs_res["picks"].as_array().expect("wcs picks") {
+        let id = p["id"].as_str().expect("id");
+        let got_name = p["name"].as_str().expect("wcs pick must include 'name'");
+        assert_eq!(seen_by_id.get(&("part".to_owned(), id.to_owned())).map(String::as_str), Some(got_name));
+    }
+
+    // Refusals and FeatureSel::Display never contain 0x hex ids.
+    let err = c.refused(
+        "set_operation_geometry",
+        json!({ "operation": "P1", "picks": [{ "model": "part", "id": "face:0xdeadbeef" }] }),
+    );
+    assert!(!err.contains("0x"), "MCP missing pick refusal leaked hex: {err}");
+
+    let world = camcraft_app::world::new_world();
+    camcraft_app::commands::Command::apply(
+        &camcraft_app::commands::ImportModel::from_mesh(
+            "part",
+            camcraft_app::geometry::cube(camcraft_app::geometry::Point3::ZERO, camcraft_app::geometry::Point3::new(10.0, 10.0, 10.0)),
+        ),
+        &world,
+    );
+    let lay = pick::PlaneLay { plane: camcraft_app::cl::ArcPlane::Xy, flip: false, place: false };
+    for fs in [
+        FeatureSel::Face(0x885acc12),
+        FeatureSel::Patch(0x885acc34),
+        FeatureSel::Chain(0x885acc56),
+        FeatureSel::Vertex(0x885acc78),
+    ] {
+        assert!(!fs.to_string().contains("0x"), "FeatureSel::Display leaked hex: {fs}");
+        let g = GeoSel { entity: "part".into(), feature: fs };
+        let r1 = pick::lay_on_plane(&world, std::slice::from_ref(&g), lay).expect_err("invalid refuses");
+        assert!(!r1.contains("0x"), "lay_on_plane refusal leaked hex: {r1}");
+    }
+    let _ = boss_faces.take();
     let _ = std::fs::remove_dir_all(&dir);
 }

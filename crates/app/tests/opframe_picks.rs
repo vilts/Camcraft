@@ -378,12 +378,12 @@ fn tilt_times_picks_and_unverified_stay_refused_and_area_passes_in_phase_two() {
     let err = generate(&world, &op_of(&world, "TiltedPick"), "TiltedPick").expect_err("aligned tilt x picks refuses");
     assert!(err.to_string().contains("tilted plane is not supported yet in an aligned setup"), "{err}");
 
-    // #2276 / #2283: 2D Offset, Circular and 2D Chamfer are verified
-    // now; Deburr still waits for proof (the op keeps its old name).
-    let circular = (KindInfo::ALL[OpType::Deburr.ordinal()].seed)(&Carried::of(&face_params(Height::fixed(9.0), 25.0)));
-    let cm = catalog().into_iter().find(|(n, _)| *n == "CM-0600-90").map(|(_, t)| t).expect("chamfer mill");
-    h.execute(&world, AddTool::new(&world, "CM-0600-90", cm).expect("add chamfer mill"));
-    h.execute(&world, CreateOperation::new(&world, "CircularPick", "CM-0600-90", sel, circular).expect("create the Deburr"));
+    // #2276 / #2283 / #2284: 2D Offset, Circular, 2D Chamfer and Deburr have proof;
+    // Probe stays unverified (the op keeps its old name).
+    let circular = (KindInfo::ALL[OpType::Probe.ordinal()].seed)(&Carried::of(&face_params(Height::fixed(9.0), 25.0)));
+    let probe = catalog().into_iter().find(|(n, _)| *n == "PRB-0400").map(|(_, t)| t).expect("probe");
+    h.execute(&world, AddTool::new(&world, "PRB-0400", probe).expect("add probe"));
+    h.execute(&world, CreateOperation::new(&world, "CircularPick", "PRB-0400", sel, circular).expect("create the Probe"));
     let err = generate(&world, &op_of(&world, "CircularPick"), "CircularPick").expect_err("unverified kind refuses");
     assert!(err.to_string().contains("not supported yet in an aligned setup"), "{err}");
 

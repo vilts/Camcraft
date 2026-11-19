@@ -24,7 +24,7 @@ pub(super) fn region_for(
     // #1504: a picked Slot that leaves its picks draws nothing - the
     // preview never outlines a slot across a wall; generation names it.
     super::slot_pick::confine_slot(world, setup, src, params)?;
-    let z = section_z_of(world, setup, src, params).unwrap_or(Ok(0.0));
+    let z = section_z_of(world, setup, src, params, frame).unwrap_or(Ok(0.0));
     region_core(material, params, frame, z)
 }
 
@@ -40,6 +40,7 @@ pub(super) fn section_z_of(
     setup: Option<&str>,
     src: Option<&SrcRef>,
     params: &OpParams,
+    frame: Option<&crate::cl::TiltedFrame>,
 ) -> Option<Result<f64, GenError>> {
     let top_z = match params {
         OpParams::Contour { top_z, .. }
@@ -57,7 +58,8 @@ pub(super) fn section_z_of(
         _ => return None,
     };
     Some(
-        resolve_height(world, setup, src, top_z)
+        // #2389: a tilted section stands along the tool axis.
+        fold_height(world, setup, src, frame, top_z)
             .ok_or_else(|| unresolved_err("Top of Part Z", top_z, world, setup, src)),
     )
 }
@@ -204,11 +206,19 @@ fn source_region(
             section(&material.facets, z - oz)
         }
         // The chamfer ride's machine area is the edge the cone lies
-        // along: the section at the apex plane - a boundary ride the
-        // contour's way (M2.4 B).
-        OpParams::Chamfer2D { .. } => {
-            let z = z?;
-            section(&material.facets, z - oz)
+        // along - a boundary ride the contour's way (M2.4 B). #2435: the
+        // tip touches the WALL at the corner depth, not the top plane's
+        // outline - on a model whose edge is already bevelled that
+        // outline is the bevel's top edge, inside the wall. Each top
+        // edge rides the wall section under it (a vertical wall: the
+        // top loop itself, unchanged); a top edge with no wall within
+        // the width refuses by name.
+        OpParams::Chamfer2D { width, angle_deg, .. } => {
+            let z = z? - oz;
+            let corner_z = z - width * angle_deg.to_radians().tan();
+            let top = section(&material.facets, z)?;
+            let wall = section(&material.facets, corner_z)?;
+            crate::machining2d::chamfer_ride_loops(&top, &wall, *width, corner_z)
         }
         // #1731: the Slot's machine area is the stadium of its EXTENDED
         // ends - the channel the pass is asked to cut. Where the

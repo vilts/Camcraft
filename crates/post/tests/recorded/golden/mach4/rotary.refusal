@@ -1,0 +1,2 @@
+; mach4.cps refused rotary: 1 warning(s), the program is never released
+warning: operation Index: tilted move: TILT-HEAD 5-AXIS states controller.rtcp = true, but Mach4 lacks native G43.4 RTCP (set controller.rtcp = false for 3+2 G94 posting)

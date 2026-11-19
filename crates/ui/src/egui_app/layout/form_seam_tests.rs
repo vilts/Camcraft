@@ -140,3 +140,107 @@ fn form_seam_controls_preserve_labels_clicks_and_accessible_names() {
     assert_eq!(h.state().choice, Choice::First);
 }
 
+// #2295: a wide property pane must use its free space for field names.
+fn assert_property_label_uses_spare_width(checkbox: bool) {
+    use egui_kittest::Harness;
+
+    const LABEL: &str = "Maximum spindle acceleration";
+    let mut h = Harness::builder().with_size(egui::Vec2::new(560.0, 100.0)).build_ui_state(
+        move |ui, value: &mut bool| {
+            if checkbox {
+                super::check_row(ui, LABEL, value);
+            } else {
+                super::prop_row(ui, LABEL, |ui| {
+                    ui.add_sized(egui::Vec2::new(super::CTRL_W, 20.0), egui::Button::new("Value"));
+                });
+            }
+        },
+        false,
+    );
+    h.run();
+
+    fn label_galleys(shape: &egui::Shape, out: &mut Vec<bool>) {
+        match shape {
+            egui::Shape::Text(text) if text.galley.text() == LABEL => out.push(text.galley.elided),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|shape| label_galleys(shape, out)),
+            _ => {}
+        }
+    }
+    let mut elided = Vec::new();
+    for clipped in &h.output().shapes {
+        label_galleys(&clipped.shape, &mut elided);
+    }
+    assert_eq!(elided.len(), 1, "the row must paint the property label");
+    assert!(!elided[0], "the property label is cut off while the 560-point pane has free space");
+}
+
+#[test]
+fn property_label_uses_spare_panel_width() {
+    assert_property_label_uses_spare_width(false);
+}
+
+#[test]
+fn checkbox_label_uses_spare_panel_width() {
+    assert_property_label_uses_spare_width(true);
+}
+
+#[test]
+fn property_controls_fit_a_narrow_panel_and_checkbox_caption_toggles() {
+    use egui_kittest::kittest::Queryable;
+    for width in [200.0, 260.0] {
+        let mut h = egui_kittest::Harness::builder()
+            .with_size(egui::Vec2::new(width, 100.0))
+            .build_ui_state(
+                |ui, checked: &mut bool| {
+                    let pane = ui.max_rect();
+                    let value = super::prop_row(ui, "Maximum spindle acceleration", |ui| {
+                        ui.add_sized(egui::Vec2::new(super::CTRL_W, 20.0), egui::Button::new("Value"))
+                    });
+                    assert!(value.rect.width() >= super::CTRL_W, "the label must reserve the compact control width");
+                    let checkbox = super::check_row(ui, "Synchronize spindle acceleration", checked);
+                    for rect in [value.rect, checkbox.rect] {
+                        assert!(pane.contains_rect(rect), "control {rect:?} extends outside pane {pane:?}");
+                    }
+                },
+                false,
+            );
+        h.run();
+        let label = h.get_by_role_and_label(egui::accesskit::Role::Label, "Maximum spindle acceleration").rect();
+        let value = h.get_by_role_and_label(egui::accesskit::Role::Button, "Value").rect();
+        assert!(label.right() <= value.left(), "label {label:?} overlaps control {value:?} at panel width {width}");
+        h.get_by_role_and_label(egui::accesskit::Role::Label, "Synchronize spindle acceleration").click();
+        h.run();
+        assert!(*h.state(), "clicking the caption must still toggle the checkbox");
+    }
+}
+
+#[test]
+fn truncated_property_label_shows_full_name_on_hover() {
+    use egui_kittest::kittest::Queryable;
+
+    const LABEL: &str = "Maximum spindle acceleration";
+    let mut h = egui_kittest::Harness::builder()
+        .with_size(egui::Vec2::new(260.0, 100.0))
+        .build_ui(|ui| {
+            super::prop_row(ui, LABEL, |ui| {
+                ui.add_sized(egui::Vec2::new(super::CTRL_W, 20.0), egui::Button::new("Value"));
+            });
+        });
+    h.run();
+    let center = h.get_by_role_and_label(egui::accesskit::Role::Label, LABEL).rect().center();
+    h.ctx.style_mut_of(h.ctx.theme(), |style| style.interaction.tooltip_delay = 0.0);
+    h.hover_at(center);
+    h.run_steps(3);
+
+    fn has_full_label(shape: &egui::Shape) -> bool {
+        match shape {
+            egui::Shape::Text(text) => text.galley.text() == LABEL && !text.galley.elided,
+            egui::Shape::Vec(shapes) => shapes.iter().any(has_full_label),
+            _ => false,
+        }
+    }
+    assert!(
+        h.output().shapes.iter().any(|clipped| has_full_label(&clipped.shape)),
+        "hover must show the full name when the label must be cut off"
+    );
+}

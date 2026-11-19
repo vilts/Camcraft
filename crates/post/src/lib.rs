@@ -18,6 +18,7 @@
 //! (assets/posts/AGENTS.md). No flecs, no schema, no world.
 
 pub mod data_dir;
+pub mod data_scan;
 pub mod kinematics;
 pub mod machine;
 pub mod post;

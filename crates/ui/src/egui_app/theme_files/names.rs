@@ -56,6 +56,10 @@ pub const TREE_PAD_Y: &str = "tree_pad_y";
 pub const TREE_SUFFIX_GAP: &str = "tree_suffix_gap";
 pub const TREE_HEADER_BOOST: &str = "tree_header_boost";
 pub const HIGHLIGHT_STROKE_PX: &str = "highlight_stroke_px";
+pub const MENU_WIDTH: &str = "menu_width";
+pub const RECENT_WIDTH: &str = "recent_width";
+pub const MENU_GAP: &str = "menu_gap";
+pub const MENU_PAD_X: &str = "menu_pad_x";
 
 pub const WINDOW_MARGIN: &str = "window_margin";
 pub const STATUS_H: &str = "status_h";
@@ -83,4 +87,5 @@ pub const GEOM_NAMES: &[&str] = &[
     TREE_EYE_RESERVE, TREE_PAD_X, TREE_PAD_Y, TREE_SUFFIX_GAP,
     TREE_HEADER_BOOST, HIGHLIGHT_STROKE_PX,
     WINDOW_MARGIN, STATUS_H, RIBBON_TAB_PAD_X, RIBBON_TAB_GAP, RIBBON_TAB_STROKE,
+    MENU_WIDTH, RECENT_WIDTH, MENU_GAP, MENU_PAD_X,
 ];

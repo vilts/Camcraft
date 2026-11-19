@@ -2,9 +2,9 @@
 //! an A rotary about X, and the PathPilot post indexes it between
 //! operations (G53 G0 Z up, then G0 A alone), writes each indexed section
 //! in the turned frame, and refuses by name what it cannot state: a tilt
-//! the A axis cannot reach, an A past travel, an A that changes inside an
-//! operation (simultaneous 4-axis, unconfirmed on PathPilot), an indexed
-//! arc, and a tilt on a machine with no A about X.
+//! the A axis cannot reach, an A past travel, an indexed arc, and a tilt
+//! on a machine with no A about X. An A that changes inside an operation
+//! posts as wrapped A (#796, `tormach_wrapped_a`).
 //! Provenance: our own tests over our own machine file and post; the
 //! machine facts from Tormach's TD10749 (microARC 4 owner's guide) and the
 //! frame law from the LinuxCNC reference (rotary positions in degrees).
@@ -159,9 +159,11 @@ fn the_microarc_machine_states_an_a_about_x() {
     let a = m.axes.iter().find(|a| a.name == "A").expect("an A axis");
     assert!(a.rotary, "A is a rotary");
     assert_eq!(a.axis, Some([1.0, 0.0, 0.0]), "A turns about X");
-    assert_eq!(a.travel, Some((-360.0, 360.0)), "degrees, never unit-scaled");
-    // TD10749 states no rate for the microARC 4: unstated, never a zero.
-    assert_eq!((a.feed, a.rapid), (None, None));
+    assert_eq!(a.travel, None, "PathPilot has no A soft limit (continuous rotary)");
+    // TD10749 states no rate for the microARC 4; #796 states the feed the
+    // PathPilot Hub ran as asked (360 deg/min, never unit-scaled), and no
+    // rapid - unstated, never a zero.
+    assert_eq!((a.feed, a.rapid), (Some(360.0), None));
     // X Y Z are the 770MX's own figures, unchanged by the add-on.
     let base = shipped("Tormach 770MX");
     let lin: Vec<_> = m.axes.iter().filter(|a| !a.rotary).cloned().collect();
@@ -179,7 +181,7 @@ fn the_microarc_machine_states_an_a_about_x() {
     let p = machine::script_props(&machine::mirror(&m));
     assert_eq!(p["rtcp"], true, "the A about X is a tilting rotary");
     assert_eq!(p["rotaries"][0]["name"], "A");
-    assert_eq!(p["rotaries"][0]["travel"], json!([-360.0, 360.0]));
+    assert_eq!(p["rotaries"][0]["travel"], Value::Null);
 }
 
 /// The golden: four faces, each indexed alone with Z up, each posted in
@@ -297,7 +299,7 @@ fn a_tilt_the_a_axis_cannot_reach_is_refused() {
 }
 
 /// The tool angle is read through the axis, so it lies in -180..180 and
-/// the shipped -360..360 holds every face; a machine stating less travel
+/// the shipped machine has no A travel limit; a machine stating less travel
 /// (a table stopped at +-100 degrees) refuses the face underneath.
 #[test]
 fn an_a_past_travel_is_refused() {
@@ -308,8 +310,11 @@ fn an_a_past_travel_is_refused() {
     assert!(ok.warnings.is_empty(), "A90 is inside: {:?}", ok.warnings);
 }
 
+/// #796: an A that changes inside an operation is no longer refused - it
+/// posts as wrapped A (G93 on the turning feeds, A cumulative);
+/// `tormach_wrapped_a` pins the words.
 #[test]
-fn an_a_that_changes_inside_an_operation_is_refused() {
+fn an_a_that_changes_inside_an_operation_posts_wrapped_a() {
     let mut recs = head();
     recs.push(cnc::Record::Param { name: "OperationName".into(), value: json!("WRAP") });
     recs.push(cnc::Record::Section { begin: true });
@@ -318,7 +323,9 @@ fn an_a_that_changes_inside_an_operation_is_refused() {
         recs.push(mv(k, world(a, l), f, Some([a, 0.0, 0.0])));
     }
     recs.push(cnc::Record::Section { begin: false });
-    refused(&mirrored(ARC4), &cnc::serialize(&recs), "simultaneous 4-axis motion in operation WRAP");
+    let out = run(&mirrored(ARC4), &cnc::serialize(&recs));
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    assert!(out.program.lines().any(|l| l.starts_with("G93 G1 ")), "{}", out.program);
 }
 
 #[test]

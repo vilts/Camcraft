@@ -119,3 +119,29 @@ fn external_thread_has_no_hole_break_through_control() {
     h.run_steps(3);
     assert!(h.query_by_label("Break-through").is_none());
 }
+
+#[test]
+fn drill_break_through_from_defaults_to_full_diameter_and_switches_to_tip() {
+    use camcraft_app::drilling::BreakThroughFrom;
+    let _g = snapshot_guard();
+    let mut h = page("Drill", Unit::Millimeters);
+    let current = |h: &Harness<'static, ShellUi>| -> BreakThroughFrom {
+        let OpParams::Drill { break_through_from, .. } = &h.state().state.op_ui.params else {
+            panic!("drill params");
+        };
+        *break_through_from
+    };
+    assert_eq!(current(&h), BreakThroughFrom::FullDiameter);
+    assert_eq!(h.query_all_by_label("Break-through from").count(), 1);
+    let combo = h.get_by_label("Break-through from");
+    let y = combo.rect().center().y;
+    let box_btn = h
+        .query_all_by_role(egui::accesskit::Role::ComboBox)
+        .find(|n| (n.rect().center().y - y).abs() < 15.0)
+        .expect("Break-through from combo");
+    box_btn.click();
+    h.run_steps(2);
+    h.get_by_label("Tip").click();
+    h.run_steps(2);
+    assert_eq!(current(&h), BreakThroughFrom::Tip);
+}

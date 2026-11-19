@@ -68,6 +68,7 @@ fn params(cycle: CycleChoice, dwell: f64) -> OpParams {
         }],
         cross: vec![],
         break_through: None,
+        break_through_from: Default::default(),
     }
 }
 

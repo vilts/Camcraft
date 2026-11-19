@@ -459,7 +459,7 @@ fn trace_plate_with_hole_matches_golden() {
 
 // ------------------------------------------------------------ drilling
 
-use camcraft_app::drilling::{CycleChoice, CycleParams, Hole, drill};
+use camcraft_app::drilling::{BreakThroughFrom, CycleChoice, CycleParams, Hole, drill};
 use camcraft_app::tools::{Tool, ToolKind};
 
 fn cycle_tool(kind: ToolKind, diameter: f64, tip_angle: f64, pitch: f64) -> Tool {
@@ -518,6 +518,7 @@ fn drill_plate_matches_golden() {
     ];
     let p = CycleParams {
         through_clear: camcraft_app::drilling::THROUGH_CLEAR,
+        break_through_from: BreakThroughFrom::Tip,
         clearance_z: 5.0,
         r_z: 0.0,
         hop_z: None,
@@ -555,6 +556,7 @@ fn drill_peck_matches_golden() {
     }];
     let p = CycleParams {
         through_clear: camcraft_app::drilling::THROUGH_CLEAR,
+        break_through_from: BreakThroughFrom::Tip,
         clearance_z: 6.0,
         r_z: 0.0,
         hop_z: None,
@@ -590,6 +592,7 @@ fn tap_plate_matches_golden() {
     }];
     let p = CycleParams {
         through_clear: camcraft_app::drilling::THROUGH_CLEAR,
+        break_through_from: BreakThroughFrom::Tip,
         clearance_z: 5.0,
         r_z: 0.0,
         hop_z: None,

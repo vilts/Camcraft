@@ -265,7 +265,7 @@ pub fn rotary_axis_of(
     }
     let SrcRef::Entity(name) = &op.src else { return None };
     let e = model::find_by_name(world, name)?;
-    let facets = model::world_facets(world, &e)?;
+    let facets = crate::setup_align::facets_in(world, &e, op.setup.as_deref())?;
     let ax = crate::multiaxis::axis::fit(&facets).ok()?;
     Some(camcraft_sim::verify::RotaryAxis { origin: ax.origin, dir: [ax.dir.x, ax.dir.y, ax.dir.z] })
 }

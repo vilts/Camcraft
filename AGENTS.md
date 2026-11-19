@@ -611,6 +611,21 @@ tests are in `crates/ui/tests/`; they start the real app through
   a cut, never for each edit. A split must not lose coverage: the `#[test]`
   count before and after is the same, and the ignored set keeps its golden
   asserts.
+- **Tests that start red use the known-fail marker** (#2567). A test that
+  is red on purpose must not use a plain `#[ignore]`. Use
+  `#[ignore = "known-fail #ISSUE | TARGET | FULL_TEST_NAME | PANIC_LINE_PREFIX"]`.
+  Set `TARGET` to `lib` or an integration binary in the `kernel`, `motion`
+  or `app` heavy lanes. Name the open issue and the full libtest name.
+  Put `// known-fail-assert` immediately before the one expected failing
+  assertion. The gate discovers the marker from the source. It pins the
+  assertion location and a panic message line prefix.
+  The release gate prints `SKIPPED (known fail, #N): <test>`, then checks
+  the test alone. The gate fails if the test passes, its issue closes, or
+  it fails for another reason. Both `cargo xtask gate release` and
+  `cargo xtask release` check the issue state. If `gh` cannot read the
+  state, the gate prints a warning and still checks the expected failure.
+  Reviewers reject a test that starts red with a plain ignore. They check
+  the issue, marker, assertion location and expected panic prefix.
 - **Pixel snapshots are release-lane** (#255). The PNG goldens
   (`crates/ui/tests/snapshots/*.png`) are `#[ignore]`d and run only in the
   release tier. A PR never changes a snapshot PNG. The goldens are made new

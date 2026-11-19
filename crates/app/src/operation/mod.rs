@@ -87,6 +87,8 @@ mod stamp_stock;
 pub use stamp_stock::reads_setup_stock;
 pub(crate) use stamp_stock::write_setup_stock;
 mod material;
+// #2496: a drill makes its own size; a wider hole is named.
+mod drill_size;
 pub use material::*;
 mod material_region;
 pub(crate) use material_region::selection_drives_region;
@@ -179,6 +181,9 @@ use boundary_ctx::*;
 // operation's world reads and CL wrap (part_alignment x Tilt).
 mod frame;
 pub use frame::OpFrame;
+// #2389: a tilted op's reference heights read along its tool axis.
+mod tilt_heights;
+pub use tilt_heights::{fold_height, resolve_params_folded};
 mod wcs_yaw;
 mod job;
 pub use job::*;
@@ -221,6 +226,7 @@ pub mod mark_law;
 pub mod keep_law;
 // #1749: the 3D Pocket's footprint past its open edges.
 mod open_side;
+pub use open_side::AIR_BAND_FIXTURE;
 // #1628: the post's live re-judge of the parts `keep_law` keeps.
 pub mod kept_rejudge;
 // #864: what a kind's gouge laws need of its model's fidelity.

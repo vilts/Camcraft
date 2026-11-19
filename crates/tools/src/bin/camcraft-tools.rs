@@ -30,6 +30,7 @@ OPTIONS:
 ";
 
 fn main() -> ExitCode {
+    log_init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         None => die("expected a command (try --help)".into()),
@@ -97,4 +98,14 @@ fn speeds(work: &str, tool: &str, d: &str, z: &str) -> ExitCode {
     println!("rpm: {n0:.0}..{n1:.0}");
     println!("feed: {:.0}..{:.0} mm/min", feed_for(fz0, z, n0), feed_for(fz1, z, n1));
     ExitCode::SUCCESS
+}
+
+/// #163: the library's diagnostics are `tracing` events; print them on
+/// stderr, filtered by `CAMCRAFT_LOG`, else `RUST_LOG`, else `info` - the
+/// app binaries' rule. A second init is a no-op, never a panic.
+fn log_init() {
+    let filter = tracing_subscriber::EnvFilter::try_from_env("CAMCRAFT_LOG")
+        .or_else(|_| tracing_subscriber::EnvFilter::try_from_default_env())
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).with_writer(std::io::stderr).try_init();
 }

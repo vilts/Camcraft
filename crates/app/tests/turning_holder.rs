@@ -327,6 +327,7 @@ fn a_lathe_body_on_a_bar_refuses_a_milling_op_by_name() {
     let hole = camcraft_app::drilling::Hole { xy: camcraft_app::geo2d::Point2::new(0.0, 0.0), radius: 5.0, entry_z: 50.0, floor_z: -16.0, through: false, stepped: false };
     let params = OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(60.0),
         retract_z: None,
         top_z: Height::fixed(50.0),

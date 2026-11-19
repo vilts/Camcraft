@@ -5,19 +5,21 @@
 //! fits there - the axial plunge at the pass start off the wall or in
 //! the floor's room, each starting just over the material and traversing
 //! at the plane the user's level link chose. [`start`] answers where a
-//! descent begins, so a keep-down link knows what to reach.
+//! descent begins, so a keep-down link knows what to reach. Where an
+//! entry lands (helix spot, plunge spot) is `descent_place`.
 //!
 //! Provenance: standard CNC entry motions (plunge, linear and zig-zag
 //! ramp, helical interpolation, circular ramp) per public G-code manuals
 //! and machining handbooks; the legality laws are M8.1's superset law and
 //! the shell's tip law (`machining3d::shell`). No vendor material.
 
+use super::descent_place::{Hel, along_pass, helix, plunge_at};
 use super::level_ctx::{LevelCtx, bore_meets_lifted_leg, dive_link, feed_leg, substituted_dive, traverse};
 use super::params::Entry3D;
 
 use crate::approach::{CENTER_CUT_REFUSAL, NOT_CENTER_CUTTING};
 use crate::cl::{MoveKind, PathBuilder, lattice};
-use crate::entry::{chord_hits_plan, disc_clears, dive_room, helix_about};
+use crate::entry::{disc_clears, dive_room, helix_about};
 use crate::entry_arc::{arc_lead_swept, pts_dir, push_arc_lead};
 use crate::geo2d::Point2;
 use crate::geometry::Point3;
@@ -38,13 +40,16 @@ pub(super) struct Ask<'a> {
     pub prev_z: f64,
     /// The previous cut level's plane, `None` before any cut.
     pub prev_cut: Option<f64>,
+    /// Issue #1950: `entry` is proved in the air outside the stock - a
+    /// plain plunge there, for every arm (it bores into nothing).
+    pub air: bool,
 }
 
 /// The plane a descent starts from (M11.3): on the first level the top
 /// of the cut plus the plunge height (air above by the generator's
 /// contract), on later levels the plane above - or, for a plain-ladder
 /// ramp to depth, the top of the cut again.
-fn from(lvl: &LevelCtx, a: &Ask, ramp: bool) -> f64 {
+pub(super) fn from(lvl: &LevelCtx, a: &Ask, ramp: bool) -> f64 {
     let p = lvl.p;
     let ap = &p.links.approach;
     if a.prev_cut.is_none() || (ramp && ap.ramp_to_depth && lvl.field.is_none()) {
@@ -129,112 +134,10 @@ fn arc(lvl: &LevelCtx, a: &Ask) -> Result<crate::entry_arc::ArcLead, &'static st
     }
 }
 
-/// The margin a dive at the pass start keeps off the wall.
-fn wall_margin(lvl: &LevelCtx) -> f64 {
-    (lvl.p.tool_diameter * 0.05).max(0.01)
-}
-
-/// Points along the first pass past its start (and a wall margin to
-/// either side), every half millimetre up to four tool diameters, that
-/// link back to the start at depth (inside the center, crossing no
-/// planned pass) - where an entry lands when the start sits on the wall
-/// (M11.3: one entry per level, no second dive).
-fn along_pass(lvl: &LevelCtx, a: &Ask) -> Vec<Point2> {
-    const STEP: f64 = 0.5;
-    let reach = (lvl.p.tool_diameter * 4.0).max(4.0);
-    let off = wall_margin(lvl) * 1.5;
-    let e = a.entry;
-    let mut out = Vec::new();
-    let mut run = 0.0;
-    let mut prev = e;
-    for &q in a.first_pass {
-        let d = (q.x - prev.x).hypot(q.y - prev.y);
-        if !(d.is_finite() && d > 0.0) {
-            prev = q;
-            continue;
-        }
-        let (nx, ny) = (-(q.y - prev.y) / d * off, (q.x - prev.x) / d * off);
-        let mut t = STEP;
-        while t <= d && run + t <= reach && out.len() < 1200 {
-            let f = t / d;
-            let (px, py) = (prev.x + (q.x - prev.x) * f, prev.y + (q.y - prev.y) * f);
-            for (dx, dy) in [(0.0, 0.0), (nx, ny), (-nx, -ny)] {
-                let c = Point2::new(lattice(px + dx), lattice(py + dy));
-                if chord_clears(lvl.cen, c, e) && !chord_hits_plan(c, e, lvl.passes) {
-                    out.push(c);
-                }
-            }
-            t += STEP;
-        }
-        run += d;
-        prev = q;
-        if run > reach {
-            break;
-        }
-    }
-    out
-}
-
-/// A placed helix: its near-side start, center, turns, radius.
-struct Hel {
-    start: Point2,
-    center: Point2,
-    turns: f64,
-    r: f64,
-}
-
-/// The helix: closing ON the pass start where a center a radius off it
-/// has the orbit's room (M11.3), else at the floor's widest room; radii
-/// from the op's down to the user's minimum.
-fn helix(lvl: &LevelCtx, a: &Ask) -> Result<Hel, &'static str> {
-    let p = lvl.p;
-    let ap = &p.links.approach;
-    let crosses = |c: Point2| match (lvl.field, a.prev_cut) {
-        (Some(_), Some(pz)) => bore_meets_lifted_leg(lvl, pz, c),
-        _ => false,
-    };
-    let mut why = "the widened disc fits nowhere at this level";
-    for r in ap.helix_radii(p.helix_radius) {
-        let pitch = if a.transition { p.links.helix_pitch } else { ap.entry_pitch(r) };
-        let Some(t) = helix_turns(from(lvl, a, false) - lvl.z, r, pitch) else {
-            why = "the helix pitch asks too many turns";
-            continue;
-        };
-        for q in std::iter::once(a.entry).chain(along_pass(lvl, a)) {
-            for k in 0..8 {
-                let (sn, cs) = (f64::from(k) * std::f64::consts::FRAC_PI_4).sin_cos();
-                let c = Point2::new(lattice(q.x + r * cs), lattice(q.y + r * sn));
-                if disc_clears(lvl.cen, c, r + 1e-3) && !crosses(c) {
-                    return Ok(Hel { start: q, center: c, turns: t, r });
-                }
-            }
-        }
-        if let Some(c) = dive_room(lvl.cen, r + 1e-3) {
-            if crosses(c) {
-                why = "the shell lifts legs the bore would cross";
-                continue;
-            }
-            let s = Point2::new(lattice(c.x - r), lattice(c.y));
-            return Ok(Hel { start: s, center: Point2::new(lattice(s.x + r), lattice(s.y)), turns: t, r });
-        }
-    }
-    Err(why)
-}
-
-/// Where the plain plunge lands: the pass start off the wall, else the
-/// floor's room.
-fn plunge_at(lvl: &LevelCtx, a: &Ask) -> Option<Point2> {
-    let m = wall_margin(lvl);
-    if disc_clears(lvl.cen, a.entry, m) {
-        return Some(a.entry);
-    }
-    along_pass(lvl, a).into_iter().find(|&q| disc_clears(lvl.cen, q, m)).or_else(|| dive_room(lvl.cen, 0.0))
-}
-
 /// Where the descent `a` begins in XY with the tool standing over `leg`.
 pub(super) fn start(lvl: &LevelCtx, a: &Ask, leg: Point2) -> Point2 {
     let sub = || plunge_at(lvl, a).unwrap_or(a.entry);
-    if a.rest {
+    if a.rest || a.air {
         return a.entry;
     }
     let cc = lvl.p.links.approach.center_cutting;
@@ -364,8 +267,9 @@ pub(super) fn descend(b: &mut PathBuilder, lvl: &LevelCtx, a: &Ask) -> Option<Po
     let (entry, z) = (a.entry, lvl.z);
     let at = b.at();
     let leg = Point2::new(at.x, at.y);
-    if a.rest {
-        // The rest ladder's entry: it starts inside planes the coarse
+    if a.rest || a.air {
+        // The rest ladder's entry (and #1950's air entry, its tool disc
+        // clear of the stock): it starts inside planes the coarse
         // run already swept, so it rides the vertical dive at the wall
         // entry the nesting law specced.
         traverse(b, lvl, entry);

@@ -328,3 +328,6 @@ fn flatten(a: SpunPoint, b: SpunPoint) -> Vec<(f64, f64)> {
 #[cfg(test)]
 #[path = "spun_tests.rs"]
 mod tests;
+
+#[path = "spun_envelope.rs"]
+mod envelope;

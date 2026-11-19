@@ -94,7 +94,11 @@ pub fn thread_warnings_excess(
             });
         }
     }
-    revolve::judge(&pts, moves, (tol, excess), 0.0, true, None)
+    let mut out = revolve::judge(&pts, moves, (tol, excess), 0.0, true, None);
+    // The chip-break dip laws (issue #419): phase, depth, slope, and
+    // where a dip may stand - read off the path's own chains.
+    out.extend(super::thread_dips::dip_warnings(&f, path));
+    out
 }
 
 /// The hand verdict (issue #629): a half-turn that does not wind the

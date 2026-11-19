@@ -245,6 +245,22 @@ fn dry_run_walks_the_ten_phases_and_changes_nothing() {
 }
 
 #[test]
+fn release_command_checks_known_fail_issues_before_the_gate() {
+    let r = repo("release/v9.9.9", "9.9.9");
+    write(&r.0, "crates/motion/src/lib.rs", "#[test]\n#[ignore = \"known-fail #123 | lib | example | expected failure\"]\nfn example() {\n// known-fail-assert\nassert!(false, \"expected failure\");\n}\n");
+    let mut cut = Cut::new(&r.0, args("9.9.9"), Os::Linux);
+    cut.phases().unwrap();
+    let check = cut.out.iter().position(|s| s == "known fail: #123 state not read (dry run)").expect("issue check");
+    let gate = cut.out.iter().position(|s| s == "cargo xtask gate release (in process)").expect("gate");
+    assert!(check < gate);
+
+    write(&r.0, "crates/motion/src/lib.rs", "#[test]\n#[ignore = \"known-fail #0\"]\nfn example() {}\n");
+    let mut invalid = Cut::new(&r.0, args("9.9.9"), Os::Linux);
+    assert!(invalid.phases().unwrap_err().contains("invalid known-fail marker"));
+    assert!(!invalid.out.iter().any(|s| s.contains("version bump")));
+}
+
+#[test]
 fn refusals_are_named() {
     let r = repo("main", "9.9.9");
     let mut on_main = Cut::new(&r.0, args("9.9.9"), Os::Windows);

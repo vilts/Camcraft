@@ -8,7 +8,7 @@
 use camcraft_app::machine::{self, Kind, library};
 use camcraft_app::operation::{OpType, Section};
 
-use super::panes::{self, Cmd, DROP_W, ribbon_plan};
+use super::panes::{self, Cmd, ribbon_plan};
 use crate::machine_modes::{self, MACHINE_MODES};
 use crate::state::{CommandKind, State};
 
@@ -106,8 +106,9 @@ fn the_door_tip_lists_every_mode() {
 
 #[test]
 fn the_menu_is_as_wide_as_its_longest_row_and_never_narrower_than_the_door_menu() {
-    assert_eq!(panes::machine_menu_width(10.0), DROP_W, "short rows keep the usual width");
-    assert_eq!(panes::machine_menu_width(500.0), 516.0, "a long row sets the width, text not cut");
+    let pal = super::theme::Tokens::DARK;
+    assert_eq!(panes::machine_menu_width(10.0, &pal), pal.menu_width, "short rows keep the usual width");
+    assert_eq!(panes::machine_menu_width(500.0, &pal), 516.0, "a long row sets the width, text not cut");
 }
 
 #[test]

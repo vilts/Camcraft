@@ -183,9 +183,22 @@ pub fn collect(state: &State) -> Scene {
 // ---------------------------------------------------------------- parts
 
 fn world_verts(state: &State, entity: &flecs_ecs::prelude::Entity) -> Vec<[f32; 3]> {
+    world_verts_by(state, entity, [0.0; 3])
+}
+
+/// [`world_verts`] slid by `by` (shown frame) - the handle drag's preview
+/// (#1198 b): display only, the world is untouched until the release.
+fn world_verts_by(state: &State, entity: &flecs_ecs::prelude::Entity, by: [f64; 3]) -> Vec<[f32; 3]> {
     let tris = model::facets_of(&state.world, entity).unwrap_or_default();
     // #326: the part where the active setup holds it.
-    let loc = camcraft_app::setup_align::view_pose(&state.world, entity).unwrap_or_default();
+    let mut loc = camcraft_app::setup_align::view_pose(&state.world, entity).unwrap_or_default();
+    loc.pos = Point3::new(loc.pos.x + by[0], loc.pos.y + by[1], loc.pos.z + by[2]);
+    // #2047: a ring drag's preview turns the shown pose about the centre.
+    if state.body_turn.is_some()
+        && let Some(turn) = model::name_of(&state.world, entity).and_then(|n| crate::turn_drag::preview_turn(state, &n))
+    {
+        loc = camcraft_app::setup_align::compose(turn, loc);
+    }
     let mut verts = Vec::with_capacity(tris.len() * 3);
     for t in tris.iter() {
         for p in [t.a, t.b, t.c] {
@@ -208,7 +221,8 @@ fn collect_parts(state: &State) -> Vec<GpuPart> {
         .into_iter()
         .filter(|(name, _)| !state.hidden_models.iter().any(|h| h == name) && !state.fixture_hidden_by_setup(name))
         .map(|(name, entity)| {
-            let verts = world_verts(state, &entity);
+            let by = crate::move_drag::preview_offset(state, &name).unwrap_or([0.0; 3]);
+            let verts = world_verts_by(state, &entity, by);
             let classes =
                 if struck.contains(&name) { vec![crate::viewport::STRUCK_CLASS; verts.len()] } else { Vec::new() };
             GpuPart { verts, selected: model::is_selected(&state.world, &entity), stock: false, fill: false, classes }

@@ -27,17 +27,22 @@ fn end_word(e: SlotEnd) -> &'static str {
     }
 }
 
-fn pocket_view(i: usize, p: &Pocket) -> Value {
+fn pocket_view(w: &flecs_ecs::prelude::World, model_name: &str, i: usize, p: &Pocket) -> Value {
     let kind = match p.kind {
         PocketKind::Closed => "closed_pocket",
         PocketKind::Open => "open_pocket",
         PocketKind::Slot => "slot",
     };
     let op = recognize::op_kind_of(p);
+    let floor_sel = crate::operation::GeoSel {
+        entity: model_name.to_owned(),
+        feature: FeatureSel::Face(p.floor),
+    };
     json!({
         "index": i,
         "kind": kind,
         "floor": feature_id(FeatureSel::Face(p.floor)),
+        "floor_name": crate::pick::geo_label(w, &floor_sel),
         "floor_z": fnum(p.floor_z),
         "top_z": fnum(p.top_z),
         "depth": fnum(p.depth),
@@ -69,7 +74,7 @@ pub(super) fn detect_pockets(env: &mut Env, a: &Map<String, Value>) -> Result<Va
     let name = req_str(a, "model")?;
     req_model(env, name)?;
     let found = recognize::pockets_of(&env.world, name)?;
-    let rows: Vec<Value> = found.iter().enumerate().map(|(i, p)| pocket_view(i, p)).collect();
+    let rows: Vec<Value> = found.iter().enumerate().map(|(i, p)| pocket_view(&env.world, name, i, p)).collect();
     let mut out = json!({ "model": name, "frame": "world", "count": found.len(), "features": rows });
     let pick = index_of(a, found.len())?;
     let tool = opt_str(a, "tool")?;

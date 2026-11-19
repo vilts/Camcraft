@@ -78,7 +78,10 @@ pub(super) fn apply(world: &World, entity: &flecs_ecs::prelude::Entity, dto: Opt
         suppressed: e.suppressed,
     });
     if e.order.is_some() {
-        entity.entity_view(world).set(OperationMeta { label: None, order: e.order });
+        entity.entity_view(world).set(OperationMeta {
+            order: e.order,
+            ..Default::default()
+        });
     }
     Ok(())
 }

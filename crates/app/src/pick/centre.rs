@@ -43,8 +43,8 @@ pub fn centre_point(world: &World, g: &GeoSel) -> Result<[f64; 3], String> {
     centre_of(world, g).map_err(|why| match why {
         CircleRefusal::Gone(_) | CircleRefusal::NotAnEdge(_) => why.to_string(),
         _ => format!(
-            "{} of '{}' is an edge with no centre ({why}) - a point is a vertex or a circular edge's centre",
-            g.feature, g.entity
+            "{} is an edge with no centre ({why}) - a point is a vertex or a circular edge's centre",
+            super::geo_label(world, g)
         ),
     })
 }

@@ -84,10 +84,20 @@ pub enum HolderPick {
 pub struct AddTool {
     name: String,
     tool: Tool,
+    /// Tool number (T/H) assigned at creation (#2442).
+    number: u32,
     /// The library holder's name and its drawn body.
     holder: Option<(String, ToolBody)>,
     /// Why the machine's default holder was not applied, when it was not.
     skipped: Option<String>,
+}
+
+impl AddTool {
+    /// Tool number assigned to this tool at creation.
+    #[must_use]
+    pub fn number(&self) -> u32 {
+        self.number
+    }
 }
 
 impl AddTool {
@@ -108,17 +118,23 @@ impl AddTool {
         if let Some(why) = tool.torch_refusal() {
             return Err(CommandError::Invalid(format!("tool '{name}': {why}")));
         }
-        if !tool.is_sane() {
-            return Err(CommandError::Invalid(format!(
-                "tool parameters must be finite and positive: {tool:?}"
-            )));
+        // #1186: the refusal names the tool and the rule it breaks.
+        if let Some(why) = tool.why_not_sane() {
+            return Err(CommandError::Invalid(format!("tool '{name}': {why}")));
         }
         if model::find_by_name(world, name).is_some() {
             return Err(CommandError::NameConflict(name.to_string()));
         }
+        let number = crate::tool_numbers::next_free(world).ok_or_else(|| {
+            CommandError::Invalid(format!(
+                "no free tool numbers remain ({})",
+                crate::tool_numbers::RANGE_TEXT
+            ))
+        })?;
         Ok(AddTool {
             name: name.to_string(),
             tool,
+            number,
             holder: None,
             skipped: None,
         })
@@ -184,7 +200,7 @@ impl Command for AddTool {
         };
         entity
             .entity_view(world)
-            .set(ToolDef { tool: self.tool.clone(), number: None });
+            .set(ToolDef { tool: self.tool.clone(), number: Some(self.number) });
         if let Some((_, body)) = &self.holder {
             crate::tool_body::set_body(world, &entity, Some(body));
         }
@@ -231,10 +247,8 @@ impl ChangeTool {
         if let Some(why) = next.torch_refusal() {
             return Err(CommandError::Invalid(format!("tool '{name}': {why}")));
         }
-        if !next.is_sane() {
-            return Err(CommandError::Invalid(format!(
-                "tool parameters must be finite and positive: {next:?}"
-            )));
+        if let Some(why) = next.why_not_sane() {
+            return Err(CommandError::Invalid(format!("tool '{name}': {why}")));
         }
         let Some(entity) = model::find_by_name(world, name) else {
             return Err(CommandError::NotFound(name.to_string()));

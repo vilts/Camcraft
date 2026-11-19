@@ -104,6 +104,7 @@ pub(super) fn operation_page(ui: &mut Ui, state: &mut State, name: &str, pal: &T
         crate::frame_cost::time("ui/properties.op.header", || prop_grid(ui, "op_header", |ui| header_rows(ui, state, &target, live.as_ref(), exists)));
         if exists {
             crate::frame_cost::time("ui/properties.op.status", || status(ui, state, &target, pal));
+            needs_review_banner(ui, state, &target);
         }
         ui.separator();
         // The named sections (M1.4's tabs): a kind shows only the sections
@@ -375,6 +376,29 @@ fn status(ui: &mut Ui, state: &mut State, target: &str, pal: &Tokens) {
         // View state, like every camera move: no command (AGENTS.md).
         crate::actions::frame_at(state, p);
     }
+}
+
+/// Migration warning banner for un-carriable parameters dropped on open (#1517).
+fn needs_review_banner(ui: &mut Ui, state: &mut State, target: &str) {
+    let notes = model::find_by_name(&state.world, target)
+        .map(|e| model::operation_meta_of(&state.world, &e).needs_review)
+        .unwrap_or_default();
+    if notes.is_empty() {
+        return;
+    }
+    let warn = text_inks(ui, &state.world).warn;
+    ui.group(|ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.colored_label(warn, format!("Needs review: {}", notes.join("; ")));
+            if ui
+                .button("Mark reviewed")
+                .on_hover_text("Clear the migration review warning so this operation can post")
+                .clicked()
+            {
+                state.pending.push_back(CommandKind::MarkOperationReviewed(target.to_owned()));
+            }
+        });
+    });
 }
 
 /// The fixed bottom bar, with the one refusal line above it.

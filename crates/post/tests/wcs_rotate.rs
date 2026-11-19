@@ -1,7 +1,7 @@
-//! #760: post::wcs_rotate transforms XY coordinates/arcs/cycles about
-//! OriginX/Y into a Z-rotated WCS frame (Bake by default, G68/ROT in
-//! Control mode when both machine and script declare support) and refuses
-//! unverified cases by name.
+//! #760: Bake keeps Setup/table coordinates and posts them relative to
+//! OriginX/Y without controller rotation. Control transforms XY moves,
+//! arcs and cycles into the rotated WCS frame and emits G68/ROT when both
+//! machine and script declare support. Unverified cases refuse by name.
 //!
 //! Provenance: RS-274 G68/G69 and DIN/ISO 840D ROT RPL coordinate rotation
 //! conventions; synthetic test streams are our own.

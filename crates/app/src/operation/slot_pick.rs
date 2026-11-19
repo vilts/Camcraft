@@ -38,7 +38,7 @@ pub fn slot_bound_of(world: &World, setup: Option<&str>, items: &[GeoSel]) -> Re
             let w = transform_point(Point3::new(p[0], p[1], p[2]), loc.pos, loc.rot);
             Point2::new(w.x, w.y)
         };
-        let label = format!("{} of '{}'", g.feature, g.entity);
+        let label = crate::pick::geo_label(world, g);
         let gone = || GenError::Invalid(format!("{label} is no longer in the model: re-pick it"));
         match g.feature {
             FeatureSel::Face(fid) => {

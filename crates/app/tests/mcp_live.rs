@@ -570,7 +570,7 @@ fn get_selection_reads_live_ui_selection_context_and_prompt_json_treats_it_read_
     assert_eq!(sc["selected_operation"], json!("Face1"));
     assert_eq!(
         sc["geometry_picks"],
-        json!([{ "model": "Block", "id": "chain:0x000000000000abcd" }])
+        json!([{ "model": "Block", "id": "chain:0x000000000000abcd", "name": "Edge of 'Block'" }])
     );
 
     // PromptJson fallback treats get_selection as read-only (no confirmation required).

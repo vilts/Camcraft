@@ -112,7 +112,8 @@ pub fn missing_source(
 
 /// The Z the operation's region lives at, resolved: the section/stadium
 /// plane for the depth kinds, the skim (or first stage) plane for Face.
-/// None when that height's reference has no source.
+/// Tilted heights use the generation fold coordinate, not setup Z.
+/// None when the reference has no source or the tilt has no direction.
 #[must_use]
 pub fn region_z(
     world: &flecs_ecs::prelude::World,
@@ -120,10 +121,12 @@ pub fn region_z(
     src: Option<&SrcRef>,
     params: &OpParams,
 ) -> Option<f64> {
+    let frame = OpFrame::new(setup.map(str::to_owned), params.tilt()).checked_frame().ok()?;
+    let resolve = |h| fold_height(world, setup, src, frame.as_ref(), h);
     match params {
         OpParams::Face { top_z, cut_z, .. } => top_z
-            .map(|t| resolve_height(world, setup, src, t))
-            .unwrap_or_else(|| resolve_height(world, setup, src, *cut_z)),
+            .map(resolve)
+            .unwrap_or_else(|| resolve(*cut_z)),
         OpParams::Contour { top_z, .. }
         | OpParams::Pocket { top_z, .. }
         // The roughing twins name the pocket's high station (M2.4 A),
@@ -171,15 +174,15 @@ pub fn region_z(
         | OpParams::Thread { top_z, .. }
         // The deburr window's ceiling names the same high station:
         // the ride's tips stand at or below it (M2.5 E B).
-        | OpParams::Deburr { top_z, .. } => resolve_height(world, setup, src, *top_z),
+        | OpParams::Deburr { top_z, .. } => resolve(*top_z),
         // The probe's station is its expected contact (#108).
         OpParams::Probe { target, .. } => Some(target[2]),
         // The plasma cut rides the plate's top (#670).
-        OpParams::PlasmaProfile(p) => resolve_height(world, setup, src, p.top_z),
+        OpParams::PlasmaProfile(p) => resolve(p.top_z),
         // The wire's profile is read on the workpiece's top (#532).
-        OpParams::WireContour(p) => resolve_height(world, setup, src, p.top_z),
+        OpParams::WireContour(p) => resolve(p.top_z),
         // The electrode enters at the work top (#541).
-        OpParams::SinkerBurn(p) | OpParams::SinkerSideBurn(crate::operation::SinkerSideBurnOp { burn: p, .. }) => resolve_height(world, setup, src, p.top_z),
+        OpParams::SinkerBurn(p) | OpParams::SinkerSideBurn(crate::operation::SinkerSideBurnOp { burn: p, .. }) => resolve(p.top_z),
     }
 }
 
@@ -221,9 +224,21 @@ pub fn resolve_params(
     src: Option<&SrcRef>,
     params: &OpParams,
 ) -> Result<ResolvedHeights, String> {
+    resolve_params_with(world, setup, src, params, &|h| resolve_height(world, setup, src, h))
+}
+
+/// [`resolve_params`] with the per-height resolve handed in: the 3+2
+/// fold (#2389) reads each reference along the tilted tool axis
+/// ([`super::tilt_heights::fold_height`]); the refusals stay word for word.
+pub fn resolve_params_with(
+    world: &flecs_ecs::prelude::World,
+    setup: Option<&str>,
+    src: Option<&SrcRef>,
+    params: &OpParams,
+    resolve: &dyn Fn(Height) -> Option<f64>,
+) -> Result<ResolvedHeights, String> {
     let req = |what: &str, h: Height| -> Result<f64, String> {
-        resolve_height(world, setup, src, h)
-            .ok_or_else(|| unresolved_msg(what, h, world, setup, src))
+        resolve(h).ok_or_else(|| unresolved_msg(what, h, world, setup, src))
     };
     let opt = |what: &str, h: Option<Height>| -> Result<Option<f64>, String> {
         h.map(|v| req(what, v)).transpose()

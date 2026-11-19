@@ -191,6 +191,7 @@ fn an_unresolved_relation_says_why_never_a_number() {
         &state.world,
         None,
         None,
+        None,
         &Height::of(R::TopOfSelection, 6.0),
         &Height::fixed(11.0),
     );
@@ -199,6 +200,139 @@ fn an_unresolved_relation_says_why_never_a_number() {
         Some("retract vs clearance unresolved: no operation selection in this context")
     );
     let corner =
-        crate::operations::corner_note(&state.world, None, None, &Height::of(R::TopOfSelection, 0.0), 1.0);
+        crate::operations::corner_note(&state.world, None, None, None, &Height::of(R::TopOfSelection, 0.0), 1.0);
     assert_eq!(corner, "the corner is unresolved: no operation selection in this context");
 }
+
+
+/// #2416: the bar has Y -1..11 and Z -20..10. A -90 measures
+/// heights along +Y. The nonzero origin Z catches a missing fold shift.
+fn asymmetric_tilted_pocket() -> State {
+    let mut params = pocket(
+        Height::of(R::TopOfStock, 10.0),
+        Height::of(R::TopOfStock, 0.0),
+        Height::of(R::TopOfStock, -1.0),
+    );
+    if let OpParams::Pocket { tilt, .. } = &mut params {
+        *tilt = Some(camcraft_app::operation::Tilt {
+            a_deg: -90.0, b_deg: 0.0, origin: [2.0, 0.0, 3.0], basis_version: 1,
+        });
+    }
+    let mut state = opened(params);
+    state.pending.push_back(CommandKind::SetStock {
+        shape: StockShape::Box { dx: 40.0, dy: 12.0, dz: 30.0 },
+        pos: [0.0, 5.0, -20.0],
+        yaw_deg: 0.0,
+    });
+    state.drain_actions();
+    state
+}
+
+#[test]
+fn tilted_height_planes_use_tool_axis_and_local_stock_corners() {
+    let state = asymmetric_tilted_pocket();
+    let frame = state.op_ui.params.tilt().expect("tilt").frame().expect("frame");
+    let lines = crate::interact::height_plane_lines(&state);
+    let clearance: Vec<_> = lines.iter().filter(|v| {
+        (0..3).all(|i| (v[3 + i] - crate::interact::CLEARANCE_RGB[i]).abs() < 1e-6)
+    }).collect();
+    assert_eq!(clearance.len(), 8, "four clearance edges");
+    // Tool diameter 4 gives a pad of 4. In local XY, stock bounds are
+    // X -22..18 and Y -7..23. The rectangle reaches X -26..22, Y -11..27.
+    let expected = [(-26.0, -11.0), (22.0, -11.0), (22.0, 27.0), (-26.0, 27.0)];
+    for vertex in &clearance {
+        let point = frame.to_local(Point3::new(f64::from(vertex[0]), f64::from(vertex[1]), f64::from(vertex[2])));
+        assert!((point.z - 21.0).abs() < 1e-5, "clearance along tool axis: {point:?}");
+        assert!(expected.iter().any(|&(x, y)| (point.x - x).abs() < 1e-5 && (point.y - y).abs() < 1e-5), "local stock corner: {point:?}");
+    }
+    for (x, y) in expected {
+        let want = frame.to_world(Point3::new(x, y, 21.0));
+        assert!(clearance.iter().any(|v| (f64::from(v[0]) - want.x).abs() < 1e-5
+            && (f64::from(v[1]) - want.y).abs() < 1e-5
+            && (f64::from(v[2]) - want.z).abs() < 1e-5), "world corner: {want:?}");
+    }
+}
+
+#[test]
+fn tilted_height_echoes_use_tool_axis_on_asymmetric_stock() {
+    let mut harness = heights_tab(asymmetric_tilted_pocket());
+    harness.run();
+    for echo in ["(= 21.000 along tool axis)", "(= 11.000 along tool axis)", "(= 10.000 along tool axis)"] {
+        assert!(harness.query_by_label(echo).is_some(), "the row echoes {echo}");
+    }
+    assert!(harness.query_by_label_contains("(= Z ").is_none(), "tilted values name their axis");
+}
+
+#[test]
+fn invalid_draft_tilt_hides_height_planes_and_names_the_missing_direction() {
+    let mut state = asymmetric_tilted_pocket();
+    if let OpParams::Pocket { tilt: Some(tilt), .. } = &mut state.op_ui.params {
+        tilt.a_deg = f64::NAN;
+    }
+    assert!(crate::interact::height_planes(&state).is_empty(), "invalid tilt has no planes");
+    assert!(crate::interact::height_plane_lines(&state).is_empty(), "invalid tilt has no lines");
+    let mut harness = heights_tab(state);
+    harness.run();
+    assert_eq!(harness.query_all_by_label("(unresolved: the 3+2 index commands no direction - its angles are not finite)").count(), 3, "each invalid tilt row names its cause");
+    assert!(harness.query_by_label_contains("(= Z ").is_none(), "invalid tilt cannot use setup Z");
+}
+
+
+#[test]
+fn tilted_height_region_level_uses_the_same_fold() {
+    let state = asymmetric_tilted_pocket();
+    let level = camcraft_app::operation::region_z(
+        &state.world, None, Some(&state.op_ui.src()), &state.op_ui.params,
+    ).expect("tilted region level");
+    assert!((level - 14.0).abs() < 1e-9, "top 11 along tool axis plus origin Z 3: {level}");
+    let mut invalid = state.op_ui.params.clone();
+    if let OpParams::Pocket { tilt: Some(tilt), .. } = &mut invalid {
+        tilt.a_deg = f64::NAN;
+    }
+    assert_eq!(camcraft_app::operation::region_z(&state.world, None, Some(&state.op_ui.src()), &invalid), None);
+}
+
+#[test]
+fn tilted_height_echoes_follow_an_unapplied_tilt_edit() {
+    let mut state = asymmetric_tilted_pocket();
+    if let OpParams::Pocket { tilt: Some(tilt), .. } = &mut state.op_ui.params {
+        tilt.a_deg = 0.0;
+        tilt.b_deg = 180.0;
+    }
+    let mut harness = heights_tab(state);
+    harness.run();
+    // The underside is Z -20. From origin Z 3, it lies 23 along -Z.
+    for echo in ["(= 33.000 along tool axis)", "(= 23.000 along tool axis)", "(= 22.000 along tool axis)"] {
+        assert!(harness.query_by_label(echo).is_some(), "draft tilt echoes {echo}");
+    }
+}
+
+
+#[test]
+fn tilted_fixed_height_echoes_keep_the_generation_origin_shift() {
+    let mut state = asymmetric_tilted_pocket();
+    if let OpParams::Pocket { clearance_z, top_z, bottom_z, .. } = &mut state.op_ui.params {
+        *clearance_z = Height::fixed(30.0);
+        *top_z = Height::fixed(13.0);
+        *bottom_z = Height::fixed(12.0);
+    }
+    let mut harness = heights_tab(state);
+    harness.run();
+    for echo in ["(= 27.000 along tool axis)", "(= 10.000 along tool axis)", "(= 9.000 along tool axis)"] {
+        assert!(harness.query_by_label(echo).is_some(), "fixed height echoes {echo}");
+    }
+}
+
+
+#[test]
+fn tilted_height_labels_show_local_axis_distance() {
+    let state = asymmetric_tilted_pocket();
+    let labels: Vec<_> = crate::interact::overlay_labels(&state, 4.0 / 3.0)
+        .into_iter().map(|(_, _, text)| text).collect();
+    for expected in ["Clearance 21.00 along tool axis", "Top 11.00 along tool axis", "Bottom 10.00 along tool axis"] {
+        assert!(labels.iter().any(|text| text.contains(expected)), "viewport label {expected}: {labels:?}");
+    }
+}
+
+#[path = "heights_note_tests.rs"]
+mod notes;

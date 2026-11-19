@@ -158,14 +158,34 @@ pub fn translate(records: Vec<Record>, f: Flip) -> Result<Vec<Record>, Vec<Strin
 /// [`translate`], with `probing` true for a script whose probing blocks
 /// are verified on the mirrored stream (`probeAxisInversion = true`).
 pub fn translate_with(records: Vec<Record>, f: Flip, probing: bool) -> Result<Vec<Record>, Vec<String>> {
+    translate_rules(records, f, Rules { probing, helix: false, cause: "an inverted axis" })
+}
+
+/// What one caller of the mirror carries (#1649): the machine door
+/// ([`apply`]) keeps its #374 rules; a flipped WCS (`wcs_flip`) also
+/// carries a helix, which its own equivalence suite pins.
+#[derive(Clone, Copy, Debug)]
+pub struct Rules<'a> {
+    /// Probing records mirror (the script declares `probeAxisInversion`).
+    pub probing: bool,
+    /// A helical arc mirrors: the reflection is an isometry, so the arc
+    /// reverses in its plane and the travel along the normal stays.
+    pub helix: bool,
+    /// The refusal's last words: "an inverted axis", "a flipped WCS axis".
+    pub cause: &'a str,
+}
+
+/// The mirror under a caller's [`Rules`].
+pub fn translate_rules(records: Vec<Record>, f: Flip, rules: Rules) -> Result<Vec<Record>, Vec<String>> {
     if !f.any() {
         return Ok(records);
     }
+    let Rules { probing, helix, cause } = rules;
     let (sx, sy, sz) = (Flip::sign(f.x), Flip::sign(f.y), Flip::sign(f.z));
     let mut refused: Vec<String> = Vec::new();
     let mut refuse = |op: &str, what: &str| {
         let who = if op.is_empty() { String::new() } else { format!("operation {op}: ") };
-        let line = format!("{who}{what} is not supported for an inverted axis yet");
+        let line = format!("{who}{what} is not supported for {cause} yet");
         if !refused.contains(&line) {
             refused.push(line);
         }
@@ -236,7 +256,7 @@ pub fn translate_with(records: Vec<Record>, f: Flip, probing: bool) -> Result<Ve
                         ArcPlane::Xz => (pos.1, m.y),
                         ArcPlane::Yz => (pos.0, m.x),
                     };
-                    if (normal.1 - normal.0).abs() > 1e-9 {
+                    if !helix && (normal.1 - normal.0).abs() > 1e-9 {
                         refuse(&op, "a helical arc");
                     }
                     let (ia, ib) = f.in_plane(m.plane);

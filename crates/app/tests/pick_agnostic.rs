@@ -222,9 +222,7 @@ fn every_pick_of_the_bore_cuts_the_same_bytes_under_hsm_adaptive() {
     let (world, name) = user_part();
     let picks = bore_picks(&world, &name);
     assert_eq!(picks.len(), 4);
-    for params in [pocket(PocketStrategy::Adaptive, 20.0, 0.0), adaptive2d(20.0, 0.0)] {
-        all_identical(&world, &name, &picks, &params);
-    }
+    all_identical(&world, &name, &picks, &adaptive2d(20.0, 0.0));
 }
 
 fn level_feeds(t: &Toolpath, z: f64) -> Vec<Move> {
@@ -255,8 +253,8 @@ fn the_chosen_strategy_runs_on_the_round_region_never_a_substitute() {
     // (A helix entry: the HSM spiral opens from its bore; out of a
     // tool-size plunge it cannot hold the load and says so by falling
     // back to the rings.)
-    let mut hp = pocket(PocketStrategy::Adaptive, 20.0, 0.0);
-    if let OpParams::Pocket { entry, helix_radius, .. } = &mut hp {
+    let mut hp = adaptive2d(20.0, 0.0);
+    if let OpParams::Adaptive2D { entry, helix_radius, .. } = &mut hp {
         *entry = Entry3D::Helix;
         *helix_radius = 2.0;
     }
@@ -290,7 +288,7 @@ fn the_chosen_strategy_runs_on_the_round_region_never_a_substitute() {
 fn a_bottom_below_the_picked_floor_is_refused_by_name_for_every_pick() {
     let (world, name) = user_part();
     for (label, sel) in bore_picks(&world, &name) {
-        let err = generate(&world, &name, &[sel], &pocket(PocketStrategy::Adaptive, 20.0, -5.0))
+        let err = generate(&world, &name, &[sel], &adaptive2d(20.0, -5.0))
             .err()
             .unwrap_or_else(|| panic!("{label}: a pocket below the bore's floor must refuse"));
         assert!(err.contains("Bottom Z sits below the selected pocket's floor"), "{label}: {err}");
@@ -331,11 +329,11 @@ fn block_with_boss() -> Mesh {
     Mesh::from_facets(f)
 }
 
-/// The island law (M11.4 A) under each of `strategies`: the floor face,
+/// The island law (M11.4 A) under each of `plans`: the floor face,
 /// the rim runs at the mouth and at the floor, and face + rim cut the
 /// same bytes, and no feed below the boss top enters its tool-grown
 /// footprint.
-fn island_law(strategies: &[PocketStrategy]) {
+fn island_law(plans: &[OpParams]) {
     let (world, name) = world_with(ImportModel::from_mesh("part", block_with_boss()), 0.0, 20.0);
     // The pocket's floor face (half-width 18: circumradius 25.46) - its
     // loops carry the boss as a hole.
@@ -372,19 +370,18 @@ fn island_law(strategies: &[PocketStrategy]) {
         ("floor rim runs".to_owned(), floor),
         ("face + mouth rim".to_owned(), with_face),
     ];
-    for &strategy in strategies {
-        let params = pocket(strategy, 20.0, 5.0);
-        identical_spellings(&world, &name, &spelled, &params);
+    for params in plans {
+        identical_spellings(&world, &name, &spelled, params);
         // No feed with its center over the boss's tool-grown footprint
         // below the boss top (r = 5 tool around a 3 mm half-width boss).
-        let (t, _) = generate(&world, &name, &[face], &params).expect("generates");
+        let (t, _) = generate(&world, &name, &[face], params).expect("generates");
         // Distance from a center to the boss square; the tool edge must
         // stand off it by the radius (the arc fitter's 0.01 band aside).
         let off = |x: f64, y: f64| (x.abs() - 3.0).max(0.0).hypot((y.abs() - 3.0).max(0.0));
         for m in t.moves.iter().filter(|m| m.kind == MoveKind::Feed && m.to.z < 12.0) {
             assert!(
                 off(m.to.x, m.to.y) >= 5.0 - 0.011,
-                "{strategy:?}: feed into the boss at {:?}",
+                "{params:?}: feed into the boss at {:?}",
                 m.to
             );
         }
@@ -395,7 +392,7 @@ fn island_law(strategies: &[PocketStrategy]) {
 /// the boss standoff, in seconds.
 #[test]
 fn a_face_with_an_island_and_its_rim_loop_cut_the_same_bytes_around_the_boss() {
-    island_law(&[PocketStrategy::Zigzag]);
+    island_law(&[pocket(PocketStrategy::Zigzag, 20.0, 5.0)]);
 }
 
 /// Heavy lane: the island law under the HSM Adaptive plan too (five plans
@@ -404,7 +401,9 @@ fn a_face_with_an_island_and_its_rim_loop_cut_the_same_bytes_around_the_boss() {
 #[test]
 #[ignore = "heavy lane: HSM adaptive around the boss island, five plans, ~12 min debug"]
 fn a_face_with_an_island_and_its_rim_loop_cut_the_same_bytes_around_the_boss_full() {
-    island_law(&[PocketStrategy::Adaptive, PocketStrategy::Zigzag]);
+    let plans = [adaptive2d(20.0, 5.0), pocket(PocketStrategy::Zigzag, 20.0, 5.0)];
+    assert!(matches!(plans[0], OpParams::Adaptive2D { .. }), "the heavy island law must exercise Adaptive2D");
+    island_law(&plans);
 }
 
 #[test]
@@ -415,7 +414,7 @@ fn a_pick_enclosing_only_part_material_is_refused_not_pocketed() {
     let (world, name) = world_with(ImportModel::from_mesh("part", block_with_boss()), 0.0, 20.0);
     let top = picks_of(&world, &name, |r, z, _, _| (r - 18f64.sqrt()).abs() < 0.01 && (z - 12.0).abs() < 1e-9);
     let face = top.iter().find(|(l, _)| l.starts_with("face")).map(|(_, s)| *s).expect("boss top face");
-    let Err(err) = generate(&world, &name, &[face], &pocket(PocketStrategy::Adaptive, 12.0, 5.0)) else {
+    let Err(err) = generate(&world, &name, &[face], &adaptive2d(12.0, 5.0)) else {
         panic!("a pick of solid part material must refuse");
     };
     assert!(err.contains("the part fills the whole selection"), "{err}");

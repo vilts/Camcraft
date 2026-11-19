@@ -3824,6 +3824,7 @@ fn drilled_block() -> camcraft_app::geometry::Mesh {
 fn drill_params(holes: Vec<Hole>, top_z: f64, clearance_z: f64) -> OpParams {
     OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(clearance_z),
         retract_z: None,
         top_z: Height::fixed(top_z),
@@ -3846,7 +3847,15 @@ fn drill_op_recognizes_from_the_model_then_machines_clean() {
     let world = new_world();
     let mut history = History::default();
     history.execute(&world, ImportModel::from_mesh("pblock", drilled_block()));
-    add_tool(&world, &mut history, "DR-0400");
+    let dr4 = camcraft_app::tools::catalog()
+        .into_iter()
+        .find(|(n, _)| *n == "DR-0400")
+        .map(|(_, mut t)| {
+            t.flute_len = 16.0;
+            t
+        })
+        .expect("DR-0400 in catalog");
+    history.execute(&world, AddTool::new(&world, "DR-0400-16", dr4).expect("tool"));
     let e = model::find_by_name(&world, "pblock").expect("part");
     let facets = model::facets_of(&world, &e).expect("mesh");
     let holes = drilling::recognize(&facets);
@@ -3857,7 +3866,7 @@ fn drill_op_recognizes_from_the_model_then_machines_clean() {
         CreateOperation::new(
             &world,
             "Drill1",
-            "DR-0400",
+            "DR-0400-16",
             SrcRef::Entity("pblock".into()),
             drill_params(holes.clone(), 10.0, 25.0),
         )
@@ -3872,13 +3881,18 @@ fn drill_op_recognizes_from_the_model_then_machines_clean() {
     assert_eq!(cache.warnings, Vec::new(), "{:?}", cache.warnings);
     assert_eq!(cache.path.cycles.len(), 1);
     let c = &cache.path.cycles[0];
-    // Auto's depth law: 11 mm of cut (10 + the through exit) in a 4 mm
-    // drill - past d, within 4d - so the peck shape, with the exit
-    // allowance recorded on the cycle the post will read.
+    // Auto's depth law: 12.202 mm of cut (10 + 1 through exit + 1.202 point) in
+    // a 4 mm drill - past d, within 4d - so the peck shape, with the full-diameter
+    // exit + drill point recorded on the cycle the post will read.
     assert_eq!(c.kind, CycleKind::Peck);
     assert_eq!((c.xy.x, c.xy.y), (0.0, 0.0));
     assert_eq!(c.entry_z, 10.0);
-    assert_eq!(c.bottom_z, -1.0);
+    let expected_bottom = -(1.0 + 2.0 / 59.0_f64.to_radians().tan());
+    assert!(
+        (c.bottom_z - expected_bottom).abs() < 1e-6,
+        "bottom_z expected {expected_bottom}, got {}",
+        c.bottom_z
+    );
     assert!(!c.xy.x.is_nan() && c.first_move < cache.path.moves.len());
 }
 
@@ -3913,7 +3927,7 @@ fn a_hole_deeper_than_the_drill_reaches_is_refused_by_name() {
         .expect("create"),
     );
     let err = GenerateOperation::new(&world, "Deep1").err().map(|e| e.to_string()).unwrap_or_default();
-    for s in ["131.000 mm deep from the stock surface", "DR-0400", "12.000 mm"] {
+    for s in ["132.202 mm deep from the stock surface", "DR-0400", "12.000 mm"] {
         assert!(err.contains(s), "the refusal names '{s}': {err:?}");
     }
     assert!(cache(&world, "Deep1").is_none(), "a refused hole caches no path");

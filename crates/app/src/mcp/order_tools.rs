@@ -11,7 +11,7 @@
 
 use super::edit::find_op;
 use super::tools::{opt_str, req_str, Tool};
-use crate::commands::{RenameOperation, ReorderOperation};
+use crate::commands::{MarkOperationReviewed, RenameOperation, ReorderOperation};
 use crate::model;
 use crate::program_entry;
 use crate::script::Env;
@@ -21,6 +21,7 @@ use serde_json::{json, Map, Value};
 pub(super) const TOOLS: &[Tool] = &[
     Tool { name: "rename_operation", description: "Change an operation's display name. Its stable key (what scripts, saved files and other tools address it by) and its place in the program do not change; naming it back to its key clears the display name. Names are unique and cannot take another operation's key. One undo step.", schema: s_rename, run: rename_operation },
     Tool { name: "reorder_operation", description: "Move an operation before or after another operation of the SAME setup, as the browser's drag and drop does. The order is saved with the project and is the order the program posts, simulates and computes rest material in; moving between setups is refused. Answers with that setup's operations in their new order. One undo step.", schema: s_reorder, run: reorder_operation },
+    Tool { name: "mark_operation_reviewed", description: "Clear an operation's migration needs-review warning once you have inspected the migrated operation. Refused by name when the operation is not flagged. One undo step.", schema: s_mark_reviewed, run: mark_operation_reviewed },
 ];
 
 fn rename_operation(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
@@ -77,5 +78,21 @@ fn s_reorder() -> Value {
             "place": { "type": "string", "enum": ["before", "after"], "description": "Before (default) or after the target." }
         }),
         &["name", "target"],
+    )
+}
+
+fn mark_operation_reviewed(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
+    let key = find_op(env, req_str(a, "name")?)?;
+    let cmd = MarkOperationReviewed::new(&env.world, &key).map_err(|e| e.to_string())?;
+    env.history.execute(&env.world, cmd);
+    Ok(json!({ "operation": key, "needs_review": [] }))
+}
+
+fn s_mark_reviewed() -> Value {
+    obj(
+        json!({
+            "name": { "type": "string", "description": "Operation name (key or display name)." }
+        }),
+        &["name"],
     )
 }

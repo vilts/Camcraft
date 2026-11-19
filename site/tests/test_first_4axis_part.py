@@ -59,7 +59,7 @@ UI_STRINGS = {
     "Shank diameter": UI + "tool_settings.rs",
     "Spindle rpm": UI + "tool_settings.rs",
     "Add tool": UI + "tool_settings.rs",
-    "Tool number (0 = list position)": UI + "tool_settings.rs",
+    "Tool number (0 = next free)": UI + "tool_settings.rs",
     "Slot": "crates/app/src/operation/kinds.rs",
     "Milling 2D": "crates/app/src/operation/kinds.rs",
     "Tool": UI + "op_page.rs",
@@ -110,7 +110,8 @@ NOT_UI = {
 # Text the page quotes from a refusal or a note, and the source that holds it.
 QUOTED = {
     "simultaneous 4-axis motion": POST,
-    "(A changes inside the operation) - not confirmed on PathPilot; this post indexes A between operations only": POST,
+    "states no A feed rate": POST,
+    "A counts on through 360": POST,
     "the A axis about X cannot reach it": POST,
     "is beyond the A axis travel": POST,
     "arc on an indexed A": POST,
@@ -177,8 +178,9 @@ class FirstFourAxisPart(unittest.TestCase):
         machine = json.loads(MACHINE.read_text())
         name = machine["general"]["model"]
         self.assertIn(f"`{name}`", text)
-        self.assertIn(f'"{name}"', (ROOT / "crates/app/src/posting.rs").read_text())
-        self.assertIn('"Tormach PathPilot"', (ROOT / "crates/app/src/posting.rs").read_text())
+        self.assertIn(f'("{name}", AssetFile("{MACHINE.name}"))',
+                      (ROOT / "crates/app/src/posting_files.rs").read_text())
+        self.assertIn('"Tormach PathPilot"', (ROOT / "crates/app/src/posting_files.rs").read_text())
         self.assertIn("`Tormach PathPilot`", text)
         self.assertEqual(project()["machine"]["machine"]["model"], name)
         self.assertEqual(project()["post"], {"named": "Tormach PathPilot"})
@@ -187,8 +189,8 @@ class FirstFourAxisPart(unittest.TestCase):
                   if p.get("type") == "rotary"]
         self.assertEqual(len(rotary), 1)
         self.assertEqual((rotary[0]["name"], rotary[0]["axis"]), ("A", [1.0, 0.0, 0.0]))
-        self.assertEqual(rotary[0]["travel"], {"min": -360.0, "max": 360.0})
-        self.assertIn("travel of -360 to 360 degrees", flat(text))
+        self.assertNotIn("travel", rotary[0])
+        self.assertIn("with no travel limit", flat(text))
         self.assertIn(f"`nose_to_axis` {rotary[0]['nose_to_axis']}", flat(text))
 
     def test_stock_and_model_numbers_are_the_projects(self):
@@ -324,11 +326,31 @@ class FirstFourAxisPart(unittest.TestCase):
         first_run = flat((guide / "getting-started/first-run.md").read_text())
         self.assertRegex(first_run, r"first-router-part\.md\).{0,140}first-4axis-part\.md\)")
 
-    def test_continuous_work_is_stated_as_refused_not_as_a_walkthrough(self):
+    def test_continuous_work_is_pointed_at_not_walked_through(self):
         text = flat(page())
         self.assertIn("issues/796", text)
-        self.assertIn("refuses it today", text)
-        self.assertNotIn("G93", text)
+        self.assertIn("is not walked through here", text)
+        for section in (text.split("## The part and how it is held")[0],
+                        text.split("## What the post refuses")[1]):
+            with self.subTest(section=section[:60]):
+                self.assertIn("hand-written motion tests in the PathPilot simulator "
+                              "confirm the control behavior", section)
+                self.assertIn("posted continuous program still needs a simulator "
+                              "run and a hardware check", section)
+                self.assertNotIn("has been run in the PathPilot simulator only", section)
+
+    def test_continuous_feed_guide_states_the_tormach_exception_consistently(self):
+        text = flat((ROOT / "site/content/guide/multi-axis/continuous-4-axis.md")
+                    .read_text())
+        feed = text.split("## Feed on a rotary move")[1].split("## Posts")[0]
+        self.assertIn("`tormach.cps` uses inverse-time feed (`G93`) for "
+                      "simultaneous A-about-X moves", feed)
+        self.assertIn("The other shipped posts write a plain F word without "
+                      "inverse-time or degrees-per-minute conversion", feed)
+        self.assertIn("For those posts, a control that requires inverse-time feed", feed)
+        missing = text.split("## Not implemented")[1]
+        self.assertIn("Inverse-time feed in posts other than `tormach.cps`", missing)
+        self.assertIn("Tormach supports `G93` for simultaneous A-about-X moves only", missing)
 
 
 if __name__ == "__main__":

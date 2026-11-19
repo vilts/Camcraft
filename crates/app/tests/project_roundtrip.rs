@@ -831,17 +831,17 @@ fn pocket_entry_family_is_a_step_up_on_the_wire() {
     assert_eq!(*helix_radius, 1.0, "absent means the seed's lead radius");
     assert_eq!(*optimal_load, camcraft_app::load::DEFAULT_OPTIMAL_LOAD, "absent means the law's 45 degrees, as a load");
 
-    // The explicit shape, hand-written so the tags are pinned.
+    // The explicit shape on a pre-v64 Pocket with Adaptive migrates on open to
+    // Adaptive2D (Spiral), carrying entry, helix_radius, and engagement load (#1517).
     let text = plain
         .replace("\"strategy\": \"zigzag\"", "\"strategy\": \"adaptive\", \"max_engagement\": 30.0, \"entry\": \"helix\", \"helix_radius\": 2.5");
     let world2 = new_world();
-    project::open(&world2, &text).expect("the grown pocket grammar must read");
+    project::open(&world2, &text).expect("the grown pocket grammar must read and migrate");
     let e2 = model::find_by_name(&world2, "Op1").expect("op");
     let o2 = model::operation_of(&world2, &e2).expect("operation");
-    let OpParams::Pocket { strategy, entry, helix_radius, optimal_load, .. } = &o2.params else {
-        panic!("pocket params expected, got {:?}", o2.params);
+    let OpParams::Adaptive2D { entry, helix_radius, optimal_load, .. } = &o2.params else {
+        panic!("adaptive2d params expected after migration, got {:?}", o2.params);
     };
-    assert_eq!(*strategy, PocketStrategy::Adaptive);
     assert_eq!(*entry, camcraft_app::machining3d::Entry3D::Helix);
     assert_eq!(*helix_radius, 2.5);
     // M11.4 B: the legacy degree word converts exactly on load.

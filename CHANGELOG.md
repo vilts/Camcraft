@@ -10,6 +10,65 @@ v0.8.1).
 
 | Commit | Date | Change | Version |
 |---|---|---|---|
+| 83867fd71 | 2026-11-18 | In the Properties pane, Tab and Shift+Tab move between the value fields, and Enter commits a value and moves to the next field of its group (#2516, PR #2555) | 0.24.0 |
+| 1e3812bf1 | 2026-11-18 | 2D Contour: the tab width is now the width of the bridge that stays on the part (the tab window on the tool path is the tab width plus the tool diameter). Before, a tab width equal to or less than the tool diameter left no tab and the part came free. Saved projects with tabs get wider gaps on the next generate (#2480, PR #2486) | 0.24.0 |
+| 0b91a0743 | 2026-11-18 | A Drill operation names each hole wider than its drill, at Detect holes and as a warning on the toolpath that does not hold the post (a pilot drill stays possible) (#2496, PR #2519) | 0.24.0 |
+| c4dfb30b7 | 2026-11-18 | Property labels use the width of wider panels and keep compact controls clear in narrow panels (#2295, PR #2491) | 0.24.0 |
+| f8a986954 | 2026-11-18 | Each picked face, bore, cylinder, curved face, edge and vertex shows one shared, user-friendly name instead of a hexadecimal id (#2403, PR #2484) | 0.24.0 |
+| 37bde5e9a | 2026-11-18 | The grblHAL and Tormach posts write P0 on the opening G86 bore cycle block when the dwell is 0 (#2362, PR #2532) | 0.24.0 |
+| 289302a18 | 2026-11-18 | BREAKING: 2D Pocket no longer has the Adaptive strategy. A project older than format 69 migrates such a Pocket to 2D Adaptive (Spiral), and a dropped setting holds the post until it is reviewed; project files are now v69 (#1517, PR #2253) | 0.24.0 |
+| 6a3e211f2 | 2026-11-18 | Whole-model 2D Contour continues across lower stepped, chamfered and slotted outlines down to Bottom Z with tabs, or refuses by name if a lower band cannot be sectioned (#2436, PR #2460) | 0.24.0 |
+| fcc4c9cc4 | 2026-11-18 | The shipped example NC programs keep LF line endings in Windows checkouts (#2523, PR #2531) | 0.24.0 |
+| 90e016a6e | 2026-11-18 | BREAKING: through-hole break-through includes the drill point length by default (`Full diameter` or `Tip`); the stock simulation cuts twist-drill cones; MCP `list_operation_types` shows `break_through`. A project older than format 68 keeps the Tip behaviour; project files are now v68 (#2441, PR #2504) | 0.24.0 |
+| aeb1aca92 | 2026-11-18 | The Tormach 770MX + microARC 4 machine no longer has the unverified -360..360 A-travel limit, so continuous multi-turn A programs post (#2471, PR #2513) | 0.24.0 |
+| c0ae2c578 | 2026-11-18 | The Heights tab shows clearance advice before Generate when the clearance plane is inside the raw stock (#2131, PR #2498) | 0.24.0 |
+| c9b1366ac | 2026-11-18 | Tools get stable, lowest-unused tool numbers when they are made, imported, or loaded from an older project (#2442, PR #2488) | 0.24.0 |
+| 0ec76a0cd | 2026-11-18 | A setup's Flip X / Flip Y no longer refuses generation and the post: Fanuc and Haas programs mirror the flipped axis, with the arc direction and compensation side kept correct. A flipped Z, a probe operation in a flipped setup and the other posts still refuse by name (#1649, PR #2492) | 0.24.0 |
+| 385a23a15 | 2026-11-18 | The viewport bar has a Rotate mode: drag a ring on the selected part to turn it about an axis through its centre, as one undo step (#2047, PR #2185) | 0.24.0 |
+| 2f965f7d9 | 2026-11-18 | Whole-model and stock-source 2D clearing names unreached stock corners in the notes (and MCP generate/verify) and keeps standing part islands blocked when it extends outside the stock (#2438, PR #2503) | 0.24.0 |
+| 61321fe50 | 2026-11-18 | The Adaptive 3D air-entry note is correct for tools that are not centre-cutting (#2468, PR #2477) | 0.24.0 |
+| bd0400ebb | 2026-11-18 | Viewport: a Move button in the bottom bar puts axis handles on the selected part; a drag moves the part along that axis, one undo step for each drag (#1198, PR #1330) | 0.24.0 |
+| 2c789ed6d | 2026-11-18 | The first-part NC example is refreshed and the router NC example ships, with CLI regression pins for both (#2422, PR #2499) | 0.24.0 |
+| 0727d7e9b | 2026-11-18 | Dropdown widths, trigger gaps and row spacing follow the theme tokens and fit narrow windows (#2065, PR #2457) | 0.24.0 |
+| e2ed62d0b | 2026-11-18 | A tool refused for unusable numbers (project load, add or edit tool, library import) names the tool and the rule it breaks, instead of printing the whole definition (#1186, PR #2236) | 0.24.0 |
+| b48c65828 | 2026-11-18 | WCS page: Set origin sits in the footer beside Close, unapplied edits are flagged, and the page and the setup sheet say where the origin is in words ("top of stock, front-left corner") (#870, PR #1209) | 0.24.0 |
+| ee49b0680 | 2026-11-18 | The machine and post lists follow their folders: new files appear, removed files disappear, and Refresh scans again (#2380, PR #2414) | 0.24.0 |
+| b629dc7e8 | 2026-11-18 | All ten 5-axis and rotary operations work in aligned setups, with turned drive chains and fitted rotary axes (#2286, PR #2433) | 0.24.0 |
+| b3cdba2a1 | 2026-11-18 | 2D Contour joins picked open contour runs and offsets inside corners correctly (#2277, PR #2487) | 0.24.0 |
+| 210984013 | 2026-11-18 | The Setup page's machine Library list shows your own machines first, then the shipped ones; "Load other" opens in your user machines folder (#2358, PR #2370) | 0.24.0 |
+| 42fd331ff | 2026-11-18 | The perspective near plane moves with the dolly distance, and the orthographic near plane no longer clips through geometry while zooming (PR #1689) | 0.24.0 |
+| 0ea577707 | 2026-11-18 | Tormach PathPilot post: a move with no A angle inside an operation indexed away from A0 is refused by name; before, the post turned A back to A0 in the middle of the operation (#2473, PR #2490) | 0.24.0 |
+| 60739b035 | 2026-11-18 | Desktop startup keeps GPU adapter and driver diagnostics, panic and failure backtraces, and log-location and backend-retry guidance (#2421, PR #2459) | 0.24.0 |
+| a94eb0ae8 | 2026-11-18 | Parallel and the other raster 3D finishes cross a hole or slot narrower than the tool in one feed, with no retract and no plunge (#2431, PR #2478) | 0.24.0 |
+| 7bcc13a4b | 2026-11-18 | A 2D Chamfer with no picked edges on an edge that is already chamfered rides the wall under the bevel (the tip no longer cuts a V into the part), and verify blocks a 2D Chamfer whose cone tip stands inside the part (#2435, PR #2450) | 0.24.0 |
+| 3e5d1cc7f | 2026-11-18 | The opening approach of each milling operation starts over the setup's WCS origin, not the world origin, in the viewport, the simulation and the program start point (#2382, PR #2420) | 0.24.0 |
+| 983f527bd | 2026-11-18 | Adaptive 3D Pocket cuts the stock ring around a whole model from the air outside the stock where the plan is clean (up to 2 tool radii past the stock side, passes joined by microlifts, a plunge only where proved clear); a tagged fixture in that band refuses the operation by name (#1950, PR #2035) | 0.24.0 |
+| b25aae66a | 2026-11-18 | Tormach cumulative A-travel refusals explain the Rotary Offset seam coverage and name a verified wider-travel machine (#2344, PR #2386) | 0.24.0 |
+| 9af6c3f9b | 2026-11-17 | Example catalog (`examples/catalog/`, `cam.call`, `.camscript`, `cargo xtask catalog`), seeded with `2d/first-part` (#2393, PR #2447) | 0.24.0 |
+| cbbd22e5e | 2026-11-17 | Tilted viewport height planes and height text use the tool axis and the shared height resolver (#2416, PR #2429) | 0.24.0 |
+| 9e611f0c4 | 2026-11-17 | MCP can delete a model as an undoable step; a model still used by operations, stock or fixtures is refused by name (#2444, PR #2455) | 0.24.0 |
+| 009238989 | 2026-11-17 | Tormach lathe G76 finish-allowance refusals tell you to regenerate threading operations that have cached thread records (#1843, PR #2454) | 0.24.0 |
+| 90c3f768a | 2026-11-17 | Generate without a name regenerates operations made stale by earlier generations in the same call (#2439, PR #2449) | 0.24.0 |
+| 737cc9979 | 2026-11-17 | The simulation draws the stock body again; playback no longer starts from the finished part hidden inside the model (#2396, PR #2446) | 0.24.0 |
+| 5f2ea4bd7 | 2026-11-17 | Threading: optional in-pass chip-break dips on roughing passes, posted as continuous G32 X Z F segments by the Fanuc lathe post (#419, PR #468) | 0.24.0 |
+| c0c92ee86 | 2026-11-17 | Library and UI diagnostics go through the same filtered terminal log as the app (CAMCRAFT_LOG / RUST_LOG); the standalone camcraft-cl, -geometry, -motion, -sim and -tools programs print them too (#163, PR #2110) | 0.24.0 |
+| ea64d16b6 | 2026-11-17 | The post engine reports script errors at the user's own line and column, refuses endless loops, deep recursion and oversized output, and has a blank post template and sample preview streams (#2069, PR #2115) | 0.24.0 |
+| 409ca5052 | 2026-11-17 | A tilted (3+2) operation measures Top/Bottom of stock, Top/Bottom of model and Work offset heights along its tool axis, not as the setup's Z (#2389, PR #2418) | 0.24.0 |
+| 3522b7ff8 | 2026-11-17 | Part alignment is accepted on verified Lathe, MillTurn, Plasma, WireEdm and SinkerEdm operations (#2287, PR #2430) | 0.24.0 |
+| c00f3a6c7 | 2026-11-17 | A Donate button in the top bar opens the project funding link and reports a browser launch failure (#2385, PR #2417) | 0.24.0 |
+| 7b36d26d6 | 2026-11-17 | Bake says that it posts table coordinates without a control rotation, and warns operators not to add a rotation on the control (#2359, PR #2419) | 0.24.0 |
+| 7ac7d52cd | 2026-11-17 | The User Guide has 13 reproducible screenshots rendered from demo projects (`cargo xtask docs-images`) (#1902, PR #2078) | 0.24.0 |
+| cc243e0c2 | 2026-11-17 | The Sinumerik post refuses unsupported G84 and G85 dwells by name and suppresses their expanded cuts (#2357, PR #2415) | 0.24.0 |
+| 70441839c | 2026-11-17 | Multi-piece pockets keep their pass starts again; the sliver filter from #2383 no longer reorders pocket areas that have no sliver (#2426, PR #2427) | 0.24.0 |
+| 3e47b898b | 2026-11-17 | The Fanuc, Haas, Mazak and Doosan DNM posts refuse G73 and G84 dwells by name instead of dropping them (#2356, PR #2387) | 0.24.0 |
+| 98deb3927 | 2026-11-17 | Clearing operations with Outside containment clear from the setup stock to the selected face or edge instead of failing on a one-tool band (#2232, PR #2383) | 0.24.0 |
+| b21ce2fa4 | 2026-11-17 | The Sinumerik post refuses an unverified G73 dwell by name instead of dropping it (#2354, PR #2376) | 0.24.0 |
+| 02ce8b046 | 2026-11-17 | Geometry tab: a selection row's remove button stays in reach at the default window size, and a long label is shortened with the full text on hover (#1688, PR #1701) | 0.24.0 |
+| c605e5687 | 2026-11-17 | ISO 13399 STEP tool holders convert conservatively to half-profile ASCII DXFs, with a clean-room ASCII DXF writer and importer and DXF/STEP profile workflows in the UI and MCP (#743, PR #2100) | 0.24.0 |
+| b7b0de3d5 | 2026-11-17 | The stock simulation plays up to the first operation that has no toolpath and names that operation, instead of refusing the whole setup (#2280, PR #2290) | 0.24.0 |
+| 1d103b265 | 2026-11-17 | The world gizmo hides the Y axis on a lathe that has no Y axis (#2019, PR #2146) | 0.24.0 |
+| 6349a542e | 2026-11-17 | New clean-room Mach4 milling post with 3-axis G94 and 3+2 AC trunnion support (#1968, PR #2296) | 0.24.0 |
+| d46cfe129 | 2026-11-17 | Deburr works in aligned milling setups with proven setup-frame geometry and model-relative heights (#2284, PR #2368) | 0.24.0 |
 | a8bb30f0c | 2026-11-17 | Fanuc, Mazak, Doosan, grblHAL and Tormach posts write each hole's own dwell P on G82 and G89 (and G86 on grblHAL and Tormach); a back-bore with no dwell posts G85 (#2360, PR #2363) | 0.23.0 |
 | 93fe3cfd0 | 2026-11-17 | Model > Open, viewport drop and MCP import_model open a Solidcraft .sc design (its cached final body); a damaged or unsupported .sc is refused by name (#1456, PR #2150) | 0.23.0 |
 | 16d62df1e | 2026-11-17 | Carry pure Z-axis WCS rotation through milling toolpath generation and Bake or Control (G68/ROT) posting, and guard 3-2-1 mill face alignment against tilted faces (#760, PR #2136) | 0.23.0 |

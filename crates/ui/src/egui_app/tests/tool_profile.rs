@@ -188,3 +188,120 @@ fn a_profile_refusal_retires_when_the_outline_validates() {
     assert!(harness.state().state.error_for(ErrorScope::Tool).is_none(), "the corrected outline retires it");
     assert!(harness.query_all_by_label_contains("holder profile not set").next().is_none());
 }
+
+#[test]
+fn profile_tab_states_conservative_envelope_and_half_profile_rules_and_dxf_workflow() {
+    let mut harness = profile_tab();
+    for label in ["Import DXF…", "Export DXF…", "Import STEP…"] {
+        assert!(harness.query_by_label(label).is_some(), "{label} sits on the Profile tab");
+    }
+    assert!(
+        harness
+            .query_all_by_label_contains("enveloped conservatively")
+            .next()
+            .is_some(),
+        "Profile tab states non-revolved features are enveloped conservatively"
+    );
+    assert!(
+        harness
+            .query_all_by_label_contains("only the half-profile is editable")
+            .next()
+            .is_some(),
+        "Profile tab states only the half-profile is editable"
+    );
+
+    // Pin the import help beside the control; no screenshot or native picker is needed.
+    let page = include_str!("../tool_profile_page.rs");
+    for convention in [
+        "parallel to Y",
+        "DXF +Y is tool +Z",
+        "z = 0 is the lower end of the centreline",
+        "independent of draw direction",
+    ] {
+        assert!(
+            page.contains(convention),
+            "missing import tooltip convention: {convention}"
+        );
+    }
+
+    // Import an ISO 13399 STEP box as an editable custom half-profile, export to DXF, re-import.
+    let step = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/tool_csys_box_iso13399.step");
+    let unaligned = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/box.step");
+
+    // A STEP without clear CSYS axis refuses by name.
+    harness.state_mut().state.import_step_profile_from(&unaligned);
+    harness.run();
+    assert!(
+        harness.state().state.error_for(ErrorScope::Tool).is_some(),
+        "unaligned STEP must refuse by name"
+    );
+
+    harness.state_mut().state.import_step_profile_from(&step);
+    harness.run();
+    assert!(harness.state().state.error_for(ErrorScope::Tool).is_none());
+    assert!(harness.state().state.tool_profile_ui.custom);
+    let points_after_step = harness.state().state.tool_profile_ui.points.clone();
+    assert!(points_after_step.len() >= 4);
+
+    let dxf_path = std::env::temp_dir().join(format!("camcraft_ui_dxf_{}.dxf", std::process::id()));
+    harness
+        .state()
+        .state
+        .export_profile_dxf_to(&dxf_path)
+        .expect("export DXF from profile tab");
+    // Reset to Parametric then re-import DXF.
+    harness.get_by_label("Parametric").click();
+    harness.run();
+    harness.state_mut().state.import_profile_dxf_from(&dxf_path);
+    harness.run();
+    let _ = std::fs::remove_file(&dxf_path);
+    assert!(harness.state().state.tool_profile_ui.custom);
+    assert_eq!(harness.state().state.tool_profile_ui.points.len(), points_after_step.len());
+}
+
+#[test]
+fn body_tab_convert_to_profile_refuses_unaligned_step_and_converts_iso_aligned_step() {
+    let mut harness = profile_tab();
+    harness.get_by_label("Body").click();
+    harness.run();
+
+    let unaligned = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/box.step");
+    harness.state_mut().state.import_tool_body_from(&unaligned);
+    harness.run();
+    assert!(harness.query_by_label("Convert to profile").is_some());
+    assert!(
+        harness
+            .query_all_by_label_contains("enveloped conservatively")
+            .next()
+            .is_some()
+    );
+    harness.get_by_label("Convert to profile").click();
+    harness.run();
+    assert!(
+        harness
+            .state()
+            .state
+            .error_for(ErrorScope::Tool)
+            .is_some_and(|e| e.contains("clear tool axis")),
+        "unaligned STEP draft must refuse instead of guessing +Z: {:?}",
+        harness.state().state.error_for(ErrorScope::Tool)
+    );
+
+    let step = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/tool_csys_box_iso13399.step");
+    harness.state_mut().state.import_tool_body_from(&step);
+    harness.run();
+    harness.get_by_label("Convert to profile").click();
+    harness.run();
+    assert!(
+        harness.state().state.error_for(ErrorScope::Tool).is_none(),
+        "aligned ISO 13399 STEP body must convert cleanly: {:?}",
+        harness.state().state.error_for(ErrorScope::Tool)
+    );
+    assert_eq!(
+        harness.state().state.tool_profile_ui.column,
+        crate::state::ToolColumn::Profile
+    );
+    assert!(harness.state().state.tool_profile_ui.custom);
+    assert!(harness.state().state.editor_tool_body().is_some());
+}
+

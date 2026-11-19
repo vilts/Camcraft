@@ -91,12 +91,14 @@ fn a_tool_is_renumbered_read_posted_undone_and_refused_over_mcp() {
     assert!(listed.contains("set_tool_number"));
     c.ok("import_model", json!({ "path": stl.display().to_string() }));
     c.ok("set_stock", json!({ "box": { "dx": 60.0, "dy": 60.0, "dz": 20.0 } }));
-    c.ok("add_tool", json!({ "catalog": "EM-0400-2FL" }));
-    c.ok("add_tool", json!({ "catalog": "EM-0600-4FL" }));
+    let t1 = c.ok("add_tool", json!({ "catalog": "EM-0400-2FL" }));
+    assert_eq!((t1["number"].clone(), t1["posts_as"].clone()), (json!(1), json!(1)), "{t1}");
+    let t2 = c.ok("add_tool", json!({ "catalog": "EM-0600-4FL" }));
+    assert_eq!((t2["number"].clone(), t2["posts_as"].clone()), (json!(2), json!(2)), "{t2}");
 
-    // Unnumbered: no own number, posts as its list position.
+    // Numbered on add: EM-0600-4FL got 2 and stays 2 even if an earlier-sorting tool arrives.
     let row = c.tool_row("EM-0600-4FL");
-    assert_eq!(row["number"], Value::Null, "{row}");
+    assert_eq!(row["number"], json!(2), "{row}");
     assert_eq!(row["posts_as"], json!(2), "{row}");
 
     let set = c.ok("set_tool_number", json!({ "tool": "EM-0600-4FL", "number": 17 }));
@@ -122,21 +124,28 @@ fn a_tool_is_renumbered_read_posted_undone_and_refused_over_mcp() {
     assert!(c.refused("set_tool_number", json!({ "tool": "block", "number": 5 })).contains("not a tool"));
     assert!(c.refused("set_tool_number", json!({ "tool": "EM-0600-4FL", "number": 17 })).contains("already has that tool number"));
     assert!(c.refused("set_tool_number", json!({ "tool": "EM-0600-4FL" })).contains("number"));
+    assert!(
+        c.refused("set_tool_number", json!({ "tool": "EM-0600-4FL", "number": null }))
+            .contains("must keep a tool number")
+    );
+    assert_eq!(c.tool_row("EM-0600-4FL")["number"], json!(17));
 
-    // Clearing is its own step; undo walks back one step at a time.
-    let cleared = c.ok("set_tool_number", json!({ "tool": "EM-0600-4FL", "number": null }));
-    assert_eq!((cleared["number"].clone(), cleared["posts_as"].clone()), (Value::Null, json!(2)));
+    // Adding an earlier-sorting tool takes the lowest free number (2, since EM-0600-4FL moved to 17)
+    // without shifting existing tools.
+    let earlier = c.ok("add_tool", json!({ "catalog": "EM-0200-2FL", "name": "AA-FIRST" }));
+    assert_eq!(earlier["number"], json!(2), "{earlier}");
+    assert_eq!(c.tool_row("EM-0400-2FL")["posts_as"], json!(1));
+    assert_eq!(c.tool_row("EM-0600-4FL")["posts_as"], json!(17));
+
+    // Undo walks back one step at a time, leaving EM-0600-4FL back at its add-time T2.
     c.ok("undo", json!({}));
     assert_eq!(c.tool_row("EM-0600-4FL")["number"], json!(17));
-    c.ok("undo", json!({}));
-    // One undo step undid the set; generate/op steps may sit above it, so
-    // keep undoing until the number is gone.
     for _ in 0..6 {
-        if c.tool_row("EM-0600-4FL")["number"] == Value::Null {
+        if c.tool_row("EM-0600-4FL")["number"] == json!(2) {
             break;
         }
         c.ok("undo", json!({}));
     }
     let row = c.tool_row("EM-0600-4FL");
-    assert_eq!((row["number"].clone(), row["posts_as"].clone()), (Value::Null, json!(2)), "{row}");
+    assert_eq!((row["number"].clone(), row["posts_as"].clone()), (json!(2), json!(2)), "{row}");
 }

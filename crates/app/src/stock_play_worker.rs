@@ -343,15 +343,16 @@ fn run(shared: &Shared, seed: PlaySeed, budget: Option<usize>) {
         Ok(p) => p,
         Err(e) => return refuse(shared, budget, e),
     };
+    // #2396: packed from the UNCUT stock - frames only lift cells over it.
+    let base = {
+        let v = play.view();
+        PackedBase::of(&v.stock, v.target.as_deref()).map(|(b, _)| Arc::new(b))
+    };
     if let Some(budget) = budget
         && !precalc(shared, &mut play, budget)
     {
         return;
     }
-    let base = {
-        let v = play.view();
-        PackedBase::of(&v.stock, v.target.as_deref()).map(|(b, _)| Arc::new(b))
-    };
     let (mut published, mut last, mut chunk) = (None, None::<Instant>, 64usize);
     let mut chain = Chain::default();
     while let Some((k, f)) = next_target(shared, (play.at(), play.frac()), published, play.total()) {

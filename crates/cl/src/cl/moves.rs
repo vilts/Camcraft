@@ -148,7 +148,7 @@ impl Move {
         match normalize_axis(axis) {
             Some(a) => self.axis = Some(a),
             None => {
-                eprintln!("cl: refusing a move axis of {axis:?}: not a direction");
+                tracing::warn!("cl: refusing a move axis of {axis:?}: not a direction");
                 self.axis = None;
             }
         }
@@ -175,7 +175,7 @@ impl Move {
         if deg.is_finite() {
             self.rotary = Some(deg);
         } else {
-            eprintln!("cl: refusing a C angle of {deg}: not an angle");
+            tracing::warn!("cl: refusing a C angle of {deg}: not an angle");
             self.rotary = None;
         }
         self
@@ -257,7 +257,8 @@ pub const MAX_ARC_CHORDS: usize = 1024;
 
 /// Tessellate the arc from `a` to `b` about `arc.center`, travelling in
 /// `arc.ccw`'s direction (sweep in (0, 2pi]), into chords whose sagitta
-/// stays under `tol`. Endpoints are exact; the last chord ends at `b`.
+/// stays under `tol`. Radius interpolates linearly with sweep for a
+/// synchronized thread ramp. Endpoints are exact; the last chord ends at `b`.
 /// Degenerate input (a zero radius, a non-finite center, zero sweep)
 /// falls back to the single straight chord - never an empty result,
 /// because empty would silently erase motion.
@@ -288,7 +289,14 @@ pub fn arc_chords(a: Point2, b: Point2, arc: ArcMove, tol: f64) -> Vec<(Point2, 
     }
     let tol = if tol.is_finite() && tol > 0.0 { tol } else { 0.01 };
     // Sagitta r(1 - cos(step/2)) <= tol bounds the sweep per chord.
-    let max_step = 2.0 * (1.0 - (tol / r).clamp(-1.0, 1.0)).clamp(-1.0, 1.0).acos();
+    let mut max_step = 2.0 * (1.0 - (tol / r).clamp(-1.0, 1.0)).clamp(-1.0, 1.0).acos();
+    if ra != rb {
+        // For p(theta) = r(theta) * (cos(theta), sin(theta)),
+        // |p''| <= hypot(max_radius, 2 * |dr/dtheta|). Linear
+        // interpolation error is at most |p''| * step^2 / 8.
+        let curvature_bound = r.hypot(2.0 * (rb - ra).abs() / d);
+        max_step = max_step.min((8.0 * tol / curvature_bound).sqrt());
+    }
     let n = if max_step > 0.0 {
         // M4.2b: `d` arrives from atan2 and `max_step` from acos, so a
         // sweep that is a clean multiple of the chord budget lands on
@@ -308,7 +316,8 @@ pub fn arc_chords(a: Point2, b: Point2, arc: ArcMove, tol: f64) -> Vec<(Point2, 
         // Measured off `a0` in the travel direction, so rounding cannot
         // accumulate along the run.
         let th = a0 + if arc.ccw { d * j as f64 / n as f64 } else { -d * j as f64 / n as f64 };
-        pts.push(Point2::new(o.x + r * th.cos(), o.y + r * th.sin()));
+        let radius = ra + (rb - ra) * j as f64 / n as f64;
+        pts.push(Point2::new(o.x + radius * th.cos(), o.y + radius * th.sin()));
     }
     pts.push(b);
     pts.windows(2).map(|w| (w[0], w[1])).collect()

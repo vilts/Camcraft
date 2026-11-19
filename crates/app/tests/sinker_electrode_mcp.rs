@@ -229,3 +229,73 @@ fn a_rounded_pocket_yields_a_body_electrode_over_mcp() {
     assert!(flat["definition"].get("outline").is_none(), "{flat}");
     assert_eq!(got["cavity"]["center"], json!([0.0, 0.0]), "{got}");
 }
+
+/// #2430 review: the electrode reply names the frame that supplies its
+/// burn coordinates, including a named aligned setup that is not active.
+#[test]
+fn electrode_reply_names_the_effective_setup_and_its_aligned_coordinates() {
+    use camcraft_app::mcp::Server;
+    use serde_json::{Value, json};
+
+    fn call(s: &mut Server, id: &mut i64, name: &str, args: Value) -> Value {
+        *id += 1;
+        let reply = s.handle(&json!({
+            "jsonrpc": "2.0", "id": *id, "method": "tools/call",
+            "params": { "name": name, "arguments": args }
+        })).expect("MCP reply");
+        assert_ne!(reply["result"]["isError"], json!(true), "{name}: {reply}");
+        reply["result"]["structuredContent"].clone()
+    }
+    let dir = std::env::temp_dir().join(format!("camcraft-2430-electrode-frame-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let (stl, mch) = (dir.join("part.stl"), dir.join("sinker.mch"));
+    pocket_support::write_stl(&block(), &stl);
+    std::fs::write(&mch, sinker_machine()).expect("machine");
+    let (mut s, mut id) = (Server::new(), 0);
+    call(&mut s, &mut id, "import_model", json!({ "path": stl.display().to_string() }));
+    call(&mut s, &mut id, "load_machine", json!({ "path": mch.display().to_string() }));
+    std::fs::remove_dir_all(&dir).expect("remove fixtures");
+    let rows = call(&mut s, &mut id, "list_features", json!({ "model": "part", "kinds": ["faces"] }));
+    let faces: Vec<&Value> = rows["faces"].as_array().expect("faces").iter().filter(|f| {
+        let b = &f["bounds"];
+        let n = |key: &str, i: usize| b[key][i].as_f64().unwrap_or(f64::NAN);
+        n("min", 0) >= LO.0 - 1e-6 && n("max", 0) <= HI.0 + 1e-6
+            && n("min", 1) >= LO.1 - 1e-6 && n("max", 1) <= HI.1 + 1e-6
+            && n("min", 2) >= FLOOR - 1e-6
+    }).collect();
+    assert_eq!(faces.len(), 5);
+    let picks: Vec<Value> = faces.iter().map(|f| json!({ "model": "part", "id": f["id"] })).collect();
+    let floor = faces.iter().find(|f| near(f["bounds"]["max"][2].as_f64().expect("Z"), FLOOR)).expect("floor");
+    let args = |name: &str| json!({ "name": name, "picks": picks, "condition": "F1", "stub": 10, "pickup": 0 });
+    let check = |got: &Value, frame: &str, setup: Value, floor: f64, top: f64| {
+        assert_eq!(got["frame"], json!(frame), "{got}");
+        assert_eq!(got["setup"], setup, "{got}");
+        assert_eq!(got["cavity"]["center"], json!([6.0, -4.0]), "{got}");
+        assert_eq!((got["burn"]["x"].clone(), got["burn"]["y"].clone()), (json!(6.0), json!(-4.0)), "{got}");
+        assert!(near(got["cavity"]["floor_z"].as_f64().expect("floor"), floor), "{got}");
+        assert!(near(got["cavity"]["top_z"].as_f64().expect("top"), top), "{got}");
+        assert_eq!(got["burn"]["floor_z"], json!({ "reference": "fixed", "offset": floor }), "{got}");
+        assert_eq!(got["burn"]["top_z"], json!({ "reference": "fixed", "offset": top }), "{got}");
+    };
+    let legacy = call(&mut s, &mut id, "electrode_from_faces", args("E-world"));
+    check(&legacy, "world", Value::Null, FLOOR, TOP);
+    call(&mut s, &mut id, "add_setup", json!({ "name": "Aligned" }));
+    call(&mut s, &mut id, "lay_part_on_face", json!({ "setup": "Aligned", "face": { "model": "part", "id": floor["id"] } }));
+    call(&mut s, &mut id, "add_setup", json!({ "name": "Other" }));
+    // Other is active. The named setup supplies the aligned heights.
+    let mut named_args = args("E-named");
+    named_args["setup"] = json!("Aligned");
+    let named = call(&mut s, &mut id, "electrode_from_faces", named_args);
+    check(&named, "setup", json!("Aligned"), 0.0, TOP - FLOOR);
+    let job = call(&mut s, &mut id, "get_job", json!({}));
+    assert_eq!(job["active_setup"], json!("Other"));
+    let other = call(&mut s, &mut id, "electrode_from_faces", args("E-other"));
+    check(&other, "setup", json!("Other"), FLOOR, TOP);
+    call(&mut s, &mut id, "activate_setup", json!({ "name": "Aligned" }));
+    let active = call(&mut s, &mut id, "electrode_from_faces", args("E-active"));
+    check(&active, "setup", json!("Aligned"), 0.0, TOP - FLOOR);
+    // Feature IDs and bounds continue to use document/world coordinates.
+    let listed_again = call(&mut s, &mut id, "list_features", json!({ "model": "part", "kinds": ["faces"] }));
+    assert_eq!(listed_again["frame"], json!("world"));
+    assert_eq!(listed_again["faces"], rows["faces"]);
+}

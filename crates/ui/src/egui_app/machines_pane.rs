@@ -20,7 +20,7 @@
 //! machine, else `LoadMachine`; a refused or already-mounted machine
 //! leaves the button disabled with the reason beside it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use egui::{Label, RichText, ScrollArea, Ui};
 
@@ -95,12 +95,26 @@ pub(crate) fn verdict(e: &MachineEntry) -> String {
     }
 }
 
+/// Where the machine file dialog ("Load other") starts (#2358): the
+/// user machines folder when it exists, else `None` - the dialog's own
+/// default.
+pub(crate) fn dialog_start(user_dir: Option<&Path>) -> Option<&Path> {
+    user_dir.filter(|d| d.is_dir())
+}
+
+/// The user machines folder, resolved once (`store::user_dir`) and kept
+/// on the pane; tests point it at a temp folder.
+pub(crate) fn user_dir(state: &mut State) -> Option<PathBuf> {
+    state.machines_pane.user_dir.get_or_insert_with(store::user_dir).clone()
+}
+
 /// Make sure the catalogue is current: read once, and again when the
-/// document mounts a different machine.
-fn refresh(state: &mut State) {
+/// document mounts a different machine. The Setup page's library list
+/// reads the same catalogue (#2358).
+pub(crate) fn refresh(state: &mut State) {
     let (path, _) = camcraft_app::machine::of(&state.world);
+    let dir = user_dir(state);
     let p = &mut state.machines_pane;
-    let dir = p.user_dir.get_or_insert_with(store::user_dir).clone();
     if p.list.is_none() || p.listed_for != path {
         let list = library::enumerate_with(&state.world, dir.as_deref());
         if p.selected.is_some_and(|i| i >= list.len()) {
@@ -142,6 +156,8 @@ pub(crate) fn draw(ui: &mut Ui, state: &mut State, pal: &Tokens) {
             .on_hover_text("Read the machine files again")
             .clicked()
         {
+            // #2380: read the shipped folders again, then the catalogue.
+            camcraft_app::posting::rescan();
             reread = true;
         }
     });

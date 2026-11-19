@@ -90,6 +90,7 @@ fn drill() -> OpParams {
 fn drill_of(h: CrossHole) -> OpParams {
     OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(25.0),
         retract_z: None,
         top_z: Height::fixed(20.0),

@@ -31,7 +31,7 @@ const TOOLS: &[Tool] = &[
     Tool { name: "list_tool_catalog", description: "The built-in tool catalog: names and definitions add_tool can copy into the document.", schema: s_empty, run: job::list_tool_catalog },
     Tool { name: "list_holder_library", description: "The built-in holder library: BT30, BT40 and CAT40 holders with ER collet or Weldon side-lock noses, and standalone ER11-ER40 chucks - names set_tool_holder takes, with their dimensions and the shanks they clamp.", schema: s_empty, run: holders::list_holder_library },
     Tool { name: "set_tool_holder", description: "Set a document tool's holder: from the holder library by name (optional gauge_len and projection, mm), from a drawn spun profile (points), or back to the holder cylinder (clear). One undo step; an unknown entry, a shank the holder cannot take or a bad profile is refused by name.", schema: holders::s_set_tool_holder, run: holders::set_tool_holder },
-    Tool { name: "add_tool", description: "Add a tool to the document, from the catalog by name or from a full definition (the shape get_job shows). It starts with the machine's default holder unless \"holder\" says otherwise; one undo removes the tool and its holder.", schema: s_add_tool, run: edit::add_tool },
+    Tool { name: "add_tool", description: "Add a tool to the document, from the catalog by name or from a full definition (the shape get_job shows). Assigns the lowest unused tool number in 1-99999 and starts with the machine's default holder unless \"holder\" says otherwise; one undo removes the tool and its holder.", schema: s_add_tool, run: edit::add_tool },
     Tool { name: "edit_tool", description: "Edit a document tool: \"patch\" is a partial tool definition (the shape add_tool's definition and get_job show, JSON merge patch - null removes an optional key). It runs the app's undoable ChangeTool, one undo step, so every gate applies (a retype that strands an operation, bad cutting_data rows, catalog values) and refuses by tool name. An unknown key is refused by name. Operations using the tool go stale.", schema: s_edit_tool, run: tool_edit::edit_tool },
     Tool { name: "delete_tool", description: "Delete a document tool through the app's undoable DeleteTool, one undo step (undo restores it with its number, holder body and cutter). Refused by tool name, changing nothing: an unknown name, an entity that is not a tool, or a tool an operation still uses (give that operation another tool with set_tool first).", schema: s_name_only_tool, run: tool_delete::delete_tool },
     Tool { name: "export_tool_library", description: "Write the document's tools to a tool library file (.camtools), the same format the Tool library page's Export writes. Refuses a document with no tools or a path that cannot be written.", schema: s_library, run: export_tool_library },
@@ -39,7 +39,7 @@ const TOOLS: &[Tool] = &[
     Tool { name: "set_stock", description: "Set the active setup's stock: a box, a cylinder, or a copy of a model.", schema: s_stock, run: edit::set_stock },
     Tool { name: "add_operation", description: "Add an operation of a kind (see list_operation_types) with a tool, on the stock or a model, seeded with the kind's defaults and an optional params patch. Not generated until generate runs.", schema: s_add_op, run: edit::add_operation },
     Tool { name: "edit_operation", description: "Patch an operation's parameters: the given fields replace the current ones (JSON merge patch over the kind's fields; null clears an optional field). One undo step.", schema: s_edit_op, run: edit::edit_operation },
-    Tool { name: "detect_holes", description: "Fill a Drill, Bore or Thread operation's hole list from its source model's holes (the app's Detect holes button); a Thread operation whose params say external: true gets the model's upright round bosses instead. A Bore operation leaves out holes wider than its tool's ring clears without a core (3 x tool diameter + 2 x stock to leave) and names each in `skipped`. One undo step.", schema: s_name, run: edit::detect_holes },
+    Tool { name: "detect_holes", description: "Fill a Drill, Bore or Thread operation's hole list from its source model's holes (the app's Detect holes button); a Thread operation whose params say external: true gets the model's upright round bosses instead. A Bore operation leaves out holes wider than its tool's ring clears without a core (3 x tool diameter + 2 x stock to leave) and names each in `skipped`. A Drill operation keeps a hole wider than its Drill-kind drill (a pilot is valid) and names each in `undersize`; its toolpath then carries a `drill_undersize` warning per such hole that does not hold the post. One undo step.", schema: s_name, run: edit::detect_holes },
     Tool { name: "detect_pockets", description: "A model's recognised pockets and slots (closed or open pockets, straight slots with open, round or square ends): boundary, floor and top Z, depth, tightest inside corner, slot width and open sides. With create, adds the operation that machines one of them (a Pocket over its floor, or a Slot along its centreline). One undo step.", schema: pockets::s_detect_pockets, run: pockets::detect_pockets },
     Tool { name: "delete_operation", description: "Delete an operation and its cached toolpath.", schema: s_name, run: edit::delete_operation },
     Tool { name: "set_tool", description: "Assign a document tool to an operation (the tool must suit the operation's kind).", schema: s_set_tool, run: edit::set_tool },
@@ -49,7 +49,7 @@ const TOOLS: &[Tool] = &[
     Tool { name: "set_operation_area", description: "Replace an operation's area controls (containment, offset, corner, extension, extra include/exclude boundaries, open boundary). One undo step.", schema: area::s_set_area, run: area::set_operation_area },
     Tool { name: "undo", description: "Undo the last document change.", schema: s_empty, run: edit::undo },
     Tool { name: "redo", description: "Redo the last undone change.", schema: s_empty, run: edit::redo },
-    Tool { name: "generate", description: "Generate toolpaths: one named operation (always regenerated) or, with no name, every operation that is not current.", schema: s_opt_name, run: generate },
+    Tool { name: "generate", description: "Generate toolpaths: one named operation (always regenerated) or, with no name, every operation that is not current when reached in program order, including operations made stale by earlier generations in this call. A refusal stops the call and names the operation.", schema: s_opt_name, run: generate },
     Tool { name: "verify", description: "Verify the job without posting: per-operation status and findings (op, move index, kind, message, whether it blocks the post) plus the program-level post gate. \"ok\" is true only when the post would write: every operation fresh, the gate passed, and no operation's own warning blocking the post (those operations are listed under \"held_by\").", schema: s_opt_name, run: job::verify },
     Tool { name: "post", description: "Post the program to an NC file through a post processor (a built-in name or a .cps path; default the document's own). Returns the written files, or refuses with the reasons. between_setups chooses what the program does at a setup change (pause by default).", schema: s_post, run: post },
     Tool { name: "render_stock", description: "Render the program's simulated stock as a PNG (an image content block), painted by deviation class (clean, rest, gouge, unjudged), optionally with the toolpath over it; plus rest and gouge volume and the bounds of the stock and the rest. Generate first.", schema: render::schema, run: render::render_stock },
@@ -87,6 +87,7 @@ fn all() -> impl Iterator<Item = &'static Tool> {
         .chain(super::machine_tools::TOOLS)
         .chain(super::tool_number_tools::TOOLS)
         .chain(super::post_options_tools::TOOLS)
+        .chain(super::holder_dxf_tools::TOOLS)
 }
 
 /// The `tools/list` rows.
@@ -97,7 +98,7 @@ pub(super) fn list() -> Vec<Value> {
 }
 
 /// Run one tool by name. An unknown name is a refusal like any other.
-pub(super) fn call(env: &mut Env, name: &str, args: &Value) -> Result<Value, String> {
+pub(crate) fn call(env: &mut Env, name: &str, args: &Value) -> Result<Value, String> {
     let Some(tool) = all().find(|t| t.name == name) else {
         let names: Vec<&str> = all().map(|t| t.name).collect();
         return Err(format!("unknown tool '{name}' - tools: {}", names.join(", ")));

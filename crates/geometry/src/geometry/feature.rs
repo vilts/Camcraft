@@ -52,6 +52,10 @@ mod runs;
 pub use runs::{RUN_LENGTH_RATIO, edge_runs, resolve_chain, run_containing, run_of_edges};
 mod vertex;
 pub use vertex::{VertexId, corner_verts, resolve_vertex, vertex_id, vertex_ids};
+mod names;
+mod patch_shape;
+pub use names::{FeatureNames, NameInputs, NameKind, build_feature_names};
+pub use patch_shape::{PatchShape, classify_patch};
 
 /// Weld lattice: 1e6 steps per mm = 1 µm. Coarser than the old viewport
 /// lattice (1/4096 mm), so clean meshes weld at least as aggressively.
@@ -1369,15 +1373,19 @@ pub fn chains(features: &Features) -> Vec<Chain> {
 /// longer. Agrees with [`chains`] whenever a chain is a lone edge.
 #[must_use]
 pub fn singleton_chain_id(features: &Features, edge: u32) -> Option<ChainId> {
-    let e = *features.edges.get(edge as usize)?;
     let sentinel = (i64::MIN, i64::MIN, i64::MIN);
     let lattice: Vec<Pos> =
         features.verts.iter().map(|p| weld_pos(p).unwrap_or(sentinel)).collect();
+    singleton_chain_id_with_lattice(features, &lattice, edge)
+}
+
+pub(super) fn singleton_chain_id_with_lattice(features: &Features, lattice: &[Pos], edge: u32) -> Option<ChainId> {
+    let e = *features.edges.get(edge as usize)?;
     // Same Euler start a one-edge component gets in `chains`: the odd
     // degree at `b` sends the walk from there.
     let vs = trail_verts(&features.edges, &[edge], e.b);
     let mut segs = Vec::new();
-    ring_segments(&vs, &lattice, false, &mut segs);
+    ring_segments(&vs, lattice, false, &mut segs);
     Some(chain_id(segs, false))
 }
 

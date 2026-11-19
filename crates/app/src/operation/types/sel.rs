@@ -67,16 +67,29 @@ impl FeatureSel {
             FeatureSel::Face(id) | FeatureSel::Chain(id) | FeatureSel::Patch(id) | FeatureSel::Vertex(id) => id,
         }
     }
+
+    /// Hash-domain discriminator for [`crate::geometry::feature::FeatureNames`].
+    #[must_use]
+    pub const fn name_kind(self) -> crate::geometry::feature::NameKind {
+        use crate::geometry::feature::NameKind;
+        match self {
+            FeatureSel::Face(_) => NameKind::Face,
+            FeatureSel::Chain(_) => NameKind::Chain,
+            FeatureSel::Patch(_) => NameKind::Patch,
+            FeatureSel::Vertex(_) => NameKind::Vertex,
+        }
+    }
 }
 
 impl core::fmt::Display for FeatureSel {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            FeatureSel::Face(id) => write!(f, "face {id:#x}"),
-            FeatureSel::Chain(id) => write!(f, "edge chain {id:#x}"),
-            FeatureSel::Patch(id) => write!(f, "welded face {id:#x}"),
-            FeatureSel::Vertex(id) => write!(f, "vertex {id:#x}"),
-        }
+        let noun = match self {
+            FeatureSel::Face(_) => "face",
+            FeatureSel::Chain(_) => "edge",
+            FeatureSel::Patch(_) => "curved face",
+            FeatureSel::Vertex(_) => "vertex",
+        };
+        f.write_str(noun)
     }
 }
 

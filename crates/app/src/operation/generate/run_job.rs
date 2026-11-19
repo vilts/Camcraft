@@ -25,10 +25,16 @@ pub fn run_job(mut job: GenJob) -> Result<(Toolpath, Vec<Warning>), GenError> {
     // a body whose band stack does not fit the record.
     let judged_tool = job.tool.clone();
     let body = job.body.clone().filter(|p| crate::operation::body_judged::falls_back(&judged_tool, p));
+    let outside_clearing = job
+        .area
+        .as_ref()
+        .and_then(|r| r.as_ref().ok())
+        .and_then(AreaCtx::outside_clearing_stock);
     let _span = tracing::info_span!("generate", op = %job.op_name).entered();
     let started = crate::clock::Instant::now();
     tracing::debug!(kind = %kind, "generation started");
     let (mut path, warns) = pocket_reach(&job).and_then(|()| run_job_arms(job))
+        .map_err(|e| name_outside_entry_refusal(e, outside_clearing))
         .map_err(|e| crate::operation::body_judged::name_enclosure(e, &judged_tool, body.as_ref()))
         .map_err(|e| e.map_location(|p| frame.map_or(p, |f| f.to_world(p))))
         // #261 part 3: a refusal's ghost rides the same frame map as a path.
@@ -84,4 +90,31 @@ fn pocket_reach(job: &GenJob) -> Result<(), GenError> {
         }
     }
     Ok(())
+}
+
+/// Annotate a narrow-area or missing-entry refusal when a clearing kind
+/// ran with `Containment::Outside`, naming the `Extension` control and
+/// setup stock (#2232).
+fn name_outside_entry_refusal(e: GenError, outside_stock: Option<bool>) -> GenError {
+    let Some(has_stock) = outside_stock else {
+        return e;
+    };
+    e.map_msg(|m| {
+        if m.contains("no room for an entry")
+            || m.contains("narrower than the tool")
+            || m.contains("too narrow")
+        {
+            if has_stock {
+                format!(
+                    "{m} - the setup stock leaves no room past the selection; enlarge the stock or set an Extension (Boundary)"
+                )
+            } else {
+                format!(
+                    "{m} - this setup has no stock, so Outside containment leaves a band one tool wide; set an Extension (Boundary) or add setup stock"
+                )
+            }
+        } else {
+            m
+        }
+    })
 }

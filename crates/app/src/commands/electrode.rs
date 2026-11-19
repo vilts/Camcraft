@@ -10,7 +10,7 @@
 use flecs_ecs::prelude::World;
 
 use crate::commands::{AddTool, Command, CommandError};
-use crate::operation::sinker_faces::electrode_from_faces;
+use crate::operation::sinker_faces::{electrode_from_faces, electrode_from_faces_in};
 use crate::operation::GeoSel;
 use crate::sinker_electrode::{ElectrodeBox, ElectrodeSpec};
 
@@ -31,6 +31,30 @@ impl ElectrodeFromFaces {
     /// words) and `AddTool`'s (a reserved or taken name).
     pub fn new(world: &World, name: &str, picks: &[GeoSel], spec: &ElectrodeSpec) -> Result<Self, CommandError> {
         let electrode = electrode_from_faces(world, picks, spec).map_err(CommandError::Invalid)?;
+        Self::finish(world, name, electrode)
+    }
+
+    /// Derive the electrode in `setup`'s frame (`None` falls back to
+    /// the document's active setup).
+    ///
+    /// # Errors
+    /// Same refusals as [`Self::new`].
+    pub fn new_in(
+        world: &World,
+        setup: Option<&str>,
+        name: &str,
+        picks: &[GeoSel],
+        spec: &ElectrodeSpec,
+    ) -> Result<Self, CommandError> {
+        let electrode = match setup {
+            Some(s) => electrode_from_faces_in(world, Some(s), picks, spec),
+            None => electrode_from_faces(world, picks, spec),
+        }
+        .map_err(CommandError::Invalid)?;
+        Self::finish(world, name, electrode)
+    }
+
+    fn finish(world: &World, name: &str, electrode: ElectrodeBox) -> Result<Self, CommandError> {
         // A sinker electrode rides no milling holder: it lands bare.
         let add = AddTool::new(world, name, electrode.tool())?;
         Ok(Self { add, electrode })

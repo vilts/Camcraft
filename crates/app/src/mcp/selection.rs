@@ -56,7 +56,7 @@ pub(super) fn get_selection(env: &mut Env, _a: &Map<String, Value>) -> Result<Va
     let (pick_mode, geometry_picks, selected_operation) = match &env.selection {
         Some(ctx) => (
             ctx.pick_mode.map(PickMode::as_str),
-            picks_view(&ctx.geometry_picks),
+            picks_view(w, &ctx.geometry_picks),
             ctx.active_operation
                 .clone()
                 .or_else(|| selected_op_in_world.cloned()),

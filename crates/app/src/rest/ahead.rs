@@ -28,6 +28,8 @@ pub(super) struct Ahead {
     /// a predecessor's chamfer would evaporate a full disc of
     /// material that is really still standing.
     pub(super) cone: Option<f64>,
+    /// #2441: true when `cone` is a twist drill with a cylindrical flute above it.
+    pub(super) drill: bool,
     /// The bull nose's corner radius (M13.1, `stock_sim::bull_corner`):
     /// the rest grid sweeps the same corner the program sim does, so a
     /// bull predecessor's fillet ring reads as the rest it is.
@@ -119,6 +121,15 @@ fn collect(world: &World, name: &str, with_moves: bool, keep: impl Fn(&Option<St
                 })
                 .unwrap_or((false, 0, Vec::new()))
         };
+        let cone = tool
+            .as_ref()
+            .filter(|t| matches!(t.kind, crate::tools::ToolKind::Taper | crate::tools::ToolKind::Drill))
+            .filter(|t| t.tip_angle.is_finite() && t.tip_angle > 0.0 && t.tip_angle < 180.0)
+            .map(|t| (t.tip_angle.to_radians() * 0.5).tan())
+            .filter(|x| x.is_finite() && *x > 0.0)
+            .map(|x| 1.0 / x);
+        let drill = cone.is_some()
+            && tool.as_ref().is_some_and(|t| t.kind == crate::tools::ToolKind::Drill);
         out.push(Ahead {
             name: n.clone(),
             kind: op.params.kind(),
@@ -127,12 +138,8 @@ fn collect(world: &World, name: &str, with_moves: bool, keep: impl Fn(&Option<St
             ball: tool
                 .as_ref()
                 .is_some_and(|t| t.kind == crate::tools::ToolKind::BallNose),
-            cone: tool
-                .as_ref()
-                .filter(|t| matches!(t.kind, crate::tools::ToolKind::Taper | crate::tools::ToolKind::Drill))
-                .map(|t| (t.tip_angle.to_radians() * 0.5).tan())
-                .filter(|x| x.is_finite() && *x > 0.0)
-                .map(|x| 1.0 / x),
+            cone,
+            drill,
             // A nonsense corner falls back to the disc: over-reported
             // removal, the side `Tool::is_sane` keeps unreachable.
             corner: tool

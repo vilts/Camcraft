@@ -27,6 +27,7 @@ OPTIONS:
 const MAX_TRIANGLES: usize = 50_000_000;
 
 fn main() -> ExitCode {
+    log_init();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let mut paths = Vec::new();
     for a in &args {
@@ -149,4 +150,14 @@ fn read_ascii(text: &str) -> Result<Vec<Triangle>, String> {
         return Err("file ends inside a facet".into());
     }
     Ok(out)
+}
+
+/// #163: the library's diagnostics are `tracing` events; print them on
+/// stderr, filtered by `CAMCRAFT_LOG`, else `RUST_LOG`, else `info` - the
+/// app binaries' rule. A second init is a no-op, never a panic.
+fn log_init() {
+    let filter = tracing_subscriber::EnvFilter::try_from_env("CAMCRAFT_LOG")
+        .or_else(|_| tracing_subscriber::EnvFilter::try_from_default_env())
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    let _ = tracing_subscriber::fmt().with_env_filter(filter).with_writer(std::io::stderr).try_init();
 }

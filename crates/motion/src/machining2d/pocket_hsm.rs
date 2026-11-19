@@ -40,8 +40,11 @@ pub(crate) struct EntryRoom {
 /// level at Z ...", M11.4's per-level port) - never a silent switch.
 /// Issue #5: with `trochoid`, a channel the spiral refuses is tried as
 /// a trochoid first (spiral -> trochoid -> rings, each fallback named).
-pub(crate) fn adaptive_passes(center: &Region, p: &PocketParams, what: &str, trochoid: bool) -> Result<Planned, GenError> {
-    let (passes, notes, rest, room, joins, travel, refused) = hsm_passes(center, p)?;
+/// Issue #1950: with `stock` (the stock outline of an open-side level), a
+/// piece of `center` that reaches past it is cut from the air
+/// (`adaptive::plan_from_air`) on the material clipped to the stock.
+pub(crate) fn adaptive_passes(center: &Region, p: &PocketParams, what: &str, trochoid: bool, stock: Option<&Region>) -> Result<Planned, GenError> {
+    let (passes, notes, rest, room, joins, travel, refused) = hsm_passes(center, p, stock)?;
     // A plan that would cross itself is never posted (the verifier's
     // crossing law, asked of the plan first); one refused past its
     // planning budget (issue #13) has no passes to judge.
@@ -197,7 +200,7 @@ pub(crate) fn choose_entry(center: &Region, p: &PocketParams, notes: &mut Vec<St
 
 /// Cutter-center walks for an Adaptive pocket, the plan's notes, the
 /// share of the reachable stock it leaves standing and its entry.
-fn hsm_passes(center: &Region, p: &PocketParams) -> Result<HsmPlanned, GenError> {
+fn hsm_passes(center: &Region, p: &PocketParams, stock: Option<&Region>) -> Result<HsmPlanned, GenError> {
     let r = p.tool_diameter * 0.5;
     let mut notes = Vec::new();
     let mut passes = Vec::new();
@@ -257,12 +260,18 @@ fn hsm_passes(center: &Region, p: &PocketParams) -> Result<HsmPlanned, GenError>
             });
             AdaptiveSpec { seed: d, start: d, bore: r, helix_r: 0.0, ..first }
         };
-        let pl = plan(&reach, comp, &spec)?;
+        let (pl, cut_area) = match air_plan(&reach, comp, &spec, stock)? {
+            Some(Ok((pl, a))) => (pl, a),
+            // Over the load bound: no pass of it is posted, the level is
+            // refused by name (the Offset rings cut it, said).
+            Some(Err(why)) => return Ok((Vec::new(), notes, 1.0, room, Vec::new(), travel, Some(why))),
+            None => (plan(&reach, comp, &spec)?, reach.area()),
+        };
         if let Some(why) = pl.refused {
             return Ok((Vec::new(), notes, 1.0, room, Vec::new(), travel, Some(why)));
         }
         rest += pl.rest;
-        area += reach.area();
+        area += cut_area;
         // Each piece's passes after its first may be microlift-joined.
         joins.extend((0..pl.passes.len()).map(|k| if k > 0 { pl.joins.get(k).cloned().flatten() } else { None }));
         passes.extend(pl.passes);
@@ -273,6 +282,51 @@ fn hsm_passes(center: &Region, p: &PocketParams) -> Result<HsmPlanned, GenError>
     }
     Ok((passes, notes, if area > 0.0 { rest / area } else { 0.0 }, room, joins, travel, None))
 }
+
+/// Issue #1950: the piece `comp` planned from the air outside `stock` -
+/// its plan and the stock-clipped area it cuts, or why it is over the
+/// load bound; `None` where no stock is given or the piece has no air
+/// side (the growth spiral plans it).
+type AirPlanned = Option<Result<(super::adaptive::AdaptivePlan, f64), String>>;
+
+fn air_plan(reach: &Region, comp: &Region, spec: &AdaptiveSpec, stock: Option<&Region>) -> Result<AirPlanned, GenError> {
+    let Some(st) = stock.filter(|s| !s.is_empty()) else { return Ok(None) };
+    let mat = reach.intersect(st)?;
+    let Some(air) = super::adaptive::plan_from_air(&mat, st, comp, spec)? else { return Ok(None) };
+    Ok(Some(match air.over {
+        Some(why) => Err(format!("cut from the air {why}")),
+        None => {
+            let mut pl = air.plan;
+            pl.notes.push(format!(
+                "adaptive: the air plan reads at most {:.1}% of D at ({:.2}, {:.2}) ({:.1}% at a run end; {:.2} deg under the bound; {} spiral and {} open fronts)",
+                air.worst.0 * 100.0,
+                air.worst.1.x,
+                air.worst.1.y,
+                air.ends.0 * 100.0,
+                air.slack_deg,
+                air.fronts.0,
+                air.fronts.1
+            ));
+            Ok((pl, mat.area()))
+        }
+    }))
+}
+
+/// Issue #1950: the gap (mm) between the stock and the tool's disc at an
+/// air entry - the plunge touches no stock.
+pub(crate) const AIR_ENTRY_GAP: f64 = 0.005;
+
+/// Issue #1950: is the tool's disc of radius `r` about `e` fully in the
+/// air outside `stock` (the stock outline, a prism in Z), with
+/// [`AIR_ENTRY_GAP`] to spare? A plunge there from the clearance plane
+/// meets no stock at any height. `false` for a non-finite point.
+pub(crate) fn in_air(stock: &Region, e: Point2, r: f64) -> bool {
+    e.x.is_finite() && e.y.is_finite() && !stock.is_empty() && !stock.contains(e) && boundary_dist(stock, e) >= r + AIR_ENTRY_GAP
+}
+
+#[cfg(test)]
+#[path = "pocket_hsm_ring.rs"]
+mod ring_tests;
 
 #[cfg(test)]
 mod tests {

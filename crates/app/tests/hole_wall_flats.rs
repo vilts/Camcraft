@@ -58,6 +58,7 @@ fn drill_ahead(world: &flecs_ecs::prelude::World, h: &mut History, radius: f64) 
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius: d * 0.5, entry_z: 20.0, floor_z: TAP_FLOOR, through: false, stepped: false };
     let params = OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(25.0),
         retract_z: None,
         top_z: Height::fixed(20.0),
@@ -169,6 +170,7 @@ fn verdict(model_hole: &[P2], kind: Kind, radius: f64) -> Vec<Warning> {
         },
         Kind::Drill => OpParams::Drill {
             break_through: None,
+            break_through_from: Default::default(),
             clearance_z: Height::fixed(30.0),
             retract_z: None,
             top_z: Height::fixed(22.0),

@@ -20,8 +20,14 @@ mod tool_properties;
 #[path = "structural/thread_repeat.rs"]
 mod thread_repeat;
 
+#[path = "structural/folder_refresh.rs"]
+mod folder_refresh;
+
 #[path = "break_through.rs"]
 mod break_through;
+
+#[path = "structural/donate.rs"]
+mod donate;
 
 /// Every painted text of the last frame with its top-left, in paint order.
 pub(super) fn painted(h: &Harness<'static, ShellUi>) -> Vec<(String, egui::Pos2)> {
@@ -573,3 +579,6 @@ fn the_drop_hint_shows_only_while_a_file_hovers() {
     h.run_steps(2);
     assert!(!painted(&h).iter().any(|(t, _)| t == super::super::file_drop::HINT), "the hint goes when the drag leaves");
 }
+
+#[path = "structural/browser_file_menus.rs"]
+mod browser_file_menus;

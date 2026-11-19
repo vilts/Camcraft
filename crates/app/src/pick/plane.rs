@@ -176,7 +176,7 @@ pub(super) fn lay_datum(world: &World, datum: &Datum, lay: PlaneLay, held: Locat
 fn datum_of(world: &World, picks: &[GeoSel]) -> Result<Datum, String> {
     let mut faces = Vec::new();
     for g in picks {
-        let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(g))?;
+        let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(world, g))?;
         if !setup_align::is_part(world, &e) {
             return Err(format!("'{}' is not the part - pick a face of the model", g.entity));
         }
@@ -184,16 +184,16 @@ fn datum_of(world: &World, picks: &[GeoSel]) -> Result<Datum, String> {
             FeatureSel::Face(_) => faces.push(g),
             FeatureSel::Chain(_) => {
                 return Err(format!(
-                    "{} of '{}' is an edge - an edge cannot set a plane; pick a flat face \
+                    "{} is an edge - an edge cannot set a plane; pick a flat face \
                      (edges set an axis: Part axes)",
-                    g.feature, g.entity
+                    super::geo_label(world, g)
                 ));
             }
             FeatureSel::Patch(_) => {
-                return Err(format!("{} of '{}' is curved - pick a flat face", g.feature, g.entity));
+                return Err(format!("{} is curved - pick a flat face", super::geo_label(world, g)));
             }
             FeatureSel::Vertex(_) => {
-                return Err(format!("{} of '{}' is a vertex - pick a flat face", g.feature, g.entity));
+                return Err(format!("{} is a vertex - pick a flat face", super::geo_label(world, g)));
             }
         }
     }
@@ -204,16 +204,16 @@ fn datum_of(world: &World, picks: &[GeoSel]) -> Result<Datum, String> {
 }
 
 fn face_datum(world: &World, g: &GeoSel) -> Result<Datum, String> {
-    let FeatureSel::Face(fid) = g.feature else { return Err(gone(g)) };
-    let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(g))?;
-    let features = model::features_of(world, &e).ok_or_else(|| gone(g))?;
-    let tris = model::facets_of(world, &e).ok_or_else(|| gone(g))?;
-    let f = features.faces.iter().find(|f| f.id == fid).ok_or_else(|| gone(g))?;
+    let FeatureSel::Face(fid) = g.feature else { return Err(gone(world, g)) };
+    let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(world, g))?;
+    let features = model::features_of(world, &e).ok_or_else(|| gone(world, g))?;
+    let tris = model::facets_of(world, &e).ok_or_else(|| gone(world, g))?;
+    let f = features.faces.iter().find(|f| f.id == fid).ok_or_else(|| gone(world, g))?;
     if f.kind == FaceKind::Degenerate {
-        return Err(format!("{} of '{}' is degenerate (no usable plane) - pick another face", g.feature, g.entity));
+        return Err(format!("{} is degenerate (no usable plane) - pick another face", super::geo_label(world, g)));
     }
     let normal = outward_normal(world, g, model::transform_of)?
-        .ok_or_else(|| format!("{} of '{}' is not flat - pick a flat face", g.feature, g.entity))?;
+        .ok_or_else(|| format!("{} is not flat - pick a flat face", super::geo_label(world, g)))?;
     let loc = model::transform_of(world, &e).unwrap_or_default();
     // Area-weighted centroid, placed: the point that goes to the level.
     let (mut area, mut sum) = (0.0_f64, [0.0_f64; 3]);
@@ -228,7 +228,7 @@ fn face_datum(world: &World, g: &GeoSel) -> Result<Datum, String> {
         sum = [sum[0] + a * m[0], sum[1] + a * m[1], sum[2] + a * m[2]];
     }
     if area.is_nan() || area <= MIN_FACE_AREA_MM2 {
-        return Err(format!("{} of '{}' has no area - pick a face with a surface", g.feature, g.entity));
+        return Err(format!("{} has no area - pick a face with a surface", super::geo_label(world, g)));
     }
     let local = Point3::new(sum[0] / area, sum[1] / area, sum[2] / area);
     let w = transform_point(local, loc.pos, loc.rot);

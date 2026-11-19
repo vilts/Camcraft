@@ -34,6 +34,11 @@ pub const STATUS_H: (f32, f32) = (16.0, 64.0);
 pub const RIBBON_TAB_PAD_X: (f32, f32) = (2.0, 32.0);
 /// Ribbon active tab underline thickness (px).
 pub const RIBBON_STROKE: (f32, f32) = (1.0, 8.0);
+/// Dropdown width, recent-list width, trigger gap and row inset (px, #2065).
+pub const MENU_W: (f32, f32) = (100.0, 480.0);
+pub const RECENT_W: (f32, f32) = (120.0, 640.0);
+pub const MENU_GAP: (f32, f32) = (0.0, 24.0);
+pub const MENU_PAD_X: (f32, f32) = (0.0, 32.0);
 
 #[must_use]
 pub fn range(v: f32, lo_hi: (f32, f32)) -> f32 {

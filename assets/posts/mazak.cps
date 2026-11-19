@@ -912,6 +912,12 @@ function onCycle() {
     msg("canned cycle G83 (deep peck) dwell is not supported by this post - a " + p.P + " s dwell is refused, not dropped; set the dwell to 0");
     return;
   }
+  // #2356: this post does not map G73/G84 dwell across control modes.
+  // Use the raw positive ask so rounding and the open-cycle shortcut cannot drop it.
+  if ((g === "G73" || g === "G84") && p.P > 0) {
+    msg("canned cycle " + g + " dwell is not supported by this post - a " + p.P + " s dwell is refused, not dropped; set the dwell to 0");
+    return;
+  }
   if (spindleStopped("canned cycle " + g)) return;
   if (!xyFirst(p.X, p.Y, p.R, false)) return;  // #1633: refused - the move is not written
   cycleSeat(p);

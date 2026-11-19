@@ -26,7 +26,7 @@ impl Shell {
         self.frame_watch.begin(now());
         // #2262: the frame-rate rule logs on a level change only.
         if let Some(line) = self.state.frame_rate.frame(now()) {
-            eprintln!("{line}");
+            diag_warn!("{line}");
         }
         // Commands the panels queued last frame land before the scene is
         // collected, so this frame draws what the user's click did.
@@ -216,7 +216,7 @@ impl Shell {
         queue.present(st);
         frame_watch.mark("submit+present", now());
         if let Some(line) = frame_watch.end(now()) {
-            eprintln!("{line}");
+            diag_warn!("{line}");
         }
 
         if state.request_quit {

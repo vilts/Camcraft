@@ -99,11 +99,13 @@ mod march;
 mod params;
 mod polar;
 mod raster;
+mod raster_bridge;
 mod rim;
 mod rings;
 mod scan;
 mod shadow;
 mod support;
+mod swarf;
 
 pub use params::{
     scallop_stepdown, scallop_stepover, Finish3DParams, FinishPattern,
@@ -121,7 +123,8 @@ pub use flow::flow;
 // closest-point law the raster clearance uses, crate-visible.
 pub(crate) use support::closest_pt_tri;
 pub use polar::{morphed_spiral, radial, spiral};
-pub use raster::{blend, parallel, swarf, swarf_multi};
+pub use raster::{blend, parallel};
+pub use swarf::{swarf, swarf_multi};
 pub use rings::waterline;
 pub use morph::morph;
 pub use shadow::{contour, project};

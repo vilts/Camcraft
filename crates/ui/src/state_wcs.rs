@@ -87,10 +87,22 @@ impl State {
                 let active = camcraft_app::setup::active(&self.world);
                 let label = camcraft_app::setup::wcs_label(&self.world, active.as_deref());
                 let axes = camcraft_app::setup_wcs_flip::axes_text(flip);
+                // #1649 review: say "mirrored" only when the post carries
+                // it; else name the refusal (once per click, not per frame).
+                let refused = (!axes.is_empty())
+                    .then(|| {
+                        camcraft_app::setup_wcs_flip::setup_problem(&self.world, active.as_deref()).or_else(|| {
+                            let ops = camcraft_app::setup_wcs_flip::setup_post_problems(&self.world, active.as_deref());
+                            (!ops.is_empty()).then(|| ops.join("; "))
+                        })
+                    })
+                    .flatten();
                 self.status = if axes.is_empty() {
                     format!("{label}: no axis flipped")
+                } else if let Some(why) = refused {
+                    format!("{label}: {axes} flipped - the post refuses it: {why}")
                 } else {
-                    format!("{label}: {axes} flipped - posting and generating are refused until the flip is cleared")
+                    format!("{label}: {axes} flipped - the posted program is mirrored")
                 };
             }
             Err(err) => self.refuse(ErrorScope::Setup, format!("WCS flip not set: {err}")),

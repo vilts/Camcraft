@@ -5,7 +5,8 @@
 //! without canned cycles and without a spindle stop (heidenhain, tinyg,
 //! carvera) refuses a bore by name. A post with no drilling refuses by name.
 //! A bore dwell is posted only where the G86
-//! format has a P word (LinuxCNC/PathPilot and grblHAL, P in seconds);
+//! format has a P word (LinuxCNC/PathPilot and grblHAL, P in seconds,
+//! writing P0 when the dwell is 0);
 //! the Fanuc-family posts and Sinumerik refuse it by name, because their
 //! G86 has no dwell word (the published Fanuc and Haas G86 formats are
 //! X Y Z R F). Goldens for the five canned posts the issue names sit in
@@ -32,6 +33,8 @@ use std::path::{Path, PathBuf};
 const NO_DWELL: [&str; 5] = ["fanuc", "haas", "mazak", "doosan-dnm", "sinumerik"];
 /// Posts that write G86 with a dwell P in seconds.
 const SECONDS: [&str; 2] = ["tormach", "grblhal"];
+/// Posts that require a non-negative P on every G86 cycle block (#2362).
+const ZERO_DWELL_P0: [&str; 2] = ["tormach", "grblhal"];
 /// Posts that refuse a bore: they cannot stop the spindle before the rapid retract.
 const EXPANDED: [&str; 3] = ["heidenhain", "tinyg", "carvera"];
 /// Posts that write no drilling at all.
@@ -55,9 +58,10 @@ fn read(rel: &str) -> String {
 /// Two bored holes, the chain the drilling generator writes for
 /// `CycleKind::Bore` (crates/motion/src/drilling/cycle.rs): rapid to R,
 /// feed to the bottom, rapid back to R, hop.
-fn program(dwell: f64) -> Toolpath {
+fn program_dwells(dwells: &[f64]) -> Toolpath {
     let mut b = PathBuilder::new(Point3::new(10.0, 10.0, HOP));
-    for (i, (x, y)) in [(10.0, 10.0), (30.0, 10.0)].into_iter().enumerate() {
+    for (i, &dwell) in dwells.iter().enumerate() {
+        let (x, y) = (10.0 + 20.0 * i as f64, 10.0);
         if i > 0 {
             b.push(MoveKind::Rapid, Point3::new(x, y, HOP), None);
         }
@@ -80,7 +84,7 @@ fn program(dwell: f64) -> Toolpath {
     b.finish()
 }
 
-fn stream(dwell: f64) -> String {
+fn stream_dwells(dwells: &[f64]) -> String {
     let d = Dump {
         op_name: "Bore",
         tool_number: 4,
@@ -92,22 +96,34 @@ fn stream(dwell: f64) -> String {
         top_z: 0.0,
         ..Dump::default()
     };
-    cnc::serialize(&dump(&program(dwell), &d))
+    cnc::serialize(&dump(&program_dwells(dwells), &d))
+}
+
+fn stream(dwell: f64) -> String {
+    stream_dwells(&[dwell, dwell])
 }
 
 fn mch() -> serde_json::Value {
     serde_json::from_str(&read("assets/machines/3axis-vmc.mch")).expect("machine json")
 }
 
-fn run(stem: &str, dwell: f64) -> Result<engine::PostOutput, String> {
+fn run_dwells(stem: &str, dwells: &[f64]) -> Result<engine::PostOutput, String> {
     let cps = read(&format!("assets/posts/{stem}.cps"));
-    engine::run(&cps, &mch(), &stream(dwell)).map_err(|e| e.to_string())
+    engine::run(&cps, &mch(), &stream_dwells(dwells)).map_err(|e| e.to_string())
+}
+
+fn run(stem: &str, dwell: f64) -> Result<engine::PostOutput, String> {
+    run_dwells(stem, &[dwell, dwell])
+}
+
+fn post_dwells(stem: &str, dwells: &[f64]) -> String {
+    let out = run_dwells(stem, dwells).unwrap_or_else(|e| panic!("{stem}: must post: {e}"));
+    assert!(out.warnings.is_empty(), "{stem}: the gate counts warnings: {:?}", out.warnings);
+    out.program
 }
 
 fn post(stem: &str, dwell: f64) -> String {
-    let out = run(stem, dwell).unwrap_or_else(|e| panic!("{stem}: must post: {e}"));
-    assert!(out.warnings.is_empty(), "{stem}: the gate counts warnings: {:?}", out.warnings);
-    out.program
+    post_dwells(stem, &[dwell, dwell])
 }
 
 /// Whitespace-split words of the program, comments dropped.
@@ -119,12 +135,16 @@ fn words(program: &str) -> Vec<String> {
         .collect()
 }
 
-fn g86_line(program: &str) -> String {
+fn g86_lines(program: &str) -> Vec<String> {
     program
         .lines()
-        .find(|l| l.split_whitespace().any(|w| w == "G86"))
+        .filter(|l| l.split_whitespace().any(|w| w == "G86"))
         .map(str::to_string)
-        .unwrap_or_default()
+        .collect()
+}
+
+fn g86_line(program: &str) -> String {
+    g86_lines(program).into_iter().next().unwrap_or_default()
 }
 
 #[test]
@@ -154,9 +174,53 @@ fn canned_posts_write_g86_and_no_other_cycle() {
             assert!(!has(other), "{stem}: a bore must never post as {other}: {ws:?}");
         }
         assert!(has("G80"), "{stem}: the cycle is cancelled: {ws:?}");
-        let g86 = g86_line(&prog);
-        assert!(!g86.split_whitespace().any(|w| w.starts_with('P')), "{stem}: no dwell, no P: {g86}");
+        for line in g86_lines(&prog) {
+            if ZERO_DWELL_P0.contains(&stem) {
+                assert!(
+                    line.split_whitespace().any(|w| w == "P0"),
+                    "{stem}: zero-dwell G86 requires P0: {line}"
+                );
+            } else {
+                assert!(
+                    !line.split_whitespace().any(|w| w.starts_with('P')),
+                    "{stem}: no dwell, no P: {line}"
+                );
+            }
+        }
     }
+}
+
+fn assert_zero_dwell_g86_has_p0(stem: &str) {
+    let prog = post(stem, 0.0);
+    let lines = g86_lines(&prog);
+    assert!(!lines.is_empty(), "{stem}: expected at least one G86 block:\n{prog}");
+    for line in &lines {
+        let p_words: Vec<&str> = line.split_whitespace().filter(|w| w.starts_with('P')).collect();
+        assert_eq!(p_words, ["P0"], "{stem}: zero-dwell G86 must emit P0 on every G86 block: {line}");
+    }
+    let mixed = post_dwells(stem, &[0.5, 0.0]);
+    let mixed_lines = g86_lines(&mixed);
+    assert_eq!(mixed_lines.len(), 2, "{stem}: expected two G86 blocks:\n{mixed}");
+    assert!(
+        mixed_lines[0].split_whitespace().any(|w| w == "P0.5"),
+        "{stem}: first G86 must emit P0.5: {}",
+        mixed_lines[0]
+    );
+    assert!(
+        mixed_lines[1].split_whitespace().any(|w| w == "P0"),
+        "{stem}: second G86 must emit P0: {}",
+        mixed_lines[1]
+    );
+}
+
+#[test]
+fn grblhal_zero_dwell_g86_has_p0() {
+    assert_zero_dwell_g86_has_p0("grblhal");
+}
+
+#[test]
+fn tormach_zero_dwell_g86_has_p0() {
+    assert_zero_dwell_g86_has_p0("tormach");
 }
 
 #[test]

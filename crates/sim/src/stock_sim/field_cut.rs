@@ -94,6 +94,10 @@ pub enum SdfTool {
     /// (virtual sharp), side slope `cot` = cotangent of the half
     /// angle from the axis, as the dexel's cone atom reads it.
     Taper { r: f64, cot: f64 },
+    /// Twist drill (#2441): cone of maximum radius `r` and side slope
+    /// `cot` from the apex up to `r * cot`, transitioning into a
+    /// cylindrical flute of radius `r` up to `flank` (`flank >= r * cot`).
+    Drill { r: f64, cot: f64, flank: f64 },
     /// Bull nose (M13.1): a cylinder of `r` to `flank` whose bottom
     /// edge is rounded by `corner` - the rounded-rectangle profile
     /// revolved (`field_bull`), the dexel's `cut_bull` atom made a
@@ -221,6 +225,9 @@ pub(super) fn chord_sweep(kind: &ToolKind, ax: [f64; 3], a: Point3, b: Point3) -
         }
         ToolKind::Flat { r, flank } => Sweep::Revolve { a, b, kind: RevKind::Flat { r: *r, flank: *flank } },
         ToolKind::Taper { r, cot } => Sweep::Revolve { a, b, kind: RevKind::Taper { r: *r, cot: *cot } },
+        ToolKind::Drill { r, cot, flank } => {
+            Sweep::Revolve { a, b, kind: RevKind::Drill { r: *r, cot: *cot, flank: *flank } }
+        }
         ToolKind::Bull { r, corner, flank } => {
             Sweep::Revolve { a, b, kind: RevKind::Bull { r: *r, corner: *corner, flank: *flank } }
         }

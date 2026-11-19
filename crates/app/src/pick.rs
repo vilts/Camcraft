@@ -20,6 +20,7 @@ pub mod feature_pick;
 pub mod feature_sel;
 // #561: face / point datums for the fixture locate mates.
 pub mod mate;
+pub mod names;
 pub mod plane;
 pub mod points;
 pub mod roles;
@@ -48,6 +49,9 @@ pub use feature_sel::{
     EdgeUnit, check_pickable, feature_chains, graph_of, is_feature_chain, pick_selection, selection_of,
 };
 pub use mate::{MateDatum, mate_datum};
+pub use names::{
+    feature_name, feature_name_or_kind, feature_names_of, geo_label, label_in_table, name_builds,
+};
 
 use flecs_ecs::prelude::World;
 

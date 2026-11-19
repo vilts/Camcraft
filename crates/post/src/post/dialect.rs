@@ -109,6 +109,16 @@ pub fn voices_wcs_rotation(cps: &str) -> Result<bool, PostError> {
     Ok(Script::load(cps)?.voices_wcs_rotation())
 }
 
+/// Whether the script's manifest declares `axisInversion = true` - it is
+/// verified on the mirrored stream, which a flipped WCS axis also needs
+/// (#374, #1649).
+///
+/// # Errors
+/// A script that does not load is a clean refusal, as everywhere.
+pub fn translates_inverted_axes(cps: &str) -> Result<bool, PostError> {
+    Ok(Script::load(cps)?.translates_inverted_axes())
+}
+
 /// Whether a path is C-axis live-tool work: some move states the
 /// spindle's C angle (issue #33). The stream's `PARAM LiveTool` and
 /// every reader that asks "does a live tool cut this section?" share

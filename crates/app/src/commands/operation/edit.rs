@@ -211,6 +211,9 @@ impl ChangeOperationKind {
         infeed_plan_gate(world, &params, &prev.tool)?;
         sinker_gate(world, prev.setup.as_deref(), &params)?;
         tool_door(world, &params, &prev.tool)?;
+        if let Some(why) = params.named_refusal() {
+            return Err(CommandError::Invalid(why));
+        }
         if !params.is_sane() {
             return Err(CommandError::Invalid(format!(
                 "operation parameters are not usable for a {} operation",

@@ -109,10 +109,11 @@ fn a_cylinder_cap_mated_across_its_plane_is_refused() {
     let (world, _h) = document();
     let before = (bounds(&world, &stock_name(&world)), bounds(&world, "part"));
     let spec = cap_on(&world, [-1.0, 30.0, 15.25]);
-    let cap = spec.mates[0].part.feature.to_string();
-    let stop = spec.mates[0].fixture.feature.to_string();
+    let cap = camcraft_app::pick::feature_name_or_kind(&world, &spec.mates[0].part.entity, spec.mates[0].part.feature);
+    let stop = camcraft_app::pick::feature_name_or_kind(&world, &spec.mates[0].fixture.entity, spec.mates[0].fixture.feature);
     let Err(e) = LocatePart::new(&world, &spec) else { panic!("the cap would stand across the stop face") };
     let e = e.to_string();
+    assert!(!e.contains("0x"), "no hex ids in refusal: {e}");
     assert!(e.contains(&format!("mate 1: {cap} of the stock '{}'", stock_name(&world))), "names the stock face: {e}");
     assert!(e.contains(&format!("the plane of, not flat on, {stop} of 'vise'")), "names the fixture plane: {e}");
     assert_eq!((bounds(&world, &stock_name(&world)), bounds(&world, "part")), before, "a refusal moves nothing");

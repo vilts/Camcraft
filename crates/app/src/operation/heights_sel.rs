@@ -155,9 +155,8 @@ pub fn selection_heights_sane(
 /// Ordering sanity on resolved values: an operation whose top is not
 /// above its bottom (or whose finished cut is not below its first stage)
 /// is refused at command creation. A height that cannot resolve is not
-/// here's business: `resolve_params` refuses it at generation, by name.
-/// (Moved beside its sibling door from `heights` at M11.3 A, unchanged
-/// but for the `src` the Selection references read.)
+/// here's business: generation refuses it by name. Read the checked tilt
+/// frame so mixed reference heights use the same axis as generation.
 #[must_use]
 pub fn depth_sane(
     world: &World,
@@ -165,7 +164,10 @@ pub fn depth_sane(
     src: Option<&SrcRef>,
     params: &OpParams,
 ) -> bool {
-    let Ok(r) = resolve_params(world, setup, src, params) else {
+    let Ok(frame) = OpFrame::new(setup.map(str::to_owned), params.tilt()).checked_frame() else {
+        return true; // an invalid tilt is refused by its own command door
+    };
+    let Ok(r) = resolve_params_folded(world, setup, src, params, frame.as_ref()) else {
         return true; // unresolved is refused elsewhere, never a false lie here
     };
     match params {

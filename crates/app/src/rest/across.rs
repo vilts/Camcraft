@@ -155,13 +155,21 @@ fn sweep(world: &World, chain: &Chain, min_r: f64, through_consumer: bool) -> Re
         if i == last && !through_consumer {
             break;
         }
-        let ops: Vec<SimOp> = s
+        let ops: Vec<(SimOp, bool)> = s
             .ops
             .iter()
             .filter(|a| a.cut)
-            .map(|a| SimOp { moves: &a.moves, radius: a.radius, ball: a.ball, cone: a.cone, corner: a.corner })
+            .map(|a| (SimOp { moves: &a.moves, radius: a.radius, ball: a.ball, cone: a.cone, corner: a.corner }, a.drill))
             .collect();
-        body.simulate(&ops).map_err(|e| e.to_string())?;
+        let mut idx = 0;
+        while idx < ops.len() {
+            let drill = ops[idx].1;
+            let end = ops[idx..].iter().position(|o| o.1 != drill).map_or(ops.len(), |d| idx + d);
+            let batch: Vec<SimOp> = ops[idx..end].iter().map(|o| o.0).collect();
+            let r = if drill { body.simulate_drill(&batch) } else { body.simulate(&batch) };
+            r.map_err(|e| e.to_string())?;
+            idx = end;
+        }
     }
     body.into_body()
 }

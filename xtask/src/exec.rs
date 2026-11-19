@@ -245,8 +245,12 @@ impl Run {
             .map(|st| st.code().unwrap_or(-1))
             .map_err(|e| format!("cargo {}: {e}", args.join(" ")))?;
         let secs = t0.elapsed().as_secs();
-        let note = read_log(&std::fs::read_to_string(&log).unwrap_or_default(), code)?;
-        let ok = code == 0;
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        let mut note = read_log(&text, code)?;
+        let ok = match &s.expect_fail {
+            Some(k) => expect_fail_note(code, &mut note, &text, k),
+            None => code == 0,
+        };
         println!("     {} in {secs}s {note}", if ok { "ok" } else { "FAIL" });
         Ok(Done { name: s.name.clone(), ok, secs, note })
     }
@@ -270,6 +274,46 @@ impl Run {
         }
         i32::from(bad > 0)
     }
+}
+
+/// A known-fail step (`known_fail`) is ok only when libtest reports `k.test` itself as FAILED (the `read_log`
+/// note `failed: ... [tests: ...]` names it exactly) AND the test's panic block in `log` is the pinned
+/// assert: its `panicked at` line names `k.file` and `k.line`, and a message line starts with `k.reason`. A pass, a renamed test, a
+/// compile error, a crash of the test binary (no `test ... FAILED` line) or a failure for another reason (a
+/// planner panic, a gouge warning, another assert) is a FAIL.
+pub fn expect_fail_note(code: i32, note: &mut String, log: &str, k: &crate::known_fail::KnownFail) -> bool {
+    let test = &k.test;
+    if code == 0 {
+        *note = "KNOWN FAIL NOW PASSES (or no such test): remove its known-fail marker".into();
+        return false;
+    }
+    let named = note.starts_with("failed:")
+        && note
+            .split_once("[tests: ")
+            .and_then(|(_, rest)| rest.split_once(']'))
+            .is_some_and(|(list, _)| list.split(", ").any(|t| t == test));
+    if !named {
+        *note = format!("known fail did not fail as a test (crash, compile error or other test): {note}");
+        return false;
+    }
+    let pinned = |(at, msg): (String, String)| at.contains(&format!("{}:{}:", k.file, k.line))
+        && msg.lines().any(|l| l.starts_with(&k.reason));
+    if !panic_block(log, test).is_some_and(pinned) {
+        *note = format!("KNOWN FAIL, DIFFERENT REASON (want {:?} at {}): {note}", k.reason, k.file);
+        return false;
+    }
+    *note = format!("known fail, red as expected ({note})");
+    true
+}
+
+/// The `panicked at` line (slashes made `/`) and the message lines after it of the thread named `test`;
+/// the message ends at the next `thread '` line or the `failures:` list.
+fn panic_block(log: &str, test: &str) -> Option<(String, String)> {
+    let head = format!("thread '{test}'");
+    let mut lines = log.lines().skip_while(|l| !(l.starts_with(&head) && l.contains("panicked at ")));
+    let at = lines.next()?.replace('\\', "/");
+    let msg: Vec<&str> = lines.take_while(|l| !l.starts_with("thread '") && !l.starts_with("failures:")).collect();
+    Some((at, msg.join("\n")))
 }
 
 /// The VOID line when the checkout under `root` no longer reads as `guard` (or cannot be read); `None` while

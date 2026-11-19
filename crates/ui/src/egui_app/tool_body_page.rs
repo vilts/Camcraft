@@ -151,6 +151,14 @@ pub(super) fn body_section(ui: &mut Ui, state: &mut State, exists: bool, u: Unit
     if ui.button("Apply body").on_hover_text("attach the body with this placement (one undo step)").clicked() {
         state.queue_apply_tool_body();
     }
+    if ui
+        .button("Convert to profile")
+        .on_hover_text("convert this aligned body into an editable conservative half-profile (non-revolved features are enveloped, never cut away)")
+        .clicked()
+    {
+        state.convert_body_draft_to_profile();
+    }
+    ui.small("Non-revolved features are enveloped conservatively (never cut away).");
     super::tool_body_assembly_page::section(ui, state);
 }
 

@@ -90,6 +90,7 @@ impl Ring {
     /// windows of `width`, centered at equal spacing. Windows wider than
     /// their spacing merge; a fully tabbed ring keeps nothing (the loop
     /// contributes no motion at that level).
+    #[cfg(test)]
     pub(super) fn tab_keeps(&self, count: usize, width: f64) -> Vec<(f64, f64)> {
         let l = self.len;
         if count == 0 || l <= 0.0 {
@@ -100,52 +101,8 @@ impl Ring {
         if hw >= spacing * 0.5 {
             return Vec::new();
         }
-        let eps = l * 1e-12;
-        let mut ws: Vec<(f64, f64)> = Vec::new();
-        for i in 0..count {
-            let c = (i as f64 + 0.5) * spacing;
-            let (mut w0, mut w1) = (c - hw, c + hw);
-            while w0 < 0.0 {
-                w0 += l;
-                w1 += l;
-            }
-            while w0 >= l {
-                w0 -= l;
-                w1 -= l;
-            }
-            if w1 <= l {
-                ws.push((w0, w1));
-            } else {
-                ws.push((w0, l));
-                ws.push((0.0, w1 - l));
-            }
-        }
-        ws.sort_by(|x, y| x.0.total_cmp(&y.0));
-        let mut merged: Vec<(f64, f64)> = Vec::with_capacity(ws.len());
-        for w in ws {
-            match merged.last_mut() {
-                Some(last) if w.0 <= last.1 + eps => last.1 = last.1.max(w.1),
-                _ => merged.push(w),
-            }
-        }
-        let mut keeps: Vec<(f64, f64)> = Vec::with_capacity(merged.len() + 1);
-        let mut cur = 0.0;
-        for w in &merged {
-            if w.0 > cur + eps {
-                keeps.push((cur, w.0));
-            }
-            cur = cur.max(w.1);
-        }
-        if cur < l - eps {
-            keeps.push((cur, l));
-        }
-        // Keep intervals at both ends of the parametrization are one
-        // arc crossing the seam.
-        if keeps.len() > 1 && keeps[0].0 <= eps && keeps[keeps.len() - 1].1 >= l - eps {
-            let last = keeps.pop().unwrap_or((0.0, 0.0));
-            keeps[0] = (last.0, keeps[0].1 + l);
-        }
-        keeps
+        let ws: Vec<(f64, f64)> = (0..count).map(|i| ((i as f64 + 0.5) * spacing - hw, (i as f64 + 0.5) * spacing + hw)).collect();
+        self.keeps_from_windows(&ws)
     }
 
     /// The keeps of [`Self::tab_keeps`] for a ring whose start the user
@@ -154,6 +111,7 @@ impl Ring {
     /// Tab `i` spans `[(i+1)s - width, (i+1)s]`; the last one ends on the
     /// seam itself, so no window crosses it. Tabs as wide as their
     /// spacing leave nothing, as in `tab_keeps`.
+    #[cfg(test)]
     pub(super) fn tab_keeps_from_start(&self, count: usize, width: f64) -> Vec<(f64, f64)> {
         let l = self.len;
         if count == 0 || l <= 0.0 {
@@ -165,6 +123,78 @@ impl Ring {
         }
         (0..count).map(|i| (i as f64 * spacing, (i + 1) as f64 * spacing - width)).collect()
     }
+
+    /// The arc intervals left to cut when the windows `ws` (arc position
+    /// from, to; any lap) are taken out of the ring. Windows that touch or
+    /// overlap merge; keep intervals at both ends of the parametrization
+    /// are one arc crossing the seam. A window as long as the ring, or
+    /// windows that cover it, keep nothing. Bounded: one pass per window.
+    pub(super) fn keeps_from_windows(&self, ws: &[(f64, f64)]) -> Vec<(f64, f64)> {
+        let l = self.len;
+        if l <= 0.0 || !l.is_finite() {
+            return vec![(0.0, l.max(0.0))];
+        }
+        let eps = l * 1e-12;
+        let mut parts: Vec<(f64, f64)> = Vec::with_capacity(ws.len() * 2);
+        for &(a, b) in ws {
+            let span = b - a;
+            if !(span.is_finite() && a.is_finite()) {
+                return Vec::new();
+            }
+            if span >= l {
+                return Vec::new();
+            }
+            let w0 = a.rem_euclid(l);
+            let w1 = w0 + span.max(0.0);
+            if w1 <= l {
+                parts.push((w0, w1));
+            } else {
+                parts.push((w0, l));
+                parts.push((0.0, w1 - l));
+            }
+        }
+        parts.sort_by(|x, y| x.0.total_cmp(&y.0));
+        let mut merged: Vec<(f64, f64)> = Vec::with_capacity(parts.len());
+        for w in parts {
+            match merged.last_mut() {
+                Some(last) if w.0 <= last.1 + eps => last.1 = last.1.max(w.1),
+                _ => merged.push(w),
+            }
+        }
+        let mut keeps: Vec<(f64, f64)> = Vec::with_capacity(merged.len() + 1);
+        let mut cur = 0.0;
+        for w in &merged {
+            if w.0 > cur + eps {
+                keeps.push((cur, w.0));
+            }
+            cur = f64::max(cur, w.1);
+        }
+        if cur < l - eps {
+            keeps.push((cur, l));
+        }
+        if keeps.len() > 1
+            && keeps[0].0 <= eps
+            && keeps[keeps.len() - 1].1 >= l - eps
+            && let Some(last) = keeps.pop()
+        {
+            keeps[0] = (last.0, keeps[0].1 + l);
+        }
+        keeps
+    }
+}
+
+/// #2480: the length of one tab window on the tool-centre ring. The
+/// cutter disc bites `D/2` past each end of a window, so a window of the
+/// tab width alone leaves a bridge of `tab_width - D` on the channel's
+/// centre line, and none when the width is `D` or less. The window is
+/// therefore the tab width plus the tool diameter: the tab width is the
+/// narrowest width of the bridge that stays (general CAM practice). This
+/// is the start length only: where the ring turns, or a lead reaches into
+/// the tab, `tab_bridge::fit_tabs` grows the window until the true bridge
+/// (the closest approach of the cut on the two sides, less `D`) holds.
+pub(super) fn tab_window(tab_width: f64, tool_diameter: f64) -> f64 {
+    let d = if tool_diameter.is_finite() { tool_diameter.max(0.0) } else { 0.0 };
+    tab_width + d
 }
 
 pub(super) fn dist(a: Point2, b: Point2) -> f64 {

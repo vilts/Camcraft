@@ -185,16 +185,21 @@ fn the_mates_read_in_plain_words_and_stay_drawn() {
     crate::locate_pick::take(h.state_mut(), top);
     h.run();
     let mate = h.query_by_label_contains("Mate 1:").and_then(|n| n.accesskit_node().value()).expect("the mate is listed");
-    assert!(mate.contains("part face -Z (bottom), #") && mate.contains("on vise face +Z (top), #"), "{mate}");
+    assert!(
+        mate.contains("Face ") && mate.contains(" of 'part' (-Z (bottom) face) on Face ") && mate.contains(" of 'vise' (+Z (top) face)"),
+        "{mate}"
+    );
     assert!(!mate.contains("0x"), "no raw ids: {mate}");
     assert!(
         h.query_by_label_contains("Turn about mate 1 normal (+ = counter-clockwise looking down the normal)").is_some(),
         "the turn names its mate and its sense"
     );
     assert!(!crate::interact::selection_feature_lines(h.state()).is_empty(), "the drafted faces stay drawn");
-    // A point reads as its coordinates in the setup frame.
-    let corner = crate::locate_pick::describe(h.state(), "vise", &vertex(h.state(), "part", [0.0, 0.0, 0.0]));
-    assert_eq!(corner, "part point (150.00, 80.00, 30.00) mm");
+    // A point reads as its friendly name plus coordinates in the setup frame.
+    let corner_sel = vertex(h.state(), "part", [0.0, 0.0, 0.0]);
+    let corner_name = camcraft_app::pick::geo_label(&h.state().world, &corner_sel);
+    let corner = crate::locate_pick::describe(h.state(), "vise", &corner_sel);
+    assert_eq!(corner, format!("{corner_name} (150.00, 80.00, 30.00) mm"));
 }
 
 #[test]

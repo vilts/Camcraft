@@ -277,7 +277,7 @@ impl PathBuilder {
         self.axis = axis.and_then(|a| match normalize_axis(a) {
             Some(n) => Some(n),
             None => {
-                eprintln!("cl: refusing a builder axis of {a:?}: not a direction");
+                tracing::warn!("cl: refusing a builder axis of {a:?}: not a direction");
                 None
             }
         });

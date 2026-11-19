@@ -33,7 +33,7 @@ pub(crate) fn run_windowed(pick: gpu::GpuPick, want: Option<String>, mcp_port: O
     let event_loop = match EventLoop::new() {
         Ok(el) => el,
         Err(err) => {
-            eprintln!("cannot create event loop: {err}");
+            diag_warn!("cannot create event loop: {err}");
             return 1;
         }
     };
@@ -58,12 +58,12 @@ pub(crate) fn run_windowed(pick: gpu::GpuPick, want: Option<String>, mcp_port: O
         match camcraft_app::mcp::Inbox::listen(port, wake) {
             Ok(inbox) => {
                 if let Some(addr) = inbox.addr() {
-                    eprintln!("mcp: listening on {addr} (connect with: camcraft-cli mcp --connect {addr})");
+                    diag_warn!("mcp: listening on {addr} (connect with: camcraft-cli mcp --connect {addr})");
                 }
                 shell.state.mcp = Some(inbox);
             }
             Err(err) => {
-                eprintln!("mcp: cannot listen on 127.0.0.1:{port}: {err}");
+                diag_warn!("mcp: cannot listen on 127.0.0.1:{port}: {err}");
                 shell.state.status = format!("MCP server not started: 127.0.0.1:{port}: {err}");
             }
         }
@@ -71,7 +71,7 @@ pub(crate) fn run_windowed(pick: gpu::GpuPick, want: Option<String>, mcp_port: O
     let code = match event_loop.run_app(&mut shell) {
         Ok(()) => shell.exit_code,
         Err(err) => {
-            eprintln!("event loop failed: {err}");
+            diag_warn!("event loop failed: {err}");
             1
         }
     };
@@ -190,7 +190,8 @@ impl Shell {
     }
 
     fn fail(&mut self, el: &ActiveEventLoop, what: &str, err: impl std::fmt::Display) {
-        eprintln!("egui shell: {what}: {err}");
+        diag_warn!("egui shell: {what}: {err}");
+        camcraft_app::logging::startup_failure(&format!("egui shell: {what}: {err}"));
         self.failed = true;
         self.exit_code = 1;
         el.exit();
@@ -239,7 +240,7 @@ impl Shell {
                 }
             };
         let gpu_line = gpu::describe(&adapter).log_line();
-        println!("{gpu_line}");
+        diag_info!("{gpu_line}");
         self.state.gpu_line = Some(gpu_line);
 
         let mut renderer = Renderer::new(&device, config.format, RendererOptions::default());
@@ -250,7 +251,7 @@ impl Shell {
         let stock_eye = match crate::trace::eye::StockEye::new(&device, VIEW3D_FORMAT) {
             Ok(e) => Some(e),
             Err(err) => {
-                eprintln!("stock eye: {err} - the deviate sheet stands in");
+                diag_warn!("stock eye: {err} - the deviate sheet stands in");
                 None
             }
         };
@@ -294,7 +295,7 @@ impl Shell {
         surface.configure(device, config);
         let elapsed = started.elapsed();
         if elapsed > super::frame_watch::BUDGET {
-            eprintln!("gpu: slow resize configure {} ms", elapsed.as_millis());
+            diag_warn!("gpu: slow resize configure {} ms", elapsed.as_millis());
         }
     }
 
@@ -306,11 +307,7 @@ fn refuse_dialog(err: &str) {
     let dialog = rfd::MessageDialog::new()
         .set_level(rfd::MessageLevel::Error)
         .set_title("CamCraft cannot start the viewport")
-        .set_description(format!(
-            "{err}
-
-Try --gpu <adapter name> (or CAMCRAFT_GPU) to choose an adapter, or --gpu-backend dx12|vulkan|gl."
-        ))
+        .set_description(camcraft_app::logging::failure_message(err))
         .set_buttons(rfd::MessageButtons::Ok);
     // #1067: owned by the shell window, so the refusal is in front of the app.
     let dialog = match crate::file_dialog::parent() {

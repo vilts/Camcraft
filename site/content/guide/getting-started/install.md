@@ -16,6 +16,9 @@ Silicon and Intel), FreeBSD amd64 and Arch Linux.
 - **Installer** (`camcraft-<version>-win-x64-setup.exe`): installs for the
   current user, without an administrator prompt.
 
+If the app closes at startup, the display freezes, or you need to report a
+problem, see [Windows troubleshooting](@/guide/reference/windows-troubleshooting.md).
+
 ## Linux
 
 - **DEB or RPM:** install the package and start **CamCraft** from the

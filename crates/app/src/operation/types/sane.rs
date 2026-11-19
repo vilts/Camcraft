@@ -9,6 +9,11 @@ use crate::operation::types::sel::lead_sane;
 pub const PREDRILLED_POCKET_ONLY: &str =
     "pre-drilled entry is read by the 2D Pocket only so far - turn it off for this operation kind";
 
+/// The refusal of the Adaptive strategy on 2D Pocket (#1517): Adaptive
+/// clearing lives in the 2D Adaptive operation only.
+pub const POCKET_ADAPTIVE_RETIRED: &str =
+    "Adaptive clearing lives in the 2D Adaptive operation now - use 2D Adaptive instead of Pocket with Adaptive";
+
 /// The refusal of a corner-arc radius no control can cut (#1733); the
 /// bound by the tool radius is the generator's (it owns the tool).
 pub const ARC_RADIUS_DOOR: &str = "corner arc radius must be a number of at least 0.01 mm";
@@ -47,6 +52,9 @@ impl OpParams {
     /// commands' generic "not usable".
     #[must_use]
     pub fn named_refusal(&self) -> Option<String> {
+        if matches!(self, OpParams::Pocket { strategy: PocketStrategy::Adaptive, .. }) {
+            return Some(POCKET_ADAPTIVE_RETIRED.into());
+        }
         if let Some(why) = self.tilt().and_then(|t| t.refusal()) {
             return Some(why);
         }
@@ -246,8 +254,9 @@ impl OpParams {
                     && pos(*feed)
                     && pos(*plunge_feed)
                     && pos(*helix_radius)
+                    && !matches!(strategy, PocketStrategy::Adaptive)
                     && (optimal_load.is_finite()
-                        && (!matches!(strategy, PocketStrategy::Adaptive | PocketStrategy::OffsetRings)
+                        && (!matches!(strategy, PocketStrategy::OffsetRings)
                             || crate::load::load_in_door(*optimal_load)))
             }
             // The twins' doors are the pocket's, read with the

@@ -4,7 +4,7 @@ members = ["crates/app", "crates/cl", "crates/motion", "crates/post", "crates/si
   "crates/tools", "crates/ui", "crates/geometry", "crates/kernel", "xtask"]
 
 [workspace.package]
-version = "0.23.0"
+version = "0.24.0"
 edition = "2024"
 rust-version = "1.90"
 

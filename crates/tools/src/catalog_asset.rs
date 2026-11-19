@@ -219,7 +219,7 @@ pub(crate) fn shipped() -> &'static [(String, Tool)] {
     CATALOG.get_or_init(|| match parse_catalog(CATALOG_JSON) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("camcraft: starter tool catalog unavailable: {e}");
+            tracing::warn!("starter tool catalog unavailable: {e}");
             Vec::new()
         }
     })

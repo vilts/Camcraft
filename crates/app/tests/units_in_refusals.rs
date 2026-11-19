@@ -54,6 +54,7 @@ fn drill_op(src: &str, top: f64, clear: f64, holes: Vec<Hole>, cross: Vec<CrossH
         src: SrcRef::Entity(src.into()),
         params: OpParams::Drill {
             break_through: None,
+            break_through_from: Default::default(),
             clearance_z: Height::fixed(top + clear),
             retract_z: None,
             top_z: Height::fixed(top),
@@ -225,6 +226,7 @@ fn params(radius: f64, cycle: CycleChoice) -> OpParams {
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius, entry_z: TOP, floor_z: FLOOR, through: false, stepped: false };
     OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(TOP + 10.0),
         retract_z: None,
         top_z: Height::fixed(TOP),
@@ -501,7 +503,7 @@ fn pocket(top: f64, bottom: f64) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
-        strategy: camcraft_app::machining2d::PocketStrategy::Adaptive,
+        strategy: camcraft_app::machining2d::PocketStrategy::OffsetRings,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,

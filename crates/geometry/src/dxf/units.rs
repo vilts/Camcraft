@@ -132,4 +132,35 @@ impl Unit {
             Self::UsSurveyMiles => 6_336_000_000.0 / 3937.0,
         }
     }
+
+    /// Autodesk DXF `$INSUNITS` group 70 integer code.
+    #[must_use]
+    pub const fn code(self) -> i32 {
+        match self {
+            Self::Inches => 1,
+            Self::Feet => 2,
+            Self::Miles => 3,
+            Self::Millimeters => 4,
+            Self::Centimeters => 5,
+            Self::Meters => 6,
+            Self::Kilometers => 7,
+            Self::Microinches => 8,
+            Self::Mils => 9,
+            Self::Yards => 10,
+            Self::Angstroms => 11,
+            Self::Nanometers => 12,
+            Self::Microns => 13,
+            Self::Decimeters => 14,
+            Self::Decameters => 15,
+            Self::Hectometers => 16,
+            Self::Gigameters => 17,
+            Self::AstronomicalUnits => 18,
+            Self::LightYears => 19,
+            Self::Parsecs => 20,
+            Self::UsSurveyFeet => 21,
+            Self::UsSurveyInches => 22,
+            Self::UsSurveyYards => 23,
+            Self::UsSurveyMiles => 24,
+        }
+    }
 }

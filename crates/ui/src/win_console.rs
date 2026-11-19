@@ -110,7 +110,7 @@ fn show_error(text: &str) {
     if CONSOLE_ATTACHED.load(Ordering::SeqCst) || ERROR_SHOWN.swap(true, Ordering::SeqCst) {
         return;
     }
-    let text = wide(text);
+    let text = wide(&camcraft_app::logging::failure_message(text));
     let caption = wide("CamCraft");
     // SAFETY: both buffers are live NUL-terminated UTF-16 for the whole call; a NULL owner
     // window is allowed. The pressed button is irrelevant.
@@ -127,8 +127,7 @@ fn show_error(text: &str) {
 /// `run` returned non-zero: with no console, nothing of the log is visible, so say so.
 pub fn report_exit_failure(code: i32) {
     show_error(&format!(
-        "CamCraft could not start or stopped with an error (exit code {code}).\n\n\
-         Start camcraft-ui.exe from a terminal (Command Prompt or PowerShell) to see the log."
+        "CamCraft could not start or stopped with an error (exit code {code})."
     ));
 }
 
@@ -136,7 +135,6 @@ pub fn report_exit_failure(code: i32) {
 /// box when no console is attached. Handled panics inside the app never reach here (#1325).
 pub fn report_panic(text: &str) {
     show_error(&format!(
-        "CamCraft stopped unexpectedly.\n\n{text}\n\n\
-         Start camcraft-ui.exe from a terminal (Command Prompt or PowerShell) to see the log."
+        "CamCraft stopped unexpectedly.\n\n{text}"
     ));
 }

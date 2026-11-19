@@ -307,7 +307,11 @@ pub(crate) fn walk(
             continue;
         }
         let sim_ops = [SimOp { moves: &p.moves, radius: p.radius, ball: p.ball, cone: p.cone, corner: p.corner }];
-        held.simulate(&sim_ops)?;
+        if p.drill {
+            held.simulate_drill(&sim_ops)?;
+        } else {
+            held.simulate(&sim_ops)?;
+        }
     }
     if let Some(u) = until {
         return Err(format!("the program never enters setup '{u}'"));
@@ -326,7 +330,7 @@ fn judge(
     let facets = crate::setup_align::parts_facets_in(world, frame.as_deref());
     // #864: the same tightened tolerance the final verdict is read at.
     let tol = crate::model_fidelity::program_tol(world)?;
-    let breaks = super::program_breaks(world, cut, true, frame);
+    let breaks = super::breaks::program_breaks(world, cut, true, frame, &facets, tol);
     let marks = super::marks::program_marks(world, cut, true, frame);
     held.verdict_snapshot(&facets, tol, |dev, tops| {
         super::credit_breaks(dev, tops, &facets, &breaks);

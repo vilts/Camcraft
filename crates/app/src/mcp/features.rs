@@ -129,12 +129,19 @@ fn outward(w: &World, model: &str, fa: &feature::Face) -> Result<[f64; 3], Strin
     let sel = GeoSel { entity: model.to_owned(), feature: FeatureSel::Face(fa.id) };
     match outward_normal(w, &sel, model::transform_of) {
         Ok(Some(n)) => Ok(n),
-        Ok(None) => Err(format!("{} of '{model}' is not a flat face", sel.feature)),
+        Ok(None) => Err(format!("{} is not a flat face", crate::pick::geo_label(w, &sel))),
         Err(why) => Err(why),
     }
 }
 
-fn faces_view(w: &World, name: &str, g: &FeatureGraph, loc: &Location, limit: usize) -> (Vec<Value>, usize) {
+fn faces_view(
+    w: &World,
+    name: &str,
+    names: Option<&feature::FeatureNames>,
+    g: &FeatureGraph,
+    loc: &Location,
+    limit: usize,
+) -> (Vec<Value>, usize) {
     let f = &*g.features;
     let by_edge = edge_chains(g);
     // Strip -> welded smooth face, so a strip names the logical face too.
@@ -157,6 +164,7 @@ fn faces_view(w: &World, name: &str, g: &FeatureGraph, loc: &Location, limit: us
             let verts = fa.loops.iter().flat_map(|l| l.verts.iter()).filter_map(|&v| f.verts.get(v as usize).copied());
             json!({
                 "id": feature_id(FeatureSel::Face(fa.id)),
+                "name": crate::pick::label_in_table(names, name, FeatureSel::Face(fa.id)),
                 "normal": side["normal"],
                 "facing": side["facing"],
                 "outside_unknown": side["outside_unknown"],
@@ -170,7 +178,13 @@ fn faces_view(w: &World, name: &str, g: &FeatureGraph, loc: &Location, limit: us
     (rows, planar.len())
 }
 
-fn chains_view(g: &FeatureGraph, loc: &Location, limit: usize) -> (Vec<Value>, usize) {
+fn chains_view(
+    name: &str,
+    names: Option<&feature::FeatureNames>,
+    g: &FeatureGraph,
+    loc: &Location,
+    limit: usize,
+) -> (Vec<Value>, usize) {
     let f = &*g.features;
     let all = feature_chains(g);
     let rows = all
@@ -188,6 +202,7 @@ fn chains_view(g: &FeatureGraph, loc: &Location, limit: usize) -> (Vec<Value>, u
                 .sum();
             json!({
                 "id": feature_id(FeatureSel::Chain(c.id)),
+                "name": crate::pick::label_in_table(names, name, FeatureSel::Chain(c.id)),
                 "closed": c.closed,
                 "edges": c.edges.len(),
                 "length": fnum(length),
@@ -200,24 +215,45 @@ fn chains_view(g: &FeatureGraph, loc: &Location, limit: usize) -> (Vec<Value>, u
     (rows, all.len())
 }
 
-fn patches_view(f: &Features, limit: usize) -> (Vec<Value>, usize) {
+fn patches_view(
+    name: &str,
+    names: Option<&feature::FeatureNames>,
+    f: &Features,
+    limit: usize,
+) -> (Vec<Value>, usize) {
     let all = feature::patches(f);
     let rows = all
         .iter()
         .take(limit)
         .map(|p| {
             let faces: Vec<String> = p.faces.iter().map(|id| feature_id(FeatureSel::Face(*id))).collect();
-            json!({ "id": feature_id(FeatureSel::Patch(p.id)), "faces": faces })
+            json!({
+                "id": feature_id(FeatureSel::Patch(p.id)),
+                "name": crate::pick::label_in_table(names, name, FeatureSel::Patch(p.id)),
+                "faces": faces,
+            })
         })
         .collect();
     (rows, all.len())
 }
 
-fn vertices_view(g: &FeatureGraph, loc: &Location, limit: usize) -> (Vec<Value>, usize) {
+fn vertices_view(
+    name: &str,
+    names: Option<&feature::FeatureNames>,
+    g: &FeatureGraph,
+    loc: &Location,
+    limit: usize,
+) -> (Vec<Value>, usize) {
     let all: Vec<Value> = g
         .points
         .iter()
-        .map(|p| json!({ "id": feature_id(FeatureSel::Vertex(p.id)), "at": pt(world_pt(loc, p.at)) }))
+        .map(|p| {
+            json!({
+                "id": feature_id(FeatureSel::Vertex(p.id)),
+                "name": crate::pick::label_in_table(names, name, FeatureSel::Vertex(p.id)),
+                "at": pt(world_pt(loc, p.at)),
+            })
+        })
         .collect();
     let total = all.len();
     (all.into_iter().take(limit).collect(), total)
@@ -263,16 +299,17 @@ pub(super) fn list_features(env: &mut Env, a: &Map<String, Value>) -> Result<Val
     let w = &env.world;
     let tris = model::facets_of(w, &e).ok_or_else(|| format!("'{name}' has no geometry to pick from"))?;
     let g = feature_graph_shared(&tris);
+    let names = crate::pick::feature_names_of(w, &e);
     let f = &*g.features;
     let loc = model::transform_of(w, &e).unwrap_or_default();
     let mut out = json!({ "model": name, "frame": "world", "truncated": false });
     let mut truncated = false;
     for k in kinds {
         let (rows, total) = match k {
-            "faces" => faces_view(w, name, &g, &loc, limit),
-            "chains" => chains_view(&g, &loc, limit),
-            "patches" => patches_view(f, limit),
-            _ => vertices_view(&g, &loc, limit),
+            "faces" => faces_view(w, name, names.as_deref(), &g, &loc, limit),
+            "chains" => chains_view(name, names.as_deref(), &g, &loc, limit),
+            "patches" => patches_view(name, names.as_deref(), f, limit),
+            _ => vertices_view(name, names.as_deref(), &g, &loc, limit),
         };
         truncated |= rows.len() < total;
         out[k] = Value::Array(rows);

@@ -15,13 +15,13 @@ fn rotate_xy(x: f64, y: f64, ox: f64, oy: f64, s_y: f64, c_y: f64) -> (f64, f64)
     (ox + dx * c_y + dy * s_y, oy - dx * s_y + dy * c_y)
 }
 
-fn read_finite(v: &Value, name: &str) -> Result<f64, PostError> {
+pub(super) fn read_finite(v: &Value, name: &str) -> Result<f64, PostError> {
     v.as_f64()
         .filter(|x| x.is_finite())
         .ok_or_else(|| PostError::Refused(format!("stream parameter {name} must be a finite number")))
 }
 
-fn chunk_bounds(records: &[Record]) -> Vec<(usize, usize)> {
+pub(super) fn chunk_bounds(records: &[Record]) -> Vec<(usize, usize)> {
     let mut spans = Vec::new();
     let mut start = 0usize;
     for (i, r) in records.iter().enumerate() {

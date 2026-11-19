@@ -115,6 +115,7 @@ fn create(world: &World, h: &mut History, name: &str, tool: &str, src: SrcRef, p
 fn drill(x: f64, y: f64) -> OpParams {
     OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(20.0),

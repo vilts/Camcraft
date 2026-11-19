@@ -93,6 +93,7 @@ fn hole(xy: (f64, f64), r: f64, entry: f64, floor: f64, through: bool) -> Hole {
 fn params<'a>(tool: &'a Tool, holes: &'a [Hole]) -> CycleParams<'a> {
     CycleParams {
         through_clear: crate::drilling::THROUGH_CLEAR,
+        break_through_from: BreakThroughFrom::FullDiameter,
         clearance_z: 15.0,
         r_z: 10.0,
         hop_z: None,
@@ -403,11 +404,40 @@ fn spot_dims_the_mouth_under_the_r_plane() {
 #[test]
 fn through_exit_clears_the_floor() {
     let tool = drill_tool(4.0);
+    let point = drill_point_length(&tool).unwrap();
     let t = drill(&params(&tool, &[hole((10.0, 10.0), 2.0, 10.0, 0.0, true)])).unwrap();
     let c = one(&t);
     assert!(c.bottom_z < 0.0);
-    assert!((c.bottom_z + THROUGH_CLEAR).abs() < 1e-9);
+    assert!((c.bottom_z + THROUGH_CLEAR + point).abs() < 1e-9);
     assert_eq!(c.entry_z, 10.0);
+
+    let hs = [hole((10.0, 10.0), 2.0, 10.0, 0.0, true)];
+    let mut tip_p = params(&tool, &hs);
+    tip_p.break_through_from = BreakThroughFrom::Tip;
+    let tip_t = drill(&tip_p).unwrap();
+    assert!((one(&tip_t).bottom_z + THROUGH_CLEAR).abs() < 1e-9);
+}
+
+#[test]
+fn drill_point_length_respects_tip_angle_and_refuses_bad_angles() {
+    let dr6 = drill_tool(6.0);
+    let want_118 = 3.0 / 59.0_f64.to_radians().tan();
+    assert!((drill_point_length(&dr6).unwrap() - want_118).abs() < 1e-9);
+
+    let mut d135 = dr6.clone();
+    d135.tip_angle = 135.0;
+    let want_135 = 3.0 / 67.5_f64.to_radians().tan();
+    assert!((drill_point_length(&d135).unwrap() - want_135).abs() < 1e-9);
+
+    let mut flat = dr6.clone();
+    flat.tip_angle = 180.0;
+    assert_eq!(drill_point_length(&flat).unwrap(), 0.0);
+
+    for bad in [0.0, -45.0, 181.0, f64::NAN] {
+        let mut t = dr6.clone();
+        t.tip_angle = bad;
+        assert!(drill_point_length(&t).is_err(), "angle {bad} must refuse");
+    }
 }
 
 #[test]

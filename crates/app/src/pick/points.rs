@@ -126,7 +126,7 @@ fn datum_of(world: &World, picks: &[GeoSel]) -> Result<(Datum, [[f64; 3]; 3]), S
         return Err("there is no part to align - import a model first".into());
     }
     for g in picks {
-        let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(g))?;
+        let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(world, g))?;
         if !setup_align::is_part(world, &e) {
             return Err(format!("'{}' is not the part - pick points of the model", g.entity));
         }
@@ -141,8 +141,8 @@ fn datum_of(world: &World, picks: &[GeoSel]) -> Result<(Datum, [[f64; 3]; 3]), S
             FeatureSel::Face(_) | FeatureSel::Patch(_) => {}
         }
         return Err(format!(
-            "{} of '{}' is a face - pick three points (corners of the model or circle centres)",
-            g.feature, g.entity
+            "{} is a face - pick three points (corners of the model or circle centres)",
+            super::geo_label(world, g)
         ));
     }
     let [g1, g2, g3] = picks else {

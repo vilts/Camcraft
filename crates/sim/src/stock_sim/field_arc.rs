@@ -67,6 +67,9 @@ impl ArcKind {
             ArcKind::Shanked { r, shank } => ArcKind::Shanked { r: *r, shank: *shank },
             ArcKind::Rev(RevKind::Flat { r, flank }) => ArcKind::Rev(RevKind::Flat { r: *r, flank: *flank }),
             ArcKind::Rev(RevKind::Taper { r, cot }) => ArcKind::Rev(RevKind::Taper { r: *r, cot: *cot }),
+            ArcKind::Rev(RevKind::Drill { r, cot, flank }) => {
+                ArcKind::Rev(RevKind::Drill { r: *r, cot: *cot, flank: *flank })
+            }
             ArcKind::Rev(RevKind::Bull { r, corner, flank }) => {
                 ArcKind::Rev(RevKind::Bull { r: *r, corner: *corner, flank: *flank })
             }
@@ -176,6 +179,7 @@ impl ArcPiece {
             ArcKind::Ball { r } => (*r, 0.0),
             ArcKind::Shanked { r, shank } => (*r, *shank),
             ArcKind::Rev(RevKind::Flat { r, flank }) | ArcKind::Rev(RevKind::Bull { r, flank, .. }) => (*r, *flank),
+            ArcKind::Rev(RevKind::Drill { r, cot, flank }) => (*r, flank.max(r * cot)),
             ArcKind::Rev(RevKind::Taper { r, cot }) => (*r, r * cot),
         }
     }
@@ -287,6 +291,7 @@ fn arc_kind(kind: &ToolKind) -> Option<(f64, ArcKind)> {
         ToolKind::Shanked { r, shank } => (*r, ArcKind::Shanked { r: *r, shank: *shank }),
         ToolKind::Flat { r, flank } => (0.0, ArcKind::Rev(RevKind::Flat { r: *r, flank: *flank })),
         ToolKind::Taper { r, cot } => (0.0, ArcKind::Rev(RevKind::Taper { r: *r, cot: *cot })),
+        ToolKind::Drill { r, cot, flank } => (0.0, ArcKind::Rev(RevKind::Drill { r: *r, cot: *cot, flank: *flank })),
         ToolKind::Bull { r, corner, flank } => (0.0, ArcKind::Rev(RevKind::Bull { r: *r, corner: *corner, flank: *flank })),
         ToolKind::Lathe { .. } => return None,
     })

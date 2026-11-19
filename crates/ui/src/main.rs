@@ -12,7 +12,7 @@ mod win_console;
 fn main() {
     #[cfg(windows)]
     win_console::attach_parent_console();
-    camcraft_app::logging::init();
+    camcraft_app::logging::init_desktop();
     let args: Vec<String> = std::env::args().skip(1).collect();
     #[cfg(windows)]
     let code = match std::panic::catch_unwind(|| camcraft_ui::run(&args)) {
@@ -24,6 +24,9 @@ fn main() {
     };
     #[cfg(not(windows))]
     let code = camcraft_ui::run(&args);
+    if code != 0 {
+        camcraft_app::logging::startup_failure(&format!("CamCraft stopped with exit code {code}"));
+    }
     #[cfg(windows)]
     if code != 0 {
         win_console::report_exit_failure(code);

@@ -106,7 +106,7 @@ pub fn contour_auto_side(
 /// are refused by name - this kind asks for curves, not boundaries.
 /// Resolution errors quote the same labels the 2D walk quotes, so a
 /// re-pick instruction reads identically in both.
-pub(super) fn drive_chains(world: &World, items: &[GeoSel]) -> Result<Vec<Vec<Point3>>, GenError> {
+pub(super) fn drive_chains(world: &World, setup: Option<&str>, items: &[GeoSel]) -> Result<Vec<Vec<Point3>>, GenError> {
     let mut out: Vec<Vec<Point3>> = Vec::new();
     for g in items {
         let Some(entity) = model::find_by_name(world, &g.entity) else {
@@ -121,8 +121,8 @@ pub(super) fn drive_chains(world: &World, items: &[GeoSel]) -> Result<Vec<Vec<Po
                 g.entity
             )));
         };
-        let loc = model::transform_of(world, &entity).unwrap_or_default();
-        let label = format!("{} of '{}'", g.feature, g.entity);
+        let loc = crate::setup_align::pose_in(world, &entity, setup).unwrap_or_default();
+        let label = crate::pick::geo_label(world, g);
         match g.feature {
             FeatureSel::Chain(cid) => {
                 let Some(c) = crate::model::resolve_chain(&features, cid) else {
@@ -178,7 +178,13 @@ pub(super) fn selection_geometry_impl(
     params: &OpParams,
     notes: Option<&mut Vec<String>>,
 ) -> Result<SelectionGeometry, GenError> {
-    selection_geometry_in(world, setup, items, params, notes, None)
+    let (loops, mut chains, auto) = selection_geometry_in(world, setup, items, params, notes, None)?;
+    if matches!(params, OpParams::Contour { .. } | OpParams::PlasmaProfile(_) | OpParams::WireContour(_))
+        && !chains.is_empty()
+    {
+        chains = boundary_chains::join_open_runs(chains);
+    }
+    Ok((loops, chains, auto))
 }
 
 /// A world point in the plane the walk projects to: world XY, or the
@@ -291,7 +297,7 @@ pub(super) fn selection_geometry_in(
             )));
         };
         let loc = opframe.pose_in_setup(world, &entity).unwrap_or_default();
-        let label = format!("{} of '{}'", g.feature, g.entity);
+        let label = crate::pick::geo_label(world, g);
         match g.feature {
             FeatureSel::Vertex(_) => {
                 // A point bounds no region: refuse by name, never drop it.

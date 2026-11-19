@@ -7,7 +7,7 @@ use egui::Ui;
 
 use camcraft_app::links::Approach;
 use camcraft_app::machining2d::{GenError, PocketStrategy, RestParams, rest_strategy};
-use camcraft_app::operation::REST_PREDRILLED;
+use camcraft_app::operation::{POCKET_ADAPTIVE_RETIRED, REST_PREDRILLED};
 use camcraft_app::units::Unit;
 
 use super::fields::num_row;
@@ -63,6 +63,11 @@ pub(super) fn rest_group(
                 "grows the computed rest area outward so passes overlap the previous tool's cut",
                 |ui| num_row(ui, u, &mut r.allowance),
             );
+            // A legacy draft carries the global retirement refusal as well as
+            // the rest-specific refusal below; Apply reports the former first.
+            if strategy == PocketStrategy::Adaptive {
+                consequence(ui, POCKET_ADAPTIVE_RETIRED);
+            }
             if let Err(err) = rest_strategy(strategy) {
                 let text = match &err {
                     GenError::Invalid(s) | GenError::Empty(s) => s.as_str(),

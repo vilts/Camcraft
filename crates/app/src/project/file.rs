@@ -118,7 +118,18 @@ use super::*;
 /// no flip - what every v66 file posted - so a v66 file steps up
 /// unchanged. An old reader must refuse a v67 file rather than drop the
 /// flip and post the setup in the unflipped frame.
-pub const PROJECT_VERSION: u32 = 67;
+/// v68 (#2441): Drill operations carry `break_through_from`
+/// (`"full_diameter"` vs `"tip"`). Pre-v68 files with the key absent
+/// migrate to `"tip"` so saved projects keep their posted depth, while
+/// new drills default to `"full_diameter"` (adding the drill point
+/// cone). An old reader must refuse a v68 file rather than ignore
+/// `"break_through_from"` and drill shallow or pierce a fixture.
+/// v69 (#1517): 2D Pocket no longer carries `strategy: adaptive` (moved
+/// to `adaptive2d`), and migrated operations may carry `needs_review`
+/// reasons naming turned-off un-carriable fields. Pre-v69 `Pocket` +
+/// `Adaptive` files open as `Adaptive2D` (Spiral); older builds must
+/// refuse v69 files rather than silently drop `needs_review` and post.
+pub const PROJECT_VERSION: u32 = 69;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
@@ -397,9 +408,9 @@ pub struct ToolDto {
     /// earlier tool was taken to be - no version step.
     #[serde(default = "centre_cutting", skip_serializing_if = "is_centre_cutting")]
     pub center_cutting: bool,
-    /// #221 addition, additive (no version step): the controller's tool
-    /// number. Absent from every older file and written only when set;
-    /// absent means "post by list position", what every older tool did.
+    /// #221 / #2442 addition: the controller's tool number (`T..` / `H..`).
+    /// Legacy files without it are frozen to their 1-based name-sorted list
+    /// position on load so adding or deleting tools later never shifts them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub number: Option<u32>,
     /// #368 (v58): the tool's modelled body. Absent is none - the

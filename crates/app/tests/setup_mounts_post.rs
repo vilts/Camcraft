@@ -17,7 +17,7 @@ use flecs_ecs::prelude::World;
 
 use camcraft_app::commands::{
     ActivateSetup, AddTool, CreateOperation, CreateSetup, EditOperationParams, GenerateOperation, History,
-    ImportModel, SetSetupMachine, SetSetupPost, SetStock, SetToolNumber,
+    ImportModel, SetOperationSetup, SetSetupMachine, SetSetupPost, SetStock, SetToolNumber,
 };
 use camcraft_app::geometry::{Mesh, Point3, Triangle};
 use camcraft_app::machine::{self, AxisLimits, Coolant, Kind, Machine};
@@ -360,17 +360,25 @@ fn a_tool_number_shared_across_machines_posts_but_clashes_within_one() {
     assert_eq!(files.len(), 2);
     assert!(files[0].1.contains("T02 M6") && files[1].1.contains("T02"), "{files:?}");
 
-    // A second mill tool on Setup1, posting by position, and the mill
-    // tool on that same number (renumbered if it is not already):
-    // one carousel, one T number.
+    // A second mill tool placed initially on a separate mill machine lets
+    // MILL_TOOL take the same number, and moving Face1b onto Setup1 brings
+    // both tools onto one carousel so post_mounts catches the clash.
     const OTHER: &str = "EM-0600-4FL";
     add_tool(&world, &mut h, OTHER);
     let n = camcraft_app::tool_numbers::number_of(&world, OTHER).expect("a tool");
+    h.execute(&world, CreateSetup::new(&world, None, None).expect("Setup3"));
+    h.execute(
+        &world,
+        SetSetupMachine::new(&world, "Setup3", Some(("bench-mill-2.mch".into(), Some(bench_mill()))))
+            .expect("mill2"),
+    );
+    let box3 = SetStock::new(&world, StockShape::Box { dx: 60.0, dy: 60.0, dz: 20.0 }, Location::default());
+    h.execute(&world, box3.expect("box3"));
+    h.execute(&world, CreateOperation::new(&world, "Face1b", OTHER, SrcRef::Stock, face()).expect("face"));
     if camcraft_app::tool_numbers::number_of(&world, MILL_TOOL) != Some(n) {
         h.execute(&world, SetToolNumber::new(&world, MILL_TOOL, Some(n)).expect("number"));
     }
-    h.execute(&world, ActivateSetup::new(&world, Some("Setup1")).expect("activate"));
-    h.execute(&world, CreateOperation::new(&world, "Face1b", OTHER, SrcRef::Stock, face()).expect("face"));
+    h.execute(&world, SetOperationSetup::new(&world, "Face1b", Some("Setup1")).expect("move to Setup1"));
     generate(&world, &mut h, "Face1b");
     let why = post_mounts(&world, "t-within").expect_err("one machine, one T number");
     assert!(

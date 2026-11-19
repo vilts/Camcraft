@@ -91,6 +91,17 @@ pub(crate) fn num_narrow(ui: &mut Ui, u: Unit, v: &mut f64) {
 const NARROW_W: f32 = 62.0;
 
 fn num_sized(ui: &mut Ui, u: Unit, v: &mut f64, prec: usize, suffix: &str, width: f32) -> egui::Response {
+    let r = num_lens(ui, u, v, prec, suffix, width);
+    ring(ui, r)
+}
+
+/// #2516: a value field joins the pane's Tab / Enter ring.
+fn ring(ui: &Ui, r: egui::Response) -> egui::Response {
+    super::layout::field_ring::register(ui, r.id);
+    r
+}
+
+fn num_lens(ui: &mut Ui, u: Unit, v: &mut f64, prec: usize, suffix: &str, width: f32) -> egui::Response {
     let h = ui.spacing().interact_size.y;
     // Long values must overflow forward; add_sized centers overflow and moves the window's origin.
     let layout = egui::Layout::centered_and_justified(ui.layout().main_dir())
@@ -132,7 +143,8 @@ pub(crate) fn num_feed(ui: &mut Ui, u: Unit, v: &mut f64) {
 
 fn plain_drag(ui: &mut Ui, v: &mut f64) -> egui::Response {
     let h = ui.spacing().interact_size.y;
-    ui.add_sized([CTRL_W, h], DragValue::new(v).speed(0.1))
+    let r = ui.add_sized([CTRL_W, h], DragValue::new(v).speed(0.1));
+    ring(ui, r)
 }
 
 /// Rpm, counts, ratios: no lens - these were never millimeters.
@@ -192,6 +204,7 @@ pub(crate) fn int_range_row<N: egui::emath::Numeric>(
     range: std::ops::RangeInclusive<N>,
 ) {
     let r = ui.add(DragValue::new(v).range(range));
+    let r = ring(ui, r);
     if let Some(l) = super::layout::row_label_id(ui) {
         r.labelled_by(l);
     }
@@ -199,7 +212,8 @@ pub(crate) fn int_range_row<N: egui::emath::Numeric>(
 
 /// A lens-free number with its unit as the suffix ("°", "s", "%").
 pub(crate) fn num_unit(ui: &mut Ui, v: &mut f64, unit: &str) {
-    super::layout::value_with_unit(ui, v, unit, 0.1);
+    let r = super::layout::value_with_unit(ui, v, unit, 0.1);
+    ring(ui, r);
 }
 
 /// The 3+2 index editor (M5.1 stage B): the group's header checkbox arms

@@ -55,6 +55,7 @@ impl Sweep {
             Sweep::Revolve { kind, .. } => match kind {
                 RevKind::Flat { r, flank } => r.hypot(*flank),
                 RevKind::Taper { r, cot } => r.hypot(r * cot),
+                RevKind::Drill { r, cot, flank } => r.hypot(flank.max(r * cot)),
                 RevKind::Bull { r, flank, .. } => r.hypot(*flank),
             },
             Sweep::Arc(_) => 0.0, // its stadium is its own (`ArcPiece::stadium`)
@@ -77,6 +78,7 @@ impl Sweep {
             Sweep::Revolve { kind, .. } => match kind {
                 RevKind::Flat { r, flank } => (*r, *flank),
                 RevKind::Taper { r, cot } => (*r, r * cot),
+                RevKind::Drill { r, cot, flank } => (*r, flank.max(r * cot)),
                 RevKind::Bull { r, flank, .. } => (*r, *flank),
             },
             Sweep::Arc(p) => p.reach(),
@@ -116,7 +118,9 @@ impl Sweep {
             Sweep::Lathe(_) | Sweep::Ball { .. } => false,
             Sweep::Shanked { c0, c1, up, .. } => c0.z.min(c1.z) + up[2] >= z,
             Sweep::Revolve { a, b, kind } => match kind {
-                RevKind::Flat { flank, .. } | RevKind::Bull { flank, .. } => a.z.min(b.z) + flank >= z,
+                RevKind::Flat { flank, .. } | RevKind::Drill { flank, .. } | RevKind::Bull { flank, .. } => {
+                    a.z.min(b.z) + flank >= z
+                }
                 RevKind::Taper { .. } => false,
             },
             Sweep::Arc(p) => p.spans_above(z),

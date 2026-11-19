@@ -1,0 +1,82 @@
+// Example catalog seed case: 2d/first-part (#2392, #2393).
+// Builds first-part.camproj and posts first-part.nc headlessly through
+// CamCraft's undoable command verbs. Run with CWD = this case directory:
+//   camcraft-cli script build.camscript
+
+cam.import("model/first-part.obj", "first-part");
+
+cam.call("set_stock", {
+  box: { dx: 100.0, dy: 60.0, dz: 20.0 }
+});
+
+cam.call("add_tool", { catalog: "DR-0600", holder: "none" });
+cam.call("add_tool", { catalog: "EM-0600-4FL", holder: "none" });
+cam.call("add_tool", { catalog: "EM-1000-4FL", holder: "none" });
+
+cam.call("add_operation", {
+  kind: "Face",
+  name: "Face1",
+  tool: "EM-1000-4FL",
+  source: "stock",
+  params: {
+    stepover: 3.0,
+    clearance_z: { reference: "top_of_stock", offset: 25.0 },
+    cut_z: { reference: "top_of_model", offset: 0.0 },
+    feed: 1200.0,
+    plunge_feed: 300.0,
+    climb: true
+  }
+});
+
+cam.call("add_operation", {
+  kind: "2D Pocket",
+  name: "2D Pocket1",
+  tool: "EM-0600-4FL",
+  source: "first-part",
+  params: {
+    stepover: 3.0,
+    stock_to_leave: 0.0,
+    clearance_z: { reference: "top_of_stock", offset: 25.0 },
+    top_z: { reference: "top_of_model", offset: 0.0 },
+    bottom_z: { reference: "top_of_model", offset: -5.0 },
+    stepdown: 5.0,
+    feed: 1200.0,
+    plunge_feed: 300.0,
+    climb: true,
+    strategy: "auto",
+    entry: "helix",
+    helix_radius: 1.2,
+    optimal_load: 0.1464466094067262
+  }
+});
+
+cam.call("add_operation", {
+  kind: "Drill",
+  name: "Drill1",
+  tool: "DR-0600",
+  source: "first-part",
+  params: {
+    clearance_z: { reference: "top_of_stock", offset: 25.0 },
+    top_z: { reference: "top_of_stock", offset: 2.0 },
+    cycle: "auto",
+    peck: 0.0,
+    dwell: 0.0,
+    feed: 1200.0,
+    plunge_feed: 300.0,
+    holes: [
+      { xy: [38.0, 23.0], radius: 3.0, entry_z: 10.0, floor_z: 0.0, through: true, stepped: false },
+      { xy: [-38.0, 23.0], radius: 3.0, entry_z: 10.0, floor_z: 0.0, through: true, stepped: false },
+      { xy: [38.0, -23.0], radius: 3.0, entry_z: 10.0, floor_z: 0.0, through: true, stepped: false },
+      { xy: [-38.0, -23.0], radius: 3.0, entry_z: 10.0, floor_z: 0.0, through: true, stepped: false }
+    ]
+  }
+});
+
+cam.generate();
+var verdict = cam.verify();
+if (!verdict.ok) {
+  throw new Error("catalog verify failed: " + JSON.stringify(verdict));
+}
+cam.save("first-part.camproj");
+cam.post({ to: "first-part.nc" });
+cam.report();

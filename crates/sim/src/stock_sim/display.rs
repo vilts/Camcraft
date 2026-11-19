@@ -19,9 +19,8 @@
 //! `field_batch` - so the spanning flank no longer costs its length;
 //! the shorter flank stays as this module's exactness argument.)
 
-use super::backend::Stock;
+use super::backend::{op_sdf_tool, Stock};
 use super::cut::{check_ops, SimOp};
-use super::field_cut::SdfTool;
 use super::kernel::StockError;
 
 impl Stock {
@@ -29,10 +28,23 @@ impl Stock {
     /// height (see the module law). The column arm is `simulate`
     /// itself; so is any program carrying a tool axis.
     pub fn simulate_display(&mut self, ops: &[SimOp]) -> Result<(), StockError> {
+        self.simulate_display_with(ops, false)
+    }
+
+    /// [`Self::simulate_display`] for twist-drill operations (#2441): cuts a
+    /// cylindrical flute above the cone (`SdfTool::Drill`) bounded by the
+    /// stock height.
+    pub fn simulate_drill_display(&mut self, ops: &[SimOp]) -> Result<(), StockError> {
+        self.simulate_display_with(ops, true)
+    }
+
+    fn simulate_display_with(&mut self, ops: &[SimOp], drill: bool) -> Result<(), StockError> {
         let posed = ops.iter().any(|op| op.moves.iter().any(|m| m.axis.is_some()));
         let f = match self {
             Stock::Field(f) if !posed => f,
-            _ => return self.simulate(ops),
+            _ => {
+                return if drill { self.simulate_drill(ops) } else { self.simulate(ops) };
+            }
         };
         check_ops(ops)?;
         let ceiling = f.bounds().max.z;
@@ -49,16 +61,7 @@ impl Stock {
         };
         let chord_tol = (f.cell() * 0.25).max(1e-9);
         for (i, op) in ops.iter().enumerate() {
-            let tool = if op.ball {
-                SdfTool::Ball { r: op.radius }
-            } else if let Some(cot) = op.cone {
-                SdfTool::Taper { r: op.radius, cot }
-            } else if let Some(corner) = op.corner {
-                // the bull's flank rides the same stock-height law
-                SdfTool::BullNose { r: op.radius, corner, flank: flank.max(corner) }
-            } else {
-                SdfTool::Flat { r: op.radius, flank }
-            };
+            let tool = op_sdf_tool(op, flank, false, drill);
             for chunk in op.moves.chunks(super::field_batch::BATCH_MOVES) {
                 f.subtract_batch(chunk, &tool, chord_tol).map_err(|e| match e {
                     StockError::Invalid(s) => StockError::Invalid(format!("op {i}: {s}")),
@@ -114,5 +117,28 @@ mod tests {
             }
         }
         assert!(n > 1000, "the comparison saw the surfaces: {n} samples");
+    }
+
+    #[test]
+    fn drill_engines_cut_cone_with_cylindrical_flute_and_agree() {
+        let c = cube(Point3::new(0.0, 0.0, 0.0), Point3::new(20.0, 20.0, 10.0));
+        let mut field = Stock::from_facets(Backend::Field { band: FIELD_BAND }, &c.facets, 0.5).unwrap();
+        let mut pic = Stock::from_facets(Backend::Field { band: FIELD_BAND }, &c.facets, 0.5).unwrap();
+        let mut col = Stock::from_facets(Backend::Column, &c.facets, 0.5).unwrap();
+        let cot = 1.0 / 59.0_f64.to_radians().tan();
+        let mv = vec![feed(Point3::new(10.25, 10.25, 12.0), Point3::new(10.25, 10.25, 2.0))];
+        let ops = [SimOp { moves: &mv, radius: 3.0, ball: false, cone: Some(cot), corner: None }];
+        field.simulate_drill(&ops).unwrap();
+        pic.simulate_drill_display(&ops).unwrap();
+        col.simulate_drill(&ops).unwrap();
+        // At r = 2.0 mm from the hole center, the 118 deg cone rises to 2 + 2 * cot ≈ 3.202 mm.
+        let want_z = 2.0 + 2.0 * cot;
+        for (tag, s) in [("field", &field), ("display", &pic), ("column", &col)] {
+            let z = s.top(12.25, 10.25);
+            assert!((z - want_z).abs() < 1e-4, "{tag}: cone top at r=2 was {z}, want {want_z}");
+        }
+        // Check parity between field and column inside the full hole & outside flute.
+        assert!((field.top(12.25, 10.25) - col.top(12.25, 10.25)).abs() < 1e-4);
+        assert!((field.top(13.75, 10.25) - 10.0).abs() < 1e-4, "outside r=3 stays uncut");
     }
 }

@@ -5,7 +5,7 @@
 //! engine chokes on ever crashes the process - a bad source comes
 //! back as an error line with a place in it.
 //!
-//! Gate map (M4.4): covers app::script, app::posting, app::project,
+//! Gate map (M4.4): covers app::script, app::mcp, app::posting, app::project,
 //! app::commands, app::operation, app::tool_list, app::tool_library,
 //! app::world.
 
@@ -431,5 +431,35 @@ fn cam_post_with_per_op_writes_standalone_files() {
         json_str(&dir.join("missing_sub").join("perop.nc"))
     ));
     assert!(!missing_out.ok && missing_out.errors[0].contains("not a folder"), "{:?}", missing_out.errors);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn cam_call_builds_headlessly_and_records_caught_refusals() {
+    let dir = std::env::temp_dir().join(format!("camcraft-script-call-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let proj = dir.join("built.camproj");
+    let nc = dir.join("built.nc");
+    let src = format!(
+        "cam.call('set_stock', {{ box: {{ dx: 60, dy: 60, dz: 20 }} }});\n\
+         cam.call('add_tool', {{ catalog: 'EM-0400-2FL' }});\n\
+         cam.call('add_operation', {{ kind: 'Face', tool: 'EM-0400-2FL', source: 'stock', params: {{ stepover: 3, clearance_z: {{ reference: 'top_of_stock', offset: 25 }}, cut_z: {{ reference: 'top_of_stock', offset: -0.5 }}, feed: 1200, plunge_feed: 300, climb: true }} }});\n\
+         cam.generate();\n\
+         var v = cam.verify();\n\
+         cam.save({});\n\
+         cam.post({{ to: {} }});\n\
+         v",
+        json_str(&proj),
+        json_str(&nc)
+    );
+    let out = script::run(&src);
+    assert!(out.ok, "{:?}", out.errors);
+    assert_eq!(out.result["ok"], json!(true), "{}", out.result);
+    assert!(proj.is_file() && nc.is_file(), "cam.call script writes project and NC");
+
+    let bad = script::run("try { cam.call('no_such_tool', {}); } catch (e) { cam.log(e.message); }");
+    assert!(!bad.ok, "caught cam.call refusal must still fail the run");
+    assert!(bad.errors.iter().any(|l| l.contains("unknown tool 'no_such_tool'")), "{:?}", bad.errors);
     let _ = std::fs::remove_dir_all(&dir);
 }

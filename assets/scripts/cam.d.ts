@@ -116,6 +116,7 @@ interface CamApi {
   check(): VerifyReport;  // arity 0
   result(): unknown;  // arity 0
   log(...values: unknown[]): null;  // variadic
+  call(tool: string, args?: Record<string, unknown>): unknown;  // variadic
 }
 
 declare const cam: CamApi;

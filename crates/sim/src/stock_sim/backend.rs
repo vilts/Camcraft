@@ -147,9 +147,20 @@ impl Stock {
     /// floating above the cut) - the column's reach, batched per
     /// brick (M7.3's cost law, `field_batch`).
     pub fn simulate(&mut self, ops: &[SimOp]) -> Result<(), StockError> {
+        self.simulate_with(ops, false)
+    }
+
+    /// Run a twist-drill program (#2441): identical to [`Self::simulate`],
+    /// except a `cone` op carries a cylindrical flute above its cone (`SdfTool::Drill`)
+    /// rather than a truncated chamfer cone (`SdfTool::Taper`).
+    pub fn simulate_drill(&mut self, ops: &[SimOp]) -> Result<(), StockError> {
+        self.simulate_with(ops, true)
+    }
+
+    fn simulate_with(&mut self, ops: &[SimOp], drill: bool) -> Result<(), StockError> {
         match self {
             Stock::Column(d) => super::cut::simulate(d, ops),
-            Stock::Field(f) => simulate_field(f, ops),
+            Stock::Field(f) => simulate_field_with(f, ops, drill),
         }
     }
 
@@ -235,24 +246,39 @@ pub(crate) fn spanning_flank(f: &SdfField) -> f64 {
     (dx * dx + dy * dy + dz * dz).sqrt() + 2.0 * f.cap() + 4.0 * f.cell()
 }
 
+/// Map a `SimOp` to the field engine's solid (#2441 shared across `backend`
+/// and `display`). `drill` switches `op.cone` from a truncated `Taper` to
+/// a twist `Drill` with a cylindrical flute of length `flank`.
+pub(crate) fn op_sdf_tool(op: &SimOp, flank: f64, shanked_ball: bool, drill: bool) -> SdfTool {
+    if op.ball {
+        if shanked_ball {
+            SdfTool::Shanked { r: op.radius, shank: flank }
+        } else {
+            SdfTool::Ball { r: op.radius }
+        }
+    } else if let Some(cot) = op.cone {
+        if drill {
+            SdfTool::Drill { r: op.radius, cot, flank: flank.max(op.radius * cot) }
+        } else {
+            SdfTool::Taper { r: op.radius, cot }
+        }
+    } else if let Some(corner) = op.corner {
+        SdfTool::BullNose { r: op.radius, corner, flank: flank.max(corner) }
+    } else {
+        SdfTool::Flat { r: op.radius, flank }
+    }
+}
+
 /// The field arm of [`Stock::simulate`], stated once so a carried field
 /// (`CarriedField::simulate`, #637 E2c) cuts through the very same tool
 /// construction: `check_ops` first, then each op's moves batched per brick
 /// against the solid `spanning_flank` gives the column's reach.
-pub(crate) fn simulate_field(f: &mut SdfField, ops: &[SimOp]) -> Result<(), StockError> {
+pub(crate) fn simulate_field_with(f: &mut SdfField, ops: &[SimOp], drill: bool) -> Result<(), StockError> {
     check_ops(ops)?;
     let chord_tol = (f.cell() * 0.25).max(1e-9);
     let flank = spanning_flank(f);
     for (i, op) in ops.iter().enumerate() {
-        let tool = if op.ball {
-            SdfTool::Shanked { r: op.radius, shank: flank }
-        } else if let Some(cot) = op.cone {
-            SdfTool::Taper { r: op.radius, cot }
-        } else if let Some(corner) = op.corner {
-            SdfTool::BullNose { r: op.radius, corner, flank }
-        } else {
-            SdfTool::Flat { r: op.radius, flank }
-        };
+        let tool = op_sdf_tool(op, flank, true, drill);
         for chunk in op.moves.chunks(super::field_batch::BATCH_MOVES) {
             f.subtract_batch(chunk, &tool, chord_tol).map_err(|e| named_op(i, e))?;
         }

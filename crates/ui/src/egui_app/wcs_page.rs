@@ -142,16 +142,14 @@ fn quarter_turns(ui: &mut Ui, state: &mut State, is_mill: bool) {
         }
     }
     flip_row(ui, state, size3);
-    let size2 = Vec2::new(cell_w(ui, avail, 2), BUTTON_H);
-    match even_row(ui, &["Level", "Set Origin"], size2) {
-        Some(0) => {
-            state.wcs_ui.roll_deg = 0.0;
-            state.wcs_ui.pitch_deg = 0.0;
-            state.wcs_ui.yaw_deg = 0.0;
-            apply_wcs_drafts(state);
-        }
-        Some(_) => apply_wcs_drafts(state),
-        None => {}
+    // #870: typed values apply from the footer's one "Set origin"
+    // button (wcs_footer), so Level has the row to itself.
+    let size1 = Vec2::new(cell_w(ui, avail, 1), BUTTON_H);
+    if even_row(ui, &["Level"], size1).is_some() {
+        state.wcs_ui.roll_deg = 0.0;
+        state.wcs_ui.pitch_deg = 0.0;
+        state.wcs_ui.yaw_deg = 0.0;
+        apply_wcs_drafts(state);
     }
 }
 
@@ -176,12 +174,19 @@ fn flip_row(ui: &mut Ui, state: &mut State, size: Vec2) {
         }
         state.pending.push_back(CommandKind::SetWcsFlip { flip: next });
     }
-    if flip.iter().any(|f| *f) {
-        ui.label(
-            RichText::new("A flipped axis does not post yet: posting and generating are refused until the flip is cleared.")
-                .small()
-                .weak(),
-        );
+    // #1649: the post mirrors X and Y; a flipped Z and probing are refused.
+    let note = if flip.get(2).copied().unwrap_or(false) {
+        Some("A flipped Z does not post yet: clear Flip Z before you post.")
+    } else if flip.iter().any(|f| *f) {
+        Some(
+            "The posted program is mirrored: the machine control must run the flipped axis reversed. \
+             Toolpaths do not change. Probing does not post in a flipped setup.",
+        )
+    } else {
+        None
+    };
+    if let Some(text) = note {
+        ui.label(RichText::new(text).small().weak());
     }
 }
 

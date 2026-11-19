@@ -176,17 +176,13 @@ fn offset() -> OpParams {
 
 #[test]
 fn adaptive_kind_is_the_pockets_engagement_ladder() {
-    // Two worlds, the same job: the catalog name and the pocket set
-    // to Adaptive cut the same program byte for byte - the pin in
-    // generate.rs is the only thing the name changes.
+    // Two worlds, the same job: 2D Adaptive cuts a real HSM engagement ladder,
+    // while Pocket + Adaptive is retired and refused at creation (#1517).
     let (_w, _h, t) = job_on("ADP", adaptive(45.0), HSM_SIDE);
     assert!(t.is_chained() && t.all_finite(), "a real engagement ladder");
     assert!(!t.moves.is_empty(), "and not an empty one");
-    assert_eq!(
-        text_hsm(adaptive(45.0), "ADP2"),
-        text_hsm(pocket(PocketStrategy::Adaptive, 45.0), "PKT"),
-        "the name must not move the G-code"
-    );
+    let pkt = pocket(PocketStrategy::Adaptive, 45.0);
+    assert!(pkt.named_refusal().is_some(), "Pocket + Adaptive is retired");
 }
 
 #[test]
@@ -204,24 +200,17 @@ fn offset_kind_is_the_pockets_ring_tiling() {
 #[test]
 fn the_engagement_door_is_live_on_adaptive_only() {
     // The field the kind exposes must actually reach the kernel:
-    // 30° and 90° cut different ladders, and each equals the pocket
-    // set to the same angle - so it is the number flowing, not a
-    // constant wearing the field's name.
+    // 30° and 90° cut different ladders.
     let a30 = text_hsm(adaptive(30.0), "A30");
     let a90 = text_hsm(adaptive(90.0), "A90");
     assert_ne!(a30, a90, "the door bites or the kind is a lie");
-    assert_eq!(a90, text_hsm(pocket(PocketStrategy::Adaptive, 90.0), "P90"));
-    assert_eq!(a30, text_hsm(pocket(PocketStrategy::Adaptive, 30.0), "P30"));
 }
 
 #[test]
 fn the_kind_tag_separates_the_twins_from_the_pocket() {
     // The digest law (M2.4 A): the strategy byte drops out of the
     // twins because the kind tag at the head already pins which
-    // ladder runs. So a retype Pocket(Adaptive) -> Adaptive2D goes
-    // Stale once (a different tag) and regenerates byte-identically
-    // (the same path) - the mechanism saying so, as every strategy
-    // rename always did. And the twins never collide with each other.
+    // ladder runs, and the twins never collide with each other or Pocket.
     let src = SrcRef::Stock;
     let w = new_world();
     let mut h = History::default();
@@ -232,7 +221,7 @@ fn the_kind_tag_separates_the_twins_from_the_pocket() {
     );
     add_tool(&w, &mut h, "EM-0800-4FL");
     let st = |p: &OpParams| operation::current_stamp(&w, "EM-0800-4FL", &src, p, "X", None);
-    let pkt = pocket(PocketStrategy::Adaptive, 45.0);
+    let pkt = pocket(PocketStrategy::OffsetRings, 45.0);
     let adp = adaptive(45.0);
     assert_ne!(st(&pkt), st(&adp), "the twins are a different row of the table");
     assert_eq!(st(&adp), st(&adaptive(45.0)), "the same numbers, the same digest");

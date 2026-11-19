@@ -22,16 +22,21 @@
 //!   then calls the very function it called before #326, so an untouched
 //!   setup is byte-identical (paths, stamps, posts and saved files).
 //! - **Refuse what is not verified.** Generation in an aligned setup is
-//!   wired for `Face`, `Contour`, `Pocket`, `Adaptive2D`, `Offset2D`,
-//!   `Trace`, `Engrave`, `Circular`, `Slot`, `TrochoidalSlot`, `Drill`,
-//!   `Bore`, `Thread`, `Pocket3D` and `Finish3D` over a whole model,
-//!   the stock, or picked features, area controls included (#1743 3D,
-//!   #2210 2D, #2276 the region, typed and hole-list kinds; Detect holes and the
-//!   Slot's picks read the op's setup frame): every world read of
-//!   `boundary_ctx` - picks, part material, heights, silhouette - goes
-//!   through the same setup-frame doors as the model, and the stock
-//!   outline is furniture. Other kinds, a tilt and a non-mill machine
-//!   are refused by name ([`generation_problem`]).
+//!   wired for the 17 verified 2D/3D/hole mill kinds (`Face`, `Contour`,
+//!   `Pocket`, `Adaptive2D`, `Offset2D`, `Trace`, `Engrave`, `Chamfer2D`,
+//!   `Circular`, `Slot`, `TrochoidalSlot`, `Drill`, `Bore`, `Thread`,
+//!   `Deburr`, `Pocket3D`, `Finish3D` - area controls and `Detect holes`
+//!   included: #1743, #2210, #2276) on `Mill` and `MillTurn`, the 10
+//!   5-axis and rotary kinds (`Contour5D`, `Parallel5D`, `Swarf`,
+//!   `AdvancedSwarf`, `RotaryContour`, `RotaryParallel`, `RotaryOffset`,
+//!   `MultiAxisRough`, `Flow5D`, `MultiAxisContour`; `drive_chains` and
+//!   `rotary_axis_of` read the setup frame: #2286) on `Mill` only, all 12
+//!   turning kinds on `MillTurn`, all 12 turning kinds and `Drill` on
+//!   `Lathe`, `PlasmaProfile` on `Plasma`, `WireContour` (including 4-axis
+//!   ruled picks) on `WireEdm`, and `SinkerBurn` (including
+//!   `electrode_from_faces`) on `SinkerEdm`. `Probe`, 5-axis/rotary on
+//!   non-`Mill` machines, a tilted plane and `Waterjet` are refused by
+//!   name ([`generation_problem`]).
 
 use flecs_ecs::core::EntityViewGet; // try_get is not re-exported in prelude (0.2.2)
 use flecs_ecs::prelude::{Entity, World};
@@ -366,38 +371,78 @@ pub fn about_centre(rot: [f64; 4], c: Point3) -> Option<Location> {
 
 /// The op kinds whose every world read is wired through this module's
 /// setup-frame helpers, and pinned by tests in an aligned setup.
-fn verified_kind(params: &crate::operation::OpParams) -> bool {
+fn verified_mill(params: &crate::operation::OpParams) -> bool {
     use crate::operation::OpParams;
     matches!(
         params,
         OpParams::Face { .. } | OpParams::Pocket { .. } | OpParams::Contour { .. } | OpParams::Adaptive2D { .. }
             | OpParams::Offset2D { .. } | OpParams::Trace { .. } | OpParams::Engrave { .. }
             | OpParams::Chamfer2D { .. } | OpParams::Circular { .. } | OpParams::TrochoidalSlot { .. } | OpParams::Slot { .. }
-            | OpParams::Drill { .. } | OpParams::Bore { .. } | OpParams::Thread { .. }
+            | OpParams::Drill { .. } | OpParams::Bore { .. } | OpParams::Thread { .. } | OpParams::Deburr { .. }
             | OpParams::Pocket3D { .. } | OpParams::Finish3D { .. }
     )
 }
 
+fn verified_multiaxis(params: &crate::operation::OpParams) -> bool {
+    use crate::operation::OpParams;
+    matches!(
+        params,
+        OpParams::Contour5D { .. } | OpParams::Parallel5D { .. } | OpParams::Swarf { .. }
+            | OpParams::AdvancedSwarf { .. } | OpParams::RotaryContour { .. } | OpParams::RotaryParallel { .. }
+            | OpParams::RotaryOffset { .. } | OpParams::MultiAxisRough { .. } | OpParams::Flow5D { .. }
+            | OpParams::MultiAxisContour { .. }
+    )
+}
+
+fn verified_turn(params: &crate::operation::OpParams) -> bool {
+    use crate::operation::OpParams;
+    matches!(
+        params,
+        OpParams::Facing { .. } | OpParams::ProfileRough { .. } | OpParams::ProfileFinish { .. }
+            | OpParams::GrooveRough { .. } | OpParams::GrooveFinish { .. } | OpParams::Part { .. }
+            | OpParams::Threading { .. } | OpParams::Chamfering { .. } | OpParams::TaperTurning { .. }
+            | OpParams::MultiPassTurning { .. } | OpParams::FormTurning { .. } | OpParams::BoringTurning { .. }
+    )
+}
+
+fn verified_for_machine(kind: crate::machine::Kind, params: &crate::operation::OpParams) -> bool {
+    use crate::machine::Kind;
+    use crate::operation::OpParams;
+    match kind {
+        Kind::Mill => verified_mill(params) || verified_multiaxis(params),
+        Kind::MillTurn => verified_mill(params) || verified_turn(params),
+        Kind::Lathe => verified_turn(params) || matches!(params, OpParams::Drill { .. }),
+        Kind::Plasma => matches!(params, OpParams::PlasmaProfile(_)),
+        Kind::WireEdm => matches!(params, OpParams::WireContour(_)),
+        Kind::SinkerEdm => matches!(params, OpParams::SinkerBurn(_)),
+        Kind::Waterjet => false,
+    }
+}
+
 /// Why an operation may not be generated in its setup's aligned frame
-/// yet - `None` when the setup is unaligned (nothing changes) or the op
-/// is one this slice verified. Read at the door of every generation
-/// (`collect_job`), so an unverified op is refused by name and never cut
-/// in the unaligned frame.
+/// yet - `None` when the setup is unaligned (nothing changes) or the
+/// machine/op pair is verified. Read at the door of every generation
+/// (`collect_job`), so an unverified op or machine is refused by name.
 #[must_use]
 pub fn generation_problem(world: &World, op: &crate::schema::Operation) -> Option<String> {
     let setup = crate::setup::effective(world, op.setup.as_deref())?;
     stored(world, &setup)?;
     let head = format!("setup '{setup}' holds the part turned (part alignment)");
     let kind = crate::machine::kind_of_setup(world, Some(&setup));
-    if kind != crate::machine::Kind::Mill {
-        let name = crate::stock_sim::machine_kind_name(kind);
+    let name = crate::stock_sim::machine_kind_name(kind);
+    if kind == crate::machine::Kind::Waterjet {
         return Some(format!("{head} - an aligned part is not supported yet on a {name} machine"));
     }
-    if !verified_kind(&op.params) {
+    if !verified_for_machine(kind, &op.params) {
+        let label = op.params.kind().info().label;
+        if kind == crate::machine::Kind::Mill {
+            return Some(format!(
+                "{head} - {label} is not supported yet in an aligned setup (Face, 2D Contour, 2D Pocket, \
+                 2D Adaptive, 2D Offset, Trace, Engrave, 2D Chamfer, Circular, Slot, Trochoidal Slot, Drill, Bore, Thread, Deburr, 3D Pocket, 3D Finish, 5-Axis Contour, 5-Axis Parallel, Swarf, Advanced Swarf, Rotary Contour, Rotary Parallel, Rotary Offset, Multi-Axis Rough, 5-Axis Flow and Multi-Axis Contour are); set the setup's part alignment back to As modelled, or machine it in another setup"
+            ));
+        }
         return Some(format!(
-            "{head} - {} is not supported yet in an aligned setup (Face, 2D Contour, 2D Pocket, \
-             2D Adaptive, 2D Offset, Trace, Engrave, 2D Chamfer, Circular, Slot, Trochoidal Slot, Drill, Bore, Thread, 3D Pocket and 3D Finish are); set the setup's part alignment back to As modelled, or machine it in another setup",
-            op.params.kind().info().label
+            "{head} - {label} is not supported yet in an aligned setup on a {name} machine; set the setup's part alignment back to As modelled, or machine it in another setup"
         ));
     }
     if op.params.tilt().is_some() {

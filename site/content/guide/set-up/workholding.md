@@ -36,6 +36,8 @@ and **Open to stock** closes the moving jaw against the stock. MCP:
 clamp or a soft jaw, each generated from a few dimensions you can edit
 later. MCP: `add_accessory`, `set_accessory`.
 
+![Built-in six inch vise holding stock on parallels with face and contour toolpaths clearing the jaws](../../../images/guide/workholding-vise-toolpath.png)
+
 The same dialog adds a lathe chuck: a 3-jaw chuck, a 4-jaw chuck or a
 collet chuck. With **Fit to the stock** ticked, the chuck closes on the
 setup's round stock, its face at the stock's underside; the box opens

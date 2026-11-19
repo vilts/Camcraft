@@ -176,7 +176,7 @@ pub(super) fn pose_law(
         // somehow missed): hold vertical, say so - never invent an
         // angle the law refused to compute, and never let the escape
         // speak for a law that stayed silent.
-        eprintln!("multiaxis: the axis law stated no direction at {p:?}; the move holds vertical");
+        tracing::warn!("multiaxis: the axis law stated no direction at {p:?}; the move holds vertical");
         return Ok((None, up, true));
     };
     let a = [a.x, a.y, a.z];

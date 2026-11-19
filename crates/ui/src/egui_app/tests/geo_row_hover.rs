@@ -11,8 +11,12 @@ fn hovered(h: &Harness<'static, ShellUi>) -> Option<camcraft_app::operation::Geo
 
 /// The seed's Contour1 carries the top face; add one chain and one vertex.
 fn three_picks() -> Harness<'static, ShellUi> {
-    // Wide enough that the pane's row and its remove button are on screen.
-    let mut harness = Harness::builder().with_size(egui::vec2(2400.0, 1000.0)).build_ui_state(frame, ShellUi::seeded());
+    three_picks_at(egui::vec2(2400.0, 1000.0))
+}
+
+/// [`three_picks`] in a window of `size`.
+fn three_picks_at(size: egui::Vec2) -> Harness<'static, ShellUi> {
+    let mut harness = Harness::builder().with_size(size).build_ui_state(frame, ShellUi::seeded());
     harness.run_steps(2);
     let (chain, vert) = {
         let st = &harness.state().state;
@@ -93,6 +97,35 @@ fn row_hover_style_is_strong_and_distinct_in_both_themes() {
             assert!(d > 0.5, "row hover ink differs from {other:?} (light={light}): {d}");
         }
     }
+}
+
+/// #1688: at the window's default size (1280 x 800, `shell_window`) every
+/// row's remove button is on screen and works, the face row first among
+/// them (its two Set origin buttons make it the widest), and each row's
+/// label is still there to hover, shortened when it doesn't fit.
+#[test]
+fn every_rows_remove_button_is_in_reach_at_the_default_window_size() {
+    let size = egui::vec2(1280.0, 800.0);
+    let mut harness = three_picks_at(size);
+    let chips = harness.state().state.geo_chips();
+    assert_eq!(chips.len(), 3, "face, chain and vertex rows");
+    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, size);
+    let mut xs: Vec<egui::Rect> = harness.get_all_by_label("×").map(|n| n.rect()).collect();
+    xs.sort_by(|a, b| a.min.y.total_cmp(&b.min.y));
+    assert_eq!(xs.len(), 3, "a remove button per row");
+    for (i, r) in xs.iter().enumerate() {
+        assert!(screen.contains_rect(*r), "row {i}'s remove button is on screen: {r:?}");
+        harness.hover_at(r.center());
+        harness.run_steps(2);
+        assert_eq!(hovered(&harness), Some(chips[i].sel.clone()), "remove button of row {i}");
+    }
+    // Clicking the face row's button removes the face pick, as it does at
+    // any width.
+    harness.get_all_by_label("×").min_by(|a, b| a.rect().min.y.total_cmp(&b.rect().min.y)).expect("a remove button").click();
+    harness.run_steps(2);
+    let left: Vec<_> = harness.state().state.op_ui.geo.iter().map(|g| g.feature).collect();
+    assert_eq!(left.len(), 2, "one pick removed: {left:?}");
+    assert!(!left.contains(&chips[0].sel.feature), "the face row's pick is the one removed");
 }
 
 /// #1519, the reverse of the above: the viewport pointer over a picked face

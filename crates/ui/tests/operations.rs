@@ -99,7 +99,7 @@ fn tool_add_update_delete_undo_and_refusals() {
         tool: catalog_tool("EM-0400-2FL"),
     });
     state.drain_actions();
-    assert_eq!(state.status, "tool EM-0400-2FL added");
+    assert_eq!(state.status, "tool EM-0400-2FL added (T1)");
     assert!(state.tool_names().iter().any(|t| t == "EM-0400-2FL"), "combo lists it");
 
     // Same name twice: refused, history untouched.
@@ -623,19 +623,21 @@ fn chips_round_trip_clear_restores_stock_and_undo_is_exact() {
     state.drain_actions();
     state.sync_ops_ui();
     assert_eq!(src_of(&state, "Face1"), SrcRef::Selection(vec![top.clone()]));
+    let top_name = camcraft_app::pick::geo_label(&state.world, &top);
     let chips = state.geo_chips();
     assert_eq!(chips.len(), 1, "one chip per pick");
     assert!(!chips[0].missing);
-    assert!(chips[0].label.starts_with("Face part · "), "{}", chips[0].label);
+    assert!(chips[0].label.starts_with(&format!("{top_name} · ")), "{}", chips[0].label);
 
     // Ctrl adds a chain: the list is kind-blind and order-keeping.
     let chain = chain_pick(&state, "part");
+    let chain_name = camcraft_app::pick::geo_label(&state.world, &chain);
     queue_feature_pick(&mut state, chain.clone(), true);
     state.drain_actions();
     state.sync_ops_ui();
     let chips = state.geo_chips();
     assert_eq!(chips.len(), 2);
-    assert!(chips[1].label.starts_with("Chain part · "), "{}", chips[1].label);
+    assert!(chips[1].label.starts_with(&format!("{chain_name} · ")), "{}", chips[1].label);
     assert!(
         chips[1].label.contains(" · open · ") && chips[1].label.ends_with(" · 1 of 1"),
         "a lone box edge is one open run, length and count spelled out: {}",
@@ -784,22 +786,24 @@ fn selection_rows_read_as_human_descriptors() {
 
     // Face: axis locator and area. The 10 x 10 top of the box sits at z 5.
     let top = face_pick(&state, "part", true);
+    let top_name = camcraft_app::pick::geo_label(&state.world, &top);
     queue_feature_pick(&mut state, top, false);
     state.drain_actions();
     state.sync_ops_ui();
     let chips = state.geo_chips();
     assert!(!chips[0].missing);
-    assert!(chips[0].label.starts_with("Face part · z=5.00"), "{}", chips[0].label);
+    assert!(chips[0].label.starts_with(&format!("{top_name} · z=5.00")), "{}", chips[0].label);
     assert!(chips[0].label.contains("100.0 mm"), "area spelled out: {}", chips[0].label);
 
     // Chain: open or closed, length, and its number among the runs picked
     // on that entity. A lone box edge is one open run of one.
     let chain = chain_pick(&state, "part");
+    let chain_name = camcraft_app::pick::geo_label(&state.world, &chain);
     queue_feature_pick(&mut state, chain, true);
     state.drain_actions();
     state.sync_ops_ui();
     let chips = state.geo_chips();
-    assert!(chips[1].label.starts_with("Chain part · open · "), "{}", chips[1].label);
+    assert!(chips[1].label.starts_with(&format!("{chain_name} · open · ")), "{}", chips[1].label);
     assert!(chips[1].label.contains(" mm · 1 of 1"), "{}", chips[1].label);
 
     // Gone model: the digest resurfaces and the row admits it cannot read
@@ -1087,12 +1091,10 @@ fn geometry_notes_report_through_the_panel_seam() {
 fn strategy_combo_offers_auto() {
     assert_eq!(
         camcraft_ui::operations::strategy_names(),
-        &["Zigzag", "Waterline", "Adaptive", "Auto", "Offset rings"],
-        "the combo offers Adaptive, Auto and (M11.4 C) the pre-HSM Offset rings beside the explicit choices"
+        &["Zigzag", "Waterline", "Auto", "Offset rings"],
+        "2D Pocket offers Zigzag, Waterline, Auto and Offset rings (Adaptive moved to 2D Adaptive, #1517)"
     );
-    // M11.4 (the Pocket3D port): the 3-D combo offers the same choice -
-    // Adaptive is the HSM plan per level, Offset rings the rings at the
-    // load step every earlier 3-D Adaptive posted.
+    // M11.4 (the Pocket3D port): the 3-D combo keeps Adaptive until #1591.
     assert_eq!(camcraft_ui::operations::strategy3d_names(), &["Zigzag", "Waterline", "Adaptive", "Auto", "Offset rings"]);
 }
 

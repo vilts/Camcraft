@@ -1,7 +1,8 @@
 //! The Threading page's infeed plan rows (issue #416): how the passes
 //! enter (radial, flank, alternating), the depth schedule, the minimum
 //! depth, finish allowance and spring passes, and the repeat of each
-//! roughing depth (issue #418). Every value edits the
+//! roughing depth (issue #418), and the in-pass chip-break dips (issue
+//! #419). Every value edits the
 //! page draft; Apply rides EditOperationParams, whose threading door
 //! refuses a plan the insert cannot cut, by name.
 //!
@@ -53,4 +54,12 @@ pub(super) fn rows(ui: &mut Ui, u: Unit, plan: &mut ThreadInfeed) {
     hint(ui, "extra passes at full depth after the finish - tooling makers advise 0 unless the thread needs them");
     check_row(ui, "Repeat each depth", &mut plan.repeat_each_depth);
     hint(ui, "cut every roughing depth twice, the second cut on the same line, before going deeper - G32 passes only (a G76 cycle refuses it); tooling makers recommend against routine spring passes, so leave it off unless the flanks come out rough");
+    prop_row(ui, "Chip-break every", |ui| num(ui, u, &mut plan.dips.interval));
+    hint(ui, "0 for none; otherwise each roughing pass lifts out and back this often along the thread so the chip breaks - at least two leads, never in the first or last lead, never on the finishing or spring passes; G32 passes on a continuous-threading post only (a G76 cycle and other posts refuse it)");
+    if plan.dips.is_on() {
+        prop_row(ui, "Dip height", |ui| num(ui, u, &mut plan.dips.height));
+        hint(ui, "how far the insert lifts, radially - at most the shallowest roughing pass's depth of cut");
+        prop_row(ui, "Dip length", |ui| num(ui, u, &mut plan.dips.length));
+        hint(ui, "axial length of one dip, ramps included; 0 is the shortest dip the ramps allow (each ramp stays under 45 degrees)");
+    }
 }

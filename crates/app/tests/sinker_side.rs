@@ -365,7 +365,7 @@ fn a_worn_side_burn_is_compensated_in_z_and_judged_clean() {
     let e = model::find_by_name(&world, "Side1").expect("op");
     let mut copy = model::operation_of(&world, &e).expect("op");
     copy.params = p.clone();
-    h.execute(&world, PasteOperation::new(&world, "Side2", copy).expect("paste admits a measured wear"));
+    h.execute(&world, PasteOperation::new(&world, "Side2", copy, Vec::new()).expect("paste admits a measured wear"));
     let file = std::env::temp_dir().join(format!("camcraft-1340-{}.ccam", std::process::id()));
     project::save(&world, &file).expect("save");
     let back = new_world();

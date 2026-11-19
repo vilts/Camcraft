@@ -15,13 +15,11 @@ use std::path::{Path, PathBuf};
 use camcraft_app::recent::{RecentEntry, RecentKind};
 use egui::{Rect, Sense, Ui, Vec2};
 
-use super::panes::{Cell, Cmd, DROP_GAP};
+use super::panes::{Cell, Cmd};
 use super::theme::Tokens;
 use crate::actions;
 use crate::state::{CommandKind, State};
 
-/// The list's width: wider than the other doors, file names run long.
-pub(super) const RECENT_W: f32 = 300.0;
 /// The bottom rows' captions (also their AccessKit labels).
 pub(super) const CLEAR: &str = "Clear recent";
 pub(super) const BROWSE: &str = "Browse…";
@@ -116,12 +114,14 @@ pub(super) fn rows_of(
     if has_examples(state, kind) {
         rows.push(RecentRow::Examples);
     }
-    let left = button.left().min(strip.right() - RECENT_W).max(strip.left());
+    let g = pal.dropdown();
+    let w = g.fit_width(g.recent_width, strip.width());
+    let left = g.fit_left(button.left(), strip, w);
     rows.into_iter()
         .enumerate()
         .map(|(k, r)| {
-            let min = egui::Pos2::new(left, button.bottom() + DROP_GAP + k as f32 * pal.row_height);
-            (r, Rect::from_min_size(min, Vec2::new(RECENT_W, pal.row_height)))
+            let min = egui::Pos2::new(left, button.bottom() + g.gap + k as f32 * pal.row_height);
+            (r, Rect::from_min_size(min, Vec2::new(w, pal.row_height)))
         })
         .collect()
 }
@@ -155,7 +155,9 @@ fn show(
         state.ribbon_recent_open = None;
         return;
     };
-    let panel = Rect::from_min_size(top, Vec2::new(RECENT_W, rows.len() as f32 * pal.row_height));
+    let g = pal.dropdown();
+    let w = rows.first().map_or(g.recent_width, |(_, r)| r.width());
+    let panel = Rect::from_min_size(top, Vec2::new(w, rows.len() as f32 * pal.row_height));
     let mut chose: Option<RecentRow> = None;
     let mut example_pick = None;
     let mut example_open = false;
@@ -198,8 +200,8 @@ fn show(
                 if matches!(row, RecentRow::Clear) {
                     p.hline(r.x_range(), r.top(), egui::Stroke::new(1.0, pal.border));
                 }
-                p.with_clip_rect(r.shrink2(Vec2::new(4.0, 0.0))).text(
-                    r.left_center() + Vec2::new(8.0, 0.0),
+                p.with_clip_rect(r.shrink2(Vec2::new(g.clip_inset_x, 0.0))).text(
+                    r.left_center() + Vec2::new(g.pad_x, 0.0),
                     egui::Align2::LEFT_CENTER,
                     &label,
                     egui::FontId::proportional(pal.font_row),
@@ -235,7 +237,7 @@ fn show(
             let outside = ui.input(|i| {
                 i.pointer.button_pressed(egui::PointerButton::Primary)
                     && i.pointer.interact_pos().is_none_or(|p| {
-                        !button.expand(DROP_GAP).contains(p) && !rows.iter().any(|(_, r)| r.contains(p))
+                        !button.expand(g.gap).contains(p) && !rows.iter().any(|(_, r)| r.contains(p))
                     })
             });
             if outside && !example_open {

@@ -190,18 +190,12 @@ pub fn prior_state(
     let refused = |e: String| GenError::Invalid(format!("rest from previous operations: {e}"));
     // #637: the stock on this thread's engine (the column grid by default).
     let mut held = stock_sim::carry::first_held(world, setup, min_r).map_err(refused)?;
-    let ops: Vec<SimOp> = ahead
+    let runs: Vec<(SimOp, bool)> = ahead
         .iter()
         .filter(|a| a.cut)
-        .map(|a| SimOp {
-            moves: &a.moves,
-            radius: a.radius,
-            ball: a.ball,
-            cone: a.cone,
-            corner: a.corner,
-        })
+        .map(|a| (SimOp { moves: &a.moves, radius: a.radius, ball: a.ball, cone: a.cone, corner: a.corner }, a.drill))
         .collect();
-    held.simulate(&ops).map_err(refused)?;
+    simulate_ahead(&mut held, &runs).map_err(refused)?;
     Ok(PriorState {
         grid: Some(held.into_tops().map_err(refused)?),
         digest: Some(digest),
@@ -268,16 +262,33 @@ fn sweep(held: &mut Held, ahead: &[Ahead]) -> Result<(), String> {
                 None => Vec::new(),
             })
             .collect();
-        let ops: Vec<SimOp> = ahead
+        let ops: Vec<(SimOp, bool)> = ahead
             .iter()
             .zip(&tips)
             .map(|(a, tip)| match a.nose {
-                Some(n) => SimOp { moves: tip, radius: n, ball: true, cone: None, corner: None },
-                None => SimOp { moves: &a.moves, radius: a.radius, ball: a.ball, cone: a.cone, corner: a.corner },
+                Some(n) => (SimOp { moves: tip, radius: n, ball: true, cone: None, corner: None }, false),
+                None => (SimOp { moves: &a.moves, radius: a.radius, ball: a.ball, cone: a.cone, corner: a.corner }, a.drill),
             })
             .collect();
-        held.simulate(&ops)
+        simulate_ahead(held, &ops)
     }
+}
+
+/// Run contiguous drill and mill chunks in program order (#2441).
+fn simulate_ahead(held: &mut Held, ops: &[(SimOp, bool)]) -> Result<(), String> {
+    let mut i = 0;
+    while i < ops.len() {
+        let drill = ops[i].1;
+        let end = ops[i..].iter().position(|o| o.1 != drill).map_or(ops.len(), |d| i + d);
+        let batch: Vec<SimOp> = ops[i..end].iter().map(|o| o.0).collect();
+        if drill {
+            held.simulate_drill(&batch)?;
+        } else {
+            held.simulate(&batch)?;
+        }
+        i = end;
+    }
+    Ok(())
 }
 
 /// The program ahead of `name` in its setup, collected for verify's

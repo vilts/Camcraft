@@ -35,6 +35,7 @@ pub(super) fn apply_overlay(
         font_op_tab, tree_glyph_px, tree_inset_x, tree_indent,
         tree_eye_reserve, tree_pad_x, tree_pad_y, tree_suffix_gap,
         tree_header_boost, highlight_stroke_px,
+        menu_width, recent_width, menu_gap, menu_pad_x,
     } = base;
     let c = |name: &str, keep: Color32| colors.get(name).copied().unwrap_or(keep);
     let f = |name: &str, keep: f32, win: (f32, f32)| {
@@ -108,5 +109,9 @@ pub(super) fn apply_overlay(
         tree_suffix_gap: f(names::TREE_SUFFIX_GAP, tree_suffix_gap, clamp::SPACING),
         tree_header_boost: f(names::TREE_HEADER_BOOST, tree_header_boost, clamp::HEADER_BOOST),
         highlight_stroke_px: f(names::HIGHLIGHT_STROKE_PX, highlight_stroke_px, clamp::STROKE),
+        menu_width: f(names::MENU_WIDTH, menu_width, clamp::MENU_W),
+        recent_width: f(names::RECENT_WIDTH, recent_width, clamp::RECENT_W),
+        menu_gap: f(names::MENU_GAP, menu_gap, clamp::MENU_GAP),
+        menu_pad_x: f(names::MENU_PAD_X, menu_pad_x, clamp::MENU_PAD_X),
     }
 }

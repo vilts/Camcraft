@@ -344,8 +344,13 @@ fn values_and_strategies_the_rest_pass_cannot_run_are_refused_by_name() {
     assert!(rest_op(Some(prev())).is_sane() && rest_op(Some(prev())).named_refusal().is_none());
     let with = |strategy: PocketStrategy| pocket(1.5, Entry3D::Plunge, strategy, Some(prev()));
     assert!(EditOperationParams::new(&world, "P2", with(PocketStrategy::Zigzag)).is_ok(), "Zigzag rest machining is supported");
+    // #1517: Adaptive is retired on 2D Pocket altogether.
     let msg = refusal(EditOperationParams::new(&world, "P2", with(PocketStrategy::Adaptive)));
-    assert!(msg.contains("not available with the Adaptive strategy"), "{msg}");
+    assert!(msg.contains("2D Adaptive"), "{msg}");
+    assert!(
+        camcraft_app::machining2d::rest_strategy(PocketStrategy::Adaptive)
+            .is_err_and(|e| e.to_string().contains("not available with the Adaptive strategy"))
+    );
     // Pre-drilled entry beside it: one of the two is turned off.
     let mut both = rest_op(Some(prev()));
     if let Some(l) = both.links_mut() {

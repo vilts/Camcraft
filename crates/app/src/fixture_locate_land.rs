@@ -81,16 +81,17 @@ pub fn stock_lands(world: &World, spec: &LocateSpec, plan: &Plan, stocks: &[(Str
         let k = i + 1;
         let missed = |what: &str| {
             format!(
-                "mate {k}: {} of the stock '{name}' {what} {} of '{}' - the stock keeps its upright shape round the turned part, so that face does not meet the fixture; locate it without a turn, or locate the part",
-                m.part.feature, m.fixture.feature, m.fixture.entity
+                "mate {k}: {} of the stock '{name}' {what} {} - the stock keeps its upright shape round the turned part, so that face does not meet the fixture; locate it without a turn, or locate the part",
+                crate::pick::feature_name_or_kind(world, &name, m.part.feature),
+                crate::pick::geo_label(world, &m.fixture),
             )
         };
         match m.part.feature {
             FeatureSel::Face(fid) => {
-                let f = features.faces.iter().find(|f| f.id == fid).ok_or_else(|| gone(&m.part))?;
+                let f = features.faces.iter().find(|f| f.id == fid).ok_or_else(|| gone(world, &m.part))?;
                 let face: Vec<Triangle> = f.facets.iter().filter_map(|&i| want.get(i as usize).copied()).collect();
                 if face.len() != f.facets.len() {
-                    return Err(gone(&m.part));
+                    return Err(gone(world, &m.part));
                 }
                 if !face_lands(&face, got) {
                     return Err(missed("would stand across the plane of, not flat on,"));
@@ -101,7 +102,7 @@ pub fn stock_lands(world: &World, spec: &LocateSpec, plan: &Plan, stocks: &[(Str
                     .and_then(|vi| features.verts.get(vi as usize))
                     .map(|q| transform_point(Point3::new(q[0], q[1], q[2]), pose.pos, pose.rot))
                     .map(|q| v(transform_point(q, plan.delta.pos, plan.delta.rot)))
-                    .ok_or_else(|| gone(&m.part))?;
+                    .ok_or_else(|| gone(world, &m.part))?;
                 let corner = got.iter().flat_map(|t| [t.a, t.b, t.c]).any(|q| norm(sub(v(q), p)) <= LEN_TOL_MM);
                 if !corner {
                     return Err(missed("would not touch"));
@@ -114,8 +115,8 @@ pub fn stock_lands(world: &World, spec: &LocateSpec, plan: &Plan, stocks: &[(Str
     Ok(())
 }
 
-fn gone(g: &GeoSel) -> String {
-    format!("{} of '{}' is gone - re-pick it", g.feature, g.entity)
+fn gone(world: &World, g: &GeoSel) -> String {
+    format!("{} is gone - re-pick it", crate::pick::geo_label(world, g))
 }
 
 /// Does the face `face` (where the mates put it) lie on the followed

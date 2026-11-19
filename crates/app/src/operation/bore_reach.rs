@@ -15,6 +15,9 @@ use crate::operation::OpParams;
 pub struct DetectedHoles {
     pub params: OpParams,
     pub skipped: Vec<String>,
+    /// One sentence per hole kept but drilled undersize: wider than the
+    /// Drill op.s drill (#2496). A pilot drill is valid, so they stay.
+    pub undersize: Vec<String>,
 }
 
 /// A Bore op's freshly detected list, cut to the holes its ring plan

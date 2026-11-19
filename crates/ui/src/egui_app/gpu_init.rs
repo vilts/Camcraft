@@ -71,7 +71,7 @@ where
         let surface = match unsafe { instance.create_surface_unsafe(target) } {
             Ok(s) => s,
             Err(err) => {
-                eprintln!("gpu: {label}: surface creation failed ({err}) - falling back");
+                diag_warn!("gpu: {label}: surface creation failed ({err}) - falling back");
                 failures.push(format!("{label}: surface creation failed ({err})"));
                 continue;
             }
@@ -83,11 +83,11 @@ where
             .collect();
         for d in &descs {
             if seen.insert(d.key()) {
-                println!("{}", d.log_line());
+                diag_info!("{}", d.log_line());
             }
         }
         if descs.is_empty() {
-            eprintln!("gpu: {label}: no adapters enumerated - falling back");
+            diag_warn!("gpu: {label}: no adapters enumerated - falling back");
             note(&mut skipped, format!("{label}: no adapters enumerated"));
         }
         let hp = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -99,7 +99,7 @@ where
         .map(|a| AdapterDesc::from_info(&a.get_info(), true));
         let (order, notes) = gpu_select::order(&descs, want, hp.as_ref());
         for n in notes {
-            println!("gpu: {label}: {n}");
+            diag_info!("gpu: {label}: {n}");
             note(&mut skipped, n);
         }
         for i in order {
@@ -108,11 +108,12 @@ where
                 continue; // already failed under an earlier mask
             }
             let who = format!("\"{}\" via {}", desc.name, gpu::backend_name(desc.backend));
+            diag_info!("gpu: trying {}", desc.summary());
             match try_adapter(&surface, adapter, size.width, size.height, &who, &mut build) {
                 Ok((device, queue, config, built)) => {
-                    println!(
-                        "gpu: using {who} ({}; {:?} {:?} {:?})",
-                        gpu_select::type_name(desc.device_type),
+                    diag_info!(
+                        "gpu: using {} ({:?} {:?} {:?})",
+                        desc.summary(),
                         config.format,
                         config.present_mode,
                         config.alpha_mode
@@ -120,7 +121,7 @@ where
                     return Ok(Bring { surface, adapter: adapter.clone(), device, queue, config, built });
                 }
                 Err(why) => {
-                    eprintln!("gpu: {who} failed: {why} - trying the next adapter");
+                    diag_warn!("gpu: {who} failed: {why} - trying the next adapter");
                     failures.push(format!("{who}: {why}"));
                 }
             }
@@ -154,7 +155,7 @@ where
         let (lost, who) = (Arc::clone(&lost), who.to_owned());
         device.set_device_lost_callback(move |reason, msg| {
             if reason != wgpu::DeviceLostReason::Destroyed {
-                eprintln!("gpu: {who}: device lost ({reason:?}): {msg}");
+                diag_warn!("gpu: {who}: device lost ({reason:?}): {msg}");
                 lost.store(true, Ordering::SeqCst);
             }
         });
@@ -205,7 +206,7 @@ fn test_frame(surface: &wgpu::Surface<'static>, device: &wgpu::Device, queue: &w
         wgpu::CurrentSurfaceTexture::Timeout
         | wgpu::CurrentSurfaceTexture::Occluded
         | wgpu::CurrentSurfaceTexture::Outdated => {
-            println!("gpu: test frame skipped (window not presentable yet)");
+            diag_info!("gpu: test frame skipped (window not presentable yet)");
             return Ok(());
         }
         wgpu::CurrentSurfaceTexture::Lost => return Err("the test frame's surface was lost".into()),

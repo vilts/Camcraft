@@ -203,10 +203,34 @@ fn first_in_solid(t: &Toolpath) -> Option<Point3> {
     None
 }
 
+fn adaptive2d(climb: bool) -> OpParams {
+    OpParams::Adaptive2D {
+        blend_radius: None,
+        links: camcraft_app::links::Links::PLANAR,
+        stepover: 4.0,
+        stock_to_leave: 0.0,
+        clearance_z: Height::fixed(40.0),
+        retract_z: None,
+        top_z: Height::fixed(20.0),
+        bottom_z: Height::fixed(FLOOR),
+        stepdown: 10.0,
+        feed: 1200.0,
+        plunge_feed: 300.0,
+        climb,
+        entry: Entry3D::Plunge,
+        helix_radius: 1.0,
+        optimal_load: 0.4,
+        method: camcraft_app::machining2d::AdaptiveMethod::Spiral,
+        troch: camcraft_app::machining2d::AdaptiveTrochParams::default(),
+        blend_turns: false,
+        tilt: None,
+    }
+}
+
 #[test]
 fn the_2d_pocket_wall_pass_runs_counter_clockwise_under_climb() {
     let world = world();
-    for strategy in [PocketStrategy::Waterline, PocketStrategy::OffsetRings, PocketStrategy::Adaptive] {
+    for strategy in [PocketStrategy::Waterline, PocketStrategy::OffsetRings] {
         for climb in [true, false] {
             let t = generate(&world, hole(&world), pocket(strategy, climb));
             assert!(first_in_solid(&t).is_none(), "{strategy:?} climb={climb}: the pocket cuts the block");
@@ -215,6 +239,13 @@ fn the_2d_pocket_wall_pass_runs_counter_clockwise_under_climb() {
             assert_ne!(turn, 0.0, "{strategy:?}: no wall pass at the floor");
             assert_eq!(turn > 0.0, climb, "{strategy:?} climb={climb}: wall pass swept {turn}");
         }
+    }
+    for climb in [true, false] {
+        let t = generate(&world, hole(&world), adaptive2d(climb));
+        assert!(first_in_solid(&t).is_none(), "Adaptive2D climb={climb}: cuts the block");
+        let turn = turn_at(&t, FLOOR, 4.99);
+        assert_ne!(turn, 0.0, "Adaptive2D: no wall pass at the floor");
+        assert_eq!(turn > 0.0, climb, "Adaptive2D climb={climb}: wall pass swept {turn}");
     }
 }
 

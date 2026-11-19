@@ -124,6 +124,21 @@ pub(super) fn render_wcs(world: &World, ctx: Option<&str>, out: &mut String) {
         }
         None => out.push_str(&format!("  {label}  (not placed - at the origin)\n")),
     }
+    // #1649: a flipped axis changes every sign the operator reads.
+    let flip = crate::setup_wcs_flip::of_setup(world, ctx);
+    if flip.iter().any(|f| *f) {
+        let axes = crate::setup_wcs_flip::axes_text(flip);
+        let one = flip.iter().filter(|f| **f).count() == 1;
+        out.push_str(&format!(
+            "       {axes} {} flipped - the program is mirrored on {}\n",
+            if one { "axis" } else { "axes" },
+            if one { "it" } else { "them" }
+        ));
+    }
+    // #870: where that origin sits, in words - what the operator touches
+    // off. An unplaced WCS is read at the world origin.
+    let words = crate::setup_origin::origin_words(world, ctx, &|v| format!("{} mm", mm(v)));
+    out.push_str(&format!("  origin: {words} (X0 Y0 Z0)\n"));
     // #196, #329, #931: the one offset the setup's program runs in: the
     // setup's label (offset 1 when unset), named by the setup's post -
     // never another offset's name.

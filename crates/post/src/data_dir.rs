@@ -152,6 +152,35 @@ impl DataFiles {
     }
 }
 
+/// The files directly inside `dir` whose extension is `ext` (case-insensitive,
+/// no dot), read from the folder now and never cached (#2380).
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct FileList {
+    /// File names, sorted.
+    pub names: Vec<String>,
+    /// Entries left out (a name that is not UTF-8), for the caller's log:
+    /// one odd entry never hides the others.
+    pub skipped: Vec<String>,
+}
+
+/// List the `ext` files of `dir`. A folder that does not read is an `Err`
+/// that names it; the caller decides to show an empty list and log why.
+pub fn list_files(dir: &Path, ext: &str) -> Result<FileList, String> {
+    let rd = std::fs::read_dir(dir).map_err(|e| format!("cannot list {}: {e}", dir.display()))?;
+    let mut out = FileList::default();
+    for path in rd.filter_map(Result::ok).map(|e| e.path()) {
+        if !path.is_file() || !path.extension().is_some_and(|x| x.eq_ignore_ascii_case(ext)) {
+            continue;
+        }
+        match path.file_name().and_then(std::ffi::OsStr::to_str) {
+            Some(name) => out.names.push(name.to_owned()),
+            None => out.skipped.push(format!("{}: the file name is not UTF-8", path.display())),
+        }
+    }
+    out.names.sort();
+    Ok(out)
+}
+
 /// One uncached read of `file` in `dir`: capped at [`MAX_BYTES`], UTF-8
 /// only, and every error names the file and the directory.
 pub fn read_file(dir: &Path, file: &str) -> Result<String, String> {

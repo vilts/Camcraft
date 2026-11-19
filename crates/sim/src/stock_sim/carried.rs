@@ -179,6 +179,11 @@ impl FieldBody {
     pub fn simulate(&mut self, ops: &[SimOp]) -> Result<(), StockError> {
         self.carried.simulate(ops)
     }
+
+    /// Cut a twist-drill program in the current frame (#2441).
+    pub fn simulate_drill(&mut self, ops: &[SimOp]) -> Result<(), StockError> {
+        self.carried.simulate_drill(ops)
+    }
 }
 
 impl CarriedStock {
@@ -198,6 +203,15 @@ impl CarriedStock {
     /// # Errors
     /// The engine's refusals, before a cell is written.
     pub fn simulate(&mut self, ops: &[SimOp]) -> Result<(), StockError> {
+        self.simulate_with(ops, false)
+    }
+
+    /// Run a twist-drill program in the current frame (#2441).
+    pub fn simulate_drill(&mut self, ops: &[SimOp]) -> Result<(), StockError> {
+        self.simulate_with(ops, true)
+    }
+
+    fn simulate_with(&mut self, ops: &[SimOp], drill: bool) -> Result<(), StockError> {
         match self {
             CarriedStock::Column(b) => {
                 if !b.dex.history.as_ref().is_some_and(|h| h.active) {
@@ -210,7 +224,7 @@ impl CarriedStock {
                 } else { b.dex = dex; }
                 Ok(())
             }
-            CarriedStock::Field(f) => f.simulate(ops),
+            CarriedStock::Field(f) => if drill { f.simulate_drill(ops) } else { f.simulate(ops) },
         }
     }
 

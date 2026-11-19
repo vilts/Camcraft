@@ -348,7 +348,29 @@ fn tool_library_import_modes_update_and_replace_over_mcp() {
     let rep = dst.ok("import_tool_library", json!({ "path": lib.display().to_string(), "mode": "replace" }));
     assert_eq!(rep["removed"], json!(["Extra"]), "{rep}");
     let job = dst.ok("get_job", json!({}));
-    assert_eq!(job["tools"], src.ok("get_job", json!({}))["tools"], "the document now holds the file's set");
+    let strip_nums = |tools: &serde_json::Value| -> Vec<serde_json::Value> {
+        tools
+            .as_array()
+            .expect("tools array")
+            .iter()
+            .map(|row| {
+                let mut m = row.as_object().expect("tool object").clone();
+                m.remove("number");
+                m.remove("posts_as");
+                serde_json::Value::Object(m)
+            })
+            .collect()
+    };
+    assert_eq!(
+        strip_nums(&job["tools"]),
+        strip_nums(&src.ok("get_job", json!({}))["tools"]),
+        "the document now holds the file's set"
+    );
+    assert_eq!(
+        job["tools"][1]["number"],
+        json!(3),
+        "removing Extra did not shift b off its assigned T3: {job}"
+    );
     dst.ok("undo", json!({}));
     assert!(job_tool_names(&mut dst).contains(&"Extra".to_owned()), "undo brings Extra back");
     let msg = dst.refused("import_tool_library", json!({ "path": lib.display().to_string(), "mode": "merge" }));

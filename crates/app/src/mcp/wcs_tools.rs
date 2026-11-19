@@ -120,7 +120,14 @@ fn set_wcs_from_features(env: &mut Env, a: &Map<String, Value>) -> Result<Value,
     out["angles_deg"] = json!({ "roll": fnum(fit.roll_deg), "pitch": fnum(fit.pitch_deg), "yaw": fnum(fit.yaw_deg) });
     out["picks"] = picks
         .iter()
-        .map(|(g, r)| json!({ "model": g.entity, "id": super::pick::feature_id(g.feature), "role": role_word(*r) }))
+        .map(|(g, r)| {
+            json!({
+                "model": g.entity,
+                "id": super::pick::feature_id(g.feature),
+                "name": crate::pick::geo_label(w, g),
+                "role": role_word(*r),
+            })
+        })
         .collect();
     Ok(out)
 }

@@ -9,6 +9,8 @@ use crate::geo2d::{Point2, Region};
 use crate::machining2d::GenError;
 mod conservative;
 
+mod walk;
+
 /// Front-half rim samples (over 180 degrees): the measuring stock's
 /// own count, so a reading here is a reading there.
 const FRONT_SAMPLES: usize = crate::quality::RIM_SAMPLES;
@@ -46,10 +48,19 @@ impl Raster {
         }
         let nx = (w / h).ceil().max(1.0) as usize;
         let ny = (ht / h).ceil().max(1.0) as usize;
-        let mut r = Raster { x0: lo.x - pad, y0: lo.y - pad, h, nx, ny, cells: vec![false; nx * ny], wall: std::rc::Rc::new(Vec::new()) };
+        let mut r = Raster { x0: lo.x - pad, y0: lo.y - pad, h, nx, ny, cells: Vec::new(), wall: std::rc::Rc::new(Vec::new()) };
+        r.cells = r.fill(reg);
+        r.wall = std::rc::Rc::new(r.cells.iter().map(|&c| !c).collect());
+        Ok(r)
+    }
+
+    /// The cells whose centers lie inside `reg` (even-odd scanlines).
+    fn fill(&self, reg: &Region) -> Vec<bool> {
+        let (nx, ny, h) = (self.nx, self.ny, self.h);
+        let mut cells = vec![false; nx * ny];
         let mut xs: Vec<f64> = Vec::new();
         for iy in 0..ny {
-            let y = r.y0 + (iy as f64 + 0.5) * h;
+            let y = self.y0 + (iy as f64 + 0.5) * h;
             xs.clear();
             for l in reg.loops() {
                 let pts = l.points();
@@ -64,19 +75,25 @@ impl Raster {
             }
             xs.sort_by(f64::total_cmp);
             for pair in xs.as_chunks::<2>().0 {
-                let i0 = ((pair[0] - r.x0) / h - 0.5).ceil().max(0.0) as usize;
-                let i1 = ((pair[1] - r.x0) / h - 0.5).floor();
+                let i0 = ((pair[0] - self.x0) / h - 0.5).ceil().max(0.0) as usize;
+                let i1 = ((pair[1] - self.x0) / h - 0.5).floor();
                 if i1 < 0.0 {
                     continue;
                 }
                 let i1 = (i1 as usize).min(nx - 1);
                 for ix in i0..=i1.min(nx - 1) {
-                    r.cells[ix + iy * nx] = true;
+                    cells[ix + iy * nx] = true;
                 }
             }
         }
-        r.wall = std::rc::Rc::new(r.cells.iter().map(|&c| !c).collect());
-        Ok(r)
+        cells
+    }
+
+    /// Issue #1950: the cells inside `air` read open, not wall (the air
+    /// outside the stock outline, where the tool may stand and cut from).
+    pub(super) fn open_air(&mut self, air: &Region) {
+        let a = self.fill(air);
+        self.wall = std::rc::Rc::new(self.wall.iter().zip(&a).map(|(&w, &o)| w && !o).collect());
     }
 
     /// What the rim sample at `p` stands in (off the grid: wall).
@@ -222,77 +239,6 @@ impl Raster {
             }
         }
         true
-    }
-
-    /// Walk `pts` from its first point, reading the front-half contact
-    /// angle at each step (radius `rim`) BEFORE that step cuts - the
-    /// measuring stock's own law (`quality::measure`), so what the planner
-    /// keeps is what is read; returns the worst angle and where.
-    pub(super) fn walk(&mut self, pts: &[Point2], r: f64, rim: f64, step: f64) -> (f64, Point2) {
-        self.walk_until(pts, (r, rim, step), f64::INFINITY)
-    }
-
-    /// [`Raster::walk`], abandoned at the first reading past `limit`
-    /// (a trial that already failed need not finish; the stock it
-    /// leaves is then partial and only fit to be dropped).
-    pub(super) fn walk_until(&mut self, pts: &[Point2], (r, rim, step): (f64, f64, f64), limit: f64) -> (f64, Point2) {
-        let mut worst = (0.0f64, pts.first().copied().unwrap_or_default());
-        // Where the tool stands it has already cleared its own disc (the
-        // walk before it, or the entry, brought it there).
-        if let Some(&s) = pts.first() {
-            self.cut(s, s, r);
-        }
-        for w in pts.windows(2) {
-            let (a, b) = (w[0], w[1]);
-            let len = (b.x - a.x).hypot(b.y - a.y);
-            if len <= 1e-12 {
-                continue;
-            }
-            let n = ((len / step).ceil() as usize).clamp(1, 1 << 16);
-            let mut prev = a;
-            for k in 1..=n {
-                let t = k as f64 / n as f64;
-                let p = Point2::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
-                let deg = self.engage(p, Point2::new((b.x - a.x) / len, (b.y - a.y) / len), rim);
-                if deg > worst.0 {
-                    worst = (deg, p);
-                    if deg > limit {
-                        return worst;
-                    }
-                }
-                self.cut(prev, p, r);
-                prev = p;
-            }
-        }
-        worst
-    }
-
-    /// [`Raster::walk`], read per segment: the worst angle each segment
-    /// `pts[i] -> pts[i + 1]` read (the microlift's air/cut marks).
-    pub(super) fn walk_marks(&mut self, pts: &[Point2], (r, rim, step): (f64, f64, f64)) -> Vec<f64> {
-        let mut marks = Vec::with_capacity(pts.len().saturating_sub(1));
-        if let Some(&s) = pts.first() {
-            self.cut(s, s, r);
-        }
-        for w in pts.windows(2) {
-            let (a, b) = (w[0], w[1]);
-            let len = (b.x - a.x).hypot(b.y - a.y);
-            let mut worst = 0.0f64;
-            if len > 1e-12 {
-                let dir = Point2::new((b.x - a.x) / len, (b.y - a.y) / len);
-                let n = ((len / step).ceil() as usize).clamp(1, 1 << 16);
-                let mut prev = a;
-                for k in 1..=n {
-                    let t = k as f64 / n as f64;
-                    let p = Point2::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t);
-                    worst = worst.max(self.engage(p, dir, rim));
-                    self.cut(prev, p, r);
-                    prev = p;
-                }
-            }
-            marks.push(worst);
-        }
-        marks
     }
 
     /// Does the capsule of radius `rad` about `a -> b` hold no stock

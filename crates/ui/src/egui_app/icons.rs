@@ -61,6 +61,8 @@ icon_table! {
     OpenModel => "folder-open", "icon-open-model";
     OpenProject => "file-import", "icon-open-project";
     Save => "device-floppy", "icon-save";
+    /// The project's donation link: Tabler's heart outline (MIT).
+    Donate => "heart", "icon-donate";
     // The CamCraft actions and tree rows (#661 slice 2): original SVG
     // masters too - `act-*` for the actions, `tree-*` for the browser's
     // setup rows.

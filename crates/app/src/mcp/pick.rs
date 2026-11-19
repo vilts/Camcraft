@@ -14,7 +14,7 @@ use crate::model;
 use crate::operation::{self, FeatureSel, GeoSel, OpParams, SrcRef};
 use crate::script::Env;
 
-use flecs_ecs::prelude::Entity;
+use flecs_ecs::prelude::{Entity, World};
 use serde_json::{json, Map, Value};
 
 /// The string form of a feature id: `face:0x…`, `chain:0x…`,
@@ -88,20 +88,29 @@ pub(super) fn picks_of(env: &Env, v: Option<&Value>, key: &str) -> Result<Vec<Ge
     }
 }
 
-pub(super) fn picks_view(items: &[GeoSel]) -> Vec<Value> {
-    items.iter().map(|g| json!({ "model": g.entity, "id": feature_id(g.feature) })).collect()
+pub(super) fn picks_view(w: &World, items: &[GeoSel]) -> Vec<Value> {
+    items
+        .iter()
+        .map(|g| {
+            json!({
+                "model": g.entity,
+                "id": feature_id(g.feature),
+                "name": crate::pick::geo_label(w, g),
+            })
+        })
+        .collect()
 }
 
 /// The feature-kind door: refusals the generation walks make by name,
 /// said at the pick instead, before anything lands in the History.
-pub(super) fn kind_door(label: &str, params: &OpParams, items: &[GeoSel]) -> Result<(), String> {
+pub(super) fn kind_door(w: &World, label: &str, params: &OpParams, items: &[GeoSel]) -> Result<(), String> {
     let first = |pred: fn(&FeatureSel) -> bool| items.iter().find(|g| pred(&g.feature));
     if matches!(params, OpParams::MultiAxisContour { .. }) {
         // Its picks ARE the path: curves only (selection's drive_chains).
         if let Some(g) = first(|f| !matches!(f, FeatureSel::Chain(_))) {
             return Err(format!(
-                "{} of '{}' is not an edge chain - a {label} operation machines picked edge chains",
-                g.feature, g.entity
+                "{} is not an edge chain - a {label} operation machines picked edge chains",
+                crate::pick::geo_label(w, g)
             ));
         }
     } else if operation::selection_drives_region(params)
@@ -109,8 +118,8 @@ pub(super) fn kind_door(label: &str, params: &OpParams, items: &[GeoSel]) -> Res
     {
         // A point bounds no region (the selection walk's own refusal).
         return Err(format!(
-            "{} of '{}' is a point - a {label} operation's area needs faces or edge chains",
-            g.feature, g.entity
+            "{} is a point - a {label} operation's area needs faces or edge chains",
+            crate::pick::geo_label(w, g)
         ));
     }
     Ok(())
@@ -123,7 +132,7 @@ pub(super) fn set_operation_geometry(env: &mut Env, a: &Map<String, Value>) -> R
     let items = picks_of(env, a.get("picks"), "picks")?;
     let e = model::find_by_name(&env.world, &key).ok_or_else(|| format!("no operation named '{key}'"))?;
     let op = model::operation_of(&env.world, &e).ok_or_else(|| format!("'{key}' is not an operation"))?;
-    kind_door(op.params.kind().info().label, &op.params, &items)?;
+    kind_door(&env.world, op.params.kind().info().label, &op.params, &items)?;
     let cmd = SetOperationGeometry::new(&env.world, &key, items).map_err(|e| e.to_string())?;
     env.history.execute(&env.world, cmd);
     geometry_view(env, &key)
@@ -144,7 +153,7 @@ pub(super) fn geometry_view(env: &Env, key: &str) -> Result<Value, String> {
         SrcRef::Stock => (json!("stock"), Vec::new()),
         SrcRef::Entity(n) => (json!({ "model": n }), Vec::new()),
         SrcRef::Selection(items) => (
-            json!({ "picks": picks_view(items) }),
+            json!({ "picks": picks_view(w, items) }),
             operation::selection_notes(w, op.setup.as_deref(), items, &op.params),
         ),
     };
@@ -152,7 +161,7 @@ pub(super) fn geometry_view(env: &Env, key: &str) -> Result<Value, String> {
         "operation": key,
         "kind": op.params.kind().info().label,
         "source": source,
-        "area": super::area::area_view(&op.area),
+        "area": super::area::area_view(w, &op.area),
         "area_applies": operation::area_unsupported(op.params.kind()).is_none(),
         "notes": notes,
     }))

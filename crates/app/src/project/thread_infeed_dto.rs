@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::turning::{DepthSchedule, InfeedMethod, ThreadInfeed};
+use crate::turning::{DepthSchedule, InfeedMethod, ThreadDips, ThreadInfeed};
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -37,6 +37,43 @@ pub struct ThreadInfeedDto {
     /// every #416 file.
     #[serde(default, skip_serializing_if = "is_false")]
     pub repeat_each_depth: bool,
+    /// #419: absent (and written only when not the default) is no
+    /// chip-break dips - every #416 / #418 file.
+    #[serde(default, skip_serializing_if = "ThreadDipsDto::is_default")]
+    pub dips: ThreadDipsDto,
+}
+
+/// The chip-break dips (issue #419): interval, radial height and
+/// length, mm; interval 0 lays none.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct ThreadDipsDto {
+    pub interval: f64,
+    pub height: f64,
+    pub length: f64,
+}
+
+impl Default for ThreadDipsDto {
+    fn default() -> Self {
+        ThreadDips::default().into()
+    }
+}
+
+impl ThreadDipsDto {
+    fn is_default(&self) -> bool {
+        *self == ThreadDipsDto::default()
+    }
+}
+
+impl From<ThreadDips> for ThreadDipsDto {
+    fn from(d: ThreadDips) -> Self {
+        ThreadDipsDto { interval: d.interval, height: d.height, length: d.length }
+    }
+}
+
+impl From<ThreadDipsDto> for ThreadDips {
+    fn from(d: ThreadDipsDto) -> Self {
+        ThreadDips { interval: d.interval, height: d.height, length: d.length }
+    }
 }
 
 impl Default for ThreadInfeedDto {
@@ -68,6 +105,7 @@ impl From<ThreadInfeed> for ThreadInfeedDto {
             finish_allowance: p.finish_allowance,
             spring_passes: p.spring_passes,
             repeat_each_depth: p.repeat_each_depth,
+            dips: p.dips.into(),
         }
     }
 }
@@ -89,6 +127,7 @@ impl From<ThreadInfeedDto> for ThreadInfeed {
             finish_allowance: d.finish_allowance,
             spring_passes: d.spring_passes,
             repeat_each_depth: d.repeat_each_depth,
+            dips: d.dips.into(),
         }
     }
 }

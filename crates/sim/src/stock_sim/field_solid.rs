@@ -35,6 +35,7 @@ pub(crate) enum ToolKind {
     Shanked { r: f64, shank: f64 },
     Flat { r: f64, flank: f64 },
     Taper { r: f64, cot: f64 },
+    Drill { r: f64, cot: f64, flank: f64 },
     Bull { r: f64, corner: f64, flank: f64 },
     /// The turning tool's footprint (M13.1 owed; the blade's, #21):
     /// the annular-sector sweep about the lathe axis, `field_cut`'s
@@ -79,6 +80,12 @@ pub(crate) fn tool_kind(tool: &SdfTool) -> Result<ToolKind, StockError> {
             radius(r)?;
             length("cone slope", cot)?;
             ToolKind::Taper { r: *r, cot: *cot }
+        }
+        SdfTool::Drill { r, cot, flank } => {
+            radius(r)?;
+            length("cone slope", cot)?;
+            length("flank length", flank)?;
+            ToolKind::Drill { r: *r, cot: *cot, flank: (*flank).max(*r * *cot) }
         }
         SdfTool::BullNose { r, corner, flank } => {
             radius(r)?;
@@ -165,6 +172,8 @@ pub(crate) enum RevKind {
     Flat { r: f64, flank: f64 },
     /// truncated cone: apex at the anchor, up to radius `r`
     Taper { r: f64, cot: f64 },
+    /// twist drill (#2441): cone up to `r * cot`, then cylinder of `r` up to `flank`
+    Drill { r: f64, cot: f64, flank: f64 },
     /// bull nose (M13.1): cylinder of `r` to `flank`, its bottom edge
     /// rounded by `corner` (`field_bull`'s profile)
     Bull { r: f64, corner: f64, flank: f64 },
@@ -199,8 +208,26 @@ pub(crate) fn pose_dist(ax: [f64; 3], t: Point3, q: Point3, kind: &RevKind) -> f
                 )
             }
         }
+        RevKind::Drill { r, cot, flank } => drill_dist(rho, zl, *r, *cot, *flank),
         RevKind::Bull { r, corner, flank } => super::field_bull::bull_dist(rho, zl, *r, *corner, *flank),
     }
+}
+
+/// Exact Euclidean SDF to a twist drill profile: cone from apex `(0, 0)`
+/// to `(r, r * cot)`, followed by cylindrical flute of `r` up to `flank`.
+fn drill_dist(rho: f64, zl: f64, r: f64, cot: f64, flank: f64) -> f64 {
+    let h = r * cot;
+    let f = flank.max(h);
+    let len = r.hypot(h);
+    let d_cone = (rho * h - zl * r) / len;
+    if rho <= r && zl <= f && d_cone <= 0.0 {
+        return d_cone.max(rho - r).max(zl - f);
+    }
+    let l2 = r * r + h * h;
+    let tc = if l2 > 0.0 { ((rho * r + zl * h) / l2).clamp(0.0, 1.0) } else { 0.0 };
+    let dist_cone = (rho - tc * r).hypot(zl - tc * h);
+    let dist_cyl = (rho - r).max(0.0).hypot(zl - zl.clamp(h, f));
+    dist_cone.min(dist_cyl)
 }
 
 /// An UPRIGHT flat pose's exact distance `v` (anchor `foot`, axis +Z)
@@ -275,6 +302,13 @@ mod tests {
         // The 45-degree cone, a point on its flank line: distance 0.
         let f = pose_dist(ax, p(0.0, 0.0, 0.0), p(2.0, 0.0, 2.0), &RevKind::Taper { r: 4.0, cot: 1.0 });
         assert!(f.abs() < 1e-12, "on the flank: {f}");
+        // Twist drill (45-degree half angle, cone height 3, shank to z 10).
+        let drill = RevKind::Drill { r: 3.0, cot: 1.0, flank: 10.0 };
+        assert!(pose_dist(ax, p(0.0, 0.0, 0.0), p(2.0, 0.0, 2.0), &drill).abs() < 1e-12, "on drill cone");
+        assert!(pose_dist(ax, p(0.0, 0.0, 0.0), p(3.0, 0.0, 6.0), &drill).abs() < 1e-12, "on drill flute");
+        assert!((pose_dist(ax, p(0.0, 0.0, 0.0), p(4.0, 0.0, 6.0), &drill) - 1.0).abs() < 1e-12, "outside flute");
+        assert!((pose_dist(ax, p(0.0, 0.0, 0.0), p(0.0, 0.0, -2.0), &drill) - 2.0).abs() < 1e-12, "below tip");
+        assert!(pose_dist(ax, p(0.0, 0.0, 0.0), p(2.5, 0.0, 6.0), &drill) < -0.49, "inside flute");
     }
 
     #[test]

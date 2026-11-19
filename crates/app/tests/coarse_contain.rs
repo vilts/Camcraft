@@ -61,6 +61,7 @@ fn drilled(coarse_mm: Option<f64>, bottom: f64) -> Vec<Warning> {
     h.execute(&world, AddTool::new(&world, "DR-0400", drill).expect("tool"));
     let params = OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(22.0),

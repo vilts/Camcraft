@@ -2173,6 +2173,26 @@ mod projection_tests {
     }
 
     #[test]
+    fn the_ortho_projection_keeps_a_point_in_front_of_the_eye_plane() {
+        // The ortho eye sits at a fixed nominal distance behind the
+        // target, so an in-front-of-the-eye-plane near plane swallowed
+        // the model whole. The near plane now reaches far behind it.
+        // A point in front of the eye plane must clip inside.
+        let cam = Camera { projection: ProjectionMode::Orthographic, dist: 300.0, ..Camera::default() };
+        let eye = cam.eye();
+        let back = [cam.target[0] - eye[0], cam.target[1] - eye[1], cam.target[2] - eye[2]];
+        let back_len = (back[0] * back[0] + back[1] * back[1] + back[2] * back[2]).sqrt();
+        let point = [
+            cam.target[0] + 150.0 * back[0] / back_len,
+            cam.target[1] + 150.0 * back[1] / back_len,
+            cam.target[2] + 150.0 * back[2] / back_len,
+        ];
+        let m = cam.mvp(ASPECT);
+        let z = z_ndc(&m, point);
+        assert!((0.0..=1.0).contains(&z), "the point in front of the eye plane must survive: z = {z}");
+    }
+
+    #[test]
     fn the_ortho_depth_spans_zero_to_one_between_the_planes() {
         // The OpenGL ortho convention spans NDC z over [-1, +1], but
         // WebGPU clips on 0 <= z <= w, and ortho keeps clip.w at 1 -
@@ -2198,7 +2218,7 @@ mod projection_tests {
                 ],
             )
         };
-        let near = 0.1f64;
+        let near = -((cam.dist * 20.0).max(1000.0) - crate::viewport::ORTHO_EYE_DIST);
         let far = (cam.dist * 40.0).max(1000.0);
         assert!((at(near) - 0.0).abs() < 1e-3, "the near plane sits at {}", at(near));
         assert!((at(far) - 1.0).abs() < 1e-3, "the far plane sits at {}", at(far));
@@ -2284,10 +2304,15 @@ mod projection_tests {
         let mp = p.mvp(ASPECT);
         for (nx, ny) in [(-0.9, -0.9), (-0.3, 0.2), (0.0, 0.0), (0.6, 0.85)] {
             let (origin, dir) = o.ray_through([nx, ny], ASPECT).expect("ortho ray");
+            let dd = dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2];
+            let t = ((o.target[0] - origin[0]) * dir[0]
+                + (o.target[1] - origin[1]) * dir[1]
+                + (o.target[2] - origin[2]) * dir[2])
+                / dd;
             let hit = [
-                origin[0] + dir[0] * o.dist,
-                origin[1] + dir[1] * o.dist,
-                origin[2] + dir[2] * o.dist,
+                origin[0] + dir[0] * t,
+                origin[1] + dir[1] * t,
+                origin[2] + dir[2] * t,
             ];
             let a = project(&mo, hit);
             let b = project(&mp, hit);

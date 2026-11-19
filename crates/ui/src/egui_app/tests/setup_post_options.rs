@@ -192,7 +192,7 @@ fn wcs_rotation_on_the_document_post_page_is_undoable() {
     assert!(h.query_by_label("WCS rotation").is_some(), "document post page shows WCS rotation picker");
     assert_eq!(setup_post_options::document(&h.state().state.world).wcs_rotation, WcsRotationOutput::Bake);
 
-    super::setup_mount_pages::pick(&mut h, "Bake into XY", "Control rotation (G68 / ROT)");
+    super::setup_mount_pages::pick(&mut h, "Bake into XY (table coordinates)", "Control rotation (G68 / ROT)");
     assert_eq!(setup_post_options::document(&h.state().state.world).wcs_rotation, WcsRotationOutput::Control);
 
     run(&mut h.state_mut().state, CommandKind::Undo);

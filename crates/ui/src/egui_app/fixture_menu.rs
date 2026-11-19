@@ -18,7 +18,6 @@ use camcraft_app::{model, setup};
 use crate::state::{CommandKind, SetupPage, State, TreeMenuTarget};
 
 use super::browser_tree::Leaf;
-use super::panes::{DROP_GAP, DROP_W};
 use super::theme::Tokens;
 
 /// The menu's rows: a header (no command), then the verbs. Empty when
@@ -83,32 +82,44 @@ pub(super) fn fixture_menu(ui: &mut Ui, state: &mut State, pal: &Tokens, rect: R
         state.tree_menu = None;
         return;
     };
-    let anchor = egui::Pos2::new(rect.left(), rect.top() + (ix + 1) as f32 * pal.row_height + DROP_GAP);
-    let panel = Rect::from_min_size(anchor, Vec2::new(DROP_W, lines.len() as f32 * pal.row_height));
+    let g = pal.dropdown();
+    let (anchor, width) = g.tree_anchor(rect, ui.ctx().content_rect(), ix, pal.row_height);
+    let panel = Rect::from_min_size(anchor, Vec2::new(width, lines.len() as f32 * pal.row_height));
     let mut chosen: Option<usize> = None;
     egui::Area::new(ui.id().with(("fixture-menu", ix)))
         .fixed_pos(anchor)
         .order(egui::Order::Foreground)
         .movable(false)
         .show(ui.ctx(), |ui| {
-            let p = ui.painter();
+            ui.expand_to_include_rect(panel);
+            let p = ui.painter().clone();
             p.rect_filled(panel, pal.radius_menu, pal.ink);
             p.rect_stroke(panel, pal.radius_menu, egui::Stroke::new(1.0, pal.border), egui::StrokeKind::Outside);
             for (k, (label, cmd)) in lines.iter().enumerate() {
                 let r = Rect::from_min_size(
                     egui::Pos2::new(anchor.x, anchor.y + k as f32 * pal.row_height),
-                    Vec2::new(DROP_W, pal.row_height),
+                    Vec2::new(width, pal.row_height),
                 );
-                let resp = cmd.as_ref().map(|_| ui.interact(r, ui.id().with(("fixture-menu-row", k)), Sense::click()));
+                let why = cmd.as_ref().and_then(|cmd| {
+                    state.browser_build.then(|| crate::browser_files::refusal(cmd, false)).flatten()
+                });
+                let live = cmd.is_some() && why.is_none();
+                let resp = cmd.as_ref().map(|_| {
+                    let resp = ui.add_enabled_ui(live, |ui| {
+                        ui.interact(r, ui.id().with(("fixture-menu-row", k)), Sense::click())
+                    }).inner;
+                    resp.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, live, label));
+                    if let Some(why) = why { resp.on_disabled_hover_text(why) } else { resp }
+                });
                 if resp.as_ref().is_some_and(egui::Response::hovered) {
                     p.rect_filled(r, 0.0, pal.field_hover);
                 }
                 p.text(
-                    r.left_center() + Vec2::new(8.0, 0.0),
+                    r.left_center() + Vec2::new(g.pad_x, 0.0),
                     egui::Align2::LEFT_CENTER,
                     label,
                     egui::FontId::proportional(pal.font_row),
-                    if cmd.is_some() { pal.text } else { pal.text_dim },
+                    if live { pal.text } else { pal.text_dim },
                 );
                 if resp.is_some_and(|r| r.clicked()) {
                     chosen = Some(k);

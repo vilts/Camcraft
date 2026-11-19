@@ -71,6 +71,10 @@ impl Tokens {
         tree_suffix_gap: 6.0,
         tree_header_boost: 0.5,
         highlight_stroke_px: 2.0,
+        menu_width: 200.0,
+        recent_width: 300.0,
+        menu_gap: 2.0,
+        menu_pad_x: 8.0,
     };
 
     /// The same shell, inverted: paper grounds, dark ink, the steel
@@ -142,5 +146,9 @@ impl Tokens {
         tree_suffix_gap: 6.0,
         tree_header_boost: 0.5,
         highlight_stroke_px: 2.0,
+        menu_width: 200.0,
+        recent_width: 300.0,
+        menu_gap: 2.0,
+        menu_pad_x: 8.0,
     };
 }

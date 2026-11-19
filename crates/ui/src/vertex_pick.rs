@@ -31,11 +31,15 @@ pub(crate) fn vertex_world(state: &State, entity: &str, id: VertexId) -> Option<
 /// Queue the work origin onto a picked vertex: the WCS pane's angles, the vertex's world position, through the one `SetWcs` command
 /// the anchor grid also queues (undoable like any origin move).
 pub fn queue_origin_at_vertex(state: &mut State, entity: &str, id: VertexId) {
+    let what = camcraft_app::pick::geo_label(
+        &state.world,
+        &camcraft_app::operation::GeoSel { entity: entity.to_owned(), feature: FeatureSel::Vertex(id) },
+    );
     let Some(pos) = vertex_world(state, entity, id) else {
-        state.status = format!("the picked vertex of '{entity}' is no longer in the model");
+        state.status = format!("{what} is no longer in the model");
         return;
     };
-    state.status = format!("WCS origin set at a vertex of '{entity}'");
+    state.status = format!("WCS origin set at {what}");
     state.pending.push_back(CommandKind::SetWcs {
         pos,
         roll_deg: state.wcs_ui.roll_deg,
@@ -73,7 +77,11 @@ pub fn queue_origin_at_face(state: &mut State, entity: &str, sel: FeatureSel, z_
     } else {
         target.centroid
     };
-    state.status = format!("WCS origin set on a face of '{entity}'");
+    let what = camcraft_app::pick::geo_label(
+        &state.world,
+        &camcraft_app::operation::GeoSel { entity: entity.to_owned(), feature: sel },
+    );
+    state.status = format!("WCS origin set on {what}");
     state.pending.push_back(CommandKind::SetWcs {
         pos,
         roll_deg: state.wcs_ui.roll_deg,

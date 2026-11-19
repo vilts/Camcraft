@@ -172,7 +172,7 @@ pub(super) fn sided_pieces(sm: &SignedMeridian, path: &Toolpath, tol: f64) -> Re
 }
 
 /// A move's meridian pieces: its chord, a thread's helix read at its
-/// constant radius (flagged `true`: a round arc about the axis, whose
+/// linearly ramping radius (flagged `true`: an arc about the axis, whose
 /// ends stand on both sides and tell no holder side), or a meridian
 /// arc's chords; `None` when it leaves the turning plane.
 pub(super) fn pieces_of(m: &Move, sm: &SignedMeridian, tol: f64) -> Option<(Vec<Seg>, bool)> {

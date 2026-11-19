@@ -156,7 +156,13 @@ pub fn field_view_with(world: &flecs_ecs::prelude::World, texels: f64) -> Result
         let cut = match (&p.rotary, &p.lathe) {
             (_, Some(l)) => stock.simulate_lathe_profile(&p.moves, &l.profile, &l.axis),
             (Some(ax), None) => crate::stock_sim::simulate_rotary_slice(&mut stock, &op, &p.moves, 0, ax, pose_tol).map(|_| ()),
-            (None, None) => stock.simulate_display(std::slice::from_ref(&op)),
+            (None, None) => {
+                if p.drill {
+                    stock.simulate_drill_display(std::slice::from_ref(&op))
+                } else {
+                    stock.simulate_display(std::slice::from_ref(&op))
+                }
+            }
         };
         cut.map_err(|e| format!("the field view could not cut the program: {e}"))?;
     }
@@ -183,12 +189,26 @@ pub(crate) fn display_inputs(
     if !(texels.is_finite() && texels >= 1.0) {
         return Err(format!("the field view needs a positive texel budget, not {texels}"));
     }
-    let planned = plan_program(world)?;
+    display_inputs_of(world, texels, plan_program(world)?, None)
+}
+
+/// `display_inputs` over a given plan (#2280: the playback's plan ends
+/// before an op with no toolpath). `fallback_setup` names the setup
+/// whose stock is drawn when the plan is empty.
+pub(crate) fn display_inputs_of(
+    world: &flecs_ecs::prelude::World,
+    texels: f64,
+    planned: Vec<crate::stock_sim::Planned>,
+    fallback_setup: Option<String>,
+) -> Result<(Vec<Triangle>, Vec<crate::stock_sim::Planned>, f64), String> {
+    if !(texels.is_finite() && texels >= 1.0) {
+        return Err(format!("the field view needs a positive texel budget, not {texels}"));
+    }
     // #541: the field eye has no box atom - said, never cut as a disc.
     if let Some(p) = planned.iter().find(|p| p.electrode.is_some()) {
         return Err(format!("{}: {}", p.name, crate::stock_sim::ELECTRODE_FIELD_REFUSAL));
     }
-    let first = planned.first().and_then(|p| p.setup.clone());
+    let first = planned.first().map_or(fallback_setup, |p| p.setup.clone());
     let eff = crate::setup::effective(world, first.as_deref());
     if planned.iter().any(|p| crate::setup::effective(world, p.setup.as_deref()) != eff) {
         return Err("the field view draws one setup's stock; a multi-setup program keeps the sheet (the flip transform is M7.3's)".into());

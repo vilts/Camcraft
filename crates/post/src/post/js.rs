@@ -17,165 +17,10 @@ use boa_engine::{Context, JsValue, Source};
 use serde_json::Value;
 use std::collections::BTreeMap;
 
-/// The JS shim every script sees before its own text. Original,
-/// in-repo; specced by `docs/CNC-INTERMEDIATE.md`.
-pub const PRELUDE: &str = r#"
-var OUT = [];
-var MESSAGES = [];
-var LINE = "";
-var properties = {};
-var W = properties;
-var currentPosition = { X: 0, Y: 0, Z: 0 };
-// The program's number (#111): 1 for a whole-job program; one file
-// per operation counts 1, 2, 3... in program order. A dialect that
-// writes an O-word reads it at onOpen.
-var programNumber = 1;
-// The document's program identity (#258): \`number\` is programNumber
-// again; \`numbered\` is true only when the document states a number
-// (a dialect whose default program writes none keeps writing none);
-// \`comment\` is the document's program comment, "" when it states none.
-var program = { number: 1, numbered: false, comment: "" };
-var postOptions = {};
-var machine = { name: "", rapidRate: 0, feedRateMax: 0, spindleMax: 0, coolants: [], rotaries: [], rtcp: false, units: "mm", spindleRanges: [], rigidTapping: true, safeRetractZ: null, model: "" };
-function _flushLine() { if (LINE !== "") { OUT.push(LINE); LINE = ""; } }
-function writeln(s) { if (s !== undefined) LINE += String(s); _flushLine(); }
-function write(s) { if (s !== undefined) LINE += String(s); }
-// Lines written so far, a pending partial line included (#504): a
-// script marks where a block ended and later asks whether anything
-// followed it.
-function linesWritten() { _flushLine(); return OUT.length; }
-function writeBlock() {
-  _flushLine();
-  var parts = [];
-  for (var i = 0; i < arguments.length; i++) {
-    var a = arguments[i];
-    if (a === undefined || a === null || a === "") continue;
-    parts.push(String(a));
-  }
-  if (parts.length > 0) OUT.push(parts.join(" "));
-}
-function writeWord(w) { if (w !== undefined && w !== null && w !== "") write(String(w)); }
-function writeAddress(letter, value, dp) {
-  if (value === undefined || value === null) return;
-  write(String(letter) + formatUnit(Number(value), dp));
-}
-// #594: the default comment is the RS-274 / ISO 6983 `( )` form, so
-// its text loses every parenthesis (one would end or nest the comment)
-// and every control character (one would end the block).
-function writeComment(s) {
-  var t = String(s === null || s === undefined ? "" : s);
-  writeln("(" + t.replace(/[()]/g, " ").replace(/[\x00-\x1F\x7F]/g, " ") + ")");
-}
-function writeBlankLine() { _flushLine(); OUT.push(""); }
-function writeOutput(s) { write(s); }
-function message(s) { MESSAGES.push(String(s)); }
-function getProperty(k) { return properties[k]; }
-function setProperty(k, v) { properties[k] = v; }
-function formatUnit(v, dp) {
-  if (typeof v !== "number" || !isFinite(v)) return "0";
-  if (dp === undefined) dp = 3;
-  var s = v.toFixed(dp);
-  if (s.indexOf(".") >= 0) { s = s.replace(/0+$/, "").replace(/\.$/, ""); }
-  if (s === "-0") s = "0";
-  return s;
-}
-function formatMotion(v) { return formatUnit(v, 3); }
-function formatFeed(v) {
-  if (typeof v !== "number" || !isFinite(v) || v <= 0) return "0";
-  return String(Math.round(v));
-}
-function onComment(s) { writeln(s); }
-// Bar-feeder lifecycle defaults (M5.2 G.2): the events carry no
-// motion and no post may invent an M-code, so the default voices
-// the intent as a comment - visible to the operator, harmless to
-// any controller. A script with a real feeder dialect overrides
-// these exactly as it overrides any other hook.
-function onPartLoading() {
-  var a = properties.Advance;
-  writeComment("PART LOAD" + (a > 0 ? " ADVANCE " + formatUnit(a) : ""));
-}
-function onPartUnloading() { writeComment("PART UNLOAD"); }
-// The handoff step of the same lifecycle family (M5.3 C): a comment
-// naming the stations, the machine's own dialect by override.
-function onPartTransfer() {
-  writeComment("PART TRANSFER " + properties.From + "->" + properties.To);
-}
-// The measurement ask of the same family (M5.3 D): the default states
-// the budget as a comment - which probe protocol measures to it (an
-// RS238 hand check, a macro cycle, a laser) is the override's
-// dialect, and the engine invents none of it.
-function onProbe() {
-  writeComment("PROBE TOL " + formatUnit(properties.Tolerance));
-}
-// The reference-era language-version pragma: accepted and ignored,
-// because the engine (not the script) decides semantics.
-function setLanguageVersion(_v) { return 0; }
-"#;
+pub use super::js_host::{is_false, is_true, ProgramId, HOOKS, PRELUDE};
 
-/// Strict boolean tests for hook returns (an `undefined` from a
-/// missing hook is neither - only a literal `false` swallows).
-#[must_use]
-pub fn is_true(v: &JsValue) -> bool {
-    v.as_boolean() == Some(true)
-}
-
-#[must_use]
-pub fn is_false(v: &JsValue) -> bool {
-    v.as_boolean() == Some(false)
-}
-
-/// The hook names the engine may call, per the format doc.
-pub const HOOKS: &[&str] = &[
-    "onOpen",
-    "onParameter",
-    "onToolChange",
-    "onSection",
-    "onSectionEnd",
-    "onCommand",
-    "onRapid",
-    "onLinear",
-    "onCircular",
-    "onPlunge",
-    "onCycle",
-    "onCyclePoint",
-    "onCycleEnd",
-    "onDwell",
-    "onSpindleSpeed",
-    "onRadiusCompensation",
-    "onThreadCycle",
-    "onThreadCycleEnd",
-    "onPartLoading",
-    "onPartUnloading",
-    "onPartTransfer",
-    "onProbe",
-    "onProbeMove",
-    "onProbeRetreat",
-    "onProbeGuard",
-    "onProbeResult",
-    // #671: the plasma header and the torch spans.
-    "onPlasma",
-    "onTorchOn",
-    "onTorchOff",
-    "onComment",
-    "onClose",
-];
-
-/// The program's identity a post writes (#258): its number (the
-/// O-word of a numbering dialect, 1 when the document states none),
-/// whether the document stated that number, and the document's
-/// program comment ("" for none - the dialect writes its own default).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct ProgramId {
-    pub number: u32,
-    pub numbered: bool,
-    pub comment: String,
-}
-
-impl Default for ProgramId {
-    fn default() -> Self {
-        Self { number: 1, numbered: false, comment: String::new() }
-    }
-}
+/// Maximum emitted lines in one post run, across all hooks.
+pub const MAX_OUTPUT_LINES: usize = 100_000;
 
 /// One loaded post script.
 pub struct Script {
@@ -210,6 +55,12 @@ pub struct Script {
     /// Without it a thread that needs the spindle reversed is refused
     /// by name - the script would cut it the other hand under M03.
     thread_hands: bool,
+    /// The `continuousThreading = true` manifest flag (issue #419): the
+    /// script posts a thread's passes as one continuous synchronized
+    /// chain per pass, chip-break dips included, on a control whose
+    /// manual states that consecutive threading blocks keep sync.
+    /// Without it a `PARAM ChipBreakDips` section is refused by name.
+    continuous_threading: bool,
     /// The `millSpindleReverse = true` manifest flag (#988): the script
     /// reads `PARAM MillSpindle reverse` and starts the spindle M04 for
     /// a left-hand-cut mill. Without it such a section is refused.
@@ -219,6 +70,8 @@ pub struct Script {
     /// section is refused by name - a cutting post would write a wire
     /// path with no condition, threading or wire words.
     wire_edm: bool,
+    /// Latches once any output-limit check trips so caught exceptions cannot pass truncated output.
+    output_limit_exceeded: bool,
     /// The `wcsRotation = true` manifest flag (#760): the script writes
     /// controller coordinate rotation (`G68 X0. Y0. R` / `G69` or
     /// `ROT RPL=` / `ROT`) when requested in `Control` mode.
@@ -230,14 +83,21 @@ impl Script {
     /// refusal, never a half-defined script.
     pub fn load(cps: &str) -> Result<Self, PostError> {
         let mut ctx = Context::default();
-        let src = format!(
-            "{PRELUDE}\n{}\n{}\n{cps}",
+        // Apply the same Boa limits on desktop and wasm, including top-level code.
+        let limits = ctx.runtime_limits_mut();
+        limits.set_loop_iteration_limit(1_000_000);
+        limits.set_recursion_limit(64);
+        limits.set_stack_size_limit(4096);
+        let host = format!(
+            "var _maxOutputLines = {MAX_OUTPUT_LINES};\n{PRELUDE}\n{}\n{}",
             super::rotary_cap::ROTARY_CAP,
             super::explain::EXPLAIN_JS
         );
-        if let Err(e) = ctx.eval(Source::from_bytes(src.as_bytes())) {
-            return Err(PostError::Script(format!("{e}")));
-        }
+        ctx.eval(Source::from_bytes(host.as_bytes()).with_path(std::path::Path::new("host.js")))
+            .map_err(|e| PostError::Script(format!("{e}")))?;
+        // A separate source keeps user diagnostics exactly 1-based, without offsets.
+        ctx.eval(Source::from_bytes(cps.as_bytes()).with_path(std::path::Path::new("user.cps")))
+            .map_err(|e| PostError::Script(format!("{e}")))?;
         let mut s = Self {
             ctx,
             present: Vec::new(),
@@ -248,8 +108,10 @@ impl Script {
             axis_inversion: false,
             probe_axis_inversion: false,
             thread_hands: false,
+            continuous_threading: false,
             mill_spindle_reverse: false,
             wire_edm: false,
+            output_limit_exceeded: false,
             wcs_rotation: false,
         };
         let mut present = Vec::new();
@@ -293,10 +155,15 @@ impl Script {
             .eval("typeof probeAxisInversion !== \"undefined\" && probeAxisInversion === true")
             .map(|v| is_true(&v))
             .unwrap_or(false);
+        s.continuous_threading = s
+            .eval("typeof continuousThreading !== \"undefined\" && continuousThreading === true")
+            .map(|v| is_true(&v))
+            .unwrap_or(false);
         s.wire_edm = s
             .eval("typeof wireEdm !== \"undefined\" && wireEdm === true")
             .map(|v| is_true(&v))
             .unwrap_or(false);
+        super::js_host::check_output_limit(&mut s.ctx, &mut s.output_limit_exceeded)?;
         s.wcs_rotation = s
             .eval("typeof wcsRotation !== \"undefined\" && wcsRotation === true")
             .map(|v| is_true(&v))
@@ -412,10 +279,13 @@ impl Script {
     /// missing-hook case is a no-op returning undefined. A JS throw is
     /// a `Script` error - the Prime Directive's refusal shape.
     pub fn call(&mut self, name: &str, args: &str) -> Result<JsValue, PostError> {
+        super::js_host::check_output_limit(&mut self.ctx, &mut self.output_limit_exceeded)?;
         if !self.has(name) {
             return Ok(JsValue::undefined());
         }
-        self.eval(&format!("{name}({args})"))
+        let res = self.eval(&format!("{name}({args})"));
+        super::js_host::check_output_limit(&mut self.ctx, &mut self.output_limit_exceeded)?;
+        res
     }
 
     /// True when `name` exists (used for the onPlunge preference).
@@ -474,6 +344,12 @@ impl Script {
         self.probe_axis_inversion
     }
 
+    /// True when the script declares `continuousThreading = true` - it
+    /// posts chip-break dips inside one G32 chain (issue #419).
+    pub fn voices_continuous_threading(&self) -> bool {
+        self.continuous_threading
+    }
+
     /// True when the script declares `wcsRotation = true` - it writes
     /// controller coordinate rotation (`G68` / `ROT`) in `Control` mode (#760).
     #[must_use]
@@ -485,12 +361,19 @@ impl Script {
     /// Open partial lines count as flushed: a hook that ends a record
     /// mid-line still wrote a line of the program.
     pub fn out_len(&mut self) -> Result<usize, PostError> {
+        super::js_host::check_output_limit(&mut self.ctx, &mut self.output_limit_exceeded)?;
         let v = self.eval("(_flushLine(), OUT.length)")?;
-        Ok(v.as_number().map(|n| n.max(0.0) as usize).unwrap_or(0))
+        let len = v.as_number().map(|n| n.max(0.0) as usize).unwrap_or(0);
+        if len > MAX_OUTPUT_LINES {
+            self.output_limit_exceeded = true;
+            return Err(PostError::Script(super::js_host::OUTPUT_LIMIT_ERROR.into()));
+        }
+        Ok(len)
     }
 
     /// Pull the finished line buffer and the `message()` log.
     pub fn drain(&mut self) -> Result<(Vec<String>, Vec<String>), PostError> {
+        self.out_len()?;
         let out = self.pull("OUT")?;
         let msgs = self.pull("MESSAGES")?;
         Ok((out, msgs))

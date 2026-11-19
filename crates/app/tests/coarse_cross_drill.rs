@@ -119,6 +119,7 @@ fn hole(x: f64, y: f64, z: f64, dx: f64, depth: f64, through: bool) -> CrossHole
 fn drill_params(cross: Vec<CrossHole>) -> OpParams {
     OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(20.0),
         retract_z: None,
         top_z: Height::fixed(15.0),

@@ -84,7 +84,7 @@ pub(super) fn row(ui: &mut Ui, state: &mut State, setup: &str) {
         ui.horizontal_wrapped(|ui| {
             let words: Vec<String> = picks
                 .iter()
-                .map(|(g, r)| format!("{} of '{}' sets {}", g.feature, g.entity, role_label(*r)))
+                .map(|(g, r)| format!("{} sets {}", camcraft_app::pick::geo_label(&state.world, g), role_label(*r)))
                 .collect();
             let text = if words.is_empty() { "nothing picked yet".to_owned() } else { words.join(", ") };
             ui.label(RichText::new(format!("      Picked: {text}")).weak());

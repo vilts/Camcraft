@@ -66,6 +66,7 @@ fn hole(x: f64, radius: f64) -> Hole {
 fn drill(x: f64, radius: f64, bottom: f64) -> OpParams {
     OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(22.0),

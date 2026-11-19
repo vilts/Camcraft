@@ -47,6 +47,17 @@ mod tests {
         }
     }
 
+    /// #2280: the notes of an operation with 0 warnings are not an
+    /// error. The text is the status line the maintainer saw, without
+    /// the playback refusal that #2280 removed from its end.
+    #[test]
+    fn the_notes_of_a_clean_operation_are_not_an_alert() {
+        let mut state = State::new();
+        state.status = "generated 2D Adaptive1: 4269 moves (0 plunge(s), 3 level(s), 1617 arc(s)), 0 warning(s) -             arc output: of 789 fitted arcs, 169 could not be proved inside the cutter-centre area, 85 would add a kink             and 2 would cross another feed - those stay chords - Carried stock: the operation's top Z20.000 is below             the material over its region (Z22.000) - the first descent starts over that material and feeds down;             the first level engages 2.000 mm"
+            .to_owned();
+        assert!(!is_alert(&state), "{}", state.status);
+    }
+
     #[test]
     fn refusals_are_alerts() {
         let mut state = State::new();

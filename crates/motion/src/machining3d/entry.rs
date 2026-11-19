@@ -78,6 +78,24 @@ pub fn pocket3d_offset_prev(
     run_plain(facets, footprint, p, true, mask)
 }
 
+/// Issue #1950: the whole-model sibling of [`pocket3d_prev`] whose
+/// footprint reaches into the air past `stock` (the setup's stock
+/// outline, `open_sides` with the Adaptive band): under Adaptive each
+/// level's stock ring is planned from that air, the material clipped to
+/// the stock. Every other strategy, and `stock: None`, is
+/// [`pocket3d_prev`] move for move.
+pub fn pocket3d_open_prev(
+    facets: &[Triangle],
+    footprint: &Region,
+    stock: Option<&Region>,
+    p: &Pocket3DParams,
+    mask: Option<&Columns<'_>>,
+) -> Result<Toolpath, GenError> {
+    guard_input(facets, footprint, p)?;
+    let zs = cut_levels_under(p.top_z, p.links.approach.stock_top, p.bottom_z, p.stepdown)?;
+    ladder(facets, footprint, p, &zs, None, mask, home(p), false, None, stock)
+}
+
 fn run_plain(
     facets: &[Triangle],
     footprint: &Region,
@@ -87,7 +105,7 @@ fn run_plain(
 ) -> Result<Toolpath, GenError> {
     guard_input(facets, footprint, p)?;
     let zs = cut_levels_under(p.top_z, p.links.approach.stock_top, p.bottom_z, p.stepdown)?;
-    ladder(facets, footprint, p, &zs, None, mask, home(p), shell, None)
+    ladder(facets, footprint, p, &zs, None, mask, home(p), shell, None, None)
 }
 
 /// The plain ladder with a second, smaller footprint for its AIR
@@ -123,16 +141,16 @@ pub fn pocket3d_air_split(
     let zs = cut_levels_under(p.top_z, p.links.approach.stock_top, p.bottom_z, p.stepdown)?;
     let k = air_levels(&zs, air_above);
     if k == 0 || air_footprint.is_empty() {
-        return ladder(facets, footprint, p, &zs, None, None, home(p), false, sm_cut.as_ref());
+        return ladder(facets, footprint, p, &zs, None, None, home(p), false, sm_cut.as_ref(), None);
     }
-    let air = ladder(facets, air_footprint, p, &zs[..k], None, None, home(p), false, sm_air.as_ref())?;
+    let air = ladder(facets, air_footprint, p, &zs[..k], None, None, home(p), false, sm_air.as_ref(), None)?;
     if k == zs.len() {
         return Ok(air);
     }
     let start = air.moves.last().map_or_else(|| home(p), |m| m.to);
     let mut moves = air.moves;
     let mut notes = air.notes;
-    match ladder(facets, footprint, p, &zs[k..], None, None, start, false, sm_cut.as_ref()) {
+    match ladder(facets, footprint, p, &zs[k..], None, None, start, false, sm_cut.as_ref(), None) {
         Ok(rest) => {
             moves.extend(rest.moves);
             notes.extend(rest.notes);
@@ -234,7 +252,7 @@ fn run_rest(
     guard_input(facets, footprint, p)?;
     let r = p.tool_diameter * 0.5;
     let zs = cut_levels_under(p.top_z, p.links.approach.stock_top, p.bottom_z, p.stepdown)?;
-    let coarse = ladder(facets, footprint, p, &zs, None, mask, home(p), shell, None)?;
+    let coarse = ladder(facets, footprint, p, &zs, None, mask, home(p), shell, None, None)?;
 
     // What the coarse ladder leaves standing, column by column: the
     // op-frame grid simulated from raw stock, or - when the program
@@ -262,7 +280,7 @@ fn run_rest(
     // order (M8.1): the status line reads the substitutions as the
     // machine lived them.
     let mut notes = coarse.notes;
-    match ladder(facets, footprint, p, &zs_r, Some(&rest), None, start, shell, None) {
+    match ladder(facets, footprint, p, &zs_r, Some(&rest), None, start, shell, None, None) {
         Ok(rp) => {
             moves.extend(rp.moves);
             notes.extend(rp.notes);

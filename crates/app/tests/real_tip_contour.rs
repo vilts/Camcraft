@@ -53,7 +53,7 @@ use camcraft_app::geometry::{Mesh, Point3, Triangle, slice};
 use camcraft_app::machining2d::{Lead, Side};
 use camcraft_app::machining3d::Entry3D;
 use camcraft_app::model;
-use camcraft_app::operation::{Height, OpParams, SrcRef};
+use camcraft_app::operation::{FeatureSel, GeoSel, Height, OpParams, SrcRef};
 use camcraft_app::schema::Location;
 use camcraft_app::stock::StockShape;
 use camcraft_app::tools::{Tool, catalog};
@@ -180,10 +180,31 @@ fn generate(leave: f64) -> (Toolpath, Vec<Warning>) {
     generate_with(BULL, leave)
 }
 
+/// Pick the boss's top face so the Contour stays scoped to the boss's
+/// filleted wall (#2436: a whole-model Contour now follows lower wider
+/// plate sections past the boss foot).
+fn boss_top(world: &World) -> SrcRef {
+    let e = model::find_by_name(world, "part").expect("part");
+    let f = model::features_of(world, &e).expect("features");
+    let id = f
+        .faces
+        .iter()
+        .find(|fa| {
+            fa.normal[2] > 0.99
+                && fa.loops
+                    .iter()
+                    .flat_map(|l| l.verts.iter())
+                    .all(|&v| f.verts.get(v as usize).is_some_and(|p| (p[2] - TOP).abs() < 1e-9))
+        })
+        .map(|fa| fa.id)
+        .expect("boss top face");
+    SrcRef::Selection(vec![GeoSel { entity: "part".into(), feature: FeatureSel::Face(id) }])
+}
+
 /// The same, with `tool_name` from the catalog.
 fn generate_with(tool_name: &str, leave: f64) -> (Toolpath, Vec<Warning>) {
     let (world, mut h) = world_with(tool_name);
-    let op = CreateOperation::new(&world, "C1", tool_name, SrcRef::Entity("part".into()), contour_op(leave));
+    let op = CreateOperation::new(&world, "C1", tool_name, boss_top(&world), contour_op(leave));
     h.execute(&world, op.expect("create"));
     h.execute(&world, GenerateOperation::new(&world, "C1").expect("generate"));
     let e = model::find_by_name(&world, "C1").expect("op");
@@ -350,7 +371,7 @@ fn the_same_contour_pushed_into_the_floor_still_convicts() {
     if let OpParams::Contour { bottom_z, .. } = &mut deep {
         *bottom_z = Height::fixed(FLOOR - 2.0);
     }
-    h.execute(&world, CreateOperation::new(&world, "C2", BULL, SrcRef::Entity("part".into()), deep).expect("create"));
+    h.execute(&world, CreateOperation::new(&world, "C2", BULL, boss_top(&world), deep).expect("create"));
     h.execute(&world, GenerateOperation::new(&world, "C2").expect("generate"));
     let e = model::find_by_name(&world, "C2").expect("op");
     let tp = model::toolpath_of(&world, &e).expect("cached path");

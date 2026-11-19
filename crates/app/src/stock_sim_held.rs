@@ -204,9 +204,18 @@ impl ElectrodeAtom {
 impl Held {
     /// Cut `ops` (current frame) into the stock.
     pub(crate) fn simulate(&mut self, ops: &[SimOp]) -> Result<(), String> {
+        self.simulate_with(ops, false)
+    }
+
+    /// Cut twist-drill `ops` (cone plus cylindrical flute, #2441).
+    pub(crate) fn simulate_drill(&mut self, ops: &[SimOp]) -> Result<(), String> {
+        self.simulate_with(ops, true)
+    }
+
+    fn simulate_with(&mut self, ops: &[SimOp], drill: bool) -> Result<(), String> {
         match self {
-            Held::Plain(s) => s.simulate(ops),
-            Held::Carried(c) => c.simulate(ops),
+            Held::Plain(s) => if drill { s.simulate_drill(ops) } else { s.simulate(ops) },
+            Held::Carried(c) => if drill { c.simulate_drill(ops) } else { c.simulate(ops) },
         }
         .map_err(|e| e.to_string())
     }

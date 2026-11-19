@@ -2,8 +2,9 @@
 //! (X+ becomes X-). The flags ride the WCS entity (`schema::WcsFlip`);
 //! the origin and rotation are not touched. A WCS that was never placed
 //! is placed at the identity, as `SetWcsOrigin` would, and the inverse
-//! removes it again. The post and generation refuse a flipped WCS by
-//! name (`setup_wcs_flip`), so this command changes no posted output.
+//! removes it again. The post mirrors a section of a flipped X or Y
+//! (#1649, `post::wcs_flip`); a flipped Z and the other cases it does
+//! not carry are refused by name (`setup_wcs_flip`).
 //!
 //! Provenance: our own design notes over our own WCS model; no vendor
 //! material consulted.

@@ -3,7 +3,7 @@
 //! stored calculation and starts a new one. Provenance: our own
 //! fixtures (a staged face) over the M7.1 field engine.
 //!
-//! Gate map (M4.4): covers ui::play_precalc, ui::actions::ensure_field_view (precalc stamp).
+//! Gate map (M4.4): covers ui::play_precalc, ui::actions::ensure_field_view (precalc stamp, #2280 stop line).
 
 use camcraft_app::commands::{AddTool, CreateOperation, EditOperationParams, GenerateOperation, SetStock};
 use camcraft_app::geometry::{Point3, IDENTITY_Q};
@@ -14,7 +14,7 @@ use camcraft_app::stock_play::Precalc;
 use camcraft_app::tools::catalog;
 
 use crate::actions::ensure_field_view;
-use crate::play_precalc::precalc_readout;
+use crate::play_precalc::{playback_stop, precalc_readout, stop_readout};
 use crate::state::{Sim, State};
 
 fn face(stepover: f64) -> OpParams {
@@ -83,4 +83,32 @@ fn an_edit_of_the_operation_retires_the_stored_calculation() {
     let after = play.index().total();
     assert!(after > before, "the stored calculation was for {before} moves; the edited program has {after}");
     assert_ne!(play.precalc(), Precalc::Off, "and it calculates again");
+}
+
+/// #2280: an operation with no toolpath after a generated one. The
+/// playback starts and plays the generated one; the stop is its own
+/// plain-English line, not a refusal on the status line.
+#[test]
+fn an_op_without_a_toolpath_stops_the_playback_and_says_so() {
+    let mut state = faced_state();
+    state.sim = Some(Sim::new());
+    ensure_field_view(&mut state);
+    let whole = state.field_play.as_ref().map(|p| p.index().total()).expect("Face1 alone plays");
+    assert_eq!(playback_stop(&state), None, "a whole program has no stop line");
+
+    let w = &state.world;
+    let cmd = CreateOperation::new(w, "2D Contour1", "EM-0400-2FL", SrcRef::Stock, face(1.5)).expect("create");
+    state.history.execute(w, cmd);
+    state.doc_version += 1;
+    state.status = "generated Face1: 40 moves, 0 warning(s)".into();
+    ensure_field_view(&mut state);
+    assert!(!matches!(state.field_view, Some(Err(_))), "the playback is not refused");
+    let play = state.field_play.as_ref().expect("the playback runs");
+    assert_eq!(play.index().total(), whole, "Face1's moves play");
+    assert_eq!(
+        playback_stop(&state).as_deref(),
+        Some("Stock simulation stops before 2D Contour1: it has no toolpath. Generate it to see the rest.")
+    );
+    assert_eq!(stop_readout("X"), "Stock simulation stops before X: it has no toolpath. Generate it to see the rest.");
+    assert_eq!(state.status, "generated Face1: 40 moves, 0 warning(s)", "the status line is not changed");
 }

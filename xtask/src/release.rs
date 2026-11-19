@@ -189,6 +189,9 @@ impl Cut {
             self.say("skipped (--skip-gate)");
             return Ok(());
         }
+        for note in crate::known_fail::check_issues(&self.root, self.a.dry)? {
+            self.say(note);
+        }
         self.say("cargo xtask gate release (in process)");
         let mut run = exec::Run::new(&self.root, "release", self.a.dry)?;
         run.plan(&crate::plan::release(&self.root))?;

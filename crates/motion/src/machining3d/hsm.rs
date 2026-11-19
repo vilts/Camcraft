@@ -34,12 +34,16 @@ use crate::geometry::Point3;
 use crate::entry::Entry3D;
 use crate::machining2d::{
     ARC_FIT_TOL, GenError, PocketParams, PocketStrategy, ProofTally, Return, Seg, adaptive_passes, choose_entry,
-    crossing_free, fit_proved, microlift_link, plan_passes, push_segs,
+    crossing_free, in_air, fit_proved, microlift_link, plan_passes, push_segs,
 };
 
 /// Said once per path where the rest pass runs under Adaptive.
 pub const REST_RINGS: &str =
     "adaptive: the rest pass cuts Offset rings at the load step - its targets are what the simulation left, entered by plunges";
+
+/// Said once per path where a level is entered by a plunge in the air
+/// outside the stock (issue #1950).
+pub const AIR_ENTRY: &str = "adaptive: the level is entered by a plunge in the air outside the stock, at the start of its first pass";
 
 /// Said per developed level whose area the rotary wrap's seam cuts.
 pub const SEAM_RINGS: &str =
@@ -93,11 +97,15 @@ pub(super) struct LevelPlan {
     /// never by a keep-down chord at depth - the chord would be legal in
     /// the center area yet slot through stock the plan has not cleared.
     pub hsm: bool,
+    /// Issue #1950: the first pass starts in the air outside the stock
+    /// (`machining2d::in_air` proved it), so the level is entered by a
+    /// plunge there - no helix or ramp bores into the stock.
+    pub air_entry: bool,
 }
 
 impl LevelPlan {
     fn rings(passes: Vec<Vec<Point2>>, helix_r: f64) -> Self {
-        Self { passes, joins: Vec::new(), arcs: None, helix_r, hsm: false }
+        Self { passes, joins: Vec::new(), arcs: None, helix_r, hsm: false, air_entry: false }
     }
 
     /// The level's params: the entry's helix narrowed to the bore the
@@ -112,7 +120,8 @@ impl LevelPlan {
 /// planner's notes on the builder.
 // One slot per law the level threads (the ladder's own shape): the
 // builder, the area, the params, the plane, the hop, the rest and shell
-// flags, and the wrap's seam (issue #9).
+// flags, the wrap's seam (issue #9) and the stock outline of an
+// open-side level (issue #1950: its ring is cut from the air).
 #[allow(clippy::too_many_arguments)]
 pub(super) fn plan_level(
     b: &mut PathBuilder,
@@ -123,6 +132,7 @@ pub(super) fn plan_level(
     rest: bool,
     shell: bool,
     seam: Option<&Seam>,
+    stock: Option<&Region>,
 ) -> Result<LevelPlan, GenError> {
     let step = p.tiling_step();
     if p.strategy != PocketStrategy::Adaptive {
@@ -169,7 +179,7 @@ pub(super) fn plan_level(
     // On the wrap a hard planner refusal (no room for an entry, ...)
     // costs the level, not the op: rings cut it, said by name - the
     // planar ladder keeps the refusal it always had.
-    let (passes, notes, s, room, joins) = match (adaptive_passes(center, &pp, &what, false), seam) {
+    let (passes, notes, s, room, joins) = match (adaptive_passes(center, &pp, &what, false, if seam.is_some() { None } else { stock }), seam) {
         (Ok(planned), _) => planned,
         (Err(e), Some(_)) => return rings_named(b, center, p, &format!("adaptive: the HSM planner refused ({e})"), &what),
         (Err(e), None) => return Err(e),
@@ -216,7 +226,17 @@ pub(super) fn plan_level(
             None => b.note(format!("Z {z:.3}: {n}")),
         }
     }
-    Ok(LevelPlan { passes, joins, arcs: Some(runs), helix_r, hsm: true })
+    // Issue #1950: an air plan's first pass starts outside the stock; the
+    // entry plunges there only where the tool's disc is proved clear of
+    // the stock outline (a prism: clear at every height). Else the
+    // ladder's own entry law, as before.
+    let r = p.tool_diameter * 0.5;
+    let air_entry = seam.is_none()
+        && stock.is_some_and(|s| passes.first().and_then(|w| w.first()).is_some_and(|&e| in_air(s, e, r)));
+    if air_entry && p.links.approach.center_cutting {
+        b.note_once(AIR_ENTRY);
+    }
+    Ok(LevelPlan { passes, joins, arcs: Some(runs), helix_r, hsm: true, air_entry })
 }
 
 /// The tail every ring-cut level's note ends with (issue #983): the

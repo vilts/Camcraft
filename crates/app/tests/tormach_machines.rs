@@ -487,6 +487,7 @@ fn a_tap_job_posts_on_the_1100mx_and_is_refused_on_the_770m() {
         h.execute(&world, AddTool::new(&world, "TAP-M6", tap).expect("add tap"));
         let drill = OpParams::Drill {
             break_through: None,
+            break_through_from: Default::default(),
             clearance_z: Height::fixed(25.0),
             retract_z: None,
             top_z: Height::fixed(12.0),

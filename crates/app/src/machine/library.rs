@@ -174,14 +174,24 @@ pub fn read_for_assign(source: &MachineSource) -> Result<(String, super::Machine
     Ok((source.mount_path(), m))
 }
 
-/// The shipped library, in `posting::MACHINES` order.
+/// The shipped library as the machine folder holds it now (#2380): the
+/// `posting::MACHINES` entries that have a file, in table order. A table
+/// entry with no file is not listed (it is gone, not an error); the
+/// document that names it is still refused by name when it mounts.
 #[must_use]
 pub fn builtins() -> Vec<MachineEntry> {
+    builtins_of(&posting::machine_scan())
+}
+
+/// [`builtins`] for a given folder scan.
+#[must_use]
+pub fn builtins_of(scan: &posting::FolderScan) -> Vec<MachineEntry> {
     posting::MACHINES
         .iter()
+        .filter(|(name, _)| scan.present.contains(name))
         .map(|(name, _)| match posting::builtin_machine_text(name) {
             Ok(text) => MachineEntry::from_text(name, MachineSource::Builtin(name), text),
-            // #2282: a shipped file missing on disk is listed with its refusal.
+            // The file went between the scan and the read: list it with its refusal.
             Err(why) => {
                 let mut entry = MachineEntry::from_text(name, MachineSource::Builtin(name), "{}");
                 entry.refusals = vec![Refusal { key: "file".to_owned(), rule: why }];
@@ -189,6 +199,16 @@ pub fn builtins() -> Vec<MachineEntry> {
             }
         })
         .collect()
+}
+
+/// The machine folder's whole list for a scan: the library entries that
+/// have a file, then every other `.mch` in the folder as a file entry
+/// (a malformed one is listed with its refusals, never skipped silently).
+#[must_use]
+pub fn shipped_entries(scan: &posting::FolderScan) -> Vec<MachineEntry> {
+    let mut out = builtins_of(scan);
+    out.extend(scan.extra.iter().map(|(_, path)| MachineEntry::from_file(path)));
+    out
 }
 
 /// Every `.mch` file directly inside `dir`, sorted by file name. A
@@ -224,7 +244,7 @@ pub fn text_of(source: &MachineSource) -> Result<String, String> {
 /// read fresh from that path.
 #[must_use]
 pub fn enumerate_with(world: &World, user_dir: Option<&Path>) -> Vec<MachineEntry> {
-    let mut out = builtins();
+    let mut out = shipped_entries(&posting::machine_scan());
     if let Some(dir) = user_dir {
         out.extend(scan_dir(dir));
     }

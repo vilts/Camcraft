@@ -59,7 +59,7 @@ fn project_timed(facets: &[Triangle], samples: usize, cacheable: bool) -> Result
     let started = profile_projection().then(std::time::Instant::now);
     let result = project_uncached(facets, samples);
     if let Some(started) = started {
-        eprintln!(
+        tracing::info!(
             "profile: projection {} facets={} samples={} elapsed={} ms result={}",
             if cacheable { "cache miss" } else { "uncached large mesh" },
             facets.len(),
@@ -258,7 +258,7 @@ pub fn project(facets: &[Triangle], samples: usize) -> Result<Region, SliceError
                 let count = hits.get().saturating_add(1);
                 hits.set(count);
                 if count == 1 || count % 100 == 0 {
-                    eprintln!("profile: projection cache hits={count}");
+                    tracing::info!("profile: projection cache hits={count}");
                 }
             });
         }

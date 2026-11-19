@@ -121,25 +121,60 @@ fn build(world: &World, op: &Operation, tool_r: f64, material: &Material, part_s
     // is still steel an extension must not flood and a face must not
     // sweep.
     let mut islands = false;
+    let overhead_union = |facets: &[Triangle], planes: &[f64]| -> Result<Region, GenError> {
+        let mut b = Region::empty();
+        for &z in planes {
+            b = b.union(&slice::material_overhead(facets, z).map_err(from_slice)?)?;
+        }
+        Ok(b)
+    };
     let blocked = match &op.params {
-        OpParams::Pocket { .. } | OpParams::Adaptive2D { .. } | OpParams::Offset2D { .. } => {
+        OpParams::Pocket { top_z, bottom_z, stepdown, .. }
+        | OpParams::Adaptive2D { top_z, bottom_z, stepdown, .. }
+        | OpParams::Offset2D { top_z, bottom_z, stepdown, .. } => {
+            let planes_for = |parts: &[Triangle], init_top: f64| -> Option<Vec<f64>> {
+                let t = fold_height(world, setup, Some(&op.src), frame.as_ref(), *top_z)?;
+                let b = fold_height(world, setup, Some(&op.src), frame.as_ref(), *bottom_z)?;
+                let mt = super::area::stock_top(world, setup, parts, init_top, frame.as_ref());
+                Some(super::area::ladder_planes(t - oz, mt, b - oz, *stepdown))
+            };
             match &op.src {
                 SrcRef::Selection(items) => match pocket_ladder(world, setup, items, &op.params)? {
                     Some((part, planes)) => {
                         islands = true;
-                        let mut b = Region::empty();
-                        for z in planes {
-                            b = b.union(&slice::material_overhead(&part, z).map_err(from_slice)?)?;
-                        }
-                        Some(b)
+                        Some(overhead_union(&part, &planes)?)
                     }
                     None => None,
                 },
+                // Whole-model / stock-source pockets clear stock AROUND
+                // standing part islands (`islands` stays false so manual
+                // offset into the part still exercises DepthLaw::Keep,
+                // while extension only grows past the stock exterior).
+                SrcRef::Entity(_) if part_solid && stock.is_some() => match planes_for(&material.facets, material.top) {
+                    Some(planes) => Some(overhead_union(facets, &planes)?),
+                    None => None,
+                },
+                SrcRef::Stock if stock.is_some() => {
+                    let parts = crate::setup_align::parts_facets_in(world, setup);
+                    if parts.is_empty() {
+                        None
+                    } else {
+                        match planes_for(&parts, f64::NEG_INFINITY) {
+                            Some(planes) => {
+                                let local_parts = frame.as_ref().map(|fr| fr.local_facets(&parts));
+                                Some(overhead_union(local_parts.as_deref().unwrap_or(&parts), &planes)?)
+                            }
+                            None => None,
+                        }
+                    }
+                }
                 _ => None,
             }
         }
         OpParams::Face { .. } | OpParams::Contour { .. } if part_solid => {
-            let hs = resolve_params(world, setup, Some(&op.src), &op.params).map_err(GenError::Invalid)?;
+            // #2389: under a tilt the plane is read along the tool axis.
+            let hs = resolve_params_folded(world, setup, Some(&op.src), &op.params, frame.as_ref())
+                .map_err(GenError::Invalid)?;
             let z = hs
                 .bottom
                 .ok_or_else(|| GenError::Invalid("the cut plane does not resolve".into()))?;

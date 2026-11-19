@@ -127,6 +127,7 @@ pub(super) fn stream(
         top_z: stock_top_z,
         wcs,
         origin,
+        wcs_flip: crate::setup_wcs_flip::of_setup(world, setup),
         stock,
         stock_top_z,
         after,

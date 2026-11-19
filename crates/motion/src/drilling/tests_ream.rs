@@ -22,6 +22,7 @@ fn hole(r: f64, stepped: bool) -> Hole {
 fn ream_params<'a>(tool: &'a crate::tools::Tool, holes: &'a [Hole]) -> CycleParams<'a> {
     CycleParams {
         through_clear: crate::drilling::THROUGH_CLEAR,
+        break_through_from: BreakThroughFrom::default(),
         clearance_z: 15.0,
         r_z: 10.0,
         hop_z: None,

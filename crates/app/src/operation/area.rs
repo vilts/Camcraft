@@ -169,8 +169,8 @@ pub(super) fn whole_model_pocket(
     if stock.is_empty() {
         return None;
     }
-    let t = resolve_height(world, setup, Some(src), top)?;
-    let b = resolve_height(world, setup, Some(src), bottom)?;
+    let t = fold_height(world, setup, Some(src), frame, top)?;
+    let b = fold_height(world, setup, Some(src), frame, bottom)?;
     let (part, part_top) = match material_of(world, setup, src) {
         Ok(m) => (m.facets, m.top),
         Err(e) => return Some(Err(e)),
@@ -217,8 +217,8 @@ pub(super) fn stock_pocket(
     if stock.is_empty() {
         return None;
     }
-    let t = resolve_height(world, setup, Some(src), top)?;
-    let b = resolve_height(world, setup, Some(src), bottom)?;
+    let t = fold_height(world, setup, Some(src), frame, top)?;
+    let b = fold_height(world, setup, Some(src), frame, bottom)?;
     let oz = frame.map_or(0.0, |f| f.origin.z);
     let mt = stock_top(world, setup, &parts, f64::NEG_INFINITY, frame);
     let (parts, stock) = match frame {

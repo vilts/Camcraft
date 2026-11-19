@@ -330,6 +330,7 @@ fn plan_for(root: &Path, a: &Args, mut listed: Vec<Listed>) -> Result<merge_plan
         });
     }
     let heads: BTreeMap<u32, String> = listed.iter().map(|p| (p.number, p.head.clone())).collect();
+    crate::merge_review::warn(a.repo.as_deref(), &heads, |args| gh(root, args))?;
     let facts = Facts { base_name: base.to_string(), base_sha: base_sha.clone(), prs, before, shared };
     let mut sim = Sim { root, base_sha, heads, commits: BTreeMap::new() };
     merge_plan::plan(&facts, &mut |onto: &[u32], pr: u32| sim.trial(onto, pr))

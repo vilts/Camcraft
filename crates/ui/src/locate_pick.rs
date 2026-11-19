@@ -111,21 +111,17 @@ fn facing(n: [f64; 3]) -> String {
 /// keeps its raw words.
 #[must_use]
 pub fn describe(state: &State, fixture: &str, g: &GeoSel) -> String {
-    let raw = || format!("{} of '{}'", g.feature, g.entity);
+    let name = camcraft_app::pick::geo_label(&state.world, g);
     match (fixture_locate::read_pick(&state.world, fixture, g), &g.feature) {
-        (Ok(MateDatum::Plane { normal, .. }), FeatureSel::Face(id)) => {
-            let n = model::find_by_name(&state.world, &g.entity)
-                .and_then(|e| model::features_of(&state.world, &e))
-                .and_then(|f| f.faces.iter().position(|f| f.id == *id))
-                .map_or_else(String::new, |i| format!(", #{}", i + 1));
-            format!("{} face {}{n}", g.entity, facing(normal))
+        (Ok(MateDatum::Plane { normal, .. }), FeatureSel::Face(_)) => {
+            format!("{name} ({} face)", facing(normal))
         }
         (Ok(MateDatum::Point(p)), _) => {
             let u = state.units();
             let c = p.map(|v| units::len(v, u, 2));
-            format!("{} point ({}, {}, {}) {}", g.entity, c[0], c[1], c[2], u.suffix())
+            format!("{name} ({}, {}, {}) {}", c[0], c[1], c[2], u.suffix())
         }
-        _ => raw(),
+        _ => name,
     }
 }
 

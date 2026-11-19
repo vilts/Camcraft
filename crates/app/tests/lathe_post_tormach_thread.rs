@@ -253,6 +253,46 @@ fn a_g76_record_the_cycle_cannot_state_exactly_is_refused_by_name() {
 }
 
 #[test]
+fn cached_zero_finish_allowance_g76_refusal_tells_the_user_to_regenerate() {
+    for inch in [false, true] {
+        let (world, _history) = thread_world(inch);
+        let records = posting::stream_records(&world).expect("generated");
+        // Records cached before #517 used zero instead of the finishing pass's depth.
+        let cached = with_rec(&records, |t| t.finish_allowance = 0.0);
+        let (text, refused) = post(&world, &cached, g76());
+        assert!(
+            refused.iter().any(|w| w.contains("G76")
+                && w.contains("finish allowance 0")
+                && w.contains("regenerate")
+                && w.contains("operation")),
+            "inch {inch}: the cached record needs actionable refusal text: {refused:?}"
+        );
+        assert!(!text.contains("G76 P"), "inch {inch}: a refused cycle was written: {text}");
+    }
+}
+
+#[test]
+fn cached_zero_finish_allowance_keeps_fanuc_g76_output() {
+    for inch in [false, true] {
+        let (world, _history) = thread_world(inch);
+        let records = posting::stream_records(&world).expect("generated");
+        let cached = with_rec(&records, |t| t.finish_allowance = 0.0);
+        let mut options = posting::options_value(g76());
+        options["Units"] = json!(posting::unit_word(camcraft_app::units::of(&world)));
+        let fanuc = include_str!("../../../assets/posts/fanuc-lathe.cps");
+        let out = engine::run_with(fanuc, &posting::machine_value(&world), &cnc::serialize(&cached), &options)
+            .expect("the Fanuc script runs");
+        assert!(out.warnings.is_empty(), "inch {inch}: {:?}", out.warnings);
+        // The existing inch grid rounds the last allowance up by one increment.
+        let allowance = if inch { " R0.0001" } else { " R0." };
+        assert!(
+            out.program.lines().any(|line| line.starts_with("G76 P") && line.ends_with(allowance)),
+            "inch {inch}: cached Fanuc records keep their output: {}", out.program
+        );
+    }
+}
+
+#[test]
 fn g76_takes_the_record_whose_finishing_step_is_the_ladders_own() {
     // #417: the record's finish allowance is the finishing pass's own
     // step. 1.0 deep in rungs of 0.4 lays 0.4, 0.8 and a 0.2 finish -

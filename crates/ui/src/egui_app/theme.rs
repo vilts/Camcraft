@@ -21,7 +21,9 @@ use egui::{Color32, CornerRadius, Margin, Stroke, Style, Visuals, vec2};
 use super::contrast;
 
 pub mod clamp;
+mod dropdown;
 mod tables;
+pub use dropdown::DropGeom;
 
 /// One theme's whole truth: colours, then geometry.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -121,6 +123,11 @@ pub struct Tokens {
     pub tree_header_boost: f32,
     /// Active rule / row highlight / drop-target stroke thickness (px).
     pub highlight_stroke_px: f32,
+    /// Dropdown width, recent-list width, trigger gap and row inset in points (#2065).
+    pub menu_width: f32,
+    pub recent_width: f32,
+    pub menu_gap: f32,
+    pub menu_pad_x: f32,
 }
 
 /// The ribbon strip's height: the tab row, its gap, the cell box, the
@@ -144,6 +151,12 @@ pub const fn status_h(t: &Tokens) -> f32 {
 }
 
 impl Tokens {
+    /// Validated popup widths and row spacing shared by every dropdown.
+    #[must_use]
+    pub fn dropdown(&self) -> DropGeom {
+        DropGeom::from_tokens(self)
+    }
+
     /// The panel ground behind the ribbon/browser strips (painted.rs).
     #[must_use]
     pub const fn strip_fill(&self) -> Color32 {
@@ -178,6 +191,7 @@ impl Tokens {
             op_tab_radius: _, font_op_tab: _, tree_glyph_px: _, tree_inset_x: _,
             tree_indent: _, tree_eye_reserve: _, tree_pad_x: _, tree_pad_y: _,
             tree_suffix_gap: _, tree_header_boost: _, highlight_stroke_px: _,
+            menu_width: _, recent_width: _, menu_gap: _, menu_pad_x: _,
         } = *self;
         let mut v = Visuals::dark();
         v.panel_fill = ink;
@@ -290,6 +304,7 @@ const fn geom_legal(t: &Tokens) -> bool {
         tree_glyph_px, tree_inset_x, tree_indent, tree_eye_reserve,
         tree_pad_x, tree_pad_y, tree_suffix_gap, tree_header_boost,
         highlight_stroke_px,
+        menu_width, recent_width, menu_gap, menu_pad_x,
     } = *t;
     radius_widget <= clamp::RADIUS
         && radius_window <= clamp::RADIUS_WINDOW
@@ -372,6 +387,10 @@ const fn geom_legal(t: &Tokens) -> bool {
         && tree_header_boost <= clamp::HEADER_BOOST.1
         && highlight_stroke_px >= clamp::STROKE.0
         && highlight_stroke_px <= clamp::STROKE.1
+        && menu_width >= clamp::MENU_W.0 && menu_width <= clamp::MENU_W.1
+        && recent_width >= clamp::RECENT_W.0 && recent_width <= clamp::RECENT_W.1
+        && menu_gap >= clamp::MENU_GAP.0 && menu_gap <= clamp::MENU_GAP.1
+        && menu_pad_x >= clamp::MENU_PAD_X.0 && menu_pad_x <= clamp::MENU_PAD_X.1
 }
 
 const _: () = assert!(geom_legal(&Tokens::DARK));

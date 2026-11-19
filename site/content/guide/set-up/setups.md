@@ -28,6 +28,8 @@ Each setup appears in the browser with its own pages:
 
 Below the pages, {{ <icon name="tree-op-group" /> }} **Operations** lists the setup's operations.
 
+![CamCraft setup overview showing browser tree, part, stock outline, work offset, and generated 2D toolpaths](../../../images/guide/setup-overview.png)
+
 ## Work offset
 
 Each setup owns one {{ <icon name="tree-wcs" /> }} work coordinate system. G54 to G59 is only the label
@@ -44,8 +46,9 @@ about Y (pitch)** and the **Turn X+**, **Turn X-**, **Turn Y+** and **Turn
 Y-** buttons, because milling cuts along machine Z and generation refuses a
 work offset tilted off Z. A hint points to **Part alignment** on the Setup
 page, which turns the part instead. **X origin**, **Y origin**, **Z
-origin**, **Turn about Z (yaw)**, **Turn Z+**, **Turn Z-**, **Level** and
-**Set Origin** stay live. On a lathe the tilt fields and all six turn
+origin**, **Turn about Z (yaw)**, **Turn Z+**, **Turn Z-** and **Level** stay
+live. **Set origin** in the page footer, beside **Close**, applies the typed
+origin. On a lathe the tilt fields and all six turn
 buttons stay live. If an existing milling work offset is already tilted,
 the page warns that generation will refuse it: click **Level**, then turn
 the part with Part alignment.

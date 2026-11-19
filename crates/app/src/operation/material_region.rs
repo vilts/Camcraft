@@ -201,7 +201,7 @@ pub fn chains_of(world: &World, op: &Operation) -> Vec<Vec<Point2>> {
 /// sits there.
 pub(super) fn drive_chains_of(world: &World, op: &Operation) -> Result<Vec<Vec<Point3>>, GenError> {
     match &op.src {
-        SrcRef::Selection(items) => drive_chains(world, items),
+        SrcRef::Selection(items) => drive_chains(world, op.setup.as_deref(), items),
         SrcRef::Stock => Err(GenError::Invalid(
             "Multi-Axis Contour machines picked edge chains - pick them in the Geometry section, \
              or use 5-Axis Contour to machine the stock's own pattern"

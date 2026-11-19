@@ -252,10 +252,16 @@ fn stock_source_chamfer_refusal_names_cause_and_part_as_source_workaround() {
 #[test]
 fn framed_stock_chamfer_live_refusal_keeps_hint_without_local_move_number() {
     use camcraft_app::operation::Tilt;
+    // #2483: the ride plane stands at mid-wall. A 10-degree plane at the
+    // stock's top (Z20) crosses the top face along a line that is no edge.
+    // The #2435 wall law refuses that line by name, and the refusal is
+    // right. At Z10 the plane and the corner plane Z9 cut only the walls.
+    const MID: f64 = 10.0;
     let (world, mut h) = job_without_part(HALF);
     let mut params = chamfer(1.0);
-    if let OpParams::Chamfer2D { tilt, .. } = &mut params {
+    if let OpParams::Chamfer2D { tilt, top_z, .. } = &mut params {
         *tilt = Some(Tilt { basis_version: 1, a_deg: 0.0, b_deg: 10.0, origin: [0.0; 3] });
+        *top_z = Height::fixed(MID);
     }
     let warns = generated(&world, &mut h, CHAMFER, params);
     assert!(warns.iter().all(|w| !w.blocks_post()), "previously clear chamfer: {warns:?}");
@@ -267,7 +273,7 @@ fn framed_stock_chamfer_live_refusal_keeps_hint_without_local_move_number() {
     let mut f = Vec::new();
     // Model the added part in the cutting plane: its top meets the
     // chamfer, while its body stays below the cutter's shank.
-    common::solid_part::plate(&common::solid_part::rect(-50.0, -50.0, 50.0, 50.0), None, 0.0, TOP, &mut f);
+    common::solid_part::plate(&common::solid_part::rect(-50.0, -50.0, 50.0, 50.0), None, 0.0, MID, &mut f);
     let frame = op.params.tilt().expect("tilt").frame().expect("frame");
     let f = f.iter().map(|t| camcraft_app::geometry::Triangle::new(frame.to_world(t.a), frame.to_world(t.b), frame.to_world(t.c))).collect();
     h.execute(&world, ImportModel::from_mesh("other", Mesh::from_facets(f)));

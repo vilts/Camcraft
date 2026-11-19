@@ -331,6 +331,7 @@ fn a_blind_hole_shallower_than_one_stepdown_is_cut_at_its_floor() {
 fn drill_op(bottom: Option<f64>) -> OpParams {
     OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(22.0),

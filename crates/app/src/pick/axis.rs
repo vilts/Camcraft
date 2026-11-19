@@ -281,14 +281,14 @@ fn in_plane(world: &World, held: Location, pick: &AxisPick, axis: InPlaneAxis) -
 /// two points.
 fn ends(world: &World, pick: &AxisPick, name: &str) -> Result<([f64; 3], [f64; 3]), String> {
     for g in &pick.picks {
-        let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(g))?;
+        let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(world, g))?;
         if !setup_align::is_part(world, &e) {
             return Err(format!("'{}' is not the part - pick an edge or points of the model for {name}", g.entity));
         }
         if matches!(g.feature, FeatureSel::Face(_) | FeatureSel::Patch(_)) {
             return Err(format!(
-                "{} of '{}' is a face - a face sets no direction; pick a straight edge or two points for {name}",
-                g.feature, g.entity
+                "{} is a face - a face sets no direction; pick a straight edge or two points for {name}",
+                super::geo_label(world, g)
             ));
         }
     }
@@ -296,7 +296,10 @@ fn ends(world: &World, pick: &AxisPick, name: &str) -> Result<([f64; 3], [f64; 3
     match pick.picks.as_slice() {
         [] => Err(format!("pick a straight edge or two points for {name}")),
         [g] if matches!(g.feature, FeatureSel::Chain(_)) => straight_edge(world, g, model::transform_of, &role),
-        [g] => Err(format!("{} of '{}' is one point - pick a second point for {name}, or a straight edge", g.feature, g.entity)),
+        [g] => Err(format!(
+            "{} is one point - pick a second point for {name}, or a straight edge",
+            super::geo_label(world, g)
+        )),
         // #692: either point may be a round edge's centre.
         [p, q] => {
             let pt = |g: &GeoSel| {
@@ -338,17 +341,17 @@ pub(super) fn point(world: &World, g: &GeoSel) -> Result<[f64; 3], String> {
     let id = match g.feature {
         FeatureSel::Vertex(id) => id,
         FeatureSel::Chain(_) => return super::centre::centre_point(world, g),
-        FeatureSel::Face(_) | FeatureSel::Patch(_) => return Err(gone(g)),
+        FeatureSel::Face(_) | FeatureSel::Patch(_) => return Err(gone(world, g)),
     };
-    let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(g))?;
-    let features = model::features_of(world, &e).ok_or_else(|| gone(g))?;
-    let vi = feature::resolve_vertex(&features, id).ok_or_else(|| gone(g))?;
-    let v = features.verts.get(vi as usize).ok_or_else(|| gone(g))?;
+    let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(world, g))?;
+    let features = model::features_of(world, &e).ok_or_else(|| gone(world, g))?;
+    let vi = feature::resolve_vertex(&features, id).ok_or_else(|| gone(world, g))?;
+    let v = features.verts.get(vi as usize).ok_or_else(|| gone(world, g))?;
     let loc = model::transform_of(world, &e).unwrap_or_default();
     let w = transform_point(Point3::new(v[0], v[1], v[2]), loc.pos, loc.rot);
     let out = [w.x, w.y, w.z];
     if !out.iter().all(|c| c.is_finite()) {
-        return Err(format!("{} of '{}' is not a finite point - re-pick it", g.feature, g.entity));
+        return Err(format!("{} is not a finite point - re-pick it", super::geo_label(world, g)));
     }
     Ok(out)
 }

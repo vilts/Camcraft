@@ -14,7 +14,6 @@ use crate::state::{CommandKind, State, TreeMenuTarget, UiTarget};
 
 use super::browser_tree::Leaf;
 use super::tree_entry;
-use super::panes::{DROP_GAP, DROP_W};
 use super::theme::Tokens;
 
 /// The tree menu's verb rows, keyed past every kind ordinal.
@@ -179,13 +178,11 @@ pub(super) fn tree_menu(ui: &mut Ui, state: &mut State, pal: &Tokens, rect: Rect
     if let Some((_, e)) = &entry {
         lines = tree_entry::entry_lines(e);
     }
-    let anchor = egui::Pos2::new(
-        rect.left(),
-        rect.top() + (ix + 1) as f32 * pal.row_height + DROP_GAP,
-    );
+    let g = pal.dropdown();
+    let (anchor, width) = g.tree_anchor(rect, ui.ctx().content_rect(), ix, pal.row_height);
     let panel = Rect::from_min_size(
         anchor,
-        Vec2::new(DROP_W, lines.len() as f32 * pal.row_height),
+        Vec2::new(width, lines.len() as f32 * pal.row_height),
     );
     let mut chosen: Option<usize> = None;
     egui::Area::new(ui.id().with(("tree-menu", ix)))
@@ -204,7 +201,7 @@ pub(super) fn tree_menu(ui: &mut Ui, state: &mut State, pal: &Tokens, rect: Rect
             for (k, (label, runnable, item)) in lines.iter().enumerate() {
                 let r = Rect::from_min_size(
                     egui::Pos2::new(anchor.x, anchor.y + k as f32 * pal.row_height),
-                    Vec2::new(DROP_W, pal.row_height),
+                    Vec2::new(width, pal.row_height),
                 );
                 let is_current = item.is_some_and(|i| Some(i) == here);
                 if is_current {
@@ -232,7 +229,7 @@ pub(super) fn tree_menu(ui: &mut Ui, state: &mut State, pal: &Tokens, rect: Rect
                 };
                 resp.widget_info(|| egui::WidgetInfo::labeled(kind, live, &text));
                 p.text(
-                    r.left_center() + Vec2::new(8.0, 0.0),
+                    r.left_center() + Vec2::new(g.pad_x, 0.0),
                     egui::Align2::LEFT_CENTER,
                     &text,
                     egui::FontId::proportional(pal.font_row),

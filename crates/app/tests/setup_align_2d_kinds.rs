@@ -296,19 +296,19 @@ fn turned_picked_slot_fills_the_turned_face() {
 #[test]
 fn kinds_without_proof_stay_refused_in_a_turned_setup() {
     let (world, _) = document(Case::Turned);
-    for kind in [OpType::Probe, OpType::Deburr] {
-        let op = camcraft_app::schema::Operation {
-            tool: TOOL.into(),
-            src: SrcRef::Entity("part".into()),
-            params: retype_params(&contour_params(), kind as usize),
-            stamp: None,
-            setup: Some("Setup1".into()),
-            area: Default::default(),
-            coolant: Default::default(),
-            after: Default::default(),
-            suppressed: false,
-        };
-        let why = setup_align::generation_problem(&world, &op).unwrap_or_else(|| panic!("{kind:?} stays refused"));
-        assert!(why.contains("not supported yet in an aligned setup"), "{why}");
-    }
+    let kind = OpType::Probe;
+    let op = camcraft_app::schema::Operation {
+        tool: TOOL.into(),
+        src: SrcRef::Entity("part".into()),
+        params: retype_params(&contour_params(), kind as usize),
+        stamp: None,
+        setup: Some("Setup1".into()),
+        area: Default::default(),
+        coolant: Default::default(),
+        after: Default::default(),
+        suppressed: false,
+    };
+    let why = setup_align::generation_problem(&world, &op).unwrap_or_else(|| panic!("{kind:?} stays refused"));
+    assert!(why.contains("not supported yet in an aligned setup"), "{why}");
+    assert!(why.contains("Deburr"), "the supported kinds include Deburr: {why}");
 }

@@ -78,6 +78,17 @@ pub struct GeoSig {
     pub sig: u64,
 }
 
+/// Derived user-friendly feature name lookup table (#2403), paired with the
+/// revision and facet allocation it describes. Valid only while `&Facets`
+/// remains mounted at the same revision and allocation; derived only, never
+/// serialized, dies with its entity.
+#[derive(Component, Debug, Clone)]
+pub struct FeatureNamesMemo {
+    pub rev: u64,
+    pub tris: std::sync::Weak<[Triangle]>,
+    pub table: std::sync::Arc<crate::geometry::feature::FeatureNames>,
+}
+
 /// A model whose mesh stands for its curved surfaces more coarsely than
 /// the STEP importer promises (#864): `chord_mm` is the chord error the
 /// import actually kept, always above `step::CHORD_CAP`. Present ONLY on
@@ -187,8 +198,8 @@ pub struct Wcs;
 /// Z order. Rides the `Wcs` entity beside its `Location`: a unit
 /// quaternion cannot hold a mirror. Absent is no flip (every older
 /// file); written only through `SetWcsFlip`, the project loader and the
-/// undo of a delete (`setup_wcs_flip::set`). The post and generation
-/// refuse a set flag by name until a flip is carried into the program.
+/// undo of a delete (`setup_wcs_flip::set`). The post mirrors a flipped
+/// X or Y into the program (#1649) and refuses a flipped Z by name.
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct WcsFlip(pub [bool; 3]);
 
@@ -198,11 +209,10 @@ pub struct WcsFlip(pub [bool; 3]);
 #[derive(Component, Debug, Clone, PartialEq)]
 pub struct ToolDef {
     pub tool: Tool,
-    /// The controller's number for this tool (#221): what the post writes
-    /// as `T..` / `H..`, matching the machine's tool table. `None` = not
-    /// stated, and the tool posts as its 1-based position in the document's
-    /// tool list (the numbering every earlier document had). Changed only
-    /// through `SetToolNumber`; `ChangeTool` leaves it as it is.
+    /// The controller's number for this tool (#221, #2442): what the post writes
+    /// as `T..` / `H..`, matching the machine's tool table. Assigned on add /
+    /// import to the lowest unused number in `1-99999` and frozen at legacy
+    /// list position on pre-#2442 load; changed only through `SetToolNumber`.
     pub number: Option<u32>,
 }
 
@@ -411,12 +421,14 @@ pub struct Operation {
     pub suppressed: bool,
 }
 
-/// User-facing operation label and explicit position within its setup.
+/// User-facing operation label, explicit position within its setup, and
+/// un-carriable migration notes requiring review (#1517).
 /// The entity's `Name` remains a stable key for commands and undo history.
 #[derive(Component, Debug, Clone, Default, PartialEq, Eq)]
 pub struct OperationMeta {
     pub label: Option<String>,
     pub order: Option<u32>,
+    pub needs_review: Vec<String>,
 }
 
 /// A standalone Pause or Home entry in the operation list (#155): an
@@ -594,19 +606,22 @@ pub struct PostOptions {
     /// stop, run straight on, or write one file per setup.
     pub between_setups: BetweenSetups,
     /// How a Z-rotated work offset is expressed at post (#760):
-    /// `Bake` (the default) rotates XY coordinates into the WCS frame so
-    /// every 3-axis control can run them; `Control` emits `G68 X0. Y0. R`
-    /// or `ROT RPL=` when both machine and post script declare support.
+    /// `Bake` (the default) posts Setup/table XY coordinates relative to
+    /// the work offset origin, without controller rotation. Do not enter
+    /// a rotation on the control. `Control` transforms coordinates into
+    /// the rotated WCS frame and emits `G68 X0. Y0. R` or `ROT RPL=` when
+    /// both machine and post script declare support.
     pub wcs_rotation: WcsRotationOutput,
 }
 
 /// How a Z-rotated work offset posts (#760).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum WcsRotationOutput {
-    /// Transform XY coordinates into the rotated WCS frame (works on every control).
+    /// Post Setup/table XY relative to the origin, without controller rotation.
+    /// Do not enter a rotation on the control.
     #[default]
     Bake,
-    /// Keep WCS coordinates and emit controller coordinate rotation (`G68` / `ROT`).
+    /// Transform into WCS coordinates and emit controller rotation (`G68` / `ROT`).
     Control,
 }
 
@@ -629,7 +644,7 @@ impl WcsRotationOutput {
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
-            Self::Bake => "Bake into XY",
+            Self::Bake => "Bake into XY (table coordinates)",
             Self::Control => "Control rotation (G68 / ROT)",
         }
     }
@@ -819,6 +834,7 @@ pub fn register_schema(world: &World) {
     world.component::<Facets>();
     world.component::<Revision>();
     world.component::<GeoSig>();
+    world.component::<FeatureNamesMemo>();
     world.component::<ReducedFidelity>();
     world.component::<StepBudget>();
     world.component::<StepSource>();

@@ -78,3 +78,40 @@ fn thread_stamp_follows_every_pass_control() {
         assert_ne!(digest(&world, &thread(v)), b, "{field} must move the stamp");
     }
 }
+
+/// The #1849 module split must keep #419's chip-break stamp bytes and
+/// the pre-existing hand/plan bytes: either edit invalidates cached NC.
+#[test]
+fn threading_stamp_keeps_dips_and_existing_controls_after_split() {
+    use crate::turning::{ThreadDips, ThreadInfeed};
+    let world = crate::world::new_world();
+    let base = ThreadInfeed {
+        dips: ThreadDips { interval: 4.0, height: 0.3, length: 0.0 },
+        ..ThreadInfeed::default()
+    };
+    let params = |plan, hand| OpParams::Threading {
+        tolerance: 0.05,
+        clearance_z: Height::fixed(34.0),
+        top_z: Height::fixed(24.3),
+        bottom_z: Height::fixed(7.7),
+        pitch: 2.0,
+        depth: 1.2,
+        infeed: 0.4,
+        feed: 120.0,
+        plunge_feed: 40.0,
+        infeed_plan: plan,
+        hand,
+    };
+    let right = crate::cl::ThreadHand::Right;
+    let b = digest(&world, &params(base, right));
+    for (field, dips) in [
+        ("interval", ThreadDips { interval: 6.0, ..base.dips }),
+        ("height", ThreadDips { height: 0.2, ..base.dips }),
+        ("length", ThreadDips { length: 1.0, ..base.dips }),
+    ] {
+        assert_ne!(digest(&world, &params(ThreadInfeed { dips, ..base }, right)), b, "{field} must move the stamp");
+    }
+    assert_ne!(digest(&world, &params(ThreadInfeed::default(), right)), b, "disabling dips must move the stamp");
+    assert_ne!(digest(&world, &params(base, crate::cl::ThreadHand::Left)), b, "main's hand bytes must remain");
+    assert_ne!(digest(&world, &params(ThreadInfeed { repeat_each_depth: true, ..base }, right)), b, "main's repeat bytes must remain");
+}

@@ -481,11 +481,14 @@ pub enum OpParams {
         /// kind or the other - the mill's Z holes or the turret's
         /// cross holes - and the generator refuses a mix by name.
         cross: Vec<camcraft_motion::drilling::CrossHole>,
-        /// How far past a through hole's floor the tip runs (#1557), mm.
-        /// `None` is the kind's own default - 1.0 mm, the drill's full diameter clean through - which every file
-        /// before the option posted; checked at generation against the
-        /// stock bottom, refused by name below it.
+        /// How far past a through hole's floor the break-through runs (#1557), mm.
+        /// `None` is the kind's own default (1.0 mm); checked at generation
+        /// against the stock bottom, refused by name below it.
         break_through: Option<f64>,
+        /// Which point of a twist drill `break_through` is measured from (#2441):
+        /// `FullDiameter` (default) adds the drill point cone so the full
+        /// diameter clears the hole; `Tip` stops the tip at `floor - break_through`.
+        break_through_from: crate::drilling::BreakThroughFrom,
     },
     /// Mesh-driven 3D pocketing. The model is the final part: every
     /// level cuts the footprint minus the model's section strictly above

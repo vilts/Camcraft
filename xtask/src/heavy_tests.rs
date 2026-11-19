@@ -80,7 +80,15 @@ fn heavy_steps_skip_only_binaries_without_ignored_tests() {
         let mine: Vec<&Step> = all.iter().filter(|s| s.args.contains(&pkg) && !s.args.contains(&"--no-run".to_string())).collect();
         let mut sel: Vec<String> = Vec::new();
         for s in &mine {
-            assert!(s.args.ends_with(&["--".into(), plan::T.into(), "--ignored".into()]), "{}: {:?}", s.name, s.args);
+            // `-- --test-threads=6 [--exact --skip <known fail>...] --ignored` (known_fail, #1950 decision).
+            let tail = s.args.iter().position(|a| a == "--").map(|i| &s.args[i + 1..]).unwrap_or_default();
+            assert!(tail.first().map(String::as_str) == Some(plan::T) && tail.last().map(String::as_str) == Some("--ignored"), "{}: {:?}", s.name, s.args);
+            if s.expect_fail.is_none() {
+                // Only a lane with a known-fail entry carries its `--exact --skip` args; every other lane has none.
+                let label = s.name.split_once("heavy: ").map(|x| x.1).unwrap_or_default();
+                let skip = crate::known_fail::skip_args(&crate::known_fail::entries(&root()), d, label);
+                assert_eq!(&tail[1..tail.len() - 1], skip.as_slice(), "{}: {:?}", s.name, s.args);
+            }
             assert!(s.args.contains(&"--release".to_string()) && s.args.contains(&"--no-fail-fast".to_string()));
             let i = s.args.iter().position(|a| a == "--no-fail-fast").unwrap_or(0) + 1;
             let target: Vec<&str> = s.args[i..].iter().take_while(|a| *a != "--").map(String::as_str).collect();

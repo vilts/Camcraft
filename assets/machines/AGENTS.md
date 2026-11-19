@@ -182,8 +182,9 @@ unstated capability into existence.
     to the part (RS-274 / ISO 841 - the table turns the part the other
     way), `[-1, 0, 0]` when it turns the other way; the Tormach post
     negates its A words for the second. `tormach-770mx-microarc4.mch` is
-    the shipped 4th-axis mill (an A about X, travel -360..360 degrees,
-    rates unstated: TD10749 states none). `resolution` is the
+    the shipped 4th-axis mill (an A about X, A travel unstated — PathPilot
+    has no A soft limit per Tormach UM10587 / UM10864 / TD10749 and Hub
+    readings, feed 360 deg/min from #796). `resolution` is the
     positioning step (same scaling law as travel).
   - rotary that turns the WORK only (#804): `nose_to_axis` - how far
     the spindle nose sits above the rotary's centerline with Z at

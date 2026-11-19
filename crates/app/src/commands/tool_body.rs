@@ -360,3 +360,5 @@ impl Command for SetToolBody {
 
 #[path = "tool_body_reapply.rs"]
 mod reapply;
+#[path = "tool_body_dxf.rs"]
+mod dxf;

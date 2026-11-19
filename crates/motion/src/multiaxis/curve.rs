@@ -518,7 +518,7 @@ pub fn contour_curve(
         };
         let distinct = if ring { pts.len() - 1 } else { pts.len() };
         if distinct < 2 {
-            eprintln!(
+            tracing::warn!(
                 "multi-axis contour: drive curve {} stands on {} distinct point(s) - nothing \
                  to walk, skipped",
                 ci + 1,

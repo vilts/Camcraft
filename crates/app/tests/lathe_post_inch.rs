@@ -111,6 +111,16 @@ fn every_turning_stream_posts_the_mm_program_in_inches() {
         let plain = engine::run_with(CPS, &mch, &stream, &posting::options_value(options)).expect("runs");
         assert_eq!(plain.program, mm.program, "{name}: Units mm posts what no unit posted");
         same_program_in_inch(name, &mm.program, &inch.program);
+        if name == "thread_g32_dips" {
+            // #419 dips in inch: G32 X Z F segments, every word with its
+            // decimal point (#1836), the lead at six decimals.
+            let dips: Vec<&str> = inch.program.lines().filter(|l| l.starts_with("G32 X")).collect();
+            assert!(!dips.is_empty(), "no dip segment:\n{}", inch.program);
+            for l in &dips {
+                assert!(words(l).iter().skip(1).all(|w| w.contains('.')), "a word without its point: {l}");
+                assert!(l.ends_with(" F0.07874"), "{l}");
+            }
+        }
         if name == "groove_part" {
             // The bar feeder's 30 mm advance is named in inches, never a bare mm number.
             assert!(inch.program.contains("(PART LOAD ADVANCE 1.1811 IN)"), "{}", inch.program);

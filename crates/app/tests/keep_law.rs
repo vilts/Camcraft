@@ -208,31 +208,42 @@ mod a_whole_model_area_offset_into_the_part_gouges_and_never_posts {
     }
 }
 
-mod a_whole_model_extension_into_the_part_gouges_and_never_posts {
+// Extension only grows past the exterior stock outline (#2438): the part's
+// standing material stays in `blocked`, so extension clears past the stock
+// edges without gouging the block or boss and posts on both stocks.
+mod a_whole_model_extension_keeps_the_part_and_posts {
     use super::*;
 
     fn extension_5() -> AreaControls {
         AreaControls { extension: 5.0, ..Default::default() }
     }
 
+    fn stays_clear((label, params): Kind, rotated: bool) {
+        let (world, mut h) = job(Some(block_with_boss()), rotated);
+        let warns = generated(&world, &mut h, whole(), params, extension_5());
+        let blocking: Vec<_> = warns.iter().filter(|w| w.blocks_post()).collect();
+        assert!(blocking.is_empty(), "{label} extension rotated {rotated}: {blocking:?}");
+        assert_posts(&world, &format!("ext-legal-{label}-{rotated}"));
+    }
+
     #[test]
     fn pocket_aligned() {
-        refused(pocket_k(20.0, 5.0), false, &extension_5(), "extension");
+        stays_clear(pocket_k(20.0, 5.0), false);
     }
 
     #[test]
     fn pocket_turned() {
-        refused(pocket_k(20.0, 5.0), true, &extension_5(), "extension");
+        stays_clear(pocket_k(20.0, 5.0), true);
     }
 
     #[test]
     fn adaptive_aligned() {
-        refused(adaptive_k(20.0, 5.0), false, &extension_5(), "extension");
+        stays_clear(adaptive_k(20.0, 5.0), false);
     }
 
     #[test]
     fn adaptive_turned() {
-        refused(adaptive_k(20.0, 5.0), true, &extension_5(), "extension");
+        stays_clear(adaptive_k(20.0, 5.0), true);
     }
 }
 

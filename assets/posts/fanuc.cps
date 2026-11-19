@@ -104,6 +104,7 @@ var orgX = 0, orgY = 0, orgZ = 0; // the WCS slot origin (OriginX/Y/Z PARAMs):
 // from the work offset. A legacy .cl carries no PARAMs, so these stay 0.
 var wcsYaw = 0;            // #760: Z rotation (deg) for Control mode (G68)
 var wcsRotMode = "";       // #760: "control" | "bake" | ""
+var wcsFlip = "";          // #1649: the flipped WCS axes ("X", "Y", "XY") - the engine mirrored the section
 var wcsRotActive = false;  // #760: G68 is currently engaged in this section
 
 // ------------------------------------------------------------ helpers
@@ -607,6 +608,7 @@ function onParameter(name, value) {
   else if (name === "OriginZ" && has(value)) orgZ = Number(value);
   else if (name === "WcsYaw" && has(value)) wcsYaw = Number(value);
   else if (name === "WcsRotationMode") wcsRotMode = String(value || "");
+  else if (name === "WcsFlip") wcsFlip = String(value || "");
 }
 
 function wcsRotControl() {
@@ -660,6 +662,8 @@ function startPreamble() {
   // stopped before its first move, whatever the tool change did.
   var probeStop = spindleWait && !(sRpm > 0);
   opNotes();
+  // #1649: the operator reads why every sign on a flipped axis is the other one.
+  if (wcsFlip) note("WCS " + wcsFlip.split("").join(" AND ") + " FLIPPED - PROGRAM MIRRORED");
   block(["G90", wcsWord, "G40", "G49", "G80"]);
   if (toolWait) {
     if (secStarted > 0 && optBool("optionalStop", false)) block(["M1"]);
@@ -732,6 +736,7 @@ function endPreamble() {
   if (wcsRotActive) { block(["G69"]); wcsRotActive = false; }
   wcsYaw = 0;
   wcsRotMode = "";
+  wcsFlip = "";
   if (compOn || compG) {
     msg("cutter compensation still engaged at section end - no cancel block");
     compG = ""; compD = ""; compOn = false;
@@ -1084,6 +1089,12 @@ function onCycle() {
   // The optional small-hole mode (5.1.7) is not selected by this post.
   if (g === "G83" && p.P > 0) {
     msg("canned cycle G83 (deep peck) dwell is not supported by this post - a " + p.P + " s dwell is refused, not dropped; set the dwell to 0");
+    return;
+  }
+  // #2356: this post does not map G73/G84 dwell across control modes.
+  // Use the raw positive ask so rounding and the open-cycle shortcut cannot drop it.
+  if ((g === "G73" || g === "G84") && p.P > 0) {
+    msg("canned cycle " + g + " dwell is not supported by this post - a " + p.P + " s dwell is refused, not dropped; set the dwell to 0");
     return;
   }
   if (spindleStopped("canned cycle " + g)) return;

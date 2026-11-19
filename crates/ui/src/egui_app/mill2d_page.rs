@@ -279,16 +279,12 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                 // M11.1 C: pass corners and row-to-row links round on
                 // one arc inside the cleared area where it is legal.
                 super::kind_editors::arc_turn_rows(ui, u, "Arc turns at corners and links", blend_turns, blend_radius);
-                // M5.1 H: the 2-D combo offers Adaptive beside the 3-D
-                // one's - the law runs on the plane now, so hiding the
-                // choice would make a file that carries it display a
-                // strategy it is not cutting.
+                // #1517: Adaptive left 2D Pocket for 2D Adaptive.
                 let mut st_idx = match strategy {
                     PocketStrategy::Zigzag => 0,
                     PocketStrategy::Waterline => 1,
-                    PocketStrategy::Adaptive => 2,
-                    PocketStrategy::Auto => 3,
-                    PocketStrategy::OffsetRings => 4,
+                    PocketStrategy::Auto | PocketStrategy::Adaptive => 2,
+                    PocketStrategy::OffsetRings => 3,
                 };
                 let names = strategy_names();
                 let before = st_idx;
@@ -296,9 +292,8 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                 if st_idx != before {
                     *strategy = match st_idx {
                         1 => PocketStrategy::Waterline,
-                        2 => PocketStrategy::Adaptive,
-                        3 => PocketStrategy::Auto,
-                        4 => PocketStrategy::OffsetRings,
+                        2 => PocketStrategy::Auto,
+                        3 => PocketStrategy::OffsetRings,
                         _ => PocketStrategy::Zigzag,
                     };
                 }

@@ -19,10 +19,10 @@ use camcraft_app::operation::{Height, OpParams, SrcRef};
 use camcraft_app::schema::Location;
 use camcraft_app::stock::StockShape;
 use camcraft_app::stock_play::{FieldPlay, PlaySeed, Precalc, PRECALC_BUDGET};
-use camcraft_app::stock_play_worker::PlayWorker;
+use camcraft_app::stock_play_worker::{PlayFrame, PlayWorker};
 use camcraft_app::stock_sim::preview::pack_cut;
 use camcraft_app::stock_sim::Stock;
-use camcraft_app::stock_view::{field_view_with, PackedBase};
+use camcraft_app::stock_view::{field_view_with, CutLayer, PackedBase};
 use camcraft_app::tools::catalog;
 use camcraft_app::world::new_world;
 
@@ -243,6 +243,57 @@ fn a_cancelled_calculation_is_incomplete_by_name_and_playback_goes_on() {
     let base = PackedBase::of(&full.stock, None).expect("packs").0;
     assert_eq!(bits(&frame_at(&w, total), &base), bits(&full.stock, &base), "past a cancel the live cut still reaches the end");
     assert_eq!(PlayWorker::spawn(PlaySeed::gather(&world, false, CELLS).expect("seed")).expect("worker").precalc(), Precalc::Off);
+}
+
+/// The worker's first frame at move `k`, packed lattice and all.
+fn packed_frame_at(w: &PlayWorker, k: usize) -> PlayFrame {
+    w.request(k);
+    let (mut seen, t0) = (w.published(), Instant::now());
+    while t0.elapsed() < Duration::from_secs(120) {
+        if let Some(f) = w.take() {
+            let f = f.expect("the worker cuts the face program");
+            if f.at == k {
+                return f;
+            }
+        }
+        seen = w.wait_published(seen, Duration::from_millis(100));
+    }
+    panic!("no frame at move {k}");
+}
+
+/// Texels the eye draws as material: the composed `max(mesh, cut)` of
+/// the packed lattice is below zero.
+fn solid(mesh: &[f32], cut: &[f32]) -> usize {
+    mesh.iter().zip(cut).filter(|(m, c)| m.max(**c) < 0.0).count()
+}
+
+/// #2396: the picture the GPU eye draws at the start of playback is the
+/// UNCUT stock, also after the calculation before playback. The worker
+/// packs the session's constant mesh layer once; packed after the
+/// calculation, that layer was the finished stock (the eikonal pass
+/// writes `max(mesh, cut)` into it, and later cut layers only lift
+/// cells), so every frame showed the finished part - the stock body sat
+/// inside the model and was never seen.
+#[test]
+fn the_picture_at_the_start_is_the_uncut_stock_after_the_calculation() {
+    let world = small();
+    let w = PlayWorker::spawn_precalc(PlaySeed::gather(&world, false, CELLS).expect("seed"), PRECALC_BUDGET).expect("worker");
+    assert!(matches!(wait_precalc(&w), Precalc::Ready { .. }), "the calculation finishes: {:?}", w.precalc());
+    let frame = packed_frame_at(&w, 0);
+    let packed = frame.view.packed.as_ref().expect("the worker packs its frames for the eye");
+    let CutLayer::Full(cut) = &packed.cut else { panic!("the first frame of a session carries its whole cut layer") };
+    let uncut = FieldPlay::from_seed(PlaySeed::gather(&world, false, CELLS).expect("seed")).expect("play").view().stock;
+    let (ub, ucut) = PackedBase::of(&uncut, None).expect("packs");
+    let full = field_view_with(&world, CELLS).expect("deviate view");
+    let (fb, fcut) = PackedBase::of(&full.stock, None).expect("packs");
+    let (want, finished) = (solid(&ub.mesh, &ucut), solid(&fb.mesh, &fcut));
+    assert!(want > finished && finished > 0, "the face removes material: uncut {want}, finished {finished} texels");
+    assert_eq!(solid(&packed.base.mesh, cut), want, "move 0 draws the uncut stock, not the finished part");
+    assert_eq!(
+        packed.base.mesh.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+        ub.mesh.iter().map(|x| x.to_bits()).collect::<Vec<_>>(),
+        "the session's mesh layer is the uncut stock's"
+    );
 }
 
 /// The reading for the PR (#2181): calculation time and keyframe memory

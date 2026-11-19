@@ -245,3 +245,50 @@ fn detect_holes_on_a_bore_op_with_only_a_hole_past_the_ring_budget_is_refused() 
         "the refusal says why: {msg}"
     );
 }
+
+/// #2496: a Drill op with the 6 mm catalog drill on the plate.
+fn drill_state(cells: &[Cell]) -> State {
+    let mut state = State::new();
+    state.history.execute(&state.world, ImportModel::from_mesh("Plate", plate(cells)));
+    let tool = catalog().into_iter().find(|(n, _)| *n == "DR-0600").map(|(_, t)| t).expect("catalog DR-0600");
+    state.history.execute(&state.world, AddTool::new(&state.world, "DR-0600", tool).expect("tool"));
+    let params = OpParams::Drill {
+        clearance_z: Height::fixed(25.0),
+        retract_z: None,
+        top_z: Height::fixed(10.0),
+        bottom_z: None,
+        cycle: camcraft_app::drilling::CycleChoice::Auto,
+        peck: 0.0,
+        dwell: 0.0,
+        feed: 130.0,
+        plunge_feed: 100.0,
+        holes: Vec::new(),
+        cross: Vec::new(),
+        break_through: None,
+        break_through_from: camcraft_app::drilling::BreakThroughFrom::FullDiameter,
+    };
+    let src = SrcRef::Entity("Plate".into());
+    state.history.execute(&state.world, CreateOperation::new(&state.world, "DRL", "DR-0600", src, params).expect("create"));
+    state.ui_target = UiTarget::Operation("DRL".into());
+    state.sync_ops_ui();
+    state
+}
+
+#[test]
+fn detect_holes_on_a_drill_op_keeps_a_wider_hole_and_names_it_undersize() {
+    // #2496: the D8 hole stays (a pilot drill is valid), and the status
+    // line names it - the sentence MCP `detect_holes` answers in
+    // `undersize`. The D6 hole is the drill's own size: not named.
+    let mut state = drill_state(&[(4.0, None), (3.0, None)]);
+    state.detect_holes("DRL");
+    state.drain_actions();
+    let stored = match model::find_by_name(&state.world, "DRL").and_then(|e| model::operation_of(&state.world, &e)).map(|o| o.params) {
+        Some(OpParams::Drill { holes, .. }) => holes.len(),
+        _ => usize::MAX,
+    };
+    assert_eq!(stored, 2, "both holes are stored");
+    for want in ["holes detected for DRL", "the 8.000 mm hole at (-50.000, 0.000) is wider than the 6.000 mm drill"] {
+        assert!(state.status.contains(want), "the status names `{want}`: {}", state.status);
+    }
+    assert!(!state.status.contains("6.000 mm hole"), "the D6 hole is not named: {}", state.status);
+}

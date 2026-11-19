@@ -79,7 +79,7 @@ const FRONT_TOP: ([f64; 3], [f64; 3]) = ([0.0, 0.0, 10.0], [20.0, 0.0, 10.0]);
 const RIGHT_TOP: ([f64; 3], [f64; 3]) = ([20.0, 0.0, 10.0], [20.0, 20.0, 10.0]);
 
 fn assert_named(e: &str, what: &str) {
-    assert!(e.starts_with("face "), "the refusal names the face: {e}");
+    assert!(e.starts_with("Face ") && !e.contains("0x"), "the refusal names the face without hex: {e}");
     assert!(e.contains("of 'p'"), "the refusal names the part: {e}");
     assert!(e.contains(what), "the refusal says why ({what}): {e}");
 }
@@ -90,7 +90,7 @@ fn an_inside_out_cube_refuses_the_face_lay_by_name() {
     let top = face(&w, TOP);
     let e = lay_on_plane(&w, std::slice::from_ref(&top), G17).expect_err("refused");
     assert_named(&e, "inside-out");
-    assert!(e.starts_with(&top.feature.to_string()), "names the picked face: {e}");
+    assert!(e.starts_with(&camcraft_app::pick::geo_label(&w, &top)), "names the picked face: {e}");
     let e = plane_side(&w, &[top]).expect_err("the side readout refuses too");
     assert_named(&e, "inside-out");
 }

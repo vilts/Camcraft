@@ -61,7 +61,7 @@ pub(super) fn picks_of(world: &World, op: &Operation) -> Option<Result<RuledPick
         return None;
     };
     Some(match &op.src {
-        SrcRef::Selection(items) => read(world, items),
+        SrcRef::Selection(items) => read(world, op.setup.as_deref(), items),
         _ => Err(invalid(
             "a 4-axis cut pairs two picked profiles - pick the upper profile on the top plane and the lower profile on the bottom plane (a face or a closed edge chain each)".into(),
         )),
@@ -69,15 +69,15 @@ pub(super) fn picks_of(world: &World, op: &Operation) -> Option<Result<RuledPick
 }
 
 /// One pick as a flat profile.
-fn profile(world: &World, g: &GeoSel) -> Result<Picked, GenError> {
-    let label = format!("{} of '{}'", g.feature, g.entity);
+fn profile(world: &World, setup: Option<&str>, g: &GeoSel) -> Result<Picked, GenError> {
+    let label = crate::pick::geo_label(world, g);
     let Some(entity) = model::find_by_name(world, &g.entity) else {
         return Err(GenError::Invalid(format!("the selection names '{}', which is gone", g.entity)));
     };
     let Some(features) = model::features_of(world, &entity) else {
         return Err(GenError::Invalid(format!("'{}' has no geometry to select from", g.entity)));
     };
-    let loc = model::transform_of(world, &entity).unwrap_or_default();
+    let loc = crate::setup_align::pose_in(world, &entity, setup).unwrap_or_default();
     let place = |p: &[f64; 3]| transform_point(Point3::new(p[0], p[1], p[2]), loc.pos, loc.rot);
     let gone = || GenError::Invalid(format!("{label} is no longer in the model: re-pick it"));
     let (pts, closed): (Vec<Point3>, bool) = match g.feature {
@@ -118,8 +118,8 @@ fn profile(world: &World, g: &GeoSel) -> Result<Picked, GenError> {
     })
 }
 
-fn read(world: &World, items: &[GeoSel]) -> Result<RuledPicks, GenError> {
-    let mut found = items.iter().map(|g| profile(world, g)).collect::<Result<Vec<_>, _>>()?;
+fn read(world: &World, setup: Option<&str>, items: &[GeoSel]) -> Result<RuledPicks, GenError> {
+    let mut found = items.iter().map(|g| profile(world, setup, g)).collect::<Result<Vec<_>, _>>()?;
     for pick in found.iter().filter(|p| !p.chains.is_empty()) {
         let runs = found.iter().filter(|p| !p.chains.is_empty() && (p.z - pick.z).abs() <= FLAT).count();
         if runs > 1 {

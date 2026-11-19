@@ -67,24 +67,22 @@ pub fn collecting(state: &State) -> bool {
 /// One viewport pick into the draft: a vertex lands and replaces any
 /// earlier one; anything else is refused by name and changes nothing.
 pub fn take(state: &mut State, pick: GeoSel) {
+    let what = camcraft_app::pick::geo_label(&state.world, &pick);
     let Some(draft) = state.origin_pick.as_mut().filter(|d| d.picking) else { return };
     let setup = draft.setup.clone();
     state.status = match pick.feature {
         FeatureSel::Vertex(_) => {
             draft.pick = Some(pick);
-            format!("{setup}: vertex picked for the origin - Apply places the WCS")
+            format!("{setup}: {what} picked for the origin - Apply places the WCS")
         }
         FeatureSel::Face(_) => format!(
-            "{setup}: {} of '{}' is a face - an origin point takes a vertex (or use a box reading)",
-            pick.feature, pick.entity
+            "{setup}: {what} is a face - an origin point takes a vertex (or use a box reading)"
         ),
         FeatureSel::Chain(_) => format!(
-            "{setup}: {} of '{}' is an edge - an origin point takes a vertex (or use a box reading)",
-            pick.feature, pick.entity
+            "{setup}: {what} is an edge - an origin point takes a vertex (or use a box reading)"
         ),
         FeatureSel::Patch(_) => format!(
-            "{setup}: {} of '{}' is not a vertex - an origin point takes a vertex",
-            pick.feature, pick.entity
+            "{setup}: {what} is not a vertex - an origin point takes a vertex"
         ),
     };
 }

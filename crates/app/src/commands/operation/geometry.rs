@@ -115,8 +115,8 @@ fn valid_pick(world: &World, g: &GeoSel) -> Result<(), CommandError> {
     };
     if !found {
         return Err(CommandError::Invalid(format!(
-            "{} of '{}' is not in the model",
-            g.feature, g.entity
+            "{} is not in the model",
+            crate::pick::geo_label(world, g)
         )));
     }
     Ok(())

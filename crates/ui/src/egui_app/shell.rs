@@ -502,7 +502,10 @@ fn viewport_panel(
                 if right_press {
                     state.drag = Some(DragMode::Pan);
                 }
-                if left_pressed {
+                // #1198 b: a press on a move ball starts the body drag and is
+                // never remembered as a pick/orbit press - the ball wins.
+                // #2047: a press on a turn ring likewise starts the turn.
+                if left_pressed && !crate::move_drag::press(state, parr(p)) && !crate::turn_drag::press(state, parr(p)) {
                     *left_press = Some(parr(p));
                 }
             }
@@ -517,9 +520,31 @@ fn viewport_panel(
         }
     }
 
+    // #1198 b: Escape drops a body drag in flight - nothing reaches history.
+    let handle_drag = state.body_drag.is_some() || state.body_turn.is_some();
+    if handle_drag && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+        crate::move_drag::cancel(state);
+        crate::turn_drag::cancel(state);
+    }
+    // The window lost focus (Alt+Tab) or the pointer left it mid-drag: the
+    // release may never arrive, or arrive later from elsewhere - drop the
+    // drag so that no later release sends a move or a turn.
+    if (state.body_drag.is_some() || state.body_turn.is_some())
+        && ui.input(|i| {
+            !i.focused || i.events.iter().any(|e| matches!(e, egui::Event::WindowFocused(false) | egui::Event::PointerGone))
+        })
+    {
+        crate::move_drag::cancel(state);
+        crate::turn_drag::cancel(state);
+    }
     // Releases. A short press released inside the pane is a pick; a same-
     // frame press+release (fast click) is handled here, not at the press.
-    if left_released {
+    // A body drag's release is its one command, never a pick.
+    if left_released && (state.body_drag.is_some() || state.body_turn.is_some()) {
+        left_press.take();
+        crate::move_drag::release(state);
+        crate::turn_drag::release(state);
+    } else if left_released {
         let press = left_press.take();
         if state.drag.is_some() {
             state.drag = None;
@@ -546,7 +571,12 @@ fn viewport_panel(
     // button promotes to orbit past the travel threshold. Hover recomputes
     // every frame (imgui checks inside draw, so a parked cursor keeps its
     // feature outline); interact gates it on drag/hot/inside itself.
-    if motion != egui::Vec2::ZERO {
+    if motion != egui::Vec2::ZERO && (state.body_drag.is_some() || state.body_turn.is_some()) {
+        if let Some(p) = pos {
+            crate::move_drag::motion(state, parr(p));
+            crate::turn_drag::motion(state, parr(p));
+        }
+    } else if motion != egui::Vec2::ZERO {
         match state.drag {
             Some(DragMode::Orbit) => state.cam.orbit(motion.x, motion.y),
             Some(DragMode::Pan) => state.cam.pan(motion.x, motion.y),
@@ -571,7 +601,7 @@ fn viewport_panel(
         }
     }
     if let Some(p) = pos {
-        crate::frame_cost::time("ui/viewport.hover", || interact::update_hover(state, parr(p), left_press.is_some()));
+        crate::frame_cost::time("ui/viewport.hover", || interact::update_hover(state, parr(p), left_press.is_some() || state.body_drag.is_some() || state.body_turn.is_some()));
     }
 
     // Screen-space overlays on the image: axis/anchor/gizmo labels and the
@@ -603,6 +633,8 @@ fn viewport_panel(
         for (a, b, rgb) in &segs {
             ui.painter().line_segment([to_px(*a), to_px(*b)], egui::Stroke::new(interact::GIZMO_STROKE_PX, rgb8(*rgb)));
         }
+        super::move_handles::draw(ui, state, pos.map(parr), resp.rect, &font);
+        super::turn_handles::draw(ui, state, pos.map(parr), resp.rect, &font);
         let axis_font = egui::FontId::proportional((font.size * 1.4).max(14.0));
         for (uv, rgb, text) in crate::frame_cost::time("ui/viewport.labels", || interact::overlay_labels(state, aspect)) {
             let at = to_px(uv);
@@ -994,7 +1026,7 @@ pub(crate) mod headless {
         // Software adapter first, else the hardware one (#615: macOS's
         // Metal has no software fallback).
         let gpu = crate::headless_gpu::device()?;
-        println!("headless: {} adapter {}", gpu.kind.label(), gpu.name);
+        diag_info!("headless: {} adapter {}", gpu.kind.label(), gpu.name);
         let (device, queue) = (gpu.device, gpu.queue);
 
         let mut view = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -1046,7 +1078,7 @@ pub(crate) mod headless {
             // less than 5% of the frame: the seeded stock did not rasterize
             return Err(format!("readback looks empty ({changed}/{total} changed px)"));
         }
-        println!(
+        diag_info!(
             "headless snapshot: {w}x{h}, {}% pixels changed; Contour1 cached {op_ok} moves",
             changed * 100 / total
         );

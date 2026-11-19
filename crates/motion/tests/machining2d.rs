@@ -766,14 +766,17 @@ fn tabs_hold_the_part_until_the_floor() {
         .filter(|m| m.kind == MoveKind::Rapid && m.from.z == 3.0 && m.to.z == 3.0)
         .count();
     assert_eq!(low_rapids, 3);
-    // The tabbed level cuts four tab widths less than a full ring.
-    // Tab windows are placed along the ring's polyline parameter, so a
-    // window boundary that falls inside a fitted corner arc removes an
-    // arc length off 6.0 by the chord-to-arc drift of one tessellation
-    // step - sub-micron, and the four boundaries share the bias.
+    // The tabbed level cuts four tab windows less than a full ring. A
+    // window starts at the tab width plus the tool diameter (#2480): the
+    // disc bites D/2 past each window end. On this ring the window ends
+    // fall on the corner arcs, where the chord between the two end discs
+    // is shorter than the arc, so each window grows until that chord is
+    // W + D (contour_tab_bridge.rs pins the true neck): a little more
+    // than 4 x 16 mm is left uncut, never less.
     let full = level_len(&t, -3.0);
     let tabbed = level_len(&t, -6.0);
-    assert!((full - tabbed - 24.0).abs() < 1e-3, "{full} - {tabbed}");
+    let need = 4.0 * (6.0 + 10.0);
+    assert!((need - 5e-3..=need + 2.0).contains(&(full - tabbed)), "{full} - {tabbed}");
     assert!(t.is_chained() && t.all_finite());
 }
 
@@ -1948,16 +1951,18 @@ fn slot_full_width_admits_no_arm_and_says_so() {
 
 #[test]
 fn contour_tabs_stand_down_the_entry_arms() {
-    // A bore held by four 2-high tabs: below -4 the tab is material
+    // A bore held by two 2-high tabs: below -4 the tab is material
     // INSIDE the certified region - no arm may descend through it.
+    // (#2480: two 4 mm tabs - a window is the tab plus the 10 mm tool,
+    // and four 6 mm tabs would fill the 40 mm centre ring.)
     let mk = |entry: Entry3D| {
         let mut p = cp();
         p.side = Side::Inside;
         p.top_z = 0.0;
         p.bottom_z = -6.0;
         p.stepdown = 3.0;
-        p.tab_count = 4;
-        p.tab_width = 6.0;
+        p.tab_count = 2;
+        p.tab_width = 4.0;
         p.tab_height = 2.0;
         p.entry = entry;
         p.helix_radius = 1.5;
@@ -1970,10 +1975,13 @@ fn contour_tabs_stand_down_the_entry_arms() {
         t.notes
     );
     // No orbit reaches a tabbed plane; the levels above -4 keep their
-    // certified helix entries.
+    // certified helix entries. (Review of #2480: the tabs sit on the
+    // square ring's corners and grow until the neck holds, so the floor
+    // level keeps only a short walk round the two other corners, which
+    // the arc fit posts as flat arcs - a helix is an arc that descends.)
     assert!(t.moves.iter().any(|m| m.arc.is_some()), "the clean levels lost their arm");
     assert!(
-        t.moves.iter().all(|m| m.arc.is_none() || m.to.z > -4.0),
+        t.moves.iter().all(|m| m.arc.is_none() || m.from.z == m.to.z || m.to.z > -4.0),
         "a helix descended into a standing tab"
     );
     // At the tabbed plane the dives are the pre-certification lead-in
@@ -1994,14 +2002,15 @@ fn contour_hop_rides_the_tall_tab_top() {
     // cross ABOVE the tab, or it drags its shank through the tab it was
     // left to hold the part. (tab_height past top_z is a pathological
     // but legal file; the law is the max, not a clamp.)
+    // #2480: two 4 mm tabs fit the 40 mm centre ring with the 10 mm tool.
     let mk = |tab_height: f64| {
         let mut p = cp();
         p.side = Side::Inside;
         p.top_z = 0.0;
         p.bottom_z = -6.0;
         p.stepdown = 3.0;
-        p.tab_count = 4;
-        p.tab_width = 6.0;
+        p.tab_count = 2;
+        p.tab_width = 4.0;
         p.tab_height = tab_height;
         contour(&rect(0.0, 0.0, 20.0, 20.0), &p).expect("valid")
     };

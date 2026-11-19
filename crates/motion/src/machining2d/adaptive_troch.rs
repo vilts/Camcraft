@@ -142,7 +142,7 @@ pub fn adaptive_trochoidal_with(region: &Region, p: &PocketParams, t: &AdaptiveT
         return Err(GenError::Empty("empty pocket region".into()));
     }
     let r = 0.5 * p.tool_diameter;
-    let center = region.offset(-(r + p.stock_to_leave))?;
+    let center = super::pocket::non_sliver_center(region, r + p.stock_to_leave)?;
     if center.is_empty() {
         return Err(GenError::Invalid(format!(
             "{WHO}: the region is narrower than the {:.3} mm tool (with {:.3} mm left on each wall)",

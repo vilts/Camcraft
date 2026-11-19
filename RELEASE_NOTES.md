@@ -1,3 +1,181 @@
+# CamCraft 0.24.0 (clean-room implementation)
+
+Released 2026-11-18.
+
+## Breaking
+Two changes are breaking. **The project file format goes from version 67 to
+69.** 0.24.0 opens the files of 0.23.0 and older. 0.23.0 and older builds
+refuse a file that 0.24.0 saves.
+- **2D Pocket no longer has the Adaptive strategy** (#1517, PR #2253;
+  format 69). Use the 2D Adaptive operation. A project from an older build
+  that has a Pocket with Adaptive opens with that operation changed to 2D
+  Adaptive (Spiral). If a setting could not be carried over (rest machining,
+  predrilled holes), the operation is marked "needs review" and its post is
+  held until you mark it reviewed (MCP `mark_operation_reviewed`).
+- **A through hole breaks through by the full drill diameter by default**
+  (#2441, PR #2504; format 68). The drill point length is added to the
+  break-through (`Full diameter`; `Tip` keeps the old depth). Holes in a
+  project from an older build keep the old `Tip` behaviour. The stock
+  simulation now cuts the drill cone, and MCP `list_operation_types` shows
+  `break_through`.
+
+A minor release headlined by **WCS Flip X / Flip Y carried into Fanuc and
+Haas programs**, **move and rotate handles for parts in the viewport**, **a
+Mach4 milling post**, **STEP tool holders converted to DXF profiles**,
+**2D Contour tabs that leave a bridge of the width you set**, and **more
+dwell words refused by name instead of dropped**. 92 pull requests merged
+since 0.23.0 (12 features, 60 fixes, 1 performance change, 2 refactors,
+docs, tests and process).
+
+## Upgrade notes
+- Save a project in 0.24.0 only when each person who opens it also has
+  0.24.0. Older builds refuse format 69 (see "Breaking").
+- Projects with 2D Contour tabs get wider gaps in the tool path on the next
+  generate, so that the bridge that stays on the part is the tab width
+  (#2480, PR #2486). Before, a tab width equal to or less than the tool
+  diameter left no tab, and the part came free.
+- Tools get stable tool numbers (the lowest unused number) when they are
+  added, imported, or loaded from an older project (#2442, PR #2488). Check
+  the T numbers of an older project before you post it.
+- A program can now be refused where 0.23.0 posted it without a dwell (see
+  "Changes to posted G-code"). Set the dwell to 0, or use a cycle that has a
+  dwell on that control.
+
+## Changes to posted G-code
+These change the program that an existing project posts, or stop a post that
+went through before.
+- **Flip X / Flip Y is posted** on the Fanuc and Haas posts (#1649,
+  PR #2492): the program mirrors the flipped axis, with the arc direction and
+  the compensation side kept correct. A flipped Z, a probe operation in a
+  flipped setup and the other posts still refuse by name.
+- **Dwells that a cycle cannot carry are refused by name, never dropped:**
+  - Fanuc, Haas, Mazak and Doosan DNM: G73 and G84 dwells (#2356, PR #2387).
+  - Sinumerik: G73 dwell (#2354, PR #2376), G84 and G85 dwells (#2357,
+    PR #2415).
+- **grblHAL and Tormach write P0** on the opening G86 block when the bore
+  dwell is 0 (#2362, PR #2532).
+- **Tormach PathPilot refuses a move with no A word** inside an operation
+  indexed away from A0 (#2473, PR #2490). Before, the post turned A back to
+  A0 in the middle of the operation.
+- **Tormach 770MX + microARC 4** no longer has the unverified -360..360
+  A-travel limit; continuous multi-turn A programs post (#2471, PR #2513).
+- **Fanuc lathe threading** can post optional in-pass chip-break dips as
+  continuous G32 segments (#419, PR #468).
+- **The opening approach starts over the setup's WCS origin**, not the world
+  origin (#2382, PR #2420).
+- Toolpath changes that show in the posted program:
+  - 2D Contour tab width is the bridge that stays (#2480, PR #2486); picked
+    open contour runs join, and inside corners offset correctly (#2277,
+    PR #2487).
+  - Whole-model 2D Contour continues across lower stepped, chamfered and
+    slotted outlines down to Bottom Z, or refuses by name (#2436, PR #2460).
+  - A no-pick 2D Chamfer on an edge that is already chamfered rides the wall
+    under the bevel; verify blocks a cone tip inside the part (#2435,
+    PR #2450).
+  - Raster 3D finishes cross a hole or slot narrower than the tool in one
+    feed (#2431, PR #2478).
+  - Adaptive 3D Pocket cuts the stock ring around a whole model from the air
+    outside the stock where that is proved clear (#1950, PR #2035).
+  - Outside containment on clearing operations clears from the setup stock
+    (#2232, PR #2383). Whole-model and stock-source 2D clearing keeps part
+    islands blocked when it extends outside the stock (#2438, PR #2503).
+  - Multi-piece pockets keep their pass starts (#2426, PR #2427).
+  - A tilted (3+2) operation measures its reference heights along its tool
+    axis (#2389, PR #2418).
+
+## Highlights
+### Posts and machines
+- A clean-room Mach4 milling post with 3-axis G94 and 3+2 AC trunnion
+  support (#1968).
+- The post engine reports script errors at your own line and column, refuses
+  endless loops, deep recursion and oversized output, and has a blank post
+  template and preview samples (#2069).
+- The machine and post lists follow their folders; the Setup page lists your
+  own machines first (#2380, #2358).
+- Bake states that it posts table coordinates without a control rotation
+  (#2359).
+
+### Operations
+- Part alignment: all ten 5-axis and rotary operations (#2286), Deburr
+  (#2284), and Lathe, MillTurn, Plasma, Wire EDM and Sinker EDM operations
+  (#2287) work in aligned setups.
+- A Drill operation names each hole that is wider than its drill (#2496).
+- The Heights tab shows clearance advice when the clearance plane is inside
+  the stock (#2131).
+
+### Tools
+- ISO 13399 STEP tool holders convert to half-profile DXFs; DXF profiles
+  import and export in the UI and MCP (#743).
+- A refused tool names itself and the rule that it breaks (#1186).
+
+### Viewport and UI
+- Move handles drag a part along an axis (#1198); a Rotate mode turns it by
+  a ring (#2047). Each drag is one undo step.
+- The WCS page has Set origin in its footer, flags unapplied edits, and says
+  where the origin is in words (#870).
+- Picked geometry has one readable name instead of a hexadecimal id (#2403).
+- Tab, Shift+Tab and Enter move between the value fields of a page (#2516).
+- Tilted height planes follow the tool axis (#2416). The near plane no
+  longer clips while zooming (PR #1689). A lathe without a Y axis hides Y on
+  the gizmo (#2019).
+- Property labels, dropdowns and Geometry rows fit narrow panels (#2295,
+  #2065, #1688).
+- A Donate button in the top bar (#2385).
+
+### Simulation
+- The simulation draws the stock body again during playback (#2396), and
+  plays up to the first operation that has no toolpath (#2280).
+
+### MCP, examples and diagnostics
+- MCP can delete a model as an undoable step (#2444). Generate without a
+  name regenerates operations that became stale in the same call (#2439).
+- An example catalog (`examples/catalog/`), seeded with `2d/first-part`
+  (#2393); refreshed first-part and router NC examples (#2422).
+- Library and UI diagnostics go through the filtered terminal log (#163).
+  Desktop startup keeps GPU diagnostics and backtraces (#2421).
+- The User Guide has reproducible screenshots (#1902) and a Windows
+  troubleshooting guide (#2423).
+
+## Not exercised on a real control
+No real control ran the output of these changes. The test goldens are
+regression records. Check the first program on the machine before cutting.
+- The Flip X / Flip Y mirror on Fanuc and Haas (#1649).
+- The G73, G84 and G85 dwell refusals (#2354, #2356, #2357) and the grblHAL
+  and Tormach G86 P0 (#2362).
+- The Tormach A-word refusal (#2473) and the microARC 4 multi-turn A travel
+  (#2471).
+- The Mach4 post (#1968) and the Fanuc lathe chip-break dips (#419).
+- The drill point break-through depth (#2441).
+
+## Known issues
+No `P1` or `P2` issue was open at the cut line (2026-11-18 17:33 UTC), and
+none was filed during the cut. Two open defects have a workaround:
+- #2561 (P3): 2D Contour tabs - the bridge check compares only neighbouring
+  cuts. Check the bridges in the simulation when tabs stand close together.
+- #1950 (P3, blocked): 3D Pocket Adaptive on a whole model. The stock ring
+  around the part exceeds the planner limits. The planner then refuses
+  Adaptive on that level with a note, and Offset rings cut the level. The
+  output is safe. The release gate skips the three tests that pin this issue
+  and checks that they still fail (`xtask/src/known_fail.rs`).
+
+## Process changes
+`PROCESS_VERSION` went from 89 to 100 (pinned issue #681):
+- 90: the cut list and the cut line replace the P1/P2 start condition; a
+  gate-map pin for the rotated WCS control suite.
+- 91: the FreeBSD backfill workflow.
+- 92: `cargo xtask docs-images`.
+- 93-94: MCP skill rows for `set_stock_material`, `cutting_data` and
+  `delete_model`; `cargo xtask catalog`.
+- 95: the release gate runs its suites in a longest-first queue.
+- 96: the `set_wcs_flip` row names the refused operations.
+- 97: heavy release tests run first; AGENTS.md "Agent roles".
+- 98: `merge-plan` warns on a stale review marker; LF endings for shipped
+  NC examples.
+- 99: the MCP skill drops Pocket Adaptive.
+- 100: the MCP skill documents operation notes and corner checks.
+
+---
+
 # CamCraft 0.23.0 (clean-room implementation)
 
 Released 2026-11-17.

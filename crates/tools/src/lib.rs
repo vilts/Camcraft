@@ -1,7 +1,7 @@
 //! camcraft-tools - the tool-catalog seam of the M4.1 crate split
 //! (R2, docs/M4.1-CRATE-SPLIT.md). Just the plain types: the R0 audit
-//! proved tools.rs imports nothing (not even geometry), and it still
-//! holds - the entity wrappers live in the app's schema, the picker
+//! proved tools.rs imports nothing; the DXF profile converter uses geometry.
+//! The entity wrappers live in the app's schema, the picker
 //! and sheet rendering in commands/tool and tool_list.
 //!
 //! Provenance: end mill / ball nose / bull nose shapes and the
@@ -45,5 +45,10 @@ pub mod cutting_rows;
 pub mod waterjet;
 pub mod wire;
 pub mod tools;
+// #1186: the tool sanity law, said by name.
+pub mod tool_sanity;
 // #891: turning surface speed, feed per rev and the max-rpm clamp.
 pub mod turning_data;
+
+// #743: DXF half-profile parsing and projection into validated holder profiles.
+pub mod tool_profile_dxf;

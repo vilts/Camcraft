@@ -105,16 +105,16 @@ pub fn check_pickable(world: &World, g: &GeoSel) -> Result<(), String> {
                 return Ok(());
             }
             Err(format!(
-                "{} of '{}' is not a feature point - a point is a corner where model edges meet or the end \
+                "{} is not a feature point - a point is a corner where model edges meet or the end \
                  of an open edge, never a vertex along a smooth edge or inside a face",
-                g.feature, g.entity
+                super::geo_label(world, g)
             ))
         }
         FeatureSel::Chain(id) => match crate::model::resolve_chain(&graph.features, id) {
             Some(c) if !is_feature_chain(&graph, &c) => Err(format!(
-                "{} of '{}' runs along the mesh's own triangles, not a model edge - pick an edge where two \
+                "{} runs along the mesh's own triangles, not a model edge - pick an edge where two \
                  faces meet",
-                g.feature, g.entity
+                super::geo_label(world, g)
             )),
             _ => Ok(()),
         },

@@ -15,7 +15,7 @@ use crate::tool_numbers;
 
 pub(super) const TOOLS: &[Tool] = &[Tool {
     name: "set_tool_number",
-    description: "Give a document tool its controller number (the T.. / H.. a post writes, which must match the machine's tool table), or pass number: null to go back to its list position. Returns the tool's own number and the number it posts as (get_job's tool rows show both). One undoable step. Refused by name: an unknown or non-tool name, a number outside 1-99999, a number another tool already has, and a no-op.",
+    description: "Give a document tool its controller number (the T.. / H.. a post writes, which must match the machine's tool table). Returns the tool's own number and the number it posts as (get_job's tool rows show both). One undoable step. Refused by name: an unknown or non-tool name, a number outside 1-99999, null, a number another tool already has on the same machine, and a no-op.",
     schema,
     run: set_tool_number,
 }];
@@ -24,7 +24,7 @@ fn schema() -> Value {
     obj(
         json!({
             "tool": { "type": "string", "description": "A document tool's name." },
-            "number": { "type": ["integer", "null"], "description": "The tool number, 1-99999; null clears it." },
+            "number": { "type": "integer", "description": "The tool number, 1-99999." },
         }),
         &["tool", "number"],
     )
@@ -33,10 +33,12 @@ fn schema() -> Value {
 fn set_tool_number(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
     let tool = req_str(a, "tool")?;
     let next = match a.get("number") {
-        None => return Err("\"number\" is required: an integer, or null to clear".into()),
+        None => return Err(format!("\"number\" is required: an integer in {}", tool_numbers::RANGE_TEXT)),
         Some(Value::Null) => None,
         Some(v) => {
-            let n = v.as_u64().ok_or("\"number\" must be a positive integer, or null")?;
+            let n = v
+                .as_u64()
+                .ok_or_else(|| format!("\"number\" must be a positive integer in {}", tool_numbers::RANGE_TEXT))?;
             Some(u32::try_from(n).map_err(|_| format!("tool number {n} is out of range - tool numbers run {}", tool_numbers::RANGE_TEXT))?)
         }
     };

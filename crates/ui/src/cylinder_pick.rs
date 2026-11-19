@@ -72,20 +72,20 @@ pub fn collecting(state: &State) -> bool {
 /// One viewport pick into the draft: a face lands and replaces any
 /// earlier one; anything else is refused by name and changes nothing.
 pub fn take(state: &mut State, pick: GeoSel) {
+    let what = camcraft_app::pick::geo_label(&state.world, &pick);
     let Some(draft) = state.cylinder_pick.as_mut().filter(|d| d.picking) else { return };
     let setup = draft.setup.clone();
     state.status = match pick.feature {
         FeatureSel::Face(_) | FeatureSel::Patch(_) => {
             draft.pick = Some(pick);
-            format!("{setup}: wall picked - choose the target axis and Apply")
+            format!("{setup}: {what} picked as wall - choose the target axis and Apply")
         }
         FeatureSel::Chain(_) => format!(
-            "{setup}: {} of '{}' is an edge - an edge cannot name a cylinder's axis; pick its curved wall \
-             (edges set an axis: Axes)",
-            pick.feature, pick.entity
+            "{setup}: {what} is an edge - an edge cannot name a cylinder's axis; pick its curved wall \
+             (edges set an axis: Axes)"
         ),
         FeatureSel::Vertex(_) => {
-            format!("{setup}: {} of '{}' is a point - pick the bore's or cylinder's curved wall", pick.feature, pick.entity)
+            format!("{setup}: {what} is a point - pick the bore's or cylinder's curved wall")
         }
     };
 }

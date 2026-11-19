@@ -160,3 +160,65 @@ fn the_builder_splits_a_vertical_arc_at_its_z_extremum() {
     b.push_arc_in(MoveKind::Feed, p(0.0, 4.0, 0.0), Some(1.0), Point2::new(5.0, 5.0), true, ArcPlane::Xz);
     assert!(b.finish().moves[0].arc.is_none());
 }
+
+#[test]
+fn thread_dip_chords_interpolate_radius_with_axial_travel() {
+    // A half turn of the golden dip: the controller moves linearly
+    // from r5.6 to r5.9 while advancing one half lead.
+    for ccw in [false, true] {
+        let m = arc(
+            p(5.6, 0.0, 20.0),
+            p(-5.9, 0.0, 19.0),
+            (0.0, 0.0),
+            ccw,
+            ArcPlane::Xy,
+        );
+        let chords = m.segments3(0.001);
+        assert!(chords.len() > 20);
+        assert_eq!(chords[0].0, m.from);
+        assert_eq!(chords.last().unwrap().1, m.to);
+        for (_, q) in &chords {
+            let f = 20.0 - q.z;
+            assert!(
+                (q.x.hypot(q.y) - (5.6 + 0.3 * f)).abs() < 1e-10,
+                "radius must follow the synchronized axial ramp: {q:?}"
+            );
+        }
+        // Choose the chord nearest the interior half-turn midpoint;
+        // its radius must be near 5.75, never the outer radius 5.9.
+        let mid = chords
+            .iter()
+            .map(|(_, q)| q)
+            .min_by(|a, b| (a.z - 19.5).abs().total_cmp(&(b.z - 19.5).abs()))
+            .unwrap();
+        assert!((mid.x.hypot(mid.y) - 5.75).abs() < 0.01, "{mid:?}");
+        assert_eq!(mid.y.is_sign_positive(), ccw);
+    }
+}
+
+#[test]
+fn thread_dip_chords_bound_linear_radius_ramp_error() {
+    // A steep radius ramp stresses the tangential contribution to
+    // chord error; a circular sagitta bound alone is insufficient.
+    let sweep: f64 = 0.1;
+    let m = arc(
+        p(1.0, 0.0, 0.0),
+        p(10.0 * sweep.cos(), 10.0 * sweep.sin(), 1.0),
+        (0.0, 0.0),
+        true,
+        ArcPlane::Xy,
+    );
+    let tol = 0.001;
+    for (a, b) in m.segments3(tol) {
+        for u in [0.25, 0.5, 0.75] {
+            let f = a.z + (b.z - a.z) * u;
+            let radius = 1.0 + 9.0 * f;
+            let exact = p(radius * (sweep * f).cos(), radius * (sweep * f).sin(), f);
+            let chord = p(a.x + (b.x - a.x) * u, a.y + (b.y - a.y) * u, f);
+            assert!(
+                (exact.x - chord.x).hypot(exact.y - chord.y) <= tol,
+                "radius ramp chords must honor tolerance at {f}: {exact:?} vs {chord:?}"
+            );
+        }
+    }
+}

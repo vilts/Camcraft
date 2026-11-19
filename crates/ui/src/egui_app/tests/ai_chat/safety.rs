@@ -410,7 +410,7 @@ fn get_selection_mcp_tool_reads_ui_geo_picks_pick_mode_and_selected_entities() {
     assert_eq!(sc["selected_entities"], json!(["Block"]));
     assert_eq!(
         sc["geometry_picks"],
-        json!([{ "model": "Block", "id": "face:0x0000000000001234" }])
+        json!([{ "model": "Block", "id": "face:0x0000000000001234", "name": "Face of 'Block'" }])
     );
 }
 

@@ -222,6 +222,18 @@ fn a_second_rotary_keeps_the_letter_law() {
     );
 }
 
+/// The feed `rec` as a rapid to the same point and angles.
+fn placed(rec: cnc::Record) -> cnc::Record {
+    match rec {
+        cnc::Record::Move(mut m) => {
+            m.kind = camcraft_app::cl::MoveKind::Rapid;
+            m.feed = None;
+            cnc::Record::Move(m)
+        }
+        other => other,
+    }
+}
+
 #[test]
 fn the_fanuc_dialect_refuses_a_b_on_an_a_only_table() {
     // fanuc.cps writes the stream's letters as they come (G43.4), so the
@@ -250,7 +262,10 @@ fn the_fanuc_dialect_refuses_a_b_on_an_a_only_table() {
             cnc::Record::Tool { number: 1, name: "EM".into() },
             // #1359: a feed with the spindle stopped is refused by name.
             cnc::Record::Param { name: "SpindleSpeed".into(), value: serde_json::json!(6000) },
-            cnc::Record::Section { begin: true },
+                cnc::Record::Section { begin: true },
+            // #796: the microARC states its A rate, so the rotary is
+            // placed by a rapid before a feed turns it (the #885 rule).
+            placed(mv(5.0)),
             mv(-5.0),
             mv(-6.0),
             cnc::Record::Section { begin: false },
@@ -300,6 +315,9 @@ fn the_fanuc_dialect_refuses_a_lone_a_stated_along_minus_x() {
         // #1359: a feed with the spindle stopped is refused by name.
         cnc::Record::Param { name: "SpindleSpeed".into(), value: serde_json::json!(6000) },
         cnc::Record::Section { begin: true },
+        // #796: the microARC states its A rate, so the rotary is placed
+        // by a rapid before a feed turns it (the #885 rule).
+        placed(mv(5.0)),
         mv(-5.0),
         mv(-6.0),
         cnc::Record::Section { begin: false },

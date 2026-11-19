@@ -94,6 +94,7 @@ fn drill_op() -> Operation {
         "part",
         OpParams::Drill {
             break_through: None,
+            break_through_from: Default::default(),
             clearance_z: Height::fixed(50.0),
             retract_z: None,
             top_z: Height::fixed(20.0),

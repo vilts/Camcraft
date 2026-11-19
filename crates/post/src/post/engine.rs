@@ -122,6 +122,12 @@ pub fn run_program_with(
     // #1386: Explain G-code on a script that states no comment form is
     // refused by name here, before any hook runs.
     let explain_form = super::explain::form(&mut s, options)?;
+    // #1649: a flipped WCS axis mirrors its own sections about the work
+    // origin - the per-setup statement of the #374 mirror below, so the
+    // two compose (a flipped X on an inverted X posts the standard signs).
+    // First, so a flipped and rotated section is refused by that name: the
+    // two passes never change the same section.
+    let records = super::wcs_flip::apply(records, &s)?;
     // #760: a Z-rotated work offset transforms coordinates into WCS XY
     // (before machine axis inversion so Bake mirrors in WCS slides), and
     // checks Control mode declarations (`coordinateRotation`, `wcsRotation`).
@@ -264,6 +270,10 @@ pub fn run_program_with(
                     warnings.push(format!(
                         "{who}cuts a thread that needs the spindle reversed (M04) for its hand, but this post script does not declare threadHands - it would cut the other hand; use a lathe post that states the thread's hand"
                     ));
+                }
+                if name == "ChipBreakDips" && !s.voices_continuous_threading() {
+                    let op = base.get("OperationName").and_then(Value::as_str).unwrap_or("");
+                    warnings.push(super::cnc_thread::dips_unvoiced(op));
                 }
                 // A left-hand-cut mill (#988) through a script that
                 // cannot start M04 would turn the cutter backwards.

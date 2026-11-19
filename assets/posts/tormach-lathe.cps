@@ -761,7 +761,7 @@ function g76Why(p, r0, r1) {
   var rungs = Math.max(1, Math.ceil(p.ThreadHeight / p.FirstDepth - 1e-9));
   var lastStep = p.ThreadHeight - (rungs - 1) * p.FirstDepth;
   if (Math.abs(p.FinishAllowance - lastStep) > 2 * EPS) {
-    return "finish allowance " + p.FinishAllowance + " - LinuxCNC's G76 has no finish-pass word; its finishing pass takes the equal ladder's own last step (" + trim0(lastStep.toFixed(4)) + ")";
+    return "finish allowance " + p.FinishAllowance + " - LinuxCNC's G76 has no finish-pass word; its finishing pass takes the equal ladder's own last step (" + trim0(lastStep.toFixed(4)) + "); regenerate the threading operation to refresh cached thread records";
   }
   if (Math.abs(p.PullOut) > EPS) return "pull-out - an angled thread exit (E/L taper) is not posted on this control yet";
   if (!(p.SpringPasses >= 0 && Math.round(p.SpringPasses) === p.SpringPasses)) return "spring passes not a whole count";

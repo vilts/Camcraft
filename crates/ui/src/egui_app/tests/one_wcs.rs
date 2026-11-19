@@ -73,7 +73,9 @@ fn the_wcs_row_edits_the_active_setups_origin_undoably() {
 fn the_wcs_page_shows_the_work_offset_dropdown_and_no_setups_page_pointer() {
     let _g = snapshot_guard();
     let mut h = Harness::builder()
-        .with_size(Vec2::new(1280.0, 720.0))
+        // #870: the page's origin line made it one row taller; 900 px
+        // keeps its foot in view without scrolling.
+        .with_size(Vec2::new(1280.0, 900.0))
         .build_ui_state(frame, ShellUi::blank());
     {
         let st = &mut h.state_mut().state;

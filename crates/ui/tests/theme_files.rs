@@ -17,6 +17,9 @@ use camcraft_ui::egui_app::theme::Tokens;
 use camcraft_ui::egui_app::theme_files as tf;
 use egui::Color32;
 
+#[path = "theme_files/dropdown.rs"]
+mod dropdown;
+
 fn tmp_dir(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("camcraft_ui_theme_{tag}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);

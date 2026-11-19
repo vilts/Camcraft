@@ -63,11 +63,24 @@ impl PlayIndex {
     /// past an op's last move and at the end (the module law).
     #[must_use]
     pub fn position_at(&self, p: &Progress, frac: f64) -> Option<(usize, f64)> {
+        // #2280: an op at or past the stop is not in the plan; the
+        // picture holds the stock as the plan left it.
+        if self.rest.contains(&p.op) {
+            return Some((self.total, 0.0));
+        }
         let k = self.index_at(p)?;
         let (_, _, len) = self.ops.iter().find(|o| o.0 == p.op)?;
         let in_connector = p.span == len + 1 && p.segs_done == 0;
         let in_flight = !in_connector && p.segs_done < p.span && k < self.total;
         Some((k, if in_flight { clamp_frac(frac) } else { 0.0 }))
+    }
+
+    /// The op the playback stops before (#2280): the first op in
+    /// program order with no toolpath. `None` when the whole program
+    /// plays. The playback never skips it to cut the ops after it.
+    #[must_use]
+    pub fn stop(&self) -> Option<&str> {
+        self.rest.first().map(String::as_str)
     }
 }
 

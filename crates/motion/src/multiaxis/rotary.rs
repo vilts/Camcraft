@@ -236,7 +236,7 @@ fn posed(
     let c0 = center(at);
     let pose0 = radial_at(ax, c0);
     if pose0.is_none() {
-        eprintln!("multiaxis: the rotary start {c0:?} stands on the axis; it opens upright");
+        tracing::warn!("multiaxis: the rotary start {c0:?} stands on the axis; it opens upright");
     }
     let t0 = tip_of(c0, pose0, r);
     let mut b = PathBuilder::new(t0);
@@ -261,7 +261,7 @@ fn posed(
                 match cut_pose(ax, c, w, w - prev) {
                     Some(a) => Some(a),
                     None => {
-                        eprintln!("multiaxis: no radial exists at {w:?}; the move holds vertical");
+                        tracing::warn!("multiaxis: no radial exists at {w:?}; the move holds vertical");
                         Some([0.0, 0.0, 1.0])
                     }
                 }

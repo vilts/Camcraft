@@ -53,6 +53,7 @@ pub use boss::recognize_bosses;
 pub use cross::{cross_drill, CrossParams};
 pub use cycle::drill;
 pub use hole::{
-    auto_kind, CrossHole, CycleChoice, CycleParams, Hole, CHIP_BREAK, SPOT_DEPTH, THROUGH_CLEAR,
+    auto_kind, drill_point_length, through_tip_run, BreakThroughFrom, CrossHole, CycleChoice,
+    CycleParams, Hole, CHIP_BREAK, SPOT_DEPTH, THROUGH_CLEAR,
 };
 pub use recognize::{recognize, recognize_cross};

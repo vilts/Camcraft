@@ -39,6 +39,15 @@ impl From<TiltDto> for Tilt {
     }
 }
 
+/// Which point of a twist drill `break_through` is measured from (#2441).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum BreakThroughFromDto {
+    #[default]
+    FullDiameter,
+    Tip,
+}
+
 /// The file mirror of `operation::OpParams`, tool-free by the same rule as
 /// the domain type: the diameter lives in the tool, never a parameter.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -430,6 +439,11 @@ pub enum ParamsDto {
         /// older file - is the kind's own default; written only when stated.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         break_through: Option<f64>,
+        /// #2441 (v68): whether `break_through` measures from the full
+        /// cutting diameter (`"full_diameter"`, new default) or the drill
+        /// point tip (`"tip"`, pre-v68 files with the key absent).
+        #[serde(default)]
+        break_through_from: Option<BreakThroughFromDto>,
     },
     /// Declared at v11 with the 3-D pocket. No footprint on the wire:
     /// a 3-D op's machine area is the model's silhouette at generation

@@ -4,7 +4,7 @@
 //! no vendor material consulted.
 
 use super::{Seam, plan_level, rings_tag};
-use crate::cl::PathBuilder;
+use crate::cl::{MoveKind, PathBuilder};
 use crate::entry::Entry3D;
 use crate::geo2d::{Loop, Point2, Region};
 use crate::geometry::Point3;
@@ -46,7 +46,7 @@ fn params(z: f64) -> Pocket3DParams {
 /// The level's notes and whether the HSM plan planned it.
 fn plan(z: f64, seam: Option<&Seam>) -> (Vec<String>, bool, usize) {
     let mut b = PathBuilder::new(Point3::new(0.0, 0.0, z + 5.0));
-    let lp = match plan_level(&mut b, &channel(), &params(z), z, z + 1.0, false, false, seam) {
+    let lp = match plan_level(&mut b, &channel(), &params(z), z, z + 1.0, false, false, seam, None) {
         Ok(lp) => lp,
         Err(e) => panic!("the level is cut: {e}"),
     };
@@ -81,4 +81,31 @@ fn a_developed_level_the_seam_cuts_is_named_by_its_radius() {
     assert!(!hsm, "rings cut the level: {notes:?}");
     let tag = rings_tag("the developed level at radius 6.000");
     assert!(notes.iter().any(|n| n.starts_with(super::SEAM_RINGS) && n.ends_with(&tag)), "{notes:?}");
+}
+
+/// Issue #2468: the air-entry note must follow the tool entry law.
+#[test]
+fn air_entry_note_matches_center_cutting_tool() {
+    let pt = |x, y| Point2::new(x, y);
+    let stock = Region::new(vec![Loop::new(vec![
+        pt(-10.0, -10.0), pt(10.0, -10.0), pt(10.0, 10.0), pt(-10.0, 10.0),
+    ]).expect("stock loop")]).expect("stock region");
+    let center = stock.offset(5.01).expect("air band for the tool radius");
+    for center_cutting in [true, false] {
+        let mut p = params(-2.0);
+        p.links.approach.center_cutting = center_cutting;
+        let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
+        let lp = plan_level(&mut b, &center, &p, -2.0, 1.0, false, false, None, Some(&stock))
+            .expect("air-side HSM plan");
+        assert!(lp.hsm && lp.air_entry, "fixture must plan an air entry");
+        b.push(MoveKind::Plunge, Point3::new(0.0, 0.0, -2.0), Some(p.plunge_feed));
+        let path = b.finish();
+        assert_eq!(path.moves[0].kind, MoveKind::Rapid, "air-entry fixture must obey the approach law");
+        assert_eq!(path.moves[0].from, Point3::new(0.0, 0.0, p.clearance_z));
+        assert_eq!(path.moves[0].to, Point3::new(0.0, 0.0, p.clearance_z));
+        assert!(path.is_chained());
+        let notes = path.notes;
+        assert_eq!(notes.iter().any(|n| n == super::AIR_ENTRY), center_cutting,
+            "air-entry note must match the entry law for center_cutting={center_cutting}: {notes:?}");
+    }
 }

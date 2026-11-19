@@ -319,8 +319,11 @@ fn load_machine(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> 
     }))
 }
 
+/// The library names that have a file in the machine folder now (#2380),
+/// the same scan the Machine page lists.
 fn machine_names() -> Vec<&'static str> {
-    crate::posting::MACHINES.iter().map(|(n, _)| *n).collect()
+    let scan = crate::posting::machine_scan();
+    crate::posting::MACHINES.iter().map(|(n, _)| *n).filter(|n| scan.present.contains(n)).collect()
 }
 
 // ---- input schemas ----------------------------------------------------

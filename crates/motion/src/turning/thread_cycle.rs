@@ -31,7 +31,8 @@ use super::thread::ThreadParams;
 /// - infeed angle: the INCLUDED angle of the compound infeed (twice the
 ///   flank angle; 0 radial); alternating infeed sets `alternating`;
 /// - a plan that repeats every roughing depth (#418) sets
-///   `repeat_each_depth` - no single cycle states it.
+///   `repeat_each_depth` - no single cycle states it; likewise a plan
+///   with chip-break dips (#419) sets `chip_break_dips`.
 ///
 /// A span the builder did not lay as planned gets no record; the
 /// passes still post.
@@ -85,6 +86,7 @@ pub(super) fn attach_cycle(
         pull_out: 0.0,
         alternating: plan.method == InfeedMethod::Alternating,
         repeat_each_depth: plan.repeat_each_depth,
+        chip_break_dips: plan.dips.is_on(),
         first,
         last,
         hand: p.hand,

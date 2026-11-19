@@ -165,8 +165,10 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
             let Some(tool) = &dto.tool else {
                 return Err(corrupt("tool entity without a definition"));
             };
-            if !tool.to_tool().is_sane() {
-                return Err(corrupt(format!("tool parameters are not usable: {tool:?}")));
+            // #1186: name the tool and the rule it breaks, never the
+            // whole definition.
+            if let Some(why) = tool.to_tool().why_not_sane() {
+                return Err(corrupt(format!("tool '{}': {why}", dto.name)));
             }
             // #221: a stated number is a real tool-table number.
             if let Some(n) = tool.number
@@ -215,6 +217,9 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
             }
             if op.label.as_deref().is_some_and(|s| s.trim().is_empty() || s.len() > 120 || s.chars().any(char::is_control)) {
                 return Err(corrupt(format!("'{}' has an invalid operation label", dto.name)));
+            }
+            if op.needs_review.iter().any(|s| s.trim().is_empty() || s.len() > 240 || s.chars().any(char::is_control)) {
+                return Err(corrupt(format!("'{}' has an invalid needs_review note", dto.name)));
             }
             if op.setup.as_deref().is_some_and(str::is_empty) {
                 return Err(corrupt(format!("'{}' names an empty setup", dto.name)));

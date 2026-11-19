@@ -81,12 +81,12 @@ fn pick_in_box(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
     if added == 0 && !replace {
         return Err(format!("every {what} in the box is already picked in '{key}' - nothing changed"));
     }
-    kind_door(op.params.kind().info().label, &op.params, &items)?;
+    kind_door(&env.world, op.params.kind().info().label, &op.params, &items)?;
     let cmd = SetOperationGeometry::new(&env.world, &key, items).map_err(|e| e.to_string())?;
     env.history.execute(&env.world, cmd);
     let mut view = geometry_view(env, &key)?;
     if let Value::Object(m) = &mut view {
-        m.insert("boxed".into(), json!(picks_view(&found)));
+        m.insert("boxed".into(), json!(picks_view(&env.world, &found)));
         m.insert("added".into(), json!(added));
     }
     Ok(view)

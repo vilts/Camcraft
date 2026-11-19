@@ -106,3 +106,38 @@ pub fn bounded(name: &str, params: &OpParams, breaks: Vec<EdgeBreak>) -> Vec<Edg
         })
         .collect()
 }
+
+/// The edge breaks the program declares, in the frame the verdict is
+/// read in: every op's when one frame holds the whole program, only
+/// the final frame's ops' when the program spans setups that hold the
+/// part differently (an earlier frame's bevel is not this frame's).
+/// #2435: a 2D Chamfer's records are credited only where the tip
+/// stands on a wall of `facets` ([`camcraft_sim::stock_sim::on_walls`]);
+/// a dropped one is logged and its columns are judged against the model
+/// as it is.
+pub(crate) fn program_breaks(
+    world: &flecs_ecs::prelude::World,
+    planned: &[super::Planned],
+    spanned: bool,
+    frame: &Option<String>,
+    facets: &[crate::geometry::Triangle],
+    tol: f64,
+) -> Vec<EdgeBreak> {
+    let mut out = Vec::new();
+    for p in planned.iter().filter(|p| !spanned || crate::setup::effective(world, p.setup.as_deref()) == *frame) {
+        if !p.walled {
+            out.extend(p.breaks.iter().cloned());
+            continue;
+        }
+        let kept = camcraft_sim::stock_sim::on_walls(facets, tol, p.breaks.clone());
+        if kept.len() < p.breaks.len() {
+            tracing::warn!(
+                op = %p.name,
+                dropped = p.breaks.len() - kept.len(),
+                "2D Chamfer break whose cone tip stands inside the part, not on a wall - credit dropped, judged against the model (#2435)"
+            );
+        }
+        out.extend(kept);
+    }
+    out
+}

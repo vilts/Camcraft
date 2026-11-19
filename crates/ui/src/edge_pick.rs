@@ -59,8 +59,9 @@ fn toggle(state: &mut State, pick: GeoSel) {
         queue_feature_pick(state, pick, true);
         return;
     };
+    let what = camcraft_app::pick::geo_label(&state.world, &pick);
     items.remove(i);
-    state.status = format!("{} of '{}' removed from {name}", pick.feature, pick.entity);
+    state.status = format!("{what} removed from {name}");
     if items.is_empty() {
         state.pending.push_back(CommandKind::EditOperationLinks { name, tool: None, src: Some(SrcRef::Stock) });
     } else {
@@ -109,12 +110,13 @@ fn take_loop(state: &mut State, pick: GeoSel) {
             g.entity != pick.entity || e.is_empty() || !e.iter().all(|x| ring_edges.contains(x))
         })
         .collect();
+    let what = camcraft_app::pick::geo_label(&state.world, &pick);
     let n = ring.len();
     for r in ring {
         if !items.contains(&r) {
             items.push(r);
         }
     }
-    state.status = format!("{} of '{}' closed around its loop ({n} runs) in {name}", pick.feature, pick.entity);
+    state.status = format!("{what} closed around its loop ({n} runs) in {name}");
     state.pending.push_back(CommandKind::SetOperationGeometry { name, items });
 }

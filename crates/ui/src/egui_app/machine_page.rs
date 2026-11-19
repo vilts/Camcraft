@@ -5,7 +5,8 @@
 //! width. Setup furniture read live off the world singleton - no mirror to
 //! go stale. The overview is exactly what the file stated; a blank is
 //! "not stated", never an invented ceiling. The library combo picks a
-//! shipped machine BY NAME (`LoadBuiltinMachine`), "Load other" reaches
+//! shipped machine BY NAME (`LoadBuiltinMachine`) or one of the user's
+//! own files (`UseCatalogueMachine`, #2358), "Load other" reaches
 //! any `.mch` through the file law (`LoadMachineDialog`), "Edit" opens the
 //! draft editor (`EditMachineDialog`) and "Clear" drops it
 //! (`ClearMachine`); the own / document choice is `SetupOwnMachine`. All
@@ -17,6 +18,7 @@
 
 use egui::{RichText, Ui, Vec2};
 
+use camcraft_app::machine::library::{MachineEntry, MachineSource};
 use camcraft_app::{machine, posting};
 
 use crate::state::{CommandKind, State};
@@ -34,6 +36,9 @@ pub(super) const FILE_HELP: &str = "Pick a library machine, or load a .mch file.
 /// What the page says with no machine loaded.
 pub(super) const NO_MACHINE: &str = "No machine loaded - the checker states, it cannot judge.";
 
+/// The AccessKit name of the page's Refresh button (#2380).
+pub(super) const REFRESH_MACHINES: &str = "Refresh machine list";
+
 /// The page body for setup `ctx` (`None` - the implicit context).
 pub(super) fn machine_page(ui: &mut Ui, state: &mut State, ctx: Option<&str>) {
     group(ui, GROUPS[0], None, |ui| ownership(ui, state, ctx, Mount::Machine));
@@ -41,7 +46,7 @@ pub(super) fn machine_page(ui: &mut Ui, state: &mut State, ctx: Option<&str>) {
     let names: Vec<&str> = posting::MACHINES.iter().map(|(n, _)| *n).collect();
     group(ui, GROUPS[1], None, |ui| {
         ui.label(RichText::new(FILE_HELP).small().weak());
-        library_row(ui, state, &path, &names);
+        library_row(ui, state, &path);
         match &m {
             Some(m) => {
                 let source = if path.is_empty() {
@@ -62,25 +67,69 @@ pub(super) fn machine_page(ui: &mut Ui, state: &mut State, ctx: Option<&str>) {
     group(ui, GROUPS[2], None, |ui| actions(ui, state, m.is_some()));
 }
 
-/// Library | combo on one row (the page's label column).
-fn library_row(ui: &mut Ui, state: &mut State, path: &str, names: &[&str]) {
-    let sel: Option<usize> = names.iter().position(|n| path == posting::builtin_path(n));
-    let text = sel.and_then(|i| names.get(i)).map_or("other", |n| *n).to_owned();
-    let mut pick: Option<String> = None;
+/// A library entry's words (#2358): a shipped machine by its name; a
+/// file by its name and file name, so it cannot pass for a shipped one,
+/// and a refused file with its first refusal.
+pub(crate) fn library_label(e: &MachineEntry) -> String {
+    let MachineSource::File(p) = &e.source else { return e.name.clone() };
+    let file = p.file_name().map_or_else(|| p.display().to_string(), |n| n.to_string_lossy().into_owned());
+    match e.refusals.first() {
+        None => format!("{} ({file})", e.name),
+        Some(first) => format!("{} ({file}) - refused: {first}", e.name),
+    }
+}
+
+/// Library | combo on one row (the page's label column). The list is
+/// the Machines pane's catalogue (#2358): the user's own files first -
+/// a user who made a machine most likely wants it - then the shipped
+/// library. A refused file is listed but cannot be picked.
+fn library_row(ui: &mut Ui, state: &mut State, path: &str) {
+    super::machines_pane::refresh(state);
+    let list: &[MachineEntry] = state.machines_pane.list.as_deref().unwrap_or(&[]);
+    let (mine, shipped): (Vec<&MachineEntry>, Vec<&MachineEntry>) =
+        list.iter().partition(|e| matches!(e.source, MachineSource::File(_)));
+    let current = list.iter().find(|e| !path.is_empty() && e.source.mount_path() == path);
+    let text = current.map_or_else(|| "other".to_owned(), library_label);
+    let mut pick: Option<MachineSource> = None;
+    let mut reread = false;
     prop_grid(ui, "machine_library_grid", |ui| {
         ui.label("Library");
         let cb = egui::ComboBox::from_id_salt("machine_library").selected_text(text).show_ui(ui, |ui| {
-            for (i, n) in names.iter().enumerate() {
-                if ui.selectable_label(sel == Some(i), *n).clicked() {
-                    pick = Some((*n).to_owned());
+            for (i, group) in [&mine, &shipped].into_iter().enumerate() {
+                if i == 1 && !mine.is_empty() && !shipped.is_empty() {
+                    ui.separator();
+                }
+                for e in group {
+                    let on = current.is_some_and(|c| c.source == e.source);
+                    let r = ui.add_enabled(e.is_valid(), egui::Button::selectable(on, library_label(e)));
+                    if r.clicked() && !on {
+                        pick = Some(e.source.clone());
+                    }
                 }
             }
         });
+        // Opening the list reads the folder again: a file saved outside
+        // the app shows up without a remount.
+        reread = cb.response.clicked();
         super::fields::named(cb.response, "Machine library");
         ui.end_row();
+        ui.label("");
+        let refresh = ui.button("Refresh").on_hover_text("Read the machine folder again");
+        if super::fields::named(refresh, REFRESH_MACHINES).clicked() {
+            // #2380: read the shipped folder again, then list the catalogue
+            // again (its shipped part is that scan).
+            posting::rescan();
+            reread = true;
+        }
+        ui.end_row();
     });
-    if let Some(name) = pick {
-        state.pending.push_back(CommandKind::LoadBuiltinMachine(name));
+    if reread {
+        state.machines_pane.list = None;
+    }
+    match pick {
+        Some(MachineSource::Builtin(name)) => state.pending.push_back(CommandKind::LoadBuiltinMachine(name.to_owned())),
+        Some(source) => state.pending.push_back(CommandKind::UseCatalogueMachine(source)),
+        None => {}
     }
 }
 

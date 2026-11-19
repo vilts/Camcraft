@@ -259,3 +259,154 @@ impl State {
         self.feedback_ctx = None;
     }
 }
+
+impl State {
+    fn clear_tool_scope_refusal(&mut self) {
+        if self.feedback.as_ref().is_some_and(|(s, _)| *s == ErrorScope::Tool) {
+            if let Some((_, msg)) = self.feedback.take()
+                && self.status == msg
+            {
+                self.status = String::from("ready");
+            }
+            self.feedback_ctx = None;
+        }
+    }
+
+    fn export_profile_dxf_string(&self) -> Result<String, String> {
+        if !self.tool_profile_ui.points.is_empty() {
+            let spun = SpunProfile::new(self.tool_profile_ui.points.clone())
+                .map_err(|e| format!("holder profile invalid: {e}"))?;
+            return camcraft_app::tool_profile_dxf::spun_to_dxf(&spun);
+        }
+        if let Some(body) = self.editor_tool_body() {
+            return camcraft_app::tool_profile_dxf::tool_body_to_dxf(&body);
+        }
+        Err("no holder body or spun profile to export".into())
+    }
+
+    fn apply_imported_spun(&mut self, spun: SpunProfile, label: &str) {
+        self.sync_tool_profile_ui();
+        self.tool_profile_ui.points = spun.points().to_vec();
+        self.tool_profile_ui.custom = true;
+        self.tool_profile_ui.refused = None;
+        self.clear_tool_scope_refusal();
+        self.status = format!("tool {}: loaded half-profile from {label}; edit or Apply profile", self.tool_ui.name);
+    }
+
+    /// "Import DXF…": pick an ASCII DXF file and load its half-profile.
+    pub(crate) fn import_profile_dxf_dialog(&mut self) {
+        if self.refuse_in_browser(crate::browser_files::NEEDS_PICKER) {
+            return;
+        }
+        if let Some(path) = crate::file_dialog::FileDialog::new()
+            .add_filter("DXF", &["dxf", "DXF"])
+            .pick_file()
+        {
+            self.import_profile_dxf_from(&path);
+        }
+    }
+
+    /// Load a DXF half-profile from `path` into the Custom profile editor.
+    pub(crate) fn import_profile_dxf_from(&mut self, path: &std::path::Path) {
+        let label = path.file_name().and_then(|s| s.to_str()).unwrap_or("DXF");
+        match std::fs::read(path)
+            .map_err(|e| format!("DXF unreadable: {e}"))
+            .and_then(|bytes| camcraft_app::tool_profile_dxf::dxf_to_spun(&bytes))
+        {
+            Ok(spun) => self.apply_imported_spun(spun, label),
+            Err(err) => self.refuse(ErrorScope::Tool, format!("DXF half-profile not imported: {err}")),
+        }
+    }
+
+    /// "Export DXF…": pick a path and write the current profile as ASCII DXF.
+    pub(crate) fn export_profile_dxf_dialog(&mut self) {
+        if self.refuse_in_browser(crate::browser_files::NO_EXPORT) {
+            return;
+        }
+        let default_name = format!(
+            "{}_holder.dxf",
+            if self.tool_ui.name.trim().is_empty() { "tool" } else { self.tool_ui.name.trim() }
+        );
+        if let Some(path) = crate::file_dialog::FileDialog::new()
+            .add_filter("DXF", &["dxf"])
+            .set_file_name(&default_name)
+            .save_file()
+            && let Err(err) = self.export_profile_dxf_to(&path)
+        {
+            self.refuse(ErrorScope::Tool, format!("DXF not exported: {err}"));
+        }
+    }
+
+    /// Write the active half-profile or tool body to `path` as ASCII DXF (mm).
+    pub(crate) fn export_profile_dxf_to(&self, path: &std::path::Path) -> Result<(), String> {
+        let dxf = self.export_profile_dxf_string()?;
+        std::fs::write(path, dxf).map_err(|e| format!("failed to write DXF: {e}"))
+    }
+
+    /// "Import STEP…": pick a STEP file with ISO 13399 CSYS and convert to profile.
+    pub(crate) fn import_step_profile_dialog(&mut self) {
+        if self.refuse_in_browser(crate::browser_files::NEEDS_PICKER) {
+            return;
+        }
+        if let Some(path) = crate::file_dialog::FileDialog::new()
+            .add_filter("STEP", &["step", "stp", "STEP", "STP"])
+            .pick_file()
+        {
+            self.import_step_profile_from(&path);
+        }
+    }
+
+    /// Convert an ISO 13399 aligned STEP body from `path` into the Custom profile editor.
+    pub(crate) fn import_step_profile_from(&mut self, path: &std::path::Path) {
+        let label = path.file_name().and_then(|s| s.to_str()).unwrap_or("STEP");
+        match camcraft_app::tool_profile_dxf::step_to_spun_profile(path) {
+            Ok(spun) => self.apply_imported_spun(spun, label),
+            Err(err) => self.refuse(ErrorScope::Tool, format!("STEP profile not imported: {err}")),
+        }
+    }
+
+    /// Body tab "Convert to profile": require an explicit/ISO 13399 axis, envelope
+    /// conservatively into an editable half-profile, and land it via `SetToolBody`.
+    pub(crate) fn convert_body_draft_to_profile(&mut self) {
+        let d = &self.tool_body_ui;
+        if d.facets.is_empty() {
+            self.refuse(ErrorScope::Tool, "cannot convert body: no body draft loaded".into());
+            return;
+        }
+        if d.lathe.is_some() {
+            self.refuse(
+                ErrorScope::Tool,
+                "cannot convert body: lathe tool bodies have no revolved spindle half-profile".into(),
+            );
+            return;
+        }
+        if let Some(reason) = d.align_note.as_deref().and_then(|s| s.strip_prefix("numeric placement (")) {
+            let why = reason.strip_suffix(')').unwrap_or(reason);
+            self.refuse(
+                ErrorScope::Tool,
+                format!("cannot convert body to half-profile without a clear tool axis ({why}) - align by ISO 13399 CSYS or set axis and tip first"),
+            );
+            return;
+        }
+        let name = self.tool_ui.name.clone();
+        let res = SetToolBody::from_placed_profile(
+            &self.world,
+            &name,
+            &d.source,
+            &d.facets,
+            d.axis,
+            d.offset,
+        );
+        match res {
+            Ok(command) => {
+                self.history.execute(&self.world, command);
+                self.doc_version += 1;
+                self.clear_tool_scope_refusal();
+                self.sync_tool_profile_ui();
+                self.tool_profile_ui.column = ToolColumn::Profile;
+                self.status = format!("tool {name}: converted body to half-profile");
+            }
+            Err(err) => self.refuse(ErrorScope::Tool, format!("holder profile not converted: {err}")),
+        }
+    }
+}

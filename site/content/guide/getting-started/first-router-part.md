@@ -38,7 +38,7 @@ camcraft-cli process examples/first-router-part.camproj -o first-router-part.nc
    `Z = 12` in document coordinates). In posted G-code (`G54`), every X/Y
    coordinate stays positive inside `0..200 mm × 0..160 mm`. Cutting depths
    are negative relative to the sheet top: the contour reaches `-12 mm`, and
-   the drill reaches `-13 mm` for breakthrough, `1 mm` below the `12 mm` stock.
+   the drill reaches `-14.803 mm` for breakthrough (`1 mm` past full diameter plus `1.803 mm` for the `118°` drill point below the `12 mm` stock).
    This matches a corner Z touch plate or zero puck resting on the sheet. See
    [Units and coordinates](@/guide/reference/units-and-coordinates.md) for
    more on WCS orientation.
@@ -72,8 +72,9 @@ part rigid until the very last cut (see
    **Cycle** on `Auto` (`grblhal.cps` posts `G73` chip-break peck when a `4 mm`
    peck is set), **Clearance** at `Top of stock + 15 mm`, **Retract** at
    `Top of stock + 5 mm`, and **Coolant = Off**. The detected through-holes
-   include `1 mm` breakthrough below the `12 mm` stock: the posted drill
-   bottom is `-13 mm` in `G54` (`G73 X53 Y50 Z-13 R0 Q4 F150` for the
+   include `1 mm` breakthrough past full diameter (plus the `1.803 mm` `118°`
+   drill point) below the `12 mm` stock: the posted drill bottom is
+   `-14.803 mm` in `G54` (`G73 X53 Y50 Z-14.803 R0 Q4 F150` for the
    first hole). Check this depth before running the drill.
 2. **`2D Pocket1` (Milling 2D > 2D Pocket).** Pick the floor face of the
    `50 × 30 × 4 mm` central recess using `EM-0600-4FL`. Use `Waterline`
@@ -101,7 +102,8 @@ and check **Deviate**:
 - Small `3 mm` inside corner fillets stay uncut inside sharp `90°` pocket
   corners (excess material left by a `6 mm` round end mill, not a gouge).
 - Check clearance for both the contour (`-12 mm` Z in `G54`) and the drill
-  breakthrough (`-13 mm` Z), `1 mm` below the `12 mm` stock. Confirm the
+  breakthrough (`-14.803 mm` Z: `1 mm` past full diameter plus the `1.803 mm`
+  drill point below the `12 mm` stock). Confirm the
   spoilboard permits this penetration and all screws and other fasteners stay
   clear of the drill and contour paths through their full cutting depths.
 

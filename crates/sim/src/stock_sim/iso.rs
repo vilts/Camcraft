@@ -94,7 +94,7 @@ pub fn extract_with(f: &SdfField, step: f64, method: IsoMethod) -> Result<Vec<Tr
             if open == 0 {
                 Ok(tris)
             } else {
-                eprintln!("iso-surface: the dual mesh has {open} open edges - marching tetrahedra stands in");
+                tracing::warn!("iso-surface: the dual mesh has {open} open edges - marching tetrahedra stands in");
                 Ok(marching(&g))
             }
         }

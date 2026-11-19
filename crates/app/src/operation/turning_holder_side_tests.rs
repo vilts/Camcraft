@@ -169,3 +169,36 @@ fn the_drawn_body_flips_its_radial_with_the_holder_side() -> Result<(), String> 
     assert_eq!(crate::operation::turning_holder::body_axes(&part, &path_of(thread_pass(8.0, 8.0, 5.5))).map(|a| a.0), Ok(front));
     Ok(())
 }
+
+#[test]
+fn a_thread_dip_radius_ramp_is_judged_with_a_holder_body() -> Result<(), String> {
+    let dipped = |start: f64, out: f64, tip: f64| {
+        let mut moves = thread_pass(start, out, tip);
+        // One outward/inward dip across two synchronized half turns,
+        // matching the generator's changing endpoint radii.
+        let peak = tip.signum() * (tip.abs() + 0.3);
+        moves[4].to.x = peak;
+        moves[5].from.x = peak;
+        moves
+    };
+    let front = dipped(8.0, 8.0, 5.5);
+    assert_eq!(
+        hits_on([3.0, 12.0], front.clone()),
+        Ok(vec![]),
+        "an outward holder is clear throughout the dipped thread"
+    );
+    let front_hits = hits_on([-12.0, -3.0], front)?;
+    for at in [4, 5] {
+        assert!(
+            front_hits.contains(&(at, true)),
+            "the holder must still detect the part on radius ramp {at}: {front_hits:?}"
+        );
+    }
+    assert_eq!(hits_on([3.0, 12.0], dipped(0.5, -8.0, -5.5)), Ok(vec![]));
+    assert_eq!(
+        hits_on([-12.0, -3.0], dipped(0.5, -8.0, -5.5))?,
+        front_hits,
+        "front and rear holders read the same synchronized dip"
+    );
+    Ok(())
+}

@@ -17,7 +17,7 @@ use camcraft_motion::cl::{MoveKind, Toolpath};
 use camcraft_motion::geo2d::{Loop, Point2, Region};
 use camcraft_motion::geometry::{Point3, Triangle};
 use camcraft_motion::machining2d::PocketStrategy;
-use camcraft_motion::machining3d::{open_sides, pocket3d_offset_prev, pocket3d_prev, Entry3D, Pocket3DParams};
+use camcraft_motion::machining3d::{open_sides, pocket3d_offset_prev, pocket3d_prev, stock_band, Entry3D, Pocket3DParams};
 use camcraft_motion::stock_sim::{Columns, Dexel};
 
 /// The cutter radius.
@@ -58,7 +58,7 @@ fn notched_part() -> Vec<Triangle> {
 /// grown past its open sides (`open_sides`, the #1749 law).
 fn footprint(f: &[Triangle]) -> Region {
     let silhouette = camcraft_motion::geometry::slice::project(f, 64).expect("silhouette");
-    open_sides(&silhouette, R, &Region::empty(), None).expect("open sides")
+    open_sides(&silhouette, R, &Region::empty(), None, stock_band(R, false)).expect("open sides")
 }
 
 /// What the op ahead left: an outside profile cleared every column
@@ -255,7 +255,7 @@ fn filleted_notch_after_outside_profile_clears_open_edge_corner_for_jaws() {
         .expect("stock loop"),
     ])
     .expect("stock region");
-    let region = open_sides(&silhouette, r, &Region::empty(), Some(&stock_rect)).expect("open sides");
+    let region = open_sides(&silhouette, r, &Region::empty(), Some(&stock_rect), stock_band(r, false)).expect("open sides");
 
     // Outside-profile mask: cleared outside silhouette + 0.254 mm down to Z 3.81
     // at auto_cell(3.175, 35.08, 35.08) = 0.396875 mm.
@@ -361,7 +361,7 @@ fn floor_fillet_part() -> (Vec<Triangle>, Region) {
         tris.push(Triangle::new(p(x0, -15.0, z0), p(x1, 15.0, z1), p(x0, 15.0, z0)));
     }
     let sil = camcraft_motion::geometry::slice::project(&tris, 64).expect("floor fillet sil");
-    let reg = open_sides(&sil, 3.175, &Region::empty(), None).expect("floor fillet open sides");
+    let reg = open_sides(&sil, 3.175, &Region::empty(), None, stock_band(3.175, false)).expect("floor fillet open sides");
     (tris, reg)
 }
 

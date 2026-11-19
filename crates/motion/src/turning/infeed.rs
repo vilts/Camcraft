@@ -32,6 +32,7 @@
 use crate::machining2d::GenError;
 
 use super::blade;
+pub use super::thread_dips::ThreadDips;
 
 /// The most spring passes a plan may ask for - a two-digit finishing
 /// count is what the lathe cycles carry (99 finishing passes, one of
@@ -86,6 +87,10 @@ pub struct ThreadInfeed {
     /// spring passes at the root are not repeated. Off by default -
     /// tooling makers advise against routine spring passes.
     pub repeat_each_depth: bool,
+    /// In-pass chip-break dips on the roughing passes (issue #419), off
+    /// by default. G32 passes on a post that declares continuous
+    /// threading only.
+    pub dips: ThreadDips,
 }
 
 impl Default for ThreadInfeed {
@@ -102,6 +107,7 @@ impl Default for ThreadInfeed {
             finish_allowance: 0.0,
             spring_passes: 0,
             repeat_each_depth: false,
+            dips: ThreadDips::default(),
         }
     }
 }
@@ -127,6 +133,9 @@ impl ThreadInfeed {
         let a = self.allowance_refusal(depth);
         if a.is_some() {
             return a;
+        }
+        if let Some(why) = self.dips.refusal(first_depth) {
+            return Some(why);
         }
         if self.spring_passes > MAX_SPRING_PASSES {
             return Some(format!(
@@ -202,6 +211,7 @@ impl ThreadInfeed {
             && self.finish_allowance.is_finite()
             && self.finish_allowance >= 0.0
             && self.spring_passes <= MAX_SPRING_PASSES
+            && self.dips.is_sane()
     }
 
     /// The pass list from the crest `ref_top` down to the `root`, the

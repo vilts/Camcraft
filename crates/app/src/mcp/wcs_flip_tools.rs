@@ -1,8 +1,9 @@
 //! The MCP WCS flip tool (#1720): set which axes of a setup's one WCS run
 //! reversed, through the same undoable `SetWcsFlip` the WCS page's Flip
 //! X / Flip Y / Flip Z buttons queue. An axis not given keeps its flag.
-//! A flipped WCS is refused at post and at generation by name
-//! (`setup_wcs_flip`); this tool states that in its reply.
+//! The post mirrors the program on a flipped X or Y (#1649); a case it
+//! does not carry is refused by name (`setup_wcs_flip`), and this tool
+//! states that refusal in its reply.
 //!
 //! Provenance: our own tool surface over this repo's WCS model; no
 //! vendor material consulted.
@@ -18,7 +19,7 @@ use serde_json::{Map, Value, json};
 
 pub(super) const TOOLS: &[Tool] = &[Tool {
     name: "set_wcs_flip",
-    description: "Set which axes of a setup's work coordinate system run reversed (a flip: X+ becomes X-), as the WCS page's Flip X, Flip Y and Flip Z buttons do. Give x, y and/or z as true (flipped) or false (normal); an axis not given keeps its flag. The origin and rotation do not change. One undo step. Posting or generating with a flipped WCS is not available yet: the post and every generation in that setup are refused by name until the flip is cleared. Refused by name: no flag given, a flag that is not a boolean, an unknown setup.",
+    description: "Set which axes of a setup's work coordinate system run reversed (a flip: X+ becomes X-), as the WCS page's Flip X, Flip Y and Flip Z buttons do. Give x, y and/or z as true (flipped) or false (normal); an axis not given keeps its flag. The origin and rotation do not change. One undo step. Toolpaths do not change. The post mirrors the program on a flipped X or Y: coordinate signs, arc direction and cutter compensation side. The reply's refused field is null when the flip is carried, else it holds why the post refuses it: a flipped Z, a WCS that is also rotated, or a post not verified for a mirrored program (Fanuc and Haas are). Refused by name: no flag given, a flag that is not a boolean, an unknown setup.",
     schema: s_set_wcs_flip,
     run: set_wcs_flip,
 }];
@@ -61,7 +62,12 @@ fn set_wcs_flip(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> 
         "setup": target,
         "label": setup::wcs_label(w, target.as_deref()),
         "flip": flip_view(flip),
-        "refused": setup_wcs_flip::setup_problem(w, target.as_deref()),
+        // #1649: the setup's own refusal, else each operation the post
+        // refuses in it (probing, rotary, turning ...); null when it posts.
+        "refused": setup_wcs_flip::setup_problem(w, target.as_deref()).or_else(|| {
+            let ops = setup_wcs_flip::setup_post_problems(w, target.as_deref());
+            (!ops.is_empty()).then(|| ops.join("; "))
+        }),
     }))
 }
 

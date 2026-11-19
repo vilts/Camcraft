@@ -5,8 +5,8 @@
 # pull_request, pull_request_target or schedule (maintainer, 2026-11-13: "Can
 # we setup a build test post merge using local gh runner?"; a push to main
 # only carries merged, reviewed code, so no fork can run code on the runner).
-# Sharing the one runner with the cut: this workflow yields. A burst of merges
-# tests only the newest head (cancel-in-progress), and a run skips itself
+# Sharing the one runner with the cut: this workflow yields. The running gate
+# finishes; newer merges replace the single pending run. A run skips itself
 # (green, with a notice) while a cut.yml run is queued or running or a
 # release/vX.Y.Z PR from this repo is open (.github/scripts/post-merge-skip.sh).
 # The release gate of the cut covers main's state then. A cut therefore never
@@ -39,7 +39,7 @@ permissions:
 # cancelled by) the gate of main.
 concurrency:
   group: post-merge-${{ github.event_name == 'push' && 'main' || inputs.ref || 'main' }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   gate:

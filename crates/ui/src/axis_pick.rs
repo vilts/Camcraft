@@ -223,29 +223,34 @@ pub fn take(state: &mut State, pick: GeoSel) {
         FeatureSel::Chain(_) => camcraft_app::pick::centre_point(&state.world, &pick).err(),
         _ => None,
     };
+    let words = camcraft_app::pick::geo_label(&state.world, &pick);
     let Some(d) = state.axis_pick.as_mut() else { return };
     let Some(axis) = d.picking else { return };
     d.applied = false;
     let by = d.by(axis);
     let setup = d.setup.clone();
-    let words = format!("that pick on '{}'", pick.entity); // #738: no internal id
     let refuse = |what: &str| format!("{setup}: {words} is {what} - {} takes {}", axis.label(), by.noun());
     let status = match (by, pick.feature) {
         (AxisBy::Edge, FeatureSel::Chain(_)) => {
             d.slot(axis).picks = vec![pick];
-            format!("{setup}: edge picked for {}", axis.label())
+            format!("{setup}: {words} picked for {}", axis.label())
         }
         // #692: a round edge picked for its centre is a point; any other
         // edge is refused with the reason.
         (AxisBy::Points, FeatureSel::Chain(_)) if no_centre.is_some() => {
-            format!("{setup}: {}", no_centre.as_deref().unwrap_or_default())
+            format!("{setup}: {words}: {}", no_centre.as_deref().unwrap_or_default())
         }
         (AxisBy::Points, FeatureSel::Vertex(_) | FeatureSel::Chain(_)) => {
             let picks = &mut d.slot(axis).picks;
             picks.push(pick);
             let extra = picks.len().saturating_sub(2);
             picks.drain(..extra);
-            format!("{setup}: {} point{} for {}", picks.len(), if picks.len() == 1 { "" } else { "s" }, axis.label())
+            format!(
+                "{setup}: {words} ({} point{} for {})",
+                picks.len(),
+                if picks.len() == 1 { "" } else { "s" },
+                axis.label()
+            )
         }
         (_, FeatureSel::Face(_) | FeatureSel::Patch(_)) => refuse("a face (a face sets no direction)"),
         (AxisBy::Edge, FeatureSel::Vertex(_)) => refuse("a point"),

@@ -43,6 +43,7 @@ fn a_constant_area_flank_g76_states_its_verified_passes() {
         finish_allowance: 0.05,
         spring_passes: 1,
         repeat_each_depth: false,
+        dips: Default::default(),
     };
     let world = g76_world(0.4, plan);
     let (text, refused) = post(&world);

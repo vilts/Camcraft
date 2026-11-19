@@ -17,10 +17,11 @@ use crate::operation::{
 };
 use crate::script::{fnum, Env};
 
+use flecs_ecs::prelude::World;
 use serde_json::{json, Map, Value};
 
 /// The controls as the tools show and take them.
-pub(super) fn area_view(a: &AreaControls) -> Value {
+pub(super) fn area_view(w: &World, a: &AreaControls) -> Value {
     json!({
         "containment": a.containment.map(|c| match c {
             Containment::Inside => "inside",
@@ -33,13 +34,13 @@ pub(super) fn area_view(a: &AreaControls) -> Value {
         "extra": a.extra.iter().map(|b| {
             let mode = match b.mode { BoundaryMode::Include => "include", BoundaryMode::Exclude => "exclude" };
             match &b.shape {
-                BoundaryShape::Picks(p) => json!({ "mode": mode, "from": "picks", "picks": picks_view(p) }),
+                BoundaryShape::Picks(p) => json!({ "mode": mode, "from": "picks", "picks": picks_view(w, p) }),
                 BoundaryShape::Stock => json!({ "mode": mode, "from": "stock" }),
                 BoundaryShape::Silhouette => json!({ "mode": mode, "from": "silhouette" }),
             }
         }).collect::<Vec<_>>(),
         "open": a.open.as_ref().map(|o| json!({
-            "picks": picks_view(&o.picks),
+            "picks": picks_view(w, &o.picks),
             "side": match o.side { ChainSide::Inside => "inside", ChainSide::Outside => "outside" },
         })),
     })

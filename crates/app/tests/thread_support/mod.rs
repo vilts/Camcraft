@@ -111,6 +111,7 @@ pub fn drill(radius: f64, floor: f64) -> OpParams {
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius, entry_z: TOP, floor_z: floor, through: false, stepped: false };
     OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(TOP + 10.0),
         retract_z: None,
         top_z: Height::fixed(TOP),

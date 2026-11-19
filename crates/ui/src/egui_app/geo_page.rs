@@ -145,6 +145,9 @@ fn chips(ui: &mut Ui, state: &mut State, target: &str, pal: &Tokens) {
         };
         let row = ui
             .horizontal(|ui| {
+                // #1688: the remove button comes first, so it stays in reach
+                // however long the label is or however narrow the panel.
+                let x = ui.small_button("×").on_hover_text("remove this pick");
                 // M13.4 stage 2 hook: a picked corner can place the WCS
                 // slot chosen in the WCS pane, through SetWcsOrigin.
                 if let Some((entity, id)) = &vertex
@@ -170,12 +173,14 @@ fn chips(ui: &mut Ui, state: &mut State, target: &str, pal: &Tokens) {
                         crate::vertex_pick::queue_origin_at_face(state, entity, *feat, true);
                     }
                 }
-                let resp = if missing {
-                    ui.colored_label(text_inks(ui, &state.world).missing, &label)
+                // The label takes the width left and is shortened to fit
+                // (#1688); hovering a shortened label shows it whole.
+                let text = if missing {
+                    RichText::new(&label).color(text_inks(ui, &state.world).missing)
                 } else {
-                    ui.label(&label)
+                    RichText::new(&label)
                 };
-                let x = ui.small_button("×").on_hover_text("remove this pick");
+                let resp = ui.add(egui::Label::new(text).truncate());
                 // #1507: the label, the remove button and the row's other
                 // buttons all light the pick: "which one am I removing?".
                 if resp.hovered() || x.hovered() {

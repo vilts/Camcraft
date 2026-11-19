@@ -6,7 +6,7 @@ use super::*;
 use wgpu::{Backend, DeviceType};
 
 fn a(name: &str, vendor: u32, ty: DeviceType, backend: Backend, ok: bool) -> AdapterDesc {
-    AdapterDesc { name: name.into(), vendor, device: 1, device_type: ty, backend, surface_ok: ok }
+    AdapterDesc { name: name.into(), vendor, device: 1, device_type: ty, backend, driver: String::new(), driver_info: String::new(), surface_ok: ok }
 }
 
 /// Intel UHD + Quadro P3200 as an Optimus laptop enumerates them, Vulkan
@@ -23,6 +23,28 @@ fn hybrid() -> Vec<AdapterDesc> {
 
 fn names(list: &[AdapterDesc], idx: &[usize]) -> Vec<String> {
     idx.iter().map(|&i| format!("{}/{}", list[i].name, crate::egui_app::gpu::backend_name(list[i].backend))).collect()
+}
+
+#[test]
+fn startup_adapter_log_names_the_gpu_backend_and_driver() {
+    let mut info = wgpu::AdapterInfo::new(DeviceType::IntegratedGpu, Backend::Vulkan);
+    info.name = "AMD Radeon test adapter".into();
+    info.vendor = 0x1002;
+    info.device = 0x164e;
+    info.driver = "AMD test driver".into();
+    info.driver_info = "Adrenalin test version".into();
+    let line = AdapterDesc::from_info(&info, true).log_line();
+    for wanted in ["AMD Radeon test adapter", "0x1002", "vulkan", "AMD test driver", "Adrenalin test version"] {
+        assert!(line.contains(wanted), "startup log omits {wanted}: {line}");
+    }
+}
+
+#[test]
+fn startup_gpu_refusal_names_backend_retry_flags() {
+    let text = refusal(&[], &[]);
+    for retry in ["--gpu-backend dx12", "--gpu-backend vulkan", "--gpu-backend gl"] {
+        assert!(text.contains(retry), "GPU startup refusal omits {retry}: {text}");
+    }
 }
 
 #[test]

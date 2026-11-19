@@ -107,6 +107,20 @@ one of three states (shown by its browser icon):
   Generate it again.
 - {{ <icon name="badge-ok" /> }} **Generated:** the cached toolpath matches its inputs.
 
+In the desktop app, a toolpath generates in the background. While it runs,
+a panel at the top centre of the viewport shows **Generating** with the
+operation's name, "(2 of 5)" when more operations wait their turn, the
+seconds it has run, an activity bar and a **Cancel generation** button. The
+panel goes away when the toolpath lands, when generation is refused (the
+message stays in the status line), or when you cancel. Cancel keeps the old
+toolpath and drops the operations that wait.
+
+The window stays usable meanwhile: you can turn the view, select and edit.
+If you edit, undo or delete the operation while it generates, its result is
+discarded and the status line asks you to generate it again, so an old
+result never overwrites newer settings. **Regenerate all stale** still runs
+in one step, without the panel.
+
 When CamCraft cannot compute a safe path for some part of an operation {{ <icon name="badge-warning" /> }}, it
 does not hand you a partial or guessed one: generation stops with a
 message that names the setting or the geometry at fault. Moves the checks

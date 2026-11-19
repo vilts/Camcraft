@@ -117,14 +117,14 @@ pub fn align_roles(world: &World, picks: &[(GeoSel, Role)]) -> Result<Alignment,
             }
         }
     }
-    let a = d1.dir.ok_or_else(|| format!("{} of '{}' sets no axis - re-pick it", g1.feature, g1.entity))?;
+    let a = d1.dir.ok_or_else(|| format!("{} sets no axis - re-pick it", super::geo_label(world, g1)))?;
     // Normalise right after reading: a Chain datum's direction is the
     // raw edge walk, so it carries the edge's length. Reading it raw left
     // the frame scaled and `quat_from_axes` returned a silently wrong
     // rotation for a part tipped off the table.
     let a_len = norm(a);
     if !(a_len.is_finite() && a_len > 0.0) {
-        return Err(format!("{} of '{}' has no length - re-pick it", g1.feature, g1.entity));
+        return Err(format!("{} has no length - re-pick it", super::geo_label(world, g1)));
     }
     let a = scale(a, 1.0 / a_len);
     // The projection maths is #187's step for step, so a role table with
@@ -136,15 +136,15 @@ pub fn align_roles(world: &World, picks: &[(GeoSel, Role)]) -> Result<Alignment,
     // never the projected one.
     let (x, y, z) = match (frame[0].1, frame[1].1) {
         (Role::Z, Role::X) => {
-            let x = square_to(g2, d2.dir, a, tilt)?;
+            let x = square_to(world, g2, d2.dir, a, tilt)?;
             (x, cross(a, x), a)
         }
         (Role::Z, Role::Y) => {
-            let y = square_to(g2, d2.dir, a, tilt)?;
+            let y = square_to(world, g2, d2.dir, a, tilt)?;
             (cross(y, a), y, a)
         }
         (Role::X, Role::Y) => {
-            let y = square_to(g2, d2.dir, a, tilt)?;
+            let y = square_to(world, g2, d2.dir, a, tilt)?;
             (a, y, cross(a, y))
         }
         _ => return Err("two different axes set the frame - re-pick one of them".into()),
@@ -177,15 +177,15 @@ pub fn align_roles(world: &World, picks: &[(GeoSel, Role)]) -> Result<Alignment,
 /// The second axis pick, projected square to the first: #187's maths -
 /// project, check the lean against `tilt` (already a sine), normalize.
 /// Refused by name when the two picks stand too near parallel.
-fn square_to(g: &GeoSel, d: Option<[f64; 3]>, axis: [f64; 3], tilt: f64) -> Result<[f64; 3], String> {
-    let d = d.ok_or_else(|| format!("{} of '{}' sets no axis - re-pick it", g.feature, g.entity))?;
+fn square_to(world: &World, g: &GeoSel, d: Option<[f64; 3]>, axis: [f64; 3], tilt: f64) -> Result<[f64; 3], String> {
+    let d = d.ok_or_else(|| format!("{} sets no axis - re-pick it", super::geo_label(world, g)))?;
     let len = norm(d);
     let ex = sub(d, scale(axis, dot(d, axis)));
     let ex_len = norm(ex);
     if !len.is_finite() || len <= 0.0 || ex_len < len * tilt {
         return Err(format!(
-            "{} of '{}' is too near parallel to the first axis - pick picks that lean apart",
-            g.feature, g.entity
+            "{} is too near parallel to the first axis - pick picks that lean apart",
+            super::geo_label(world, g)
         ));
     }
     Ok(scale(ex, 1.0 / ex_len))
@@ -207,12 +207,12 @@ fn datum_for(world: &World, g: &GeoSel, role: Role) -> Result<Datum, String> {
             ends: None,
         }),
         (FeatureSel::Vertex(_), _) => Err(format!(
-            "{} of '{}' sets no axis - pick a face, a straight edge or a wall for it",
-            g.feature, g.entity
+            "{} sets no axis - pick a face, a straight edge or a wall for it",
+            super::geo_label(world, g)
         )),
         (FeatureSel::Chain(_), Role::Origin) => Err(format!(
-            "{} of '{}' sets an axis - pick a vertex or a wall for the origin",
-            g.feature, g.entity
+            "{} sets an axis - pick a vertex or a wall for the origin",
+            super::geo_label(world, g)
         )),
         (FeatureSel::Chain(_), _) => {
             let (a, b) = straight_edge(world, g, pose, &format!("for {}", role.label()))?;
@@ -243,9 +243,9 @@ fn datum_for(world: &World, g: &GeoSel, role: Role) -> Result<Datum, String> {
 /// face, so the origin is never projected onto it.
 fn wall_datum(world: &World, g: &GeoSel, role: Role) -> Result<Datum, String> {
     let e = model::find_by_name(world, &g.entity)
-        .ok_or_else(|| gone(g))?;
+        .ok_or_else(|| gone(world, g))?;
     let feats = model::features_of(world, &e)
-        .ok_or_else(|| gone(g))?;
+        .ok_or_else(|| gone(world, g))?;
     // Facet ids straight from the feature, and a patch's faces' facets:
     // one list either way, then placed where the part sits (#326).
     let sel = match g.feature {
@@ -263,8 +263,8 @@ fn wall_datum(world: &World, g: &GeoSel, role: Role) -> Result<Datum, String> {
             }),
         _ => None,
     };
-    let ids = sel.ok_or_else(|| gone(g))?;
-    let tris = model::facets_of(world, &e).ok_or_else(|| gone(g))?;
+    let ids = sel.ok_or_else(|| gone(world, g))?;
+    let tris = model::facets_of(world, &e).ok_or_else(|| gone(world, g))?;
     let loc = crate::setup_align::view_pose(world, &e).unwrap_or_default();
     let wall: Vec<Triangle> = ids
         .iter()

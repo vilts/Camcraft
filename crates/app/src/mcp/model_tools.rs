@@ -10,10 +10,12 @@
 
 use super::setup_tools::{cmd_err, loc_view, obj, opt_nums, point};
 use super::tools::{req_str, Tool};
-use crate::commands::{MoveModel, RepairModel};
+use crate::commands::{DeleteEntity, MoveModel, RepairModel};
 use crate::model;
+use crate::operation::SrcRef;
 use crate::schema::Location;
 use crate::script::Env;
+use crate::stock::StockShape;
 
 use serde_json::{json, Map, Value};
 
@@ -25,6 +27,12 @@ const DEFAULT_WELD_TOL_MM: f64 = 0.001;
 const DEFAULT_MAX_HOLE_EDGES: usize = 256;
 
 pub(super) const TOOLS: &[Tool] = &[
+    Tool {
+        name: "delete_model",
+        description: "Delete an imported part through DeleteEntity. One undo step restores it; redo deletes it again. Refused by name without changing history: an unknown name, a non-model, a fixture, or a model still used by an operation (source, selection or area boundary) or from-model stock, including a setup's stock. Remove those references first; remove_fixture unmarks workholding before deletion.",
+        schema: s_delete_model,
+        run: delete_model,
+    },
     Tool {
         name: "move_model",
         description: "Place an imported part: position [x, y, z] in mm and an optional unit quaternion rotation [x, y, z, w] (omitted keeps the current one). Stock made from the part, or the stock of a one-part document, moves with it and is listed under \"stock\". One undo step. Refused by name: a fixture (move_fixture places it), a work offset (set_wcs), the machine table, an unknown name, a rotation that is not a quaternion.",
@@ -38,6 +46,35 @@ pub(super) const TOOLS: &[Tool] = &[
         run: repair_model,
     },
 ];
+
+fn s_delete_model() -> Value {
+    obj(json!({ "name": { "type": "string", "description": "An imported part's name." } }), &["name"])
+}
+
+fn delete_model(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
+    let name = req_str(a, "name")?;
+    super::pick::req_model(env, name)?;
+    // Refuse dangling references before executing the one undoable command.
+    for (key, entity) in model::named_entities(&env.world) {
+        if let Some(op) = model::operation_of(&env.world, &entity) {
+            let source = match &op.src {
+                SrcRef::Stock => false,
+                SrcRef::Entity(source) => source == name,
+                SrcRef::Selection(picks) => picks.iter().any(|p| p.entity == name),
+            };
+            if source || op.area.picks().any(|p| p.entity == name) {
+                let label = model::operation_label(&env.world, &key, &entity);
+                return Err(format!("model '{name}' is used by operation '{label}' - remove its model references first; nothing deleted"));
+            }
+        }
+        if matches!(model::stock_def_of(&env.world, &entity), Some(StockShape::FromModel { source }) if source == name) {
+            return Err(format!("model '{name}' is used by stock '{key}' - change that stock's source first; nothing deleted"));
+        }
+    }
+    let cmd = DeleteEntity::new(&env.world, name).map_err(cmd_err)?;
+    env.history.execute(&env.world, cmd);
+    Ok(json!({ "deleted": name }))
+}
 
 /// The named entity's current placement; identity when it has none.
 fn pose_of(env: &Env, name: &str) -> Location {

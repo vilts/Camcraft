@@ -967,8 +967,10 @@ fn seed_drill(c: &Carried) -> OpParams {
         // refuses to run one, and Detect holes fills it.
         holes: Vec::new(),
         cross: Vec::new(),
-        // #1557: the kind's default break-through.
+        // #1557: the kind's default break-through; #2441: measured from
+        // the full cutting diameter so a twist drill's point exits clean.
         break_through: None,
+        break_through_from: crate::drilling::BreakThroughFrom::FullDiameter,
     }
 }
 

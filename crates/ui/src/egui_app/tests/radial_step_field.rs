@@ -30,7 +30,19 @@ fn the_pocket_passes_tab_shows_only_the_step_its_strategy_reads() {
     for s in [PocketStrategy::Zigzag, PocketStrategy::Waterline, PocketStrategy::Auto] {
         assert_eq!(passes_with(&mut harness, s), (1, 0), "{s:?} spaces its rows by the stepover");
     }
-    for s in [PocketStrategy::Adaptive, PocketStrategy::OffsetRings] {
-        assert_eq!(passes_with(&mut harness, s), (0, 1), "{s:?} steps by the load, never the stepover");
-    }
+    assert_eq!(
+        passes_with(&mut harness, PocketStrategy::OffsetRings),
+        (0, 1),
+        "OffsetRings steps by the load, never the stepover"
+    );
+    // Kind index 5 is 2D Adaptive, where Adaptive optimal load now lives (#1517).
+    harness.state_mut().state.op_ui.params = crate::operations::retype(&cur, 5);
+    let passes = super::super::op_tabs::SECTIONS.iter().position(|s| *s == "Passes").unwrap_or(0);
+    harness.state_mut().state.op_tab = passes;
+    harness.run();
+    assert_eq!(
+        (harness.query_all_by_label(STEPOVER).count(), harness.query_all_by_label(LOAD).count()),
+        (0, 1),
+        "2D Adaptive steps by the load, never the stepover"
+    );
 }

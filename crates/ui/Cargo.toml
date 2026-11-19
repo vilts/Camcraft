@@ -26,6 +26,9 @@ egui_dock = { workspace = true }
 # Values directly - every refusal names the key it tripped on, which a
 # derived deserializer's error soup cannot promise.
 serde_json = { workspace = true }
+# #163: native diagnostics are `tracing` events (the diag seam), printed by
+# the subscriber `camcraft_app::logging::init` installs in main.
+tracing = { workspace = true }
 
 # #31: native-only - the winit adapter and the synchronous file/message
 # dialogs live in egui_app/shell_window and file_dialog's native half; the
@@ -52,6 +55,8 @@ objc2 = { workspace = true }
 # egui's own test harness, for the frame tests in the lib (egui_app) -
 # the point is to run the SAME shell_layout code the window runs.
 egui_kittest = { workspace = true }
+# #163: the diag seam test captures its events.
+tracing-subscriber = { workspace = true }
 
 [[bin]]
 name = "camcraft-ui"

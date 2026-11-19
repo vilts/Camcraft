@@ -27,7 +27,11 @@ type H = Harness<'static, ShellUi>;
 
 /// The seeded shell with one setup (`Setup1`) and `t` targeted.
 fn page(t: UiTarget) -> H {
-    let mut h = shell_harness();
+    page_in(shell_harness(), t)
+}
+
+/// `page` in a harness of the caller's size.
+fn page_in(mut h: H, t: UiTarget) -> H {
     h.state_mut().state.pending.push_back(CommandKind::CreateSetup { name: None, datum_from: None });
     h.run_steps(2);
     crate::actions::target(&mut h.state_mut().state, t);
@@ -140,8 +144,15 @@ fn layout_page_stock() {
 #[test]
 fn layout_page_wcs() {
     let _g = snapshot_guard();
-    let h = page(UiTarget::Wcs);
-    assert_page_layout(&h, "WCS", &["Turn X+", "Turn X-", "Level", "Bottom", "Pick markers in viewport", "NW", "SW"]);
+    // #870: the origin line under the heading makes the page one row
+    // taller; at 720 px the compass's bottom row scrolls under the footer,
+    // so this page is laid out in a 900 px window.
+    let tall = Harness::builder()
+        .with_size(Vec2::new(1280.0, 900.0))
+        .build_ui_state(frame, ShellUi::seeded());
+    let h = page_in(tall, UiTarget::Wcs);
+    // #870: the one "Set origin" sits in the footer, under the page body.
+    assert_page_layout(&h, "WCS", &["Turn X+", "Turn X-", "Level", "Bottom", "Pick markers in viewport", "NW", "SW", "Set origin"]);
 }
 
 #[test]
@@ -200,7 +211,7 @@ fn layout_page_setup_settings() {
 fn layout_page_setup_machine() {
     let _g = snapshot_guard();
     let h = page(UiTarget::SetupNode("Setup1".into(), SetupPage::Machine));
-    assert_page_layout(&h, "Setup machine", &["This setup has its own machine", "Machine library", "Load machine (.mch)"]);
+    assert_page_layout(&h, "Setup machine", &["This setup has its own machine", "Machine library", "Refresh machine list", "Load machine (.mch)"]);
 }
 
 #[test]

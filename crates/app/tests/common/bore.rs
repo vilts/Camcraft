@@ -178,6 +178,7 @@ pub fn pilot_of(world: &World, history: &mut History, drill: &str, radius: f64) 
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius, entry_z: 50.0, floor_z: -16.0, through: false, stepped: false };
     let params = OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(60.0),
         retract_z: None,
         top_z: Height::fixed(50.0),

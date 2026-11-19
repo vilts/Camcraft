@@ -66,17 +66,18 @@ pub fn is_keep_kind(params: &OpParams) -> bool {
     matches!(params, OpParams::Pocket { .. } | OpParams::Adaptive2D { .. } | OpParams::Offset2D { .. })
 }
 
-/// #1655: a pocket-family op that clears the stock AROUND the part (a
-/// whole-model source, #12, or the stock source with parts, #1554) says
-/// by name each band of that area narrower than the tool: the generator
-/// gives such a band no pass, and refuses only when nothing is left to
-/// cut. `cleared_around` is that reading; every other job is unchanged.
-/// The note never blocks the cut: a region the band check cannot read
-/// keeps its path and says that the check did not run.
+/// #1655, #2438: a pocket-family op that clears the stock AROUND the part
+/// (a whole-model source, #12, or the stock source with parts, #1554)
+/// says by name each band of that area narrower than the tool (and any
+/// sharp stock corners left uncut inside reached pieces, excluding air
+/// outside `stock`). `cleared_around` is that reading; every other job
+/// is unchanged. The note never blocks the cut: a region the band check
+/// cannot read keeps its path and says that the check did not run.
 pub(super) fn narrow_noted(
     mut path: crate::cl::Toolpath,
     params: &OpParams,
     region: &crate::geo2d::Region,
+    stock: Option<&crate::geo2d::Region>,
     tool_diameter: f64,
     cleared_around: bool,
     unit: crate::units::Unit,
@@ -99,6 +100,13 @@ pub(super) fn narrow_noted(
             path.notes.push(format!(
                 "{label}: the check for bands of the stock narrower than the tool did not run ({e}) - look at the stock around the part"
             ));
+        }
+    }
+    match crate::machining2d::unreached_corner_note(region, stock, tool_diameter, leave, unit) {
+        Ok(Some(n)) => path.notes.push(format!("{label}: {n}")),
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(kind = label, "the corner check around the part did not run: {e}");
         }
     }
     path

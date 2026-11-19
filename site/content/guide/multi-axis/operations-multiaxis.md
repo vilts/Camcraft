@@ -159,6 +159,24 @@ walls; doubly-curved ground is 5-Axis Parallel work.
 | Passes | Tolerance | 0.05 |
 | Feeds | Feed / Plunge feed / Climb milling | 1200 / 300 / on |
 
+![Unsafe CamCraft five-axis swarf example with red collision paths along a cylindrical blade](../../../images/guide/op-multiaxis-swarf.png)
+
+**Unsafe example — do not post or machine.** In
+`examples/guide-multiaxis.camproj`, `Swarf1` has **897 shank-hit warnings**
+(the shank or holder intersects material), **9 rapid-in-stock warnings**
+(rapid moves enter remaining material), and **2 sweep-hit warnings**
+(the tool assembly intersects material during a pose change). The red paths
+show this unsafe state; this is not a verified swarf recipe.
+Before using this setup, rough away interfering stock and select a tool
+assembly with enough reach to clear the part. Correct the lead/lag or split
+and reorient the passes where the assembly cannot clear the flank. Set
+clearance and retract heights so rapid moves and pose changes happen clear
+of the remaining stock, part and fixtures. Regenerate the toolpath and verify
+the corrected operation with no shank-hit, rapid-in-stock, sweep-hit or gouge
+warnings before posting or machining. A posed program reported as "not judged"
+by stock simulation is not a safety pass; see
+[Checks](@/guide/multi-axis/checks.md).
+
 **Common refusals:** "swarf found no ruling to follow - this surface
 curves about the same in every direction; doubly-curved ground is 5-Axis
 Parallel or Scallop work"; "this model's ruling runs along Z (vertical

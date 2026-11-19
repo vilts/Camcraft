@@ -36,7 +36,7 @@ use std::sync::Arc;
 
 use crate::geometry::Triangle;
 use crate::stock_sim::{Planned, SimOp, Stock};
-use crate::stock_view::{build_stock, build_target, display_inputs, FieldView, DEFAULT_TEXELS};
+use crate::stock_view::{build_stock, build_target, display_inputs_of, FieldView, DEFAULT_TEXELS};
 
 /// Snapshots kept at most - the backward seek's memory bound.
 pub const MAX_CHECKPOINTS: usize = 32;
@@ -51,6 +51,9 @@ pub struct PlayIndex {
     /// (op name, global index of its first move, its move count).
     ops: Vec<(String, usize, usize)>,
     total: usize,
+    /// The op the playback stops before and every op after it (#2280,
+    /// `PlaySeed::gather`); empty when the whole program plays.
+    rest: Vec<String>,
 }
 
 impl PlayIndex {
@@ -94,22 +97,28 @@ pub struct PlaySeed {
     /// The verdict tolerance the colours are gated at, or why the
     /// program is not judged (#1056, `model_fidelity::program_tol`).
     tol: Result<f64, String>,
+    /// See [`PlayIndex::stop`].
+    rest: Vec<String>,
 }
 
 impl PlaySeed {
     /// Read the document's program and stock at a display budget of
     /// `texels` cells (see `FieldPlay::new` for `judged`).
     pub fn gather(world: &flecs_ecs::prelude::World, judged: bool, texels: f64) -> Result<Self, String> {
-        let (stock_facets, planned, cell) = display_inputs(world, texels)?;
+        // #2280: the program plays up to the first op with no toolpath.
+        let (planned, rest) = crate::stock_sim::plan_program_until_ungenerated(world)?;
+        let setup = rest.first().and_then(|(_, e)| crate::model::operation_of(world, e)).and_then(|op| op.setup);
+        let (stock_facets, planned, cell) = display_inputs_of(world, texels, planned, setup)?;
         let part = if judged { Some(crate::stock_sim::part_facets(world)?) } else { None };
         let tol = crate::model_fidelity::program_tol(world);
-        Ok(PlaySeed { stock_facets, planned, cell, part, tol })
+        let rest = rest.into_iter().map(|(name, _)| name).collect();
+        Ok(PlaySeed { stock_facets, planned, cell, part, tol, rest })
     }
 
     /// The move table the transport maps onto (cheap; no field built).
     #[must_use]
     pub fn index(&self) -> PlayIndex {
-        PlayIndex::of(&self.planned)
+        PlayIndex { rest: self.rest.clone(), ..PlayIndex::of(&self.planned) }
     }
 }
 
@@ -120,6 +129,7 @@ struct PlayOp {
     ball: bool,
     cone: Option<f64>,
     corner: Option<f64>,
+    drill: bool,
     /// Global index of this op's first move.
     start: usize,
     /// A rotary op's fitted axis: its slices are chorded about it
@@ -181,14 +191,14 @@ impl FieldPlay {
     /// Build the fields from a gathered seed - no world needed, so a
     /// worker thread can pay for it.
     pub fn from_seed(seed: PlaySeed) -> Result<Self, String> {
-        let PlaySeed { stock_facets, planned, cell, part, tol } = seed;
-        let index = PlayIndex::of(&planned);
+        let PlaySeed { stock_facets, planned, cell, part, tol, rest } = seed;
+        let index = PlayIndex { rest, ..PlayIndex::of(&planned) };
         let stock = build_stock(&stock_facets, cell)?;
         let mut ops = Vec::with_capacity(planned.len());
         let mut total = 0usize;
         for p in planned {
             let n = p.moves.len();
-            ops.push(PlayOp { name: p.name, moves: p.moves, radius: p.radius, ball: p.ball, cone: p.cone, corner: p.corner, start: total, rotary: p.rotary, lathe: p.lathe });
+            ops.push(PlayOp { name: p.name, moves: p.moves, radius: p.radius, ball: p.ball, cone: p.cone, corner: p.corner, drill: p.drill, start: total, rotary: p.rotary, lathe: p.lathe });
             total = total.saturating_add(n);
         }
         let (target, target_note) = if let (Some(_), Err(why)) = (&part, &tol) {
@@ -378,7 +388,11 @@ impl FieldPlay {
                     let tol = crate::stock_sim::rotary_pose_tol(self.cur.cell());
                     crate::stock_sim::simulate_rotary_slice(&mut self.cur, &sim, &op.moves, a - op.start, ax, tol).map(|_| ())
                 }
-                (None, None) => self.cur.simulate_display(std::slice::from_ref(&sim)),
+                (None, None) => if op.drill {
+                    self.cur.simulate_drill_display(std::slice::from_ref(&sim))
+                } else {
+                    self.cur.simulate_display(std::slice::from_ref(&sim))
+                },
             };
             cut.map_err(|e| format!("playback could not cut {}: {e}", op.name))?;
             self.moves_cut = self.moves_cut.saturating_add(b - a);

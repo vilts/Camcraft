@@ -118,11 +118,12 @@ fn tool_change() -> String {
         infeed_angle: 0.0,
         spring_passes: 0,
         pull_out: 0.0,
-        alternating: false,
-        repeat_each_depth: false,
         first: 0,
         last,
         hand,
+        alternating: false,
+        chip_break_dips: false,
+        repeat_each_depth: false,
     });
     assert!(thread.threads[0].is_sane(&thread.moves), "the thread record sits on its passes");
     assert!(thread.threads[0].reverse_spindle(), "a left-hand thread toward -Z needs M04");

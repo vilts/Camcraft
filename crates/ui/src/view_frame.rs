@@ -28,8 +28,8 @@ pub enum ViewFrame {
 
 impl ViewFrame {
     /// The frame a machine kind is viewed in. Only a lathe turns the
-    /// view: a mill-turn machine keeps the milling frame until #2019
-    /// decides its convention.
+    /// view: a mill-turn machine keeps the milling frame (#2019
+    /// decision: `docs/decisions/2019-lathe-gizmo.md`).
     #[must_use]
     pub fn for_kind(kind: camcraft_app::machine::Kind) -> ViewFrame {
         match kind {
@@ -84,4 +84,32 @@ pub(crate) fn sync(state: &mut State) {
     if state.cam.frame != want {
         state.cam = state.cam.with_frame(want);
     }
+}
+
+/// Which of the world gizmo's axes (X, Y, Z) the viewport draws (#2019).
+/// A mill, and any kind that is neither lathe nor mill-turn, shows all
+/// three. A lathe shows Z and X, and Y only when its machine file states
+/// a linear Y axis. A mill-turn keeps the milling frame and hides Y only
+/// when its file states axes and none is a linear Y (an unstated list
+/// hides nothing: the unstated-limit law). Display only: the WCS, the
+/// toolpaths and the posted program do not read this.
+#[must_use]
+pub fn axes_shown(state: &State) -> [bool; 3] {
+    let kind = camcraft_app::machine::kind_of(&state.world);
+    let machine = camcraft_app::machine::of(&state.world).1;
+    let axes = machine.as_ref().map(|m| m.axes.as_slice()).unwrap_or(&[]);
+    let has_y = axes.iter().any(|a| !a.rotary && a.name.eq_ignore_ascii_case("Y"));
+    shown_for(kind, has_y, axes.is_empty())
+}
+
+/// [`axes_shown`] over plain values, for the unit tests.
+#[must_use]
+pub(crate) fn shown_for(kind: camcraft_app::machine::Kind, has_y: bool, axes_unstated: bool) -> [bool; 3] {
+    use camcraft_app::machine::Kind;
+    let y = match kind {
+        Kind::Lathe => has_y,
+        Kind::MillTurn => has_y || axes_unstated,
+        _ => true,
+    };
+    [true, y, true]
 }

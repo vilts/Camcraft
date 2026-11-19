@@ -83,10 +83,10 @@ pub fn collecting(state: &State) -> bool {
 /// role's earlier pick is replaced in place - one pick per role, the
 /// newest wins, the other roles stay put.
 pub fn take(state: &mut State, pick: GeoSel) {
+    let what = camcraft_app::pick::geo_label(&state.world, &pick);
     let Some(draft) = state.wcs_pick.as_mut().filter(|d| d.picking) else { return };
     let role = draft.role;
     let setup = draft.setup.clone();
-    let what = format!("{} of '{}'", pick.feature, pick.entity);
     match draft.picks.iter_mut().position(|(_, r)| *r == role) {
         Some(i) => draft.picks[i] = (pick, role),
         None => draft.picks.push((pick, role)),

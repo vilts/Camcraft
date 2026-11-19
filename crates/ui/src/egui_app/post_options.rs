@@ -172,8 +172,8 @@ pub(super) fn between_setups_picker(ui: &mut Ui, state: &mut State) {
     }
 }
 
-/// #760: how a pure Z-rotated work offset posts - bake the XY rotation into
-/// every G-code coordinate (default), or emit controller rotation (`G68`/`ROT`).
+/// #760: post Setup/table XY without controller rotation (Bake, the default),
+/// or transform into WCS coordinates and emit controller rotation (`G68`/`ROT`).
 pub(super) fn wcs_rotation_picker(ui: &mut Ui, state: &mut State) {
     let now = posting::post_options(&state.world);
     let mut pick: Option<camcraft_app::schema::WcsRotationOutput> = None;
@@ -190,7 +190,7 @@ pub(super) fn wcs_rotation_picker(ui: &mut Ui, state: &mut State) {
             })
             .response
             .on_hover_text(
-                "how a Z-rotated work offset posts: bake XY rotation into G-code coordinates (works on every 3-axis control) or emit controller rotation (G68/G69 or ROT RPL=/ROT)",
+                "Bake posts table XY coordinates relative to the work offset origin. Do not enter a rotation on the control. Control posts rotated WCS coordinates with G68/G69 or ROT RPL=/ROT; do not enter an additional rotation on the control.",
             );
     });
     if let Some(r) = pick {

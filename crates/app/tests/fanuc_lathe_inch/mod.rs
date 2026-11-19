@@ -19,6 +19,7 @@ use camcraft_app::operation::{Height, OpParams, SrcRef};
 use camcraft_app::schema::{Location, PostOptions, ThreadingOutput};
 use camcraft_app::stock::StockShape;
 use camcraft_app::tools::catalog;
+use camcraft_app::turning::{ThreadDips, ThreadInfeed};
 use camcraft_app::world::new_world;
 
 pub const CPS: &str = include_str!("../../../../assets/posts/fanuc-lathe.cps");
@@ -31,6 +32,8 @@ pub const FIXTURES: &[(&str, Option<&str>)] = &[
     ("axial_drill", Some("nc/fanuc-lathe/axial_drill.nc")),
     ("thread_g76", Some("nc/fanuc-lathe/thread_g76.nc")),
     ("thread_g32", None),
+    // #419: the G32 thread with chip-break dips (G32 X Z F segments).
+    ("thread_g32_dips", None),
 ];
 
 /// The words of a line, comments dropped.
@@ -170,39 +173,49 @@ pub fn fixture(name: &str) -> (World, PostOptions) {
             let hole = Hole { xy: Point2::new(0.0, 0.0), radius: 2.05, entry_z: 20.0, floor_z: 10.0, through: false, stepped: false };
             let p = OpParams::Drill {
                 break_through: None,
+                break_through_from: Default::default(),
                 clearance_z: h(30.0), retract_z: None, top_z: h(20.0), bottom_z: None, cycle: CycleChoice::Auto,
                 peck: 0.0, dwell: 0.0, feed: 120.0, plunge_feed: 80.0, holes: vec![hole], cross: vec![],
             };
             create(&w, &mut hi, "AX1", "DR-0400", p);
             (w, plain)
         }
-        _ => thread(name == "thread_g76"),
+        _ => thread(name == "thread_g76", name == "thread_g32_dips"),
     }
 }
 
 /// `lathe_post_g76`'s threaded bar: wall r6, a 60-degree V every 2.0
-/// from z 8 to z 14, 1.2 deep; G76 or the G32 default.
-fn thread(g76: bool) -> (World, PostOptions) {
+/// from z 8 to z 14, 1.2 deep; G76 or the G32 default. With chip-break
+/// dips (#419) the thread runs to z 24, `lathe_post_thread_dips`'s
+/// length: a 6 mm thread has no room for a dip between its whole first
+/// and last leads.
+fn thread(g76: bool, dips: bool) -> (World, PostOptions) {
     let (major, pitch, depth) = (6.0, 2.0, 1.2);
+    let end: f64 = if dips { 24.0 } else { 14.0 };
     let half = depth * (30.0_f64).to_radians().tan();
     let mut m = vec![(0.0, -16.0), (major, -16.0), (major, 8.0 - half)];
     let mut c = 8.0;
-    while c <= 14.0 + 1e-9 {
+    while c <= end + 1e-9 {
         m.push((major - depth, c));
         m.push((major, c + half));
-        if c + pitch <= 14.0 + 1e-9 {
+        if c + pitch <= end + 1e-9 {
             m.push((major, c + pitch - half));
         }
         c += pitch;
     }
-    m.push((major, 14.0 + half));
+    m.push((major, end + half));
     m.push((major, 40.0));
     m.push((0.0, 40.0));
     let stock = StockShape::Cylinder { diameter: 12.0, height: 56.0 };
     let (w, mut hi) = world(stock, -16.0, revolve(&m, 16), &["TD-1732-60"]);
+    let infeed_plan = if dips {
+        ThreadInfeed { dips: ThreadDips { interval: 4.0, height: 0.3, length: 0.0 }, ..ThreadInfeed::default() }
+    } else {
+        ThreadInfeed::default()
+    };
     let p = OpParams::Threading {
-        tolerance: 0.05, clearance_z: h(24.0), top_z: h(14.3), bottom_z: h(7.7), pitch, depth,
-        infeed: 0.4, feed: 120.0, plunge_feed: 40.0, hand: ThreadHand::Right, infeed_plan: Default::default(),
+        tolerance: 0.05, clearance_z: h(end + 10.0), top_z: h(end + 0.3), bottom_z: h(7.7), pitch, depth,
+        infeed: 0.4, feed: 120.0, plunge_feed: 40.0, hand: ThreadHand::Right, infeed_plan,
     };
     create(&w, &mut hi, "TH1", "TD-1732-60", p);
     let threading = if g76 { ThreadingOutput::G76Cycle } else { ThreadingOutput::G32Passes };

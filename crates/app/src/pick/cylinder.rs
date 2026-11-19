@@ -149,23 +149,24 @@ pub fn align_from_cylinder(
 /// the resulting alignment while the landing is proved). A flat face
 /// or a non-wall pick is refused by name.
 fn axis_through(world: &World, rot: [f64; 4], g: &GeoSel) -> Result<[f64; 3], String> {
+    let label = || super::geo_label(world, g);
     let e = model::find_by_name(world, &g.entity)
-        .ok_or_else(|| format!("{} of '{}' is no longer in the model - re-pick it", g.feature, g.entity))?;
+        .ok_or_else(|| format!("{} is no longer in the model - re-pick it", label()))?;
     let features = model::features_of(world, &e)
         .ok_or_else(|| format!("'{}' carries no geometry - re-pick it", g.entity))?;
     let tris = model::facets_of(world, &e)
         .ok_or_else(|| format!("'{}' carries no geometry - re-pick it", g.entity))?;
     let FeatureSel::Patch(pid) = g.feature else {
         return Err(format!(
-            "{} of '{}' is not a welded wall - pick the bore's or cylinder's curved wall",
-            g.feature, g.entity
+            "{} is not a welded wall - pick the bore's or cylinder's curved wall",
+            label()
         ));
     };
     let _patch = feature::patches(&features).into_iter().find(|p| p.id == pid);
     if _patch.is_none() {
         return Err(format!(
-            "{} of '{}' is no longer in the model - re-pick it",
-            g.feature, g.entity
+            "{} is no longer in the model - re-pick it",
+            label()
         ));
     }
     let patch_faces: Vec<_> = _patch.into_iter().flat_map(|p| p.faces.clone()).collect();
@@ -198,8 +199,8 @@ fn axis_through(world: &World, rot: [f64; 4], g: &GeoSel) -> Result<[f64; 3], St
     let l = norm(a);
     if !l.is_finite() || l <= 0.0 {
         return Err(format!(
-            "{} of '{}' does not wrap a curve - every facet of the pick lies one way; pick a fuller band of the bore's or cylinder's wall",
-            g.feature, g.entity
+            "{} does not wrap a curve - every facet of the pick lies one way; pick a fuller band of the bore's or cylinder's wall",
+            label()
         ));
     }
     let d = scale(a, 1.0 / l);
@@ -209,8 +210,8 @@ fn axis_through(world: &World, rot: [f64; 4], g: &GeoSel) -> Result<[f64; 3], St
         let dot = (n[0] * d[0] + n[1] * d[1] + n[2] * d[2]).abs();
         if dot > NORMAL_TOL {
             return Err(format!(
-                "{} of '{}' is not one cylinder wall - pick just the bore's or cylinder's curved wall",
-                g.feature, g.entity
+                "{} is not one cylinder wall - pick just the bore's or cylinder's curved wall",
+                label()
             ));
         }
     }

@@ -118,6 +118,7 @@ fn params_at(cycle: CycleChoice, radius: f64, top: Height) -> OpParams {
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius, entry_z: TOP, floor_z: FLOOR, through: false, stepped: false };
     OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(TOP + 15.0),
         retract_z: None,
         top_z: top,

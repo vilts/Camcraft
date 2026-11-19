@@ -279,3 +279,14 @@ fn unknown_flags_still_refuse_with_a_two_and_help_lists_per_command() {
     let o = cli_str(&["help"]);
     assert!(String::from_utf8_lossy(&o.stdout).contains("<command> --help"), "top-level help points at per-command help");
 }
+
+#[test]
+fn script_lane_accepts_camscript_extension() {
+    let job = tmp("job", "camscript");
+    std::fs::write(&job, "cam.log('camscript'); 6 * 7").expect("write camscript");
+    let o = cli_str(&["script", job.to_str().unwrap()]);
+    let _ = std::fs::remove_file(&job);
+    assert_eq!(code(&o), 0, "{:?}", String::from_utf8_lossy(&o.stderr));
+    let out = String::from_utf8_lossy(&o.stdout);
+    assert_eq!(out.trim().lines().collect::<Vec<_>>(), ["camscript", "42"]);
+}

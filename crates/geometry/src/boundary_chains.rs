@@ -91,6 +91,39 @@ pub fn group_runs(mut runs: Vec<Vec<Point2>>) -> Vec<Vec<Point2>> {
     out
 }
 
+/// Deduplicate XY-coincident runs (direction-free) and weld touching
+/// open runs end to end into continuous open chains. Single-point or
+/// non-finite runs stay apart so generation's own refusal names them.
+pub fn join_open_runs(runs: Vec<Vec<Point2>>) -> Vec<Vec<Point2>> {
+    if runs.len() < 2 {
+        return runs;
+    }
+    let mut seen: Vec<Vec<(i64, i64)>> = Vec::with_capacity(runs.len());
+    let mut valid: Vec<Vec<Point2>> = Vec::with_capacity(runs.len());
+    let mut passthrough: Vec<Vec<Point2>> = Vec::new();
+    for pts in runs {
+        if !pts.iter().all(|p| p.x.is_finite() && p.y.is_finite()) {
+            passthrough.push(pts);
+            continue;
+        }
+        let mut keys: Vec<(i64, i64)> = pts.iter().map(qkey).collect();
+        keys.dedup();
+        if keys.len() < 2 {
+            passthrough.push(pts);
+            continue;
+        }
+        let rev: Vec<(i64, i64)> = keys.iter().rev().copied().collect();
+        let canon = keys.min(rev);
+        if !seen.contains(&canon) {
+            seen.push(canon);
+            valid.push(pts);
+        }
+    }
+    let mut out = if valid.len() > 1 { group_runs(valid) } else { valid };
+    out.extend(passthrough);
+    out
+}
+
 /// Whether two polylines touch or cross anywhere.
 fn chains_touch(a: &[Point2], b: &[Point2]) -> bool {
     a.windows(2).any(|s| b.windows(2).any(|q| seg_seg(s[0], s[1], q[0], q[1]) <= TOUCH))
@@ -196,5 +229,32 @@ mod tests {
         let mid = vec![vec![p(-10.0, 10.0), p(10.0, 10.0)], vec![p(-10.0, 0.0), p(10.0, 0.0)]];
         let why = sides_of_chains(&mid, &reach, &base).err().map(|e| e.to_string()).unwrap_or_default();
         assert!(why.contains("open chain 2 of 2 has the operation's area evenly on both sides"), "{why}");
+    }
+
+    #[test]
+    fn join_open_runs_welds_out_of_order_and_deduplicates_coincident_runs() {
+        let edges = vec![
+            vec![p(42.0, 10.0), p(42.0, 0.0)],
+            vec![p(22.0, 10.0), p(42.0, 10.0)],
+            vec![p(22.0, 0.0), p(22.0, 10.0)],
+            vec![p(0.0, 0.0), p(22.0, 0.0)],
+            vec![p(42.0, 0.0), p(64.0, 0.0)],
+        ];
+        let joined = join_open_runs(edges);
+        assert_eq!(joined.len(), 1, "{joined:?}");
+        assert_eq!(joined[0].len(), 6, "{joined:?}");
+
+        let mixed = vec![
+            vec![p(0.0, 0.0), p(10.0, 0.0)],
+            vec![p(10.0, 0.0), p(0.0, 0.0)],
+            vec![p(10.0, 0.0), p(10.0, 5.0)],
+            vec![p(30.0, 0.0), p(40.0, 0.0)],
+            vec![p(5.0, 5.0), p(5.0, 5.0)],
+        ];
+        let out = join_open_runs(mixed);
+        assert_eq!(out.len(), 3, "{out:?}");
+        assert_eq!(out[0], vec![p(0.0, 0.0), p(10.0, 0.0), p(10.0, 5.0)]);
+        assert_eq!(out[1], vec![p(30.0, 0.0), p(40.0, 0.0)]);
+        assert_eq!(out[2], vec![p(5.0, 5.0), p(5.0, 5.0)]);
     }
 }

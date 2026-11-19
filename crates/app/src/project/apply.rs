@@ -525,8 +525,16 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
         // v66 so old readers cannot drop `controller_rtcp: false`.
         // v66 -> v67 (#1720): a WCS may record flipped axes; absent is
         // no flip.
+        // v67 -> v68 (#2441): pre-v68 Drill ops without `break_through_from`
+        // keep legacy `tip` so their saved depth and cached toolpath do not drift.
+        // v68 -> v69 (#1517): pre-v69 Pocket Adaptive ops migrate to 2D
+        // Adaptive (Spiral); un-carriable params record `needs_review`.
         notes = super::wcs_one::settle(&mut file, from)?;
         notes.extend(super::fidelity_migrate::settle(&mut file.entities, from));
+        if from < 68 {
+            super::params_impl::settle_drill_break_through(&mut file.entities);
+        }
+        notes.extend(super::pocket_adaptive_migrate::settle(&mut file.entities, from));
         // v59 -> v60 (#902): the document's unit is its programs' unit;
         // an older file opens on the unit it posted in (`units_migrate`).
         if from < 60 {
@@ -605,6 +613,7 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
     for dto in &file.entities {
         validate_kind(dto, dto.kind.unwrap_or(EntityKind::Model))?;
     }
+    freeze_legacy_tool_numbers(&mut file.entities);
     for dto in &mut file.entities {
         if let Some(op) = &mut dto.operation
             && op.tool.is_empty()
@@ -843,10 +852,11 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                     after: odto.after,
                     suppressed: odto.suppressed,
                 });
-                if odto.label.is_some() || odto.order.is_some() {
+                if odto.label.is_some() || odto.order.is_some() || !odto.needs_review.is_empty() {
                     entity.entity_view(world).set(OperationMeta {
                         label: odto.label,
                         order: odto.order,
+                        needs_review: odto.needs_review,
                     });
                 }
                 if let Some(cache) = &odto.cache {
@@ -952,4 +962,24 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
         notes.push(format!("fixture '{name}': plate location dropped on load: no such plate"));
     }
     Ok(notes)
+}
+
+/// Freeze unnumbered tools in a pre-#2442 file to their legacy 1-based
+/// name-sorted position so later tool additions or deletions never shift them.
+fn freeze_legacy_tool_numbers(entities: &mut [EntityDto]) {
+    let mut tool_indices: Vec<usize> = entities
+        .iter()
+        .enumerate()
+        .filter(|(_, dto)| dto.kind.unwrap_or(EntityKind::Model) == EntityKind::Tool)
+        .map(|(i, _)| i)
+        .collect();
+    tool_indices.sort_by(|&a, &b| entities[a].name.cmp(&entities[b].name));
+    for (pos_idx, &entity_idx) in tool_indices.iter().enumerate() {
+        let legacy_pos = u32::try_from(pos_idx.saturating_add(1)).unwrap_or(u32::MAX);
+        if let Some(tdto) = &mut entities[entity_idx].tool
+            && tdto.number.is_none()
+        {
+            tdto.number = Some(legacy_pos);
+        }
+    }
 }

@@ -127,7 +127,7 @@ pub(super) fn wrap_exit(
                 if air {
                     return held; // a rapid keeps the tilt it has
                 }
-                eprintln!(
+                tracing::warn!(
                     "multiaxis: a rotary offset cut stands ON the axis at {w:?}; the move holds vertical"
                 );
                 return Some([0.0, 0.0, 1.0]);
@@ -164,7 +164,7 @@ pub(super) fn wrap_exit(
             match command_axis(n, t, c) {
                 Some(a) => Some([a.x, a.y, a.z]),
                 None => {
-                    eprintln!(
+                    tracing::warn!(
                         "multiaxis: no lean exists at world point {w:?}; the move holds radial"
                     );
                     Some([n.x, n.y, n.z])

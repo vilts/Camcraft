@@ -17,6 +17,8 @@ pub struct AdapterDesc {
     pub device: u32,
     pub device_type: wgpu::DeviceType,
     pub backend: wgpu::Backend,
+    pub driver: String,
+    pub driver_info: String,
     /// `Adapter::is_surface_supported` for the window's surface.
     pub surface_ok: bool,
 }
@@ -29,20 +31,28 @@ impl AdapterDesc {
             device: info.device,
             device_type: info.device_type,
             backend: info.backend,
+            driver: info.driver.clone(),
+            driver_info: info.driver_info.clone(),
             surface_ok,
         }
     }
 
     /// One startup log line per adapter seen.
     pub fn log_line(&self) -> String {
+        format!("gpu: seen {}{}", self.summary(), if self.surface_ok { "" } else { " (cannot present to this window)" })
+    }
+
+    /// The same metadata names both enumerated and selected adapters.
+    pub fn summary(&self) -> String {
         format!(
-            "gpu: seen \"{}\" vendor 0x{:04x} device 0x{:04x} {} via {}{}",
+            "\"{}\" vendor 0x{:04x} device 0x{:04x} {} via {} driver {:?} ({})",
             self.name,
             self.vendor,
             self.device,
             type_name(self.device_type),
             super::gpu::backend_name(self.backend),
-            if self.surface_ok { "" } else { " (cannot present to this window)" }
+            self.driver,
+            self.driver_info
         )
     }
 
@@ -201,6 +211,7 @@ pub fn refusal(failures: &[String], skipped: &[String]) -> String {
         s.push_str("; skipped: ");
         s.push_str(&skipped.join("; "));
     }
+    s.push_str("; try --gpu-backend dx12, --gpu-backend vulkan or --gpu-backend gl");
     s
 }
 

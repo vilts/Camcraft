@@ -58,7 +58,7 @@ pub(crate) fn install() -> bool {
 
     // AnyClass::get, not class!: the macro panics on a missing class.
     let Some(ns_app) = AnyClass::get("NSApplication") else {
-        eprintln!("os quit hook: AppKit not loaded - Cmd+Q will not ask about unsaved changes");
+        diag_warn!("os quit hook: AppKit not loaded - Cmd+Q will not ask about unsaved changes");
         return false;
     };
     // SAFETY: `sharedApplication` and `delegate` are plain AppKit getters
@@ -66,13 +66,13 @@ pub(crate) fn install() -> bool {
     // already created the application on this (the main) thread.
     let app: *mut AnyObject = unsafe { msg_send![ns_app, sharedApplication] };
     if app.is_null() {
-        eprintln!("os quit hook: no NSApplication - Cmd+Q will not ask about unsaved changes");
+        diag_warn!("os quit hook: no NSApplication - Cmd+Q will not ask about unsaved changes");
         return false;
     }
     let delegate: *mut AnyObject = unsafe { msg_send![app, delegate] };
     // SAFETY: a non-null delegate is a live object retained by the app.
     let Some(delegate) = (unsafe { delegate.as_ref() }) else {
-        eprintln!("os quit hook: no application delegate - Cmd+Q will not ask about unsaved changes");
+        diag_warn!("os quit hook: no application delegate - Cmd+Q will not ask about unsaved changes");
         return false;
     };
     let cls: &AnyClass = delegate.class();
@@ -90,7 +90,7 @@ pub(crate) fn install() -> bool {
         objc2::ffi::class_addMethod(std::ptr::from_ref(cls).cast_mut().cast(), name, Some(imp), types.as_ptr())
     };
     if added == objc2::ffi::NO {
-        eprintln!(
+        diag_warn!(
             "os quit hook: {} already answers applicationShouldTerminate: - left as is",
             cls.name()
         );

@@ -29,6 +29,9 @@ pub(super) const LIFT: f64 = 0.01;
 const SAME: f64 = 1e-9;
 /// Slack (mm) of the cap classification of the offset tube.
 pub(super) const TOL: f64 = 1e-3;
+/// Tolerance (mm) letting a non-cap segment break a tie at a swallowed
+/// end where Clipper2's 5 um arc sag pulls the cap chord slightly inside d.
+const CAP_TIE: f64 = 0.006;
 /// How far (mm) the tool clearance check stays inside the tool edge, so
 /// the edge that just grazes the part wall is not read as a cut.
 const GRAZE: f64 = 0.01;
@@ -206,64 +209,155 @@ fn foot(p: Point2, a: Point2, b: Point2) -> (f64, f64) {
     (t, dist(p, Point2::new(a.x + dx * tc, a.y + dy * tc)))
 }
 
-/// One side of the run's offset at `d`: the boundary of the disc swept
-/// along it (`Region::sweep`, the clipper2 Minkowski buffer), minus its
-/// round end caps, travelled with the run on its left. A run whose offset
-/// folds onto itself is refused by name, never trimmed.
-pub(super) fn offset_run(run: &[Point2], d: f64, left: bool) -> Result<Vec<Point2>, GenError> {
-    let folds = || {
-        GenError::Invalid(format!(
-            "the open run's offset of {d:.3} mm folds onto itself (the run comes back within twice the offset of \
-             itself) - pick a gentler run or a smaller tool"
-        ))
-    };
-    let tube = Region::sweep(&[run.to_vec()], d)?;
-    let [ring] = tube.loops() else {
-        return Err(folds());
-    };
-    if !ring.is_ccw() {
-        return Err(folds());
+/// Minimum distance from `p` to the polyline `run`, plus the closest
+/// segment index and unclamped parameter.
+fn nearest_on_run(p: Point2, run: &[Point2]) -> (f64, usize, f64) {
+    let mut best = (f64::INFINITY, 0usize, 0.0);
+    for i in 0..run.len().saturating_sub(1) {
+        let (t, dd) = foot(p, run[i], run[i + 1]);
+        if dd < best.0 {
+            best = (dd, i, t);
+        }
     }
+    best
+}
+
+fn is_end_cap(i: usize, t: f64, len: f64, n: usize) -> bool {
+    (i == 0 && t * len < -TOL) || (i == n - 2 && (t - 1.0) * len > TOL)
+}
+
+fn dot(a: Point2, b: Point2) -> f64 {
+    a.x * b.x + a.y * b.y
+}
+
+/// Whether `q` near segment `i` (unclamped parameter `t`) lies in the
+/// convex round-join sector at an interior corner (`Some(on_left)`), else
+/// `None`. On >90 deg turns, `on_left` tracks `turn < 0` even where the
+/// arc wraps past the segment's own line.
+fn corner_sector_left(q: Point2, run: &[Point2], i: usize, t: f64) -> Option<bool> {
     let n = run.len();
+    if i + 2 < n && t > 1.0 {
+        let (a, b, c) = (run[i], run[i + 1], run[i + 2]);
+        let turn = cross(a, b, c);
+        let (l0, l1, dq) = (dist(a, b), dist(b, c), dist(b, q));
+        if turn.abs() > 1e-9 * l0 * l1
+            && dot(Point2::new(c.x - b.x, c.y - b.y), Point2::new(q.x - b.x, q.y - b.y)) <= 1e-3 * l1 * dq
+        {
+            return Some(turn < 0.0);
+        }
+    }
+    if i > 0 && t < 0.0 {
+        let (a, b, c) = (run[i - 1], run[i], run[i + 1]);
+        let turn = cross(a, b, c);
+        let (l0, l1, dq) = (dist(a, b), dist(b, c), dist(b, q));
+        if turn.abs() > 1e-9 * l0 * l1
+            && dot(Point2::new(b.x - a.x, b.y - a.y), Point2::new(q.x - b.x, q.y - b.y)) >= -1e-3 * l0 * dq
+        {
+            return Some(turn < 0.0);
+        }
+    }
+    None
+}
+
+/// One side of the run's offset at `d`: the outer boundary of the disc
+/// swept along it (`Region::sweep`), minus its round end caps, travelled
+/// with the run on its left. Returns `Ok(None)` when the offset folds so
+/// the chosen side breaks or vanishes.
+pub fn offset_run_side(run: &[Point2], d: f64, left: bool) -> Result<Option<Vec<Point2>>, GenError> {
+    let n = run.len();
+    if n < 2 {
+        return Ok(None);
+    }
+    let tube = Region::sweep(&[run.to_vec()], d)?;
+    let mut ccw = tube.loops().iter().filter(|l| l.is_ccw());
+    let (Some(ring), None) = (ccw.next(), ccw.next()) else {
+        return Ok(None);
+    };
     let keep: Vec<bool> = ring
         .points()
         .iter()
         .map(|&q| {
             let mut best = (f64::INFINITY, 0usize, 0.0);
+            let mut interior = (f64::INFINITY, 0usize, 0.0);
             for i in 0..n - 1 {
                 let (t, dd) = foot(q, run[i], run[i + 1]);
                 if dd < best.0 {
                     best = (dd, i, t);
                 }
+                let len = dist(run[i], run[i + 1]).max(SAME);
+                let on_interior = (0.0..=1.0).contains(&t)
+                    || (corner_sector_left(q, run, i, t).is_some()
+                        && if t < 0.0 {
+                            dist(run[i], run[0]) > CAP_TIE && dist(run[i], run[n - 1]) > CAP_TIE
+                        } else {
+                            dist(run[i + 1], run[0]) > CAP_TIE && dist(run[i + 1], run[n - 1]) > CAP_TIE
+                        });
+                if !is_end_cap(i, t, len, n) && on_interior && dd < interior.0 {
+                    interior = (dd, i, t);
+                }
             }
-            let (_, i, t) = best;
+            let (best_dd, mut i, mut t) = best;
             let len = dist(run[i], run[i + 1]).max(SAME);
-            let cap = (i == 0 && t * len < -TOL) || (i == n - 2 && (t - 1.0) * len > TOL);
-            !cap && (cross(run[i], run[i + 1], q) > 0.0) == left
+            let mut cap = is_end_cap(i, t, len, n);
+            if cap && interior.0 <= best_dd + CAP_TIE {
+                i = interior.1;
+                t = interior.2;
+                cap = false;
+            }
+            let on_left = corner_sector_left(q, run, i, t).unwrap_or_else(|| cross(run[i], run[i + 1], q) > 0.0);
+            !cap && on_left == left
         })
         .collect();
     let m = keep.len();
     let starts: Vec<usize> = (0..m).filter(|&k| keep[k] && !keep[(k + m - 1) % m]).collect();
     let [s0] = starts[..] else {
-        return Err(folds());
+        return Ok(None);
     };
     let mut ride: Vec<Point2> =
         (0..m).map(|k| (s0 + k) % m).take_while(|&k| keep[k]).map(|k| ring.points()[k]).collect();
-    // The exact ends: the perpendicular offset points at the run's ends,
-    // in CCW order - the right side runs with the run, the left against it.
-    let normal_at = |a: Point2, b: Point2, at: Point2| {
+    // Exact ends where they stand clear of the rest of the run (in CCW
+    // order: right runs with the run, left against it). At an inside
+    // corner with a short end leg the perpendicular end is swallowed inside
+    // the adjacent wall's tube, so the tube's own cap intersection stands.
+    let normal_at = |a: Point2, b: Point2, at: Point2| -> Option<Point2> {
         let l = dist(a, b);
+        if l <= SAME {
+            return None;
+        }
         let (nx, ny) = (-(b.y - a.y) / l, (b.x - a.x) / l);
         let s = if left { d } else { -d };
-        Point2::new(at.x + nx * s, at.y + ny * s)
+        Some(Point2::new(at.x + nx * s, at.y + ny * s))
     };
     let p0 = normal_at(run[0], run[1], run[0]);
     let p1 = normal_at(run[n - 2], run[n - 1], run[n - 1]);
     let (first, last) = if left { (p1, p0) } else { (p0, p1) };
-    ride.retain(|q| dist(*q, first) > TOL && dist(*q, last) > TOL);
-    ride.insert(0, first);
-    ride.push(last);
-    Ok(ride)
+    let clear = |p: Point2| nearest_on_run(p, run).0 >= d - TOL;
+    if let Some(f) = first.filter(|&p| clear(p)) {
+        while ride.first().is_some_and(|q| dist(*q, f) <= TOL) {
+            ride.remove(0);
+        }
+        ride.insert(0, f);
+    }
+    if let Some(l) = last.filter(|&p| clear(p)) {
+        while ride.last().is_some_and(|q| dist(*q, l) <= TOL) {
+            ride.pop();
+        }
+        ride.push(l);
+    }
+    if ride.len() < 2 {
+        return Ok(None);
+    }
+    Ok(Some(ride))
+}
+
+/// One side of the run's offset at `d`, refusing by name when it folds.
+pub(super) fn offset_run(run: &[Point2], d: f64, left: bool) -> Result<Vec<Point2>, GenError> {
+    offset_run_side(run, d, left)?.ok_or_else(|| {
+        GenError::Invalid(format!(
+            "the open run's offset of {d:.3} mm folds onto itself (the run comes back within twice the offset of \
+             itself) - pick a gentler run or a smaller tool"
+        ))
+    })
 }
 
 #[cfg(test)]

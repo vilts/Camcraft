@@ -14,6 +14,12 @@ use crate::clock::Instant;
 use tracing_subscriber::util::SubscriberInitExt as _;
 use tracing_subscriber::EnvFilter;
 
+#[cfg(not(target_arch = "wasm32"))]
+#[path = "logging_desktop.rs"]
+mod desktop;
+#[cfg(not(target_arch = "wasm32"))]
+pub use desktop::{failure_message, init_desktop, log_path, startup_failure};
+
 /// Milliseconds since `started`, saturating at `u64::MAX` rather than
 /// truncating the `u128` `as_millis` returns (safe numeric conversion).
 #[must_use]

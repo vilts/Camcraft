@@ -34,7 +34,6 @@
 //! RS-274 arc's centre words (`cl::plane`); our own design (#637 step-E
 //! research comment, section 3).
 
-use super::backend::simulate_field;
 use super::carry::LatticeTurn;
 use super::cut::{check_ops, SimOp};
 use super::field_carry::CarriedField;
@@ -86,11 +85,20 @@ impl CarriedField {
     /// Every refusal `Stock::simulate` makes, by the same words and before
     /// any cell is written.
     pub fn simulate(&mut self, ops: &[SimOp]) -> Result<(), StockError> {
+        self.simulate_with(ops, false)
+    }
+
+    /// Run a twist-drill program on the carried stock (#2441).
+    pub fn simulate_drill(&mut self, ops: &[SimOp]) -> Result<(), StockError> {
+        self.simulate_with(ops, true)
+    }
+
+    fn simulate_with(&mut self, ops: &[SimOp], drill: bool) -> Result<(), StockError> {
         check_ops(ops)?;
         self.bake()?;
         let shift = self.turn.shift();
         let moved: Vec<Vec<Move>> = ops.iter().map(|op| op.moves.iter().map(|m| shifted(m, shift)).collect()).collect();
         let ops: Vec<SimOp> = ops.iter().zip(&moved).map(|(op, mv)| SimOp { moves: mv, ..*op }).collect();
-        simulate_field(&mut self.field, &ops)
+        super::backend::simulate_field_with(&mut self.field, &ops, drill)
     }
 }

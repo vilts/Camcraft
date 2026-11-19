@@ -440,7 +440,8 @@ pub(crate) fn point_along(from: Point3, to: Point3, arc: Option<ArcMove>, f: f64
         return straight(f);
     }
     let th = a0 + if arc.ccw { d * f } else { -d * f };
-    // Arcs are planar by construction (push_arc's law); Z lerps.
+    // A synchronized thread dip ramps its radius with angle and Z.
+    let r = ra + (rb - ra) * f;
     Point3::new(
         o.x + r * th.cos(),
         o.y + r * th.sin(),
@@ -538,7 +539,7 @@ pub fn script<'a>(
         if !path_start.is_finite() {
             // Nowhere to stand at the start is not a slow path, it is
             // a corrupt cache; it contributes nothing, and says so.
-            eprintln!("sim: {name} starts nowhere finite and is left out");
+            tracing::warn!("sim: {name} starts nowhere finite and is left out");
             continue;
         }
         if sc.segs.len() >= MAX_SIM_SEGS {
@@ -586,7 +587,7 @@ pub fn script<'a>(
                 // The cache is validated on its way here; a corrupt
                 // move stands still and says so, keeping the
                 // move-index alignment the dwell pass depends on.
-                eprintln!("sim: a non-finite move of {name} stands in as no motion");
+                tracing::warn!("sim: a non-finite move of {name} stands in as no motion");
                 (here, here)
             };
             here = to;
@@ -866,6 +867,24 @@ mod tests {
             let r = sc.at(0.6 * k as f64 / 10.0);
             let rr = (r.pos.x * r.pos.x + r.pos.y * r.pos.y).sqrt();
             assert!((rr - 10.0).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn thread_dip_playback_interpolates_radius_at_interior_points() {
+        for ccw in [false, true] {
+            let from = p(5.6, 0.0, 20.0);
+            let to = p(-5.9, 0.0, 19.0);
+            let arc = Some(ArcMove::xy(Point2::new(0.0, 0.0), ccw));
+            for f in [0.25, 0.5, 0.75] {
+                let q = point_along(from, to, arc, f);
+                let radius = 5.6 + 0.3 * f;
+                let angle = if ccw { PI * f } else { -PI * f };
+                assert!(near(q, p(radius * angle.cos(), radius * angle.sin(), 20.0 - f), 1e-10),
+                    "playback must agree with the posted linear radius ramp at {f}: {q:?}");
+            }
+            assert!(near(point_along(from, to, arc, 0.5),
+                p(0.0, if ccw { 5.75 } else { -5.75 }, 19.5), 1e-10));
         }
     }
 

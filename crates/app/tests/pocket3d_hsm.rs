@@ -143,6 +143,36 @@ fn the_users_bore_roughs_adaptive_level_by_level_and_verifies_clean() {
     assert!(bore_path_matches(got), "the bore's path as the fix plans it: {got:?} {:?}", path.notes);
 }
 
+/// Issue #1950: the user's part as a whole model (no area control): the
+/// footprint reaches past the 70 x 70 stock, each level's stock ring is
+/// planned from the air, and every level keeps the HSM plan and verifies
+/// clean against the part solid.
+#[test]
+#[ignore = "heavy lane: issue #1950 blocked (maintainer decides), expected red: stock-ring plans exceed optimal load and fall back to Offset rings; HSM Adaptive over every whole-model level of the user's STEP, ring and bore, verified (~90 s debug, release tier); the level's debug twin is motion pocket_hsm::ring_tests::the_stock_ring_level_reaches_the_air_planner_with_the_stock"]
+fn the_users_whole_model_bore_roughs_adaptive_on_each_level() {
+    let world = new_world();
+    let mut h = History::default();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/Milling-test.step");
+    let imp = ImportModel::new(&path).expect("the user's STEP imports");
+    let name = imp.name.clone();
+    h.execute(&world, imp);
+    let loc = Location { pos: Point3::new(0.0, 0.0, -7.0), ..Default::default() };
+    h.execute(&world, SetStock::new(&world, StockShape::Box { dx: 70.0, dy: 70.0, dz: 27.0 }, loc).expect("stock"));
+    let tool = catalog().into_iter().find(|(n, _)| *n == TOOL).map(|(_, t)| t).expect("catalog");
+    h.execute(&world, AddTool::new(&world, TOOL, tool).expect("tool"));
+    h.execute(&world, CreateOperation::new(&world, "Op1", TOOL, SrcRef::Entity(name), pocket_op(PocketStrategy::Adaptive)).expect("create"));
+    h.execute(&world, GenerateOperation::new(&world, "Op1").expect("generate"));
+    let e = model::find_by_name(&world, "Op1").expect("op");
+    let tp = model::toolpath_of(&world, &e).expect("cached path");
+    let warns: Vec<String> = tp.warnings.iter().map(|w| format!("{w:?}")).collect();
+    assert!(warns.is_empty(), "every level verifies clean: {warns:?}
+notes {:?}", tp.path.notes);
+    let fell: Vec<&String> = tp.path.notes.iter().filter(|n| n.contains("Offset rings cut")).collect();
+    assert!(fell.is_empty(), "every level keeps the HSM plan: {fell:?}");
+    assert!(tp.path.notes.iter().any(|n| n.contains("cut from the air")), "{:?}", tp.path.notes);
+    assert!(!tp.path.notes.iter().any(|n| n.contains("planning budget")), "{:?}", tp.path.notes);
+}
+
 /// The bore's (moves, planar feeds, arcs) on this platform (issue #980).
 fn bore_path_matches(got: (usize, usize, usize)) -> bool {
     if cfg!(all(target_os = "windows", target_arch = "x86_64")) {

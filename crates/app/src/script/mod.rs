@@ -27,6 +27,7 @@
 //! context and every function registered inside it is dropped first.
 
 pub(crate) mod api;
+mod call;
 pub use api::refusal_text;
 mod report;
 #[cfg(test)]
@@ -97,6 +98,7 @@ pub(crate) const VERBS: &[Verb] = &[
     Verb::new("check", 0, api::v_check, "check(): VerifyReport"),
     Verb::new("result", 0, api::v_result, "result(): unknown"),
     Verb::new("log", -1, api::v_log, "log(...values: unknown[]): null"),
+    Verb::new("call", -1, call::v_call, "call(tool: string, args?: Record<string, unknown>): unknown"),
 ];
 
 pub(crate) type VerbFn = fn(&mut Env, Vec<Value>) -> Result<Value, String>;

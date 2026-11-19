@@ -127,6 +127,12 @@ pub struct ThreadCycle {
     /// the passes are not a cycle's one-cut-per-depth ladder, so a
     /// cycle cannot state them.
     pub repeat_each_depth: bool,
+    /// The roughing passes carry in-pass chip-break dips (issue #419):
+    /// half-turns whose radius changes inside one synchronized chain.
+    /// Only a continuous-threading G32 chain can state them - no
+    /// cycle can, and a post that does not declare continuous
+    /// threading refuses them.
+    pub chip_break_dips: bool,
     /// Axial length of the angled pull-out at the thread's end (0: a
     /// square, radial retract).
     pub pull_out: f64,

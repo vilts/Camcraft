@@ -97,11 +97,13 @@ fn quarter_turns_are_equal_buttons_filling_the_pane() {
         assert!((r[k].min.x - r[k + 3].min.x).abs() < 0.5, "the rows line up in columns");
         assert!(r[k].max.y <= r[k + 3].min.y, "X+ over X-, and so on");
     }
-    let (level, set) = (rect(&h, "Level"), rect(&h, "Set Origin"));
-    assert!(live(&h, "Level") && live(&h, "Set Origin"));
-    assert!(same_size(level, set), "{level:?} vs {set:?}");
+    // #870: Level has its row alone; the typed origin applies from the
+    // footer's Set origin, so the body has no apply button.
+    let level = rect(&h, "Level");
+    assert!(live(&h, "Level"));
+    assert!(h.query_by_label("Set Origin").is_none() && h.query_by_label("Set origin").is_none());
     // One width for every row: the action row spans exactly the turns'.
-    assert!((level.min.x - r[0].min.x).abs() < 1.0 && (set.max.x - r[2].max.x).abs() < 1.0, "{level:?} {set:?}");
+    assert!((level.min.x - r[0].min.x).abs() < 1.0 && (level.max.x - r[2].max.x).abs() < 1.0, "{level:?}");
     let span = r[2].max.x - r[0].min.x;
     assert!(span > 0.85 * 320.0, "the turns fill the pane's width ({span} px)");
 }
@@ -265,7 +267,7 @@ fn milling_setup_disables_xy_wcs_tilt_and_points_to_part_alignment() {
     for label in ["Tilt about X (roll)", "Tilt about Y (pitch)"] {
         assert!(!spin_live(&h, label), "{label} must be disabled on a milling setup");
     }
-    for label in ["Turn Z+", "Turn Z-", "Level", "Set Origin"] {
+    for label in ["Turn Z+", "Turn Z-", "Level"] {
         assert!(live(&h, label), "{label} stays live on a milling setup");
     }
     for label in ["Turn X+", "Turn X-", "Turn Y+", "Turn Y-"] {

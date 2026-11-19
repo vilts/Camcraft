@@ -292,13 +292,14 @@ fn rest_group_warns_and_refuses_incompatible_strategy_and_predrilled_on_apply() 
     assert_eq!(live_strategy(h.state()), Some(PocketStrategy::Zigzag));
     assert!(h.state().error_for(ErrorScope::Operation).is_none(), "no refusal for Zigzag + rest");
 
-    // Adaptive stays refused by name (rest2d::rest_strategy).
+    // Retired Adaptive and its rest-specific incompatibility both stay visible.
     if let OpParams::Pocket { strategy, .. } = &mut h.state_mut().op_ui.params {
         *strategy = PocketStrategy::Adaptive;
     }
     h.run();
     let adaptive_refusal = h.state().op_ui.params.named_refusal().expect("Adaptive draft refusal");
     assert!(adaptive_refusal.contains("Adaptive"), "{adaptive_refusal}");
+    assert!(h.query_by_label_contains("not available with the Adaptive strategy").is_some(), "main's rest-specific refusal stays visible");
     assert!(
         h.query_by_label(&adaptive_refusal).is_some(),
         "consequence warns when Adaptive is active with rest machining"

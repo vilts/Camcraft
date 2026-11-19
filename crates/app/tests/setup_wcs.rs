@@ -10,7 +10,8 @@
 //!
 //! Gate map (#196): covers app::posting (wcs_context, verification_report,
 //! post_setup, post_per_op), app::commands (SetSetupWorkOffset,
-//! CreateSetup), app::project (save, load, open), app::setup_sheet.
+//! CreateSetup), app::project (save, load, open), app::setup_sheet,
+//! app::setup_origin.
 //! Lane shape (M4.4): all tests here run in seconds.
 
 use flecs_ecs::prelude::World;
@@ -283,4 +284,25 @@ fn the_setup_sheet_names_the_program_offset() {
     pick(&world, &mut h, "Setup1", Some(4));
     let sheet = setup_sheet::render(&world, Some("Setup1")).expect("sheet");
     assert!(sheet.contains("program offset: G58\n"), "{sheet}");
+}
+
+/// #870: the sheet says where the origin is in words - what the
+/// operator touches off - beside its numbers.
+#[test]
+fn the_setup_sheet_says_where_the_origin_is_in_words() {
+    let (world, mut h) = faced_block();
+    let b = camcraft_app::model::stock_world_aabb_for(&world, Some("Setup1")).expect("stock box");
+    place(&world, &mut h, b.min.x, b.min.y, b.max.z);
+    let sheet = setup_sheet::render(&world, Some("Setup1")).expect("sheet");
+    assert!(sheet.contains("  origin: top of stock, front-left corner (X0 Y0 Z0)\n"), "{sheet}");
+    place(&world, &mut h, (b.min.x + b.max.x) * 0.5, (b.min.y + b.max.y) * 0.5, b.max.z);
+    let sheet = setup_sheet::render(&world, Some("Setup1")).expect("sheet");
+    assert!(sheet.contains("  origin: top of stock, centre (X0 Y0 Z0)\n"), "{sheet}");
+    // Off every anchor point: distances, never a corner it is not on.
+    place(&world, &mut h, b.min.x + 12.0, b.min.y, b.max.z + 1.5);
+    let sheet = setup_sheet::render(&world, Some("Setup1")).expect("sheet");
+    assert!(
+        sheet.contains("  origin: off the stock's corners: X +12.000 mm from its left side, Y 0.000 mm from its front, Z +1.500 mm from its top (X0 Y0 Z0)\n"),
+        "{sheet}"
+    );
 }

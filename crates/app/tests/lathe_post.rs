@@ -369,6 +369,7 @@ fn an_axial_drill_posts_through_the_document_with_the_lathe_post_chosen() {
     let hole = Hole { xy: Point2::new(0.0, 0.0), radius: 2.05, entry_z: 20.0, floor_z: 10.0, through: false, stepped: false };
     let params = OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::fixed(20.0),

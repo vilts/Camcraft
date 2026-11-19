@@ -104,7 +104,10 @@ pub(super) fn params_fields(ui: &mut Ui, state: &mut State, tab: usize) {
     // ...and against the operation's own source, which a From: Selection
     // height reads (M11.3 A): handed to every height editor of this
     // pass through the frame's temp data, so no row signature moves.
-    ui.data_mut(|d| d.insert_temp(egui::Id::new(HEIGHT_SRC_ID), state.op_ui.src()));
+    ui.data_mut(|d| {
+        d.insert_temp(egui::Id::new(HEIGHT_SRC_ID), state.op_ui.src());
+        d.insert_temp(egui::Id::new(super::heights_page::HEIGHT_TILT_ID), state.op_ui.params.tilt());
+    });
     if let OpParams::Drill {
         cycle: camcraft_app::drilling::CycleChoice::Auto,
         holes,
@@ -257,6 +260,17 @@ pub(super) fn params_fields(ui: &mut Ui, state: &mut State, tab: usize) {
     super::turning_more_page::fields(ui, world, params, &mut cx);
     let sync_toggle = cx.sync_toggle;
     let detect_holes = cx.detect_holes;
+    if tab == super::op_tabs::SEC_HEIGHTS
+        && let Some(note) = crate::height_memo::clearance_advice(
+            &state.world,
+            op_ctx.as_deref(),
+            &state.op_ui.src(),
+            &state.op_ui.params,
+            op.as_ref().map(|_| nm.as_str()),
+        )
+    {
+        super::layout::consequence(ui, &note);
+    }
     if sync_toggle {
         if state.wire_sync.armed {
             crate::wire_sync_pick::disarm(state);

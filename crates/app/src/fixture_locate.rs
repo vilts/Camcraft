@@ -164,12 +164,12 @@ pub fn plan(world: &World, spec: &LocateSpec) -> Result<Plan, String> {
     for (i, m) in spec.mates.iter().enumerate() {
         let k = i + 1;
         if m.part.entity != held {
-            return Err(format!("mate {k}: {} of '{}' is not on the {noun} '{held}'", m.part.feature, m.part.entity));
+            return Err(format!("mate {k}: {} is not on the {noun} '{held}'", crate::pick::geo_label(world, &m.part)));
         }
         if m.fixture.entity != spec.fixture {
             return Err(format!(
-                "mate {k}: {} of '{}' is not on the fixture '{}'",
-                m.fixture.feature, m.fixture.entity, spec.fixture
+                "mate {k}: {} is not on the fixture '{}'",
+                crate::pick::geo_label(world, &m.fixture), spec.fixture
             ));
         }
         let p = mate_datum(world, &m.part, part_pose).map_err(|e| format!("mate {k}: {e}"))?;

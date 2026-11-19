@@ -37,6 +37,11 @@
 //! refused and left (and `pocket_hsm` falls back to Offset rings when
 //! too much is left). Every loop is capped; the plan cannot hang.
 
+// Issue #1950: the stock ring cut from the air.
+mod air_chain;
+mod air_links;
+mod air_rings;
+mod air_uncross;
 mod budget;
 mod conform;
 mod core;
@@ -80,6 +85,7 @@ pub(crate) use guard::first_crossing;
 pub(crate) use troch_plan::{plan as plan_trochoid, seed as trochoid_seed};
 
 pub(crate) use lift::Travel;
+pub(crate) use air_rings::plan_from_air;
 pub(crate) use lift_link::Return;
 pub(crate) use loops::boundary_dist;
 pub(crate) use medial::{Spine, spine as medial_spine};

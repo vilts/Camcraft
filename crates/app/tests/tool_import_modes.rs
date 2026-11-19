@@ -110,7 +110,7 @@ fn update_adds_unmatched_and_skips_identical_in_one_undo() {
     let s = do_import(&w, &mut h, &items, ImportMode::Update).expect("update");
     assert!(s.contains("imported 1 tool") && s.contains("1 updated (T1)") && s.contains("already in the document (T2)"), "{s}");
     assert!(tool_named(&w, "New").is_some());
-    assert_eq!(number_of(&w, "New"), None);
+    assert_eq!(number_of(&w, "New"), Some(1));
     h.undo(&w);
     assert!(tool_named(&w, "New").is_none(), "one undo removes the add");
     assert_eq!(tool_named(&w, "T1"), Some(cat("EM-0400-2FL")), "and reverts the update");

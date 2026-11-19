@@ -23,7 +23,7 @@ const USAGE: &str = "\
 camcraft-cli - CamCraft headless batch lane (clean-room)
 
 USAGE:
-    camcraft-cli script   <job.js>
+    camcraft-cli script   <job.js|job.camscript>
     camcraft-cli process  <job.camproj> [-o <out.nc>] [--cps <name|file.cps>]
     camcraft-cli mcp      [--connect <host:port>]
     camcraft-cli help
@@ -48,13 +48,13 @@ stdout; refusals print on stderr. Exit: 0 stood, 1 refused, 2 usage.
 /// to stdout, exit 0, and the command never runs - `mcp --help` does
 /// not start the server.
 const SCRIPT_USAGE: &str = "\
-camcraft-cli script <job.js>
+camcraft-cli script <job.js|job.camscript>
 
     run a job script through the cam verbs (assets/scripts/cam.d.ts
     types them; every world write rides the commands)
 
 ARGUMENTS:
-    <job.js>          the job file; must end in .js
+    <job.js|job.camscript>  the job file; must end in .js or .camscript
 
 OPTIONS:
     -h, --help        print this usage and exit 0
@@ -217,12 +217,15 @@ fn read_source(path: &Path) -> Option<String> {
 
 fn lane_script(args: &[String]) -> i32 {
     let [job] = args else {
-        eprintln!("camcraft-cli: script takes exactly one .js file");
+        eprintln!("camcraft-cli: script takes exactly one .js or .camscript file");
         return 2;
     };
     let path = PathBuf::from(job);
-    if path.extension().is_none_or(|e| !e.eq_ignore_ascii_case("js")) {
-        eprintln!("camcraft-cli: {} is not a .js job", path.display());
+    let supported = path.extension().is_some_and(|e| {
+        e.eq_ignore_ascii_case("js") || e.eq_ignore_ascii_case("camscript")
+    });
+    if !supported {
+        eprintln!("camcraft-cli: {} is not a .js or .camscript job", path.display());
         return 2;
     }
     let Some(source) = read_source(&path) else { return 2 };

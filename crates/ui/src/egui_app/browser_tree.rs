@@ -331,11 +331,13 @@ fn op_row(
         }
         s
     });
+    let meta = model::operation_meta_of(w, entity);
+    let review = if meta.needs_review.is_empty() { "" } else { "  needs review" };
     let problem = operation::tool_gate::tool_problem_of(w, entity);
-    let badge = status_badge(status, problem.is_some(), warns);
+    let badge = status_badge(status, problem.is_some() || !review.is_empty(), warns);
     let suffix = match problem {
-        Some(why) => format!("{kind}  BLOCKED{warn_text}{flow}  {why}"),
-        None => format!("{kind}  {tag}{warn_text}{flow}"),
+        Some(why) => format!("{kind}{review}  BLOCKED{warn_text}{flow}  {why}"),
+        None => format!("{kind}{review}  {tag}{warn_text}{flow}"),
     };
     let hidden = state.hidden_paths.iter().any(|p| p == name);
     let selected = matches!(t, UiTarget::Operation(n) if n == name);

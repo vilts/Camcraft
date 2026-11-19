@@ -190,7 +190,7 @@ pub fn detect_holes(
             return Err("no upright round bosses found in the source model - an external thread is milled on one".to_string());
         }
         *holes = found;
-        return Ok(DetectedHoles { params, skipped: Vec::new() });
+        return Ok(DetectedHoles { params, skipped: Vec::new(), undersize: Vec::new() });
     }
     let is_drill = matches!(params, OpParams::Drill { .. });
     let holes: &mut Vec<_> = match &mut params {
@@ -218,7 +218,9 @@ pub fn detect_holes(
     if let OpParams::Drill { cross, .. } = &mut params {
         *cross = radial;
     }
-    Ok(DetectedHoles { params, skipped })
+    // #2496: a hole wider than the drill stays (a pilot), named by size.
+    let undersize = super::drill_size::detect_notes(world, name, &params);
+    Ok(DetectedHoles { params, skipped, undersize })
 }
 
 /// A named entity's facets in its setup's frame (#326: a part of an

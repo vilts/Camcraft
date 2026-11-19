@@ -83,6 +83,7 @@ fn job_on_machine(hand: Option<&str>, cycle: CycleChoice, lathe: bool) -> (World
     h.execute(&world, AddTool::new(&world, "Tap", tap(hand)).expect("add tap"));
     let params = OpParams::Drill {
         break_through: None,
+        break_through_from: Default::default(),
         clearance_z: Height::fixed(25.0), retract_z: None, top_z: Height::fixed(12.0),
         bottom_z: None, cycle, peck: 0.0, dwell: 0.0, feed: 100.0, plunge_feed: 100.0,
         holes: vec![Hole {

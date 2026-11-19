@@ -113,6 +113,16 @@ angle. An unset entry angle means 3 degrees, independently of the link
 angle. If there is too little room for that ramp, the path reports its
 substitution and uses the plunge feed. Read the generated entry notes.
 
+<div class="guide-pair">
+
+![2D contour toolpath without lead-in plunging directly onto the workpiece corner](../../../images/guide/op-2d-lead-before.png)
+*Before: Lead set to None plunges directly onto the contour.*
+
+![2D contour toolpath with six millimeter arc lead-in curving tangentially into the wall](../../../images/guide/op-2d-lead-after.png)
+*After: Arc lead-in enters tangentially from clear stock.*
+
+</div>
+
 **Common refusals:** "the bore is narrower than the tool - switch Side to
 Outside or pick a smaller tool"; "cannot cut the gap at (x, y): it is
 narrower than the tool's ... diameter"; "a Contour's open boundary must be
@@ -137,6 +147,28 @@ for an include or exclude boundary.
 | Passes | Optimal load (% of D) | about 14.6 (used by Adaptive and Offset rings) |
 | Heights | Stepdown | 5 |
 | Lead in / Lead out | Entry | Helix, radius 1 (Plunge, Ramp, Arc) |
+
+![2D pocket operation selected with Passes parameter panel and multi-level pocket toolpath in the viewport](../../../images/guide/op-2d-pocket-params.png)
+
+<div class="guide-pair">
+
+![2D zigzag pocket toolpath with wide four point five millimeter stepover leaving coarse pass spacing](../../../images/guide/op-2d-stepover-before.png)
+*Before: wider stepover (4.5 mm) spaces passes further apart.*
+
+![2D zigzag pocket toolpath with fine one point eight millimeter stepover filling dense floor passes](../../../images/guide/op-2d-stepover-after.png)
+*After: smaller stepover (1.8 mm) packs passes closely across the floor.*
+
+</div>
+
+<div class="guide-pair">
+
+![2D pocket waterline toolpath using direct vertical plunge entry straight into the pocket floor](../../../images/guide/op-2d-entry-before.png)
+*Before: Plunge entry dives straight along Z.*
+
+![2D pocket waterline toolpath using helical spiral entry ramping gradually into each pocket depth](../../../images/guide/op-2d-entry-after.png)
+*After: Helix entry spirals down along the programmed radius.*
+
+</div>
 
 **Common refusals:** "pocket is narrower than the tool"; "stepover leaves
 bands the tool cannot reach"; a pick that "projects to a line from above

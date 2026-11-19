@@ -9,7 +9,7 @@ use crate::geo2d::{Loop, Point2, Region};
 use crate::geometry::{Point3, Triangle};
 use crate::links::{Link, LinkTally};
 
-use super::arcs::{fit_arcs_sided, push_segs};
+use super::arcs::push_segs;
 use super::contour_depth::{Ladder, ladder, picked_law};
 use super::contour_entry::{Engage, crosses, flatten, say, seam_leads, wall_arc, wall_arc_top};
 use super::contour_comp::{self, SpanCtx};
@@ -17,8 +17,9 @@ use super::contour_link::{plan_links, push_stay, ring_link};
 use super::contour_step::{Said, Step, engage_level};
 use super::levels::{Cert, Motion};
 use super::ring::Ring;
+use super::tab_bridge::{cached, fit_tabs, keep_cut};
 use super::face::GenError;
-use super::fillet::{Legal, fillet_corners};
+use super::fillet::Legal;
 use super::fillet_tally::{FilletTally, fillet_floor};
 use super::contour_start;
 use super::lead_ext::{extend_leads, push_lead_down, retrace};
@@ -103,10 +104,16 @@ pub fn contour_on_picked(
 /// rings were picked (the #1927 law applies).
 type PartRef<'a> = (&'a [Triangle], &'a [std::ops::Range<usize>], bool);
 
-fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -> Result<Toolpath, GenError> {
-    p.validate()?;
-    // Control-side compensation (M13.11): its parameter door first.
-    contour_comp::door(p)?;
+/// Offset loops, programmed region and walking polylines prepared for one
+/// contour band; shared with `contour_whole`.
+pub(super) struct PreparedBand {
+    pub center: Region,
+    pub prog: Option<Region>,
+    pub loops: Vec<Loop>,
+    pub plan: Vec<Vec<Point2>>,
+}
+
+pub(super) fn prepare_band(region: &Region, p: &ContourParams) -> Result<PreparedBand, GenError> {
     if region.is_empty() {
         return Err(GenError::Empty("empty footprint".into()));
     }
@@ -125,18 +132,13 @@ fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -
     // The contour the post programs under G41/G42 (M13.11): the part
     // at the stock to leave; `None` for every path cut in computer.
     let prog = contour_comp::programmed_region(region, p)?;
-    let flat = p.levels()?;
-    let mut loops: Vec<&Loop> = center.loops().iter().collect();
+    let mut loops: Vec<Loop> = center.loops().to_vec();
     loops.sort_by(|a, b| b.area().abs().total_cmp(&a.area().abs()));
-    // #1448: the ring the user's start point re-sequences, or its refusal.
-    let pick = contour_start::pick_ring(&loops, p)?;
-    let exit = contour_start::pick_exit(&loops, p)?; // #1473
-
     // The rings every level plans to walk, as closed polylines - the
     // link chords of M8.1's plan law get proven against these. Tabbed
     // levels walk a subset, which errs conservative: an unproven chord
     // hops rather than dragging across a ring line.
-    let plan: Vec<Vec<Point2>> = loops
+    let plan = loops
         .iter()
         .map(|l| {
             let mut v: Vec<Point2> = super::ring::walked(l.points(), p.climb == inside, inside);
@@ -149,34 +151,34 @@ fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -
             v
         })
         .collect();
-    // The shared motion envelope: dive_link and substituted_dive read
-    // their lifts and feeds through it, so the contour's arms speak
-    // the pocket ladders' word verbatim (hop = retract clamped at
-    // clearance, exactly what `hop` below computes).
-    let m = Motion::new(p.clearance_z, Some(p.retract_z), p.feed, p.plunge_feed)
-        .with_entry(p.entry, p.helix_radius)
-        .with_arc_radius(p.tool_diameter)
-        .with_links(p.links, p.helix_radius);
-    let mut said = Said::default();
-    let cert = Cert::Region(&center);
-    // Climb travel keeps the part on the RIGHT on both sides (#1555, see
-    // the per-loop flip below), so the air - the only side a fillet may
-    // stand on - is left for climb, right for conventional.
-    let legal = Legal { region: &center, inside, air_left: Some(p.climb) };
-    let mut tally = FilletTally::default();
+    Ok(PreparedBand { center, prog, loops, plan })
+}
+
+fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -> Result<Toolpath, GenError> {
+    p.validate()?;
+    // Control-side compensation (M13.11): its parameter door first.
+    contour_comp::door(p)?;
+    let band = prepare_band(region, p)?;
+    let refs: Vec<&Loop> = band.loops.iter().collect();
+    // #1448: the user's start point re-sequences its ring instead.
+    let pick = contour_start::pick_ring(&refs, p)?;
+    let exit = contour_start::pick_exit(&refs, p)?; // #1473
+    let flat = p.levels()?;
+    let r = p.tool_diameter * 0.5;
+    let d = r + p.stock_to_leave;
     // Lead shrinks, refusals and reseated starts, each said once.
     let mut lead_notes: Vec<String> = Vec::new();
     // Which ring is cut at which level: all of them at every level for
     // a flat region; against a part, each ring down to its own floor.
     let lad = match part {
-        None => Ladder::uniform(&flat, loops.len()),
-        Some((f, bodies, _)) => ladder(&plan, f, bodies, &flat, p.top_z, r, p.stock_to_leave, &mut lead_notes),
+        None => Ladder::uniform(&flat, band.loops.len()),
+        Some((f, bodies, _)) => ladder(&band.plan, f, bodies, &flat, p.top_z, r, p.stock_to_leave, &mut lead_notes),
     };
     // A picked ring on the wrong side is refused by its own name first
     // (#1927), also when it was the only ring (#2004: with no air level
     // at Top Z, such a ring walks no level at all).
     if let Some((f, _, true)) = part {
-        picked_law(&plan, f, &flat, &lad, d, p.side)?;
+        picked_law(&band.plan, f, &flat, &lad, d, p.side)?;
     }
     if lad.zs.is_empty() {
         // Every ring stands in the part at its first level: nothing is
@@ -187,11 +189,41 @@ fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -
             lead_notes.join("; ")
         )));
     }
-    let lad = &lad;
-
-    let eng = Engage { p, center: &center, cert: &cert, plan: &plan, m: &m, legal: &legal };
-
     let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
+    let mut said = Said::default();
+    let mut tally = FilletTally::default();
+    emit_band(&mut b, &band, p, &lad, pick, exit, &mut said, &mut lead_notes, &mut tally)?;
+    finish_contour(b, lead_notes, &tally, p)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_band(
+    b: &mut PathBuilder,
+    band: &PreparedBand,
+    p: &ContourParams,
+    lad: &Ladder,
+    pick: Option<(usize, Point2)>,
+    exit: Option<(usize, Point2)>,
+    said: &mut Said,
+    lead_notes: &mut Vec<String>,
+    tally: &mut FilletTally,
+) -> Result<(), GenError> {
+    let inside = p.side == Side::Inside;
+    // The shared motion envelope: dive_link and substituted_dive read
+    // their lifts and feeds through it, so the contour's arms speak
+    // the pocket ladders' word verbatim (hop = retract clamped at
+    // clearance, exactly what `hop` below computes).
+    let m = Motion::new(p.clearance_z, Some(p.retract_z), p.feed, p.plunge_feed)
+        .with_entry(p.entry, p.helix_radius)
+        .with_arc_radius(p.tool_diameter)
+        .with_links(p.links, p.helix_radius);
+    let cert = Cert::Region(&band.center);
+    // Climb travel keeps the part on the RIGHT on both sides (#1555, see
+    // the per-loop flip below), so the air - the only side a fillet may
+    // stand on - is left for climb, right for conventional.
+    let legal = Legal { region: &band.center, inside, air_left: Some(p.climb) };
+    let eng = Engage { p, center: &band.center, cert: &cert, plan: &band.plan, m: &m, legal: &legal };
+    let prog = &band.prog;
     let hop = p.retract_z.min(p.clearance_z);
     let mut first_entry = true;
     let mut lifted = LinkTally::default();
@@ -202,10 +234,12 @@ fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -
     // and the next ring's, cut paths too (#1555: climb's leads cross it).
     let mut last_leads: Vec<Vec<Point2>> = Vec::new();
     let is_tabbed = |z: f64| p.tab_count > 0 && z < p.bottom_z + p.tab_height;
+    // #2480: each ring's tab windows, fitted once (tab_bridge).
+    let mut fits = std::collections::HashMap::new();
     // The cut order, and where the stay-down link joins it (contour_link).
-    let (sched, stay) = plan_links(p, lad, &plan, &mut lead_notes);
+    let (sched, stay) = plan_links(p, lad, &band.plan, lead_notes);
     for (si, &(z, li)) in sched.iter().enumerate() {
-        let l = loops[li];
+        let l = &band.loops[li];
         let tabbed = is_tabbed(z);
         // A tab-hop template traverses at `hop` between windows, and a
         // standing tab is material AT the window down to the level -
@@ -242,44 +276,34 @@ fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -
         // the user's start point re-sequences its ring instead.
         let ap = &p.links.approach;
         let picked = pick.filter(|&(pi, _)| pi == li).map(|(_, q)| q);
-        let ring = Ring::new(contour_start::seat(pts, picked, tabbed, prog.is_some(), p, &legal, &mut lead_notes));
+        let ring = Ring::new(contour_start::seat(pts, picked, tabbed, prog.is_some(), p, &legal, lead_notes));
         // The overlap past the start on closed rings (M11.3 C): not on
         // tabbed levels (their windows are the tab law's) and not under a
         // keep-down level link (the next level descends from the seam).
         let ov = if tabbed || ap.overlap <= 0.0 {
             0.0
         } else if p.links.level == Link::KeepDown {
-            say(&mut lead_notes, "lead: the overlap stands down under the keep-down level link - the next level descends from the seam".into());
+            say(lead_notes, "lead: the overlap stands down under the keep-down level link - the next level descends from the seam".into());
             0.0
         } else {
             ap.overlap.min(ring.len)
         };
-        let keeps = if tabbed && picked.is_some() {
-            // #1473: the tab windows measured from the picked start, so
-            // every level enters at the pick.
-            ring.tab_keeps_from_start(p.tab_count as usize, p.tab_width)
-        } else if tabbed {
-            ring.tab_keeps(p.tab_count as usize, p.tab_width)
+        let keeps = if tabbed {
+            // #2480 / #1473: windows grown until the bridge is the tab
+            // width at corners and past the leads; from a picked start
+            // the windows end on the spacing marks.
+            cached(&mut fits, li, || fit_tabs(&ring, p, picked.is_some(), &legal), lead_notes)
         } else {
             vec![(0.0, ring.len)]
         };
-        for (k, &(a, e)) in keeps.iter().enumerate() {
-            let poly = ring.arc_between(a, e);
-            if poly.len() < 2 {
-                continue;
-            }
-            let mut walk = fit_arcs_sided(&poly, p.tolerance, legal.air_left);
-            if p.blend_turns {
-                let (w, t) = fillet_corners(&walk, poly[0], r, p.tolerance, &legal);
-                walk = w;
-                tally.add(t);
-            }
+        for (k, &ke) in keeps.iter().enumerate() {
             // Both leads keep the cutter center in the legal room
             // (lead_fit.rs), meet the wall on its own tangent, and stay
             // off each other at the seam (contour_entry::seam_leads); the
             // extensions ride the same room (lead_ext).
-            let (entry, lead, lead_off) = seam_leads(&walk, &poly, p, &legal, &mut lead_notes);
-            let (entry, lead, lead_off) = extend_leads(entry, lead, lead_off, &walk, &poly, p, &legal, &mut lead_notes);
+            let Some((poly, walk, entry, lead, lead_off)) = keep_cut(&ring, ke, p, &legal, lead_notes, tally) else {
+                continue;
+            };
             if picked.is_some() && k == 0 {
                 // The first window begins at the pick (tabbed levels too);
                 // a later one begins after a tab, the tab law's start.
@@ -291,14 +315,14 @@ fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -
             let mut window = (poly, walk, entry, lead, lead_off);
             if let Some((_, q)) = exit.filter(|&(ei, _)| ei == li) {
                 // #1473: on past the seam to the user's exit point.
-                window = contour_start::exit_at(window, q, p, &legal, &mut lead_notes)?;
+                window = contour_start::exit_at(window, q, p, &legal, lead_notes)?;
             } else if ov > 0.0 {
                 let (rpoly, rwalk) = retrace(&window.0, &window.1, ov);
-                let (en, li, lo) = seam_leads(&rwalk, &rpoly, p, &legal, &mut lead_notes);
-                let (en, li, lo) = extend_leads(en, li, lo, &rwalk, &rpoly, p, &legal, &mut lead_notes);
+                let (en, li, lo) = seam_leads(&rwalk, &rpoly, p, &legal, lead_notes);
+                let (en, li, lo) = extend_leads(en, li, lo, &rwalk, &rpoly, p, &legal, lead_notes);
                 let last = rpoly[rpoly.len() - 1];
                 if crosses(en, &li, last, &lo) {
-                    say(&mut lead_notes, format!("lead: the {ov:.3} mm overlap's lead-out crosses the lead-in at ({:.3}, {:.3}) - overlap dropped", last.x, last.y));
+                    say(lead_notes, format!("lead: the {ov:.3} mm overlap's lead-out crosses the lead-in at ({:.3}, {:.3}) - overlap dropped", last.x, last.y));
                 } else {
                     window = (rpoly, rwalk, en, li, lo);
                 }
@@ -314,11 +338,11 @@ fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -
             if let (Some(s), Some(&zp)) = (stay_in, rzi.checked_sub(1).and_then(|i| rz.get(i))) {
                 // Stayed down: the tool stands on the seam at the level
                 // above (its lead-out skipped); descend on the ring.
-                push_stay(&mut b, s, &poly, &walk, zp, z, p, &legal, &mut lead_notes);
+                push_stay(b, s, &poly, &walk, zp, z, p, &legal, lead_notes);
                 first_entry = false;
-                push_segs(&mut b, &walk, z, p.feed);
+                push_segs(b, &walk, z, p.feed);
                 if !stay_out {
-                    push_segs(&mut b, &lead_off, z, p.feed);
+                    push_segs(b, &lead_off, z, p.feed);
                 }
                 continue;
             }
@@ -346,10 +370,10 @@ fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -
             if wall_arc_on && !tabbed {
                 let z_top = wall_arc_top(p, rz, rzi, hop_z);
                 let first = lead.first().or(walk.first());
-                match wall_arc(&mut b, &eng, e2, z, z_top, hop_z, first) {
+                match wall_arc(b, &eng, e2, z, z_top, hop_z, first) {
                     Ok(()) => arced = true,
                     Err(why) => say(
-                        &mut lead_notes,
+                        lead_notes,
                         format!(
                             "entry: no arc fits beside the wall at the lead-in ({:.3}, {:.3}) - {why}; \
                              grazing dive there instead",
@@ -359,7 +383,7 @@ fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -
                 }
             } else if wall_arc_on {
                 say(
-                    &mut lead_notes,
+                    lead_notes,
                     "entry: the arc stands down on tabbed levels - a standing tab is material \
                      beside the wall the room law cannot see; grazing dive at the lead-in there"
                         .into(),
@@ -371,7 +395,7 @@ fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -
                 // Ring to ring within one level: the pass link, proved
                 // against the rings and this level's dive links.
                 let cut = if dives.0.to_bits() == z.to_bits() { dives.1.as_slice() } else { &[] };
-                ring_link(&mut b, p, &legal, &[&plan, cut, &link_leads], e2, z, hop_z, tabbed, &mut lifted);
+                ring_link(b, p, &legal, &[&band.plan, cut, &link_leads], e2, z, hop_z, tabbed, &mut lifted);
             } else if k == 0 {
                 // The level's first engagement: a crossing, or the path's
                 // first entry (prev_z falls back to clearance there).
@@ -380,7 +404,7 @@ fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -
                 // when the descent one level up was the same arm.
                 let opened = rzi >= 2 || (rzi == 1 && arm == p.entry);
                 let step = Step { arm, e2, z, prev_z, first: first_entry, opened, inside, tabbed, lead_top };
-                if let Some(d) = engage_level(&mut b, &eng, &step, &lead, &walk, &mut said) {
+                if let Some(d) = engage_level(b, &eng, &step, &lead, &walk, said) {
                     if dives.0.to_bits() != z.to_bits() {
                         dives = (z, Vec::new());
                     }
@@ -391,31 +415,31 @@ fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -
                 let cur = b.at();
                 b.push(MoveKind::Feed, Point3::new(cur.x, cur.y, hop_z), Some(p.feed));
                 b.push(MoveKind::Rapid, Point3::new(e2.x, e2.y, hop_z), None);
-                super::contour_link::guard(&mut b, p, e2, lead_top, p.entry_top(), "the dive past a tab");
+                super::contour_link::guard(b, p, e2, lead_top, p.entry_top(), "the dive past a tab");
                 b.push(MoveKind::Plunge, Point3::new(e2.x, e2.y, lead_top), Some(p.plunge_feed));
             }
             first_entry = false;
             let at = b.at();
             let lead_at = b.moves_len();
             if at.x == e2.x && at.y == e2.y && at.z > z {
-                push_lead_down(&mut b, &lead, at.z, z, lf);
+                push_lead_down(b, &lead, at.z, z, lf);
             } else {
                 if lead_top > z {
-                    say(&mut lead_notes, "lead: the vertical lead-in rides only a dive at the lead-in's start - this entry lands on the cut plane".into());
+                    say(lead_notes, "lead: the vertical lead-in rides only a dive at the lead-in's start - this entry lands on the cut plane".into());
                 }
-                push_segs(&mut b, &lead, z, lf);
+                push_segs(b, &lead, z, lf);
             }
             let walk_at = b.moves_len();
-            push_segs(&mut b, &walk, z, p.feed);
+            push_segs(b, &walk, z, p.feed);
             let out_at = b.moves_len();
             if !stay_out {
-                push_segs(&mut b, &lead_off, z, p.feed);
+                push_segs(b, &lead_off, z, p.feed);
             }
             // The control's span (M13.11): the lead-in move that lands
             // on the wall engages, the lead-out move that leaves it
             // cancels; a lead the room law refused is a refusal here
             // too, by name - never a centre path under a Control op.
-            if let Some(prog) = &prog {
+            if let Some(prog) = prog {
                 if walk_at == lead_at || b.moves_len() == out_at {
                     return Err(contour_comp::refused_as(p, format!(
                         "needs a lead-in and a lead-out at ({:.3}, {:.3}) - the room law refused one ({})",
@@ -426,14 +450,23 @@ fn contour_impl(region: &Region, p: &ContourParams, part: Option<PartRef<'_>>) -
                     .with_ghost_moves(b.moves()));
                 }
                 // #871: a part-way refusal hands back the rings so far.
-                contour_comp::push_span(&mut b, &SpanCtx { prog, p }, walk_at - 1, out_at)
+                contour_comp::push_span(b, &SpanCtx { prog, p }, walk_at - 1, out_at)
                     .map_err(|e| e.with_ghost_moves(b.moves()))?;
             }
         }
     }
-    lifted.say(&mut b, "ring-to-ring");
+    lifted.say(b, "ring-to-ring");
     let cur = b.at();
     b.push(MoveKind::Rapid, Point3::new(cur.x, cur.y, p.clearance_z), None);
+    Ok(())
+}
+
+pub(super) fn finish_contour(
+    mut b: PathBuilder,
+    lead_notes: Vec<String>,
+    tally: &FilletTally,
+    p: &ContourParams,
+) -> Result<Toolpath, GenError> {
     for n in lead_notes {
         b.note(n);
     }

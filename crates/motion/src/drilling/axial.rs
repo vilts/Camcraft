@@ -24,7 +24,7 @@
 //! that a lathe's drill stands on the spindle axis and nowhere else.
 //! No vendor material consulted.
 
-use super::hole::{Hole, THROUGH_CLEAR};
+use super::hole::Hole;
 use super::recognize::recognize;
 
 use crate::cl::{CycleKind, Toolpath};
@@ -74,6 +74,7 @@ pub fn axial_doors(
     holes: &[Hole],
     tool_d: f64,
     bottom_z: Option<f64>,
+    through_clear: f64,
 ) -> Result<(), GenError> {
     if !(tool_d.is_finite() && tool_d > 0.0) {
         return Err(GenError::Invalid("axial drill diameter not usable".into()));
@@ -103,8 +104,8 @@ pub fn axial_doors(
                 mouth,
             ));
         }
-        let floor = bottom_z.unwrap_or(h.floor_z - if h.through { THROUGH_CLEAR } else { 0.0 });
-        if floor < bar_end - THROUGH_CLEAR - 1e-9 {
+        let floor = bottom_z.unwrap_or(h.floor_z - if h.through { through_clear } else { 0.0 });
+        if floor < bar_end - through_clear - 1e-9 {
             return Err(GenError::invalid_at(
                 format!(
                     "hole at ({}, {}) bottoms at z = {floor}, past the bar's far end at z = {bar_end}: the drill would leave the steel through the chuck side",
@@ -137,7 +138,7 @@ pub fn axial_doors(
 /// above the modeled one by more than `tol`. A model the recognition
 /// cannot read reports as a gouge at the first cut - a judge that
 /// cannot measure never reports silence.
-pub fn axial_warnings(facets: &[Triangle], path: &Toolpath, tool_d: f64, tol: f64) -> Vec<Warning> {
+pub fn axial_warnings(facets: &[Triangle], path: &Toolpath, tool_d: f64, tol: f64, through_clear: f64) -> Vec<Warning> {
     let first_cut = || Warning::Gouge {
         at: path
             .moves
@@ -159,7 +160,7 @@ pub fn axial_warnings(facets: &[Triangle], path: &Toolpath, tool_d: f64, tol: f6
             warns.push(Warning::Gouge { at });
             continue;
         };
-        let floor = h.floor_z - if h.through { THROUGH_CLEAR } else { 0.0 };
+        let floor = h.floor_z - if h.through { through_clear } else { 0.0 };
         if tool_d * 0.5 > h.radius + tol || c.bottom_z < floor - tol {
             warns.push(Warning::Gouge { at });
             continue;

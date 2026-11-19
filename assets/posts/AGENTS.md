@@ -19,7 +19,7 @@ the property table there is the vocabulary, this file is the grammar.
 
 Manifest: top-level assignments only — `description`, `vendor`, `legal`,
 `certificationLevel`, `minimumRevision`, `extension`, `setCodePage`,
-`capabilities`, `serves`, `coolantModes`, `programUnits`, `endUnits`, `liveTooling`, `afterModes`, `axisInversion`, `probeAxisInversion`, `threadHands`, `workOffsetIndex`, `workOffsetMax`. All but `serves` and the last nine are
+`capabilities`, `serves`, `coolantModes`, `programUnits`, `endUnits`, `liveTooling`, `afterModes`, `axisInversion`, `probeAxisInversion`, `threadHands`, `workOffsetIndex`, `workOffsetMax`, `continuousThreading`. All but `serves` and the last ten are
 text the engine reads none of; `serves = ["plasma"];` (#1266; one word or a list of kind words: mill, lathe, mill-turn, plasma, wire_edm, sinker_edm) names the machine kinds a script of the user's own posts to - the app refuses it by name on any other kind, and a script that states none is accepted only on a mill (non-turning dialect), a lathe (turning) or a mill-turn, never on a plasma table or an EDM; shipped posts are judged by registry name and need no `serves`; `programUnits = "mm inch"` (#902) says
 the script writes the program in the document's unit -
 `postOptions.Units`, `"mm"` or `"inch"`, absent = mm: the dialect's
@@ -77,12 +77,22 @@ output on the engine's mirrored stream (an inverted X / Y: negated
 coordinates, centres and origin, CW/CCW reversed in a plane holding one
 inverted axis, the comp side swapped) is verified by goldens and the
 controller-interpretation test - without it a machine with an inverted
-axis is refused by name. Fanuc and Haas set it. `probeAxisInversion =
+axis is refused by name. Fanuc and Haas set it. The same flag covers a
+flipped WCS axis (#1649, `PARAM WcsFlip`): the engine mirrors that
+section the same way (a helical arc included), and a script that sets
+the flag writes a note that names the flipped axes. `probeAxisInversion =
 true` (#392) says the script's probing blocks on that mirrored stream
 (negated touch target and trip, back-off delta, found expected values)
 are verified by the macro-B interpreter on a simulated inverted machine
 (`crates/app/tests/inverted_probe.rs`) - without it probing on an
-inverted axis is refused by name. Fanuc and Haas set it. The file-viewer's about box reads
+inverted axis is refused by name. Fanuc and Haas set it. `continuousThreading = true`
+(#419) says the script posts a thread pass's chip-break dips (`PARAM
+ChipBreakDips`: half-turns whose radius changes) as segments of one
+unbroken synchronized chain, on a control whose own manual states that
+consecutive threading blocks keep spindle sync with no new index wait -
+cite that manual section in the script's header before setting it.
+Without it the engine refuses the section by name. Only fanuc-lathe sets
+it (FANUC B-64304EN-1 §3.2 / §3.4). The file-viewer's about box reads
 the text ones, and every shipped post carries them.
 New files: `vendor = "Camcraft"` (the M4.3 naming law — the shipped
 five still carry the old label; do not copy that line's value).

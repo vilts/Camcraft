@@ -163,10 +163,11 @@ pub fn circle_centre_in(
     pick: &GeoSel,
     pose: impl Fn(&World, &Entity) -> Option<Location>,
 ) -> Result<Circle, CircleRefusal> {
+    let label = || super::geo_label(world, pick);
     let FeatureSel::Chain(id) = pick.feature else {
-        return Err(CircleRefusal::NotAnEdge(format!("{} of '{}'", pick.feature, pick.entity)));
+        return Err(CircleRefusal::NotAnEdge(label()));
     };
-    let gone = || CircleRefusal::Gone(format!("{} of '{}'", pick.feature, pick.entity));
+    let gone = || CircleRefusal::Gone(label());
     let e = model::find_by_name(world, &pick.entity).ok_or_else(gone)?;
     let graph = graph_of(world, &pick.entity).ok_or_else(gone)?;
     let run = crate::model::resolve_chain(&graph.features, id).ok_or_else(gone)?;

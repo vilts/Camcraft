@@ -314,7 +314,8 @@ pub fn extend_to_loop_in(world: &World, setup: Option<&str>, picks: &[GeoSel]) -
     let mut want: Vec<u32> = Vec::new();
     for g in &chains {
         let FeatureSel::Chain(id) = g.feature else { continue };
-        let c = crate::model::resolve_chain(&f, id).ok_or_else(|| format!("{} is no longer in the model - re-pick it", g.feature))?;
+        let c = crate::model::resolve_chain(&f, id)
+            .ok_or_else(|| format!("{} is no longer in the model - re-pick it", crate::pick::geo_label(world, g)))?;
         want.extend(c.edges);
     }
     let map = edge_map(&f);

@@ -46,6 +46,7 @@ pub mod revolve;
 pub mod stock;
 pub mod thread;
 mod thread_cycle;
+mod thread_dips;
 pub mod thread_law;
 
 pub use blade::{
@@ -68,5 +69,6 @@ pub use blade_law::{blade_program_warnings, blade_program_warnings_excess, blade
 pub use revolve::{gouge_tol_on, BandMove, Floor};
 pub use stock::StockEnv;
 pub use infeed::{DepthSchedule, InfeedMethod, ThreadInfeed};
+pub use thread_dips::{ThreadDips, MIN_DIP_HEIGHT};
 pub use thread::{thread, thread_in, thread_planned_in, ThreadParams};
 pub use thread_law::{thread_hand_warnings, thread_warnings, thread_warnings_excess};

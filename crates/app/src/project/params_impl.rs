@@ -1145,8 +1145,13 @@ impl ParamsDto {
                 holes,
                 cross,
                 break_through,
+                break_through_from,
             } => ParamsDto::Drill {
                 break_through: *break_through,
+                break_through_from: Some(match break_through_from {
+                    crate::drilling::BreakThroughFrom::FullDiameter => BreakThroughFromDto::FullDiameter,
+                    crate::drilling::BreakThroughFrom::Tip => BreakThroughFromDto::Tip,
+                }),
                 clearance_z: (*clearance_z).into(),
                 retract_z: (*retract_z).map(Into::into),
                 top_z: (*top_z).into(),
@@ -2368,8 +2373,13 @@ impl ParamsDto {
                 holes,
                 cross,
                 break_through,
+                break_through_from,
             } => OpParams::Drill {
                 break_through: *break_through,
+                break_through_from: match break_through_from.unwrap_or_default() {
+                    BreakThroughFromDto::FullDiameter => crate::drilling::BreakThroughFrom::FullDiameter,
+                    BreakThroughFromDto::Tip => crate::drilling::BreakThroughFrom::Tip,
+                },
                 clearance_z: (*clearance_z).into(),
                 retract_z: (*retract_z).map(Into::into),
                 top_z: (*top_z).into(),
@@ -2455,6 +2465,20 @@ impl ParamsDto {
                 climb: *climb,
                 holes: holes.iter().copied().map(HoleDto::to_hole).collect(),
             },
+        }
+    }
+}
+
+/// Pre-v68 projects omitted `break_through_from` and posted to the drill tip;
+/// settle absent keys to `Tip` on load so saved operations and cached paths
+/// do not shift (#2441).
+pub(super) fn settle_drill_break_through(entities: &mut [EntityDto]) {
+    for row in entities {
+        if let Some(op) = &mut row.operation
+            && let ParamsDto::Drill { break_through_from, .. } = &mut op.params
+            && break_through_from.is_none()
+        {
+            *break_through_from = Some(BreakThroughFromDto::Tip);
         }
     }
 }
