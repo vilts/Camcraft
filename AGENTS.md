@@ -594,6 +594,17 @@ tests are in `crates/ui/tests/`; they start the real app through
   | quick | each patch, by the agent or gate-runner | ≤ 5 min | only the test binaries that the diff touches, one step for each binary; debug; no heavy lanes |
   | batch | before a batch is committed; each push to `main` | ≤ 20 min | one build, then one step for each debug test binary that is not slow (kernel and ui included), clippy |
   | release | only at a cut | - | one step for each debug test binary and the `--ignored` heavy lanes in release |
+- **Heavy lanes at review** (#2568). `cargo xtask gate heavy [--base main]`
+  maps the diff to the heavy lanes that it reaches and runs them in release
+  with `--ignored`. The reach follows the dependencies between our crates: a
+  change in `motion` reaches the `app` heavy lanes.
+  - A PR whose diff reaches a heavy lane is not ready while a reached heavy
+    test is red or not run. The author runs the command on the final head
+    before the PR is flagged ready. The PR body names the lanes that ran.
+  - The review comment lists the heavy lanes that ran and their results.
+    "Not run" is never a pass.
+  - The release tier at the cut stays the final check: the tagged tree is
+    exactly the gated tree.
 - **Test the change, not everything.** The tests that pin a fix prove it.
   Run them one by one: `cargo xtask gate test <name> [--crate c] [--binary b]
   [--exact]`. Run a full suite only when the change touches what that suite

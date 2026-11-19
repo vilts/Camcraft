@@ -21,6 +21,7 @@ wrappers `scripts/gate.ps1` (`-Tier quick`, `-Test <name>`) and
 |---|---|---|
 | quick | `cargo xtask gate quick [--base main]` | Only the test binaries that the diff touches, from the gate maps and the touched crates. One build for each crate, then one step for each binary. Debug. No heavy lanes. Target: 5 minutes. |
 | batch | `cargo xtask gate batch` | One debug build (`--no-run`), then one step for each test target (`<crate> suites: lib`, `<crate> suites: <binary>`) that is not in `SLOW_BINARIES`, the `camcraft-kernel` suites (#1702), the ui suites from `crates/ui`, clippy. No release-mode heavy lanes. Target: 20 minutes. |
+| heavy | `cargo xtask gate heavy [--base main]` | The release `--ignored` heavy lanes that the diff reaches, also through the crate dependencies (#2568). One release build of the reached crates, then one step for each reached target. Before a PR is ready and at its review. |
 | release | `cargo xtask gate release` | One step for each debug test target (`lib`, `bins`, each binary, `doc`) and the `--ignored` heavy lanes in release. Only at a cut. On the cut runner: `cargo xtask gate release --no-snapshots`. |
 | test | `cargo xtask gate test <name> [--crate c] [--binary b] [--exact]` | One test by name. The plain form is `cargo test -p <crate> --test <binary> -- <name> --exact`. |
 
@@ -99,6 +100,22 @@ Quick prints its selection before it runs:
 - One red binary is one red step. Its note names the failed tests and each
   test that libtest reports as running for more than 60 s.
 - Run one heavy binary again with `--only "app heavy: <binary>"`.
+- `cargo xtask gate heavy [--base main]` runs only the heavy lanes that the
+  diff reaches (AGENTS.md "Heavy lanes at review", `xtask/src/heavy.rs`).
+  `--dry-run` prints the reach and the reason for each lane.
+  - A changed suite file reaches its own heavy binary.
+  - Shared test code under `crates/<crate>/tests/` reaches the heavy lanes
+    of that crate.
+  - A changed source file, `Cargo.toml` or `build.rs` of a crate reaches the
+    heavy lanes of that crate and of each crate that depends on it. The
+    dependencies are read from `crates/*/Cargo.toml`.
+  - A workspace manifest, `Cargo.lock`, `.cargo/` or toolchain change
+    reaches each heavy lane.
+  - A post script, machine file, catalog case or fixture reaches the heavy
+    binaries that read it.
+  - A diff that reaches no heavy lane gives a plan with no step.
+  - The steps have the names of the release tier (`<crate> heavy:
+    <target>`), so `--only` and `--failed` select them.
 - When you move a test to a lane, the `#[test]` count before and after must
   be the same, and the ignored set keeps its golden asserts.
 

@@ -122,7 +122,7 @@ merge.
       line or a per-OS pinned value (issue 1402), also run the touched
       suites locally (steps 3-4, those binaries only).
    With a green or red runner verdict and no local suites owed, skip steps 3
-   and 4: no worktree and no `target/` are made.
+   and 4, then continue at step 5. The heavy check is required on both paths.
 3. **Worktree + trial merge** (local path: no runner, or the runner path
    sent you here).
    `git fetch origin && git fetch origin pull/<N>/head:pr-<N>-review`,
@@ -143,7 +143,22 @@ merge.
    timeout (up to 10 min per command, split long runs by binary) - never
    background a run and wait on it: reviewers have stalled for an hour
    waiting on a run that had already died. Time box ~40 min of build+test.
-5. **Law check against AGENTS.md** - for each, cite file:line on a finding:
+5. **Heavy check on both paths** (AGENTS.md "Heavy lanes at review").
+   This step is required after runner results and after local tests. The
+   runner runs quick and clippy only. Its green result is not a heavy result.
+   If no local worktree exists, create it and trial-merge as in step 3, then
+   return here. Do not repeat the local quick tests in step 4.
+   Run `cargo xtask gate heavy --base <main ref> --dry-run` in the review
+   worktree. It lists the release `--ignored` lanes that the diff reaches.
+   If no lanes are reached, record that result. Otherwise check the PR body
+   for a green author run of all reached lanes on this head. Rely on that
+   result only if the head and all reached lanes match, and say so.
+   If the author result is absent, stale or incomplete, run
+   `cargo xtask gate heavy --base <main ref>` locally (outside the step 4
+   time box, one command, FOREGROUND). If the reached lanes cannot run,
+   report "heavy lanes not run" as a blocker, never a pass. A red reached
+   heavy test is a blocker. Continue to step 6 only after this check.
+6. **Law check against AGENTS.md** - for each, cite file:line on a finding:
    - Prime Directive: no `unwrap()/expect()/panic!` outside tests; numeric
      casts and indexing safe; degenerate input refused by name; nothing that
      could post a gouging or wrong toolpath/NC silently.
@@ -184,7 +199,7 @@ merge.
      instead. The snapshot tests are `#[ignore]`d: do not run them for a PR
      review, and a pixel diff on another OS is a platform artifact, not a
      defect.
-6. **Post the review** (comment only) with this shape, plain and specific,
+7. **Post the review** (comment only) with this shape, plain and specific,
    first line `<!-- pr-reviewer: <headRefOid> -->`:
    - one-line verdict: "Ready for the maintainer to merge" / "Needs changes
      before merge" / "Not built - needs a maintainer look" (the last, with
@@ -196,12 +211,15 @@ merge.
      "on the self-hosted runner: <run url>" (and main's sha from the run
      summary), "locally", or both (Windows-only readings, ui re-runs);
      a runner run that gave no verdict is named with the fallback taken;
+   - Heavy lanes: each reached lane (`<crate> heavy: <target>`) with its
+     result and who ran it (the author's run that the PR body names, or
+     this review), or "the diff reaches no heavy lane";
    - Requested before merge (numbered, each with file:line and the fix);
    - Questions / notes (not blocking);
    - closing line: "A maintainer will approve and merge by hand."
    Be courteous to the contributor; no `@name` pings except the PR author when
    asking them something.
-7. **Label** per the `review-prs` skill, step 2b: read `gh pr view <N> --json
+8. **Label** per the `review-prs` skill, step 2b: read `gh pr view <N> --json
    mergeable` (re-read once on `UNKNOWN`), then, unless the PR is a disagreement
    (AGENTS.md "Only collaborators' reviews count": leave both labels as they are,
    say so in the report), set exactly one state label
@@ -210,7 +228,7 @@ merge.
    if it conflicts); "Not built" with no blockers → `needs-maintainer`. On
    red or orange, one of our own PRs goes back to draft (`gh pr ready <N>
    --undo`); a fork PR's draft state is left as its contributor set it.
-8. **Clean up** - always, also after a failure or a skip:
+9. **Clean up** - always, also after a failure or a skip:
    `git worktree remove --force .claude/worktrees/cc-pr<N>-review` and
    your target dir (if the local path made them), `git branch -D pr-<N>-review`, `git worktree prune`, and
    delete your review lock (`.claude/pr-review.lock`, or the per-PR

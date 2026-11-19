@@ -201,18 +201,19 @@ fn may_run_ignored(root: &Path, d: &str, b: &str) -> bool {
 /// `cargo test --release -p <crate> -- --ignored` runs. Kernel joins the heavy coverage in #1783;
 /// a red step names one binary, and `--only "app heavy: <binary>"` re-runs it alone.
 pub fn heavy_steps(root: &Path) -> Vec<Step> {
+    heavy_steps_where(root, &|_, _| true)
+}
+
+/// The heavy steps whose `(crate dir, target label)` the caller keeps (`gate heavy`, #2568): the release
+/// build names only the crates that keep a target, and a selection that keeps nothing gives no step.
+pub fn heavy_steps_where(root: &Path, keep: &dyn Fn(&str, &str) -> bool) -> Vec<Step> {
     let entries = crate::known_fail::entries(root);
     let mut out = Vec::new();
     let mut build: Vec<String> = vec!["test".into(), "--release".into(), "-j".into(), J.into()];
-    for d in HEAVY_CRATES {
-        build.push("-p".into());
-        build.push(pkg(d));
-    }
-    build.push("--no-run".into());
-    out.push(Step::new("heavy build (release --no-run)", &[], "").with(&build));
+    type Targets = Vec<(String, Vec<String>)>;
+    let mut kept: Vec<(&str, Targets)> = Vec::new();
     for &d in HEAVY_CRATES {
-        let p = pkg(d);
-        let mut targets: Vec<(String, Vec<String>)> = vec![
+        let mut targets: Targets = vec![
             ("lib".into(), vec!["--lib".into()]),
             ("bins".into(), vec!["--bins".into()]),
         ];
@@ -222,6 +223,20 @@ pub fn heavy_steps(root: &Path) -> Vec<Step> {
             }
         }
         targets.push(("doc".into(), vec!["--doc".into()]));
+        targets.retain(|(label, _)| keep(d, label));
+        if !targets.is_empty() {
+            build.push("-p".into());
+            build.push(pkg(d));
+            kept.push((d, targets));
+        }
+    }
+    if kept.is_empty() {
+        return out;
+    }
+    build.push("--no-run".into());
+    out.push(Step::new("heavy build (release --no-run)", &[], "").with(&build));
+    for (d, targets) in kept {
+        let p = pkg(d);
         for (label, sel) in targets {
             let mut args = vec!["test", "--release", "-j", J, "-p", &p, "--no-fail-fast"];
             args.extend(strs(&sel));

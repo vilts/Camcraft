@@ -76,6 +76,12 @@ reads. This keeps the worker's context for the change.
   UI suites with CWD `crates/ui`. Run test executables only from cargo's
   JSON artifact list - never glob `*.exe` (it launches the GUI).
 
+- Heavy lanes (AGENTS.md "Heavy lanes at review"): `cargo xtask gate heavy
+  --dry-run` lists the release `--ignored` lanes that the diff reaches. If
+  it lists a lane, run `cargo xtask gate heavy` on the final head and name
+  the lanes and their results in the PR body. A red reached heavy test is a
+  gate failure.
+
 ## 4. Escalate instead of flailing
 Stop and escalate when the quick gate fails **twice** after your fixes, or
 the work turns out bigger than your tier (more crates, a new algorithm,
