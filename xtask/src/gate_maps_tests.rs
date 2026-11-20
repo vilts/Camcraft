@@ -164,6 +164,22 @@ fn fixture_only_changes_select_library_readers_and_keep_integration_readers() {
     }
 }
 
+/// #2926: a manifest-directory concat keeps its crate base when the suffix starts with `/`.
+#[test]
+fn manifest_directory_fixture_paths_select_library_and_integration_readers() {
+    let temp = InputFixture::new("manifest-input-paths");
+    let reader = "const MODEL: &str = concat!(env!(\"CARGO_MANIFEST_DIR\"), \"/../../testdata/models/box.step\");\n";
+    temp.write("crates/app/src/lib.rs", reader);
+    temp.write("crates/ui/tests/reader.rs", reader);
+    temp.write("crates/kernel/src/lib.rs", "const OTHER: &str = \"/../../testdata/models/box.step\";\n");
+    for file in ["testdata/models/box.step", "testdata/models/deleted.step"] {
+        let plan = planned_at(&temp.0, file);
+        assert!(plan.steps.iter().any(|s| s.name == "app suites: lib"), "manifest library reader missing: {:?}", plan.steps);
+        assert_eq!(selected_in(&plan, "ui"), ["reader"], "manifest integration reader missing");
+        assert!(!plan.steps.iter().any(|s| s.name.starts_with("kernel ")), "an absolute literal is not crate-relative");
+    }
+}
+
 fn assert_real_library_readers(file: &str) {
     let plan = planned_at(&root(), file);
     for krate in ["app", "ui"] {

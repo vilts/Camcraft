@@ -71,6 +71,8 @@ pub fn map(
     }
     // A plain text path scan is conservative. It does not try to interpret test I/O.
     let quoted = scan::re(r#""([^"\r\n]+)""#)?;
+    // A manifest-directory concat suffix starts with `/`, but remains crate-relative.
+    let manifest_prefix = scan::re(r#"concat!\s*\(\s*env!\s*\(\s*"CARGO_MANIFEST_DIR"\s*\)\s*,\s*"[/\\]"#)?;
     for dir in ALL_CRATES {
         let crate_root = root.join("crates").join(dir);
         let mut targets: Vec<_> = scan::binaries(root, dir)
@@ -89,6 +91,7 @@ pub fn map(
             for source in suites::sources(&entry)? {
                 let text = std::fs::read_to_string(&source.path)
                     .map_err(|e| format!("fixture reader {}: {e}", source.path.display()))?;
+                let text = manifest_prefix.replace_all(&text, "\"");
                 for literal in quoted.captures_iter(&text) {
                     let value = literal[1].replace('\\', "/");
                     // A formatted suffix can name any child of its static directory prefix.
