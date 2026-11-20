@@ -120,14 +120,30 @@ pub const TIMINGS: &str = "timings.tsv";
 /// time), with the file it came from; empty when no release run has recorded one. Unreadable lines are
 /// skipped: history only orders the queue, it never selects or drops a step.
 pub fn history(root: &Path) -> (HashMap<String, u64>, Option<PathBuf>) {
+    history_with(root, &["release-"])
+}
+
+/// The step seconds of the newest `timings.tsv` for `label` (`"release"` reads `release-*` only;
+/// `"batch"` and `"quick"` read the newest `batch-*` or `release-*` run by timestamp).
+pub fn history_for(root: &Path, label: &str) -> (HashMap<String, u64>, Option<PathBuf>) {
+    if label == "release" {
+        return history(root);
+    }
+    history_with(root, &["batch-", "release-"])
+}
+
+fn history_with(root: &Path, prefixes: &[&str]) -> (HashMap<String, u64>, Option<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(root.join("gate-logs")) else { return (HashMap::new(), None) };
-    let mut dirs: Vec<PathBuf> = rd
+    let mut dirs: Vec<(String, PathBuf)> = rd
         .filter_map(|e| e.ok().map(|e| e.path()))
-        .filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("release-")))
-        .filter(|p| p.join(TIMINGS).is_file())
+        .filter_map(|p| {
+            let name = p.file_name()?.to_str()?;
+            let stamp = prefixes.iter().find_map(|pre| name.strip_prefix(pre))?.to_string();
+            p.join(TIMINGS).is_file().then_some((stamp, p))
+        })
         .collect();
-    dirs.sort();
-    let Some(dir) = dirs.pop() else { return (HashMap::new(), None) };
+    dirs.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+    let Some((_, dir)) = dirs.pop() else { return (HashMap::new(), None) };
     let file = dir.join(TIMINGS);
     let text = std::fs::read_to_string(&file).unwrap_or_default();
     (parse_timings(&text), Some(file))

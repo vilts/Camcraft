@@ -188,8 +188,8 @@ fn nothing_in_crates_plans_nothing_and_xtask_runs_its_own_tests() {
 fn batch_skips_slow_binaries_and_release_runs_everything() {
     let fx = fixture();
     let b: Vec<String> = plan::batch(&fx.0).steps.iter().map(line).collect();
-    // One build, then one step for each test target (#1941); a SLOW_BINARIES binary has none in batch.
-    assert!(b[0].starts_with("debug build (--no-run) | test -j 6 -p camcraft-geometry"), "{b:#?}");
+    // Per-crate prebuilds, then one step for each test target (#1941, #2727); a SLOW_BINARIES binary has none in batch.
+    assert!(b[0].starts_with("debug build: geometry (--no-run) | test -j 6 -p camcraft-geometry --no-run"), "{b:#?}");
     assert!(b.contains(&"app suites: cmds | test -j 6 -p camcraft-app --no-fail-fast --test cmds -- --test-threads=6".to_string()), "{b:#?}");
     assert!(b.contains(&"app suites: lib | test -j 6 -p camcraft-app --no-fail-fast --lib -- --test-threads=6".to_string()));
     assert!(b.contains(&"motion suites: waterline | test -j 6 -p camcraft-motion --no-fail-fast --test waterline -- --test-threads=6".to_string()));

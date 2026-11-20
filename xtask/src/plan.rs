@@ -133,7 +133,7 @@ pub fn run_suites(root: &Path, dirs: &[&str], skip_slow: bool) -> Vec<Step> {
     out
 }
 
-/// The name of the one build step of batch and release; the executor stops when it fails.
+/// The name of the one debug build step of release; the executor stops when any `--no-run` build fails.
 pub const DEBUG_BUILD: &str = "debug build (--no-run)";
 
 /// One debug `--no-run` build step for `dirs` (`-p` each), run before their per-target steps (#1941).
@@ -145,6 +145,17 @@ pub fn debug_build(dirs: &[&str]) -> Step {
     }
     args.push("--no-run".into());
     Step::new(DEBUG_BUILD, &[], "").with(&args)
+}
+
+/// One debug `--no-run` prebuild step for a single crate `d`, keeping its own feature resolution and
+/// CWD (`crates/ui` for `ui`) so later suite steps reuse the compiled artifacts (#2727). Its JSON
+/// messages name the test executables, and the suite steps of `d` then start those without cargo (#1951).
+pub fn debug_build_crate(d: &str) -> Step {
+    Step::new(
+        format!("debug build: {d} (--no-run)"),
+        &["test", "-j", J, "-p", &pkg(d), "--no-run", crate::direct::JSON],
+        d,
+    )
 }
 
 pub fn clippy() -> Step {
@@ -165,9 +176,10 @@ pub fn batch(root: &Path) -> Plan {
         "batch: debug suites (kernel included) minus SLOW_BINARIES ({}), ui, clippy",
         SLOW_BINARIES.join(", ")
     ));
-    plan.notes.push("one build (--no-run), then one step for each test target (#1941)".into());
-    let built: Vec<&str> = BATCH_CRATES.iter().copied().chain(["ui"]).collect();
-    plan.steps.push(debug_build(&built));
+    plan.notes.push("per-crate prebuilds (--no-run), then one step for each test target in parallel lanes (#1941, #2727)".into());
+    for &d in BATCH_CRATES.iter().chain(&["ui"]) {
+        plan.steps.push(debug_build_crate(d));
+    }
     plan.steps.extend(run_suites(root, BATCH_CRATES, true));
     plan.steps.extend(run_suites(root, &["ui"], false));
     plan.steps.push(clippy());
@@ -279,13 +291,7 @@ pub fn release_with(root: &Path, snapshots: bool) -> Plan {
     }
     plan.notes.extend(crate::known_fail::entries(root).iter().map(crate::known_fail::note));
     let non_ui: Vec<&str> = ALL_CRATES.iter().copied().filter(|d| *d != "ui").collect();
-    let mut build = vec!["test", "-j", J];
-    let packages: Vec<String> = ALL_CRATES.iter().map(|d| pkg(d)).collect();
-    for p in &packages {
-        build.extend(["-p", p]);
-    }
-    build.push("--no-run");
-    plan.steps.push(Step::new(DEBUG_BUILD, &build, ""));
+    plan.steps.push(debug_build(ALL_CRATES));
     let mut heavy = heavy_steps(root).into_iter();
     if let Some(build) = heavy.next() {
         plan.steps.push(build);

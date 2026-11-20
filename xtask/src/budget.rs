@@ -2,20 +2,29 @@
 //! over the running lanes never exceeds it. Provenance: our own build law (AGENTS.md "Three gate tiers"), cargo's `-j`
 //! and libtest's `--test-threads` flags as documented in the Cargo Book and the rustc test docs.
 
-/// The budget when `CAMCRAFT_GATE_JOBS` is not set. The plan writes this value as `plan::J`.
-pub const DEFAULT: usize = 6;
 /// The environment variable that overrides the budget (a whole number of 1 or more).
 pub const ENV: &str = "CAMCRAFT_GATE_JOBS";
 
-/// The budget from the value of `ENV`; `None` or a bad value gives `DEFAULT` and a note.
-pub fn from_value(v: Option<&str>) -> (usize, Option<String>) {
+/// Resolve the budget from a CPU count, or use two jobs if CPU detection failed.
+/// Only the automatic default has a floor of two and a cap of 64; explicit overrides win.
+pub fn from_cpu_value(v: Option<&str>, cpus: Option<usize>) -> (usize, Option<String>) {
+    let default = cpus.unwrap_or(2).clamp(2, 64);
+    let source = match cpus {
+        Some(n) => format!("available CPUs: {n}, floor 2, cap 64"),
+        None => "available CPUs unavailable, fallback 2".to_string(),
+    };
     match v.map(str::trim) {
-        None | Some("") => (DEFAULT, None),
+        None | Some("") => (default, Some(format!("gate budget source: {source}"))),
         Some(s) => match s.parse::<usize>() {
-            Ok(n) if n >= 1 => (n, None),
-            _ => (DEFAULT, Some(format!("note: {ENV}={s} is not a whole number of 1 or more; the budget stays {DEFAULT}"))),
+            Ok(n) if n >= 1 => (n, Some(format!("gate budget source: {ENV}={n}"))),
+            _ => (default, Some(format!("note: {ENV}={s} is not a whole number of 1 or more; using {default} job(s) ({source})"))),
         },
     }
+}
+
+/// The budget from the environment value and the available CPU count.
+pub fn from_value(v: Option<&str>) -> (usize, Option<String>) {
+    from_cpu_value(v, std::thread::available_parallelism().ok().map(|n| n.get()))
 }
 
 /// The budget of this process.

@@ -4,6 +4,9 @@
 //! Provenance: our own build and process law (AGENTS.md "Three gate tiers", "Test the change",
 //! release step 2), replacing the scripts/gate.*, collect-decisions.* and release.ps1 twins (#748, #749).
 
+mod artifacts;
+#[cfg(test)]
+mod artifacts_tests;
 #[cfg(test)]
 mod asset_tests;
 mod assets;
@@ -20,6 +23,9 @@ mod checkout;
 #[cfg(test)]
 mod checkout_tests;
 mod decisions;
+mod direct;
+#[cfg(test)]
+mod direct_tests;
 mod docs_images;
 #[cfg(test)]
 mod directory_tests;
@@ -35,6 +41,7 @@ mod heavy_plan_tests;
 mod heavy_tests;
 mod icon_font;
 mod icons;
+mod json;
 mod known_fail;
 mod known_fail_scan;
 #[cfg(test)]
@@ -87,7 +94,7 @@ use std::process::ExitCode;
 const USAGE: &str = "\
 usage:
   cargo xtask gate quick [--base main] [--heavy]   tests the diff touches (test fns where it can)
-  cargo xtask gate batch                           one build, then one step for each debug test binary minus SLOW_BINARIES, ui, clippy (#1941)
+  cargo xtask gate batch                           per-crate debug prebuilds, then parallel lanes for each test target minus SLOW_BINARIES, ui, clippy (#1941, #2727)
   cargo xtask gate heavy [--base main]             the release --ignored heavy lanes the diff reaches, also through crate dependencies (#2568)
   cargo xtask gate release [--no-snapshots]        everything, plus the --ignored heavy lanes (one step per binary) and the ui snapshot lane
                                                    (--no-snapshots: not the Windows-made pixel goldens - cut.yml on Linux, #1413)
@@ -303,6 +310,7 @@ fn gate(root: &Path, g: &GateArgs) -> Result<i32, String> {
                 quick::Quick::Plan(p) => p,
                 quick::Quick::Batch(f) => {
                     println!("shared crate / workspace touched ({f}): quick falls back to batch");
+                    run.lanes = true;
                     plan::batch(root)
                 }
             }

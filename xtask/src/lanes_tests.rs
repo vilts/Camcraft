@@ -179,7 +179,7 @@ fn main() {
     }
     let run = |steps| {
         let mut runner = crate::exec::Run::new(&root, "release", false).expect("runner");
-        runner.budget = crate::budget::DEFAULT; // two lanes must overlap whatever CAMCRAFT_GATE_JOBS says
+        runner.budget = 6; // two lanes must overlap whatever the machine or CAMCRAFT_GATE_JOBS says
         runner.plan(&crate::plan::Plan { notes: Vec::new(), steps }).expect("execute fixture");
         runner.summary()
     };
@@ -196,5 +196,91 @@ fn main() {
     assert_eq!(seq.summary(), 1);
     assert!(!root.join("markers/after-batch-build").exists(), "a failed batch build must stop the later steps");
     assert_eq!(run(vec![step("checkout movement", &["move"])]), 1, "successful children still yield VOID after checkout movement");
+    fs::remove_dir_all(root).expect("remove fixture");
+}
+
+#[test]
+fn batch_executor_overlaps_lanes_runs_isolated_alone_and_writes_timings() {
+    use std::{fs, process::Command};
+    struct Cleanup(std::path::PathBuf);
+    impl Drop for Cleanup {
+        fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+    }
+    let root = std::env::temp_dir().join(format!("xtask-batch-lanes-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    let _cleanup = Cleanup(root.clone());
+    fs::create_dir_all(root.join("src")).expect("fixture dir");
+    fs::create_dir_all(root.join("crates/ui")).expect("ui dir");
+    fs::write(root.join("Cargo.toml"), "[package]\nname = \"batch-lane-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[workspace]\n").expect("manifest");
+    fs::write(root.join(".gitignore"), "target/\ngate-logs/\nmarkers/\n").expect("ignore");
+    fs::write(root.join("src/main.rs"), r#"
+use std::{env, fs, path::Path, thread, time::{Duration, Instant}};
+fn main() {
+    let markers = Path::new(env!("CARGO_MANIFEST_DIR")).join("markers");
+    fs::create_dir_all(&markers).unwrap();
+    let args: Vec<_> = env::args().collect();
+    let own = &args[1];
+    if own == "alone" {
+        assert!(markers.join("first").exists() && markers.join("second").exists(), "alone step must run after queued lanes");
+    }
+    fs::write(markers.join(own), "ran").unwrap();
+    if let Some(peer) = args.get(2) {
+        let start = Instant::now();
+        while !markers.join(peer).exists() {
+            assert!(start.elapsed() < Duration::from_secs(5), "peer lane never started");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+"#).expect("fixture source");
+    assert!(Command::new(crate::exec::cargo()).args(["build", "--quiet"]).current_dir(&root).status().expect("build fixture").success());
+    for args in [vec!["init", "--quiet"], vec!["add", "."], vec!["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid", "commit", "--quiet", "-m", "fixture"]] {
+        assert!(Command::new("git").args(args).current_dir(&root).status().expect("git fixture").success());
+    }
+    let step = |name: &str, extra: &[&str], dir: &str| {
+        let mut s = Step::new(name, &["run", "--quiet", "--"], dir).with(&extra.iter().map(|x| (*x).to_string()).collect::<Vec<_>>());
+        if dir == "ui" {
+            let manifest = root.join("Cargo.toml").display().to_string();
+            s = Step::new(name, &["run", "--quiet", "--manifest-path", &manifest, "--"], dir).with(&extra.iter().map(|x| (*x).to_string()).collect::<Vec<_>>());
+        }
+        s
+    };
+    let steps = vec![
+        Step::new("debug build: fixture (--no-run)", &["test", "--no-run", "--quiet"], ""),
+        step("first", &["first", "second"], ""),
+        step("second", &["second", "first"], ""),
+        step("ui suites: lib", &["alone"], "ui"),
+    ];
+    let mut runner = crate::exec::Run::new(&root, "batch", false).expect("runner");
+    runner.budget = 6;
+    runner.plan(&crate::plan::Plan { notes: Vec::new(), steps }).expect("execute batch fixture");
+    assert_eq!(runner.summary(), 0, "batch lanes must overlap ordinary suites and run ui alone after them");
+    assert!(root.join("markers/alone").exists());
+    let logs = fs::read_dir(root.join("gate-logs")).expect("gate-logs").filter_map(Result::ok).map(|e| e.path()).find(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("batch-"))).expect("batch log dir");
+    let timings = fs::read_to_string(logs.join(lanes::TIMINGS)).expect("batch timings.tsv");
+    assert!(timings.contains("\tfirst\n") && timings.contains("\tsecond\n"), "{timings}");
+    let (hist, from) = lanes::history_for(&root, "batch");
+    assert!(hist.contains_key("first") && hist.contains_key("second") && from.is_some_and(|p| p.to_string_lossy().contains("batch-")), "{hist:?}");
+}
+
+#[test]
+fn batch_history_reads_newest_batch_or_falls_back_to_release() {
+    use std::fs;
+    let root = std::env::temp_dir().join(format!("xtask-batch-hist-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    for (dir, body) in [("release-20261101-000000", "9\trel\n"), ("batch-20261102-000000", "4\tbat\n")] {
+        fs::create_dir_all(root.join("gate-logs").join(dir)).expect("log dir");
+        fs::write(root.join("gate-logs").join(dir).join(lanes::TIMINGS), body).expect("timings");
+    }
+    let (h, from) = lanes::history_for(&root, "batch");
+    assert_eq!(h.get("bat"), Some(&4));
+    assert!(from.is_some_and(|f| f.to_string_lossy().contains("batch-20261102")));
+    let (rel_h, rel_from) = lanes::history_for(&root, "release");
+    assert_eq!(rel_h.get("rel"), Some(&9));
+    assert!(!rel_h.contains_key("bat") && rel_from.is_some_and(|f| f.to_string_lossy().contains("release-20261101")));
+    // When a newer release run exists, batch uses its timings too.
+    fs::create_dir_all(root.join("gate-logs/release-20261103-000000")).expect("newer release");
+    fs::write(root.join("gate-logs/release-20261103-000000").join(lanes::TIMINGS), "7\tfresh\n").expect("timings");
+    assert_eq!(lanes::history_for(&root, "batch").0.get("fresh"), Some(&7));
     fs::remove_dir_all(root).expect("remove fixture");
 }
