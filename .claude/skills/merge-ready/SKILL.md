@@ -268,11 +268,14 @@ Do not re-review, re-gate or refresh anything between wave-1 merges.
   for the whole batch: run `cargo xtask process-bump` in a worktree off the
   new `main`, open and merge the one-line PR `chore(process): PROCESS_VERSION
   <n>`, then post the `PROCESS_VERSION <n>` · PR #M (each process PR of the
-  batch) · what changed · what a fork must do comment on the pinned issue
-  #681, as AGENTS.md says. Never bump the file inside a PR (#1153).
+  batch) · what changed · what a fork must do · reload (each running
+  session reloads `AGENTS.md`, `.claude/agents/` and `.claude/skills/`; a
+  fork runs `fork-sync`) comment on the pinned issue #681, as AGENTS.md
+  says. Never bump the file inside a PR (#1153).
 - **Don't refresh the rest.** Open PRs this batch turned `CONFLICTING` and
   that are not about to merge are left alone (label `conflicts` if they were
-  `merge-ready`). They are refreshed when their turn to merge comes.
+  `merge-ready`). They are refreshed when their turn to merge comes, or
+  earlier by their author's agents under AGENTS.md "Own blocked PRs first".
 
 For each PR answered **no**, leave it open and unchanged (labels too); just
 list it in the report.

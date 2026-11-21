@@ -246,6 +246,7 @@ fn build_cli(root: &Path) -> Result<PathBuf, String> {
     for (k, v) in exec::gate_cache_env() {
         cmd.env(k, v);
     }
+    crate::unit_env::apply(&mut cmd);
     let status = cmd
         .status()
         .map_err(|e| format!("failed to build camcraft-cli: {e}"))?;

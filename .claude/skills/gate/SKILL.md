@@ -34,6 +34,8 @@ Flags:
 - `--failed gate-logs/<run>` (each tier but `test`): run only the steps
   that failed in that run (#1702).
 - `--dry-run` with `--only` or `--failed` shows the selected steps.
+- `--lane N/M` (batch only): run lane N of M of the batch plan (#2908). See
+  "Batch lanes for separate runners".
 
 A fix for one red step then costs one step, not a full run.
 
@@ -54,6 +56,42 @@ A fix for one red step then costs one step, not a full run.
   targets, the ui steps and clippy one at a time. A quick gate that falls back to batch uses the lanes too.
   `CAMCRAFT_GATE_JOBS=<cores>` sets the job budget that the lanes share.
 - Each step starts cargo, about 0.5 s on Windows. A batch plan has about 700 steps.
+
+## Batch lanes for separate runners (#2908)
+
+`cargo xtask gate batch --lane N/M` runs one part of the batch plan. M jobs,
+one for each lane, run the full batch tier. The lanes can run on M runners at
+the same time, or one after the other on one runner. The result is the same.
+
+- The split reads only the plan. It reads no timing file. Thus each machine
+  computes the same lanes for the same commit.
+- Each test step and clippy is in exactly one lane. The steps are dealt in
+  plan order, one lane after the other: first the steps that share the
+  machine, then the steps that run alone (`lanes::ISOLATED`, ui, clippy).
+- A lane builds only the crates that it tests (`debug build: <crate>`).
+- `--lane 1/1` is the full batch plan. M is 16 at most.
+- `--lane` on a different tier, a lane out of range, or a lane with no step
+  is an error with a message. It is not a green run.
+- `--dry-run`, `--only` and `--failed` apply to the steps of the lane.
+- A lane run writes `lane-result.tsv` into its `gate-logs/batch-<stamp>/`,
+  with the step logs. The file has the lane, the runner name
+  (`RUNNER_NAME`), the result (`green`, `red`, `void`), the wall time, the
+  planned step count, and one row for each step that ran.
+
+`cargo xtask gate-verdict <dir>...` reads each `lane-result.tsv` below the
+directories (the `gate-logs/` of one machine, or the downloaded artifacts of
+all lanes). It prints one Markdown verdict: a row for each lane with its
+runner, time, result and record path, then the red steps by name.
+
+- The exit code is 0 for green and 1 for red.
+- The verdict is red when a step is red, and also when a lane has no record,
+  has two records, is void, ran fewer steps than its plan, or has a record
+  that cannot be read. A lane that did not report is never green.
+- The failure of a red step is in the log of that step, in the artifact of
+  its lane. No second run is necessary to read it.
+
+`post-merge.yml` does not use the lanes yet. That workflow change is a
+different PR (#2908).
 
 ## What quick selects
 
@@ -181,6 +219,14 @@ those compilations cache hits.
   `SCCACHE_DIR` moves it.
 - Dev builds have line tables only. `--config profile.dev.debug=true` gives
   the variable debug information back for a debugger.
+- Each gate cargo call gets `CARGO_INCREMENTAL=0`, and the gate removes the
+  `CARGO_PROFILE_*` variables of the caller (#3150). These inputs change
+  the unit hash. A different value gives each unit a new directory under
+  `target/<profile>/build/`, and cargo does not remove the old one. The
+  gate prints a note when `RUSTFLAGS` is set. The summary gives the number
+  of unit directories that the run added: a second run on the same tree
+  adds none. For a plain `cargo test` in a shared build worktree, use the
+  same env.
 
 ## Local batch gate when the post-merge runner is down
 

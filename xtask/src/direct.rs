@@ -164,6 +164,7 @@ pub fn run(d: &Direct, root: &Path, mut log: File) -> Result<i32, String> {
 pub fn cargo(cargo: &str, env: Vec<(&'static str, String)>, args: &[String], dir: &Path, log: File, capture: bool) -> Result<(i32, Option<String>), String> {
     let fail = |e: std::io::Error| format!("cargo {}: {e}", args.join(" "));
     let mut cmd = Command::new(cargo);
+    crate::unit_env::apply(&mut cmd);
     cmd.envs(env).args(args).current_dir(dir).stdin(Stdio::null());
     if capture {
         let out = cmd.stdout(Stdio::piped()).stderr(log).output().map_err(fail)?;

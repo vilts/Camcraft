@@ -14,9 +14,10 @@ and reports when the two sides really clash.
 
 Since 2026-11-12 a conflicting PR is refreshed **only at merge time**
 (AGENTS.md "Refresh only at merge time", issue #1221): it carries
-`conflicts` and is otherwise left alone, by its author's agents, by
-maintenance and by reviewers. Nobody refreshes all of them at session
-start. The merging session (or the author, when asked for one named PR)
+`conflicts` and is otherwise left alone by maintenance and by reviewers.
+Its author's agents refresh it only under AGENTS.md "Own blocked PRs
+first" (before they claim a new issue). Nobody refreshes all of them at
+session start. The merging session (or the author, when asked for one named PR)
 runs this skill on the PR the merge batch is about to merge, in the order
 `cargo xtask merge-plan` gives. Its delta check after a refresh is
 `cargo xtask merge-plan --delta <PR> --reviewed <sha>`.
@@ -71,7 +72,9 @@ gh pr list --repo NeoTech/Camcraft --state open --author "$me" --limit 100 \
 
 Re-read `mergeable` for each (retry while `UNKNOWN`, up to ~6 tries). Work
 only on the PR the merge batch is about to merge - the next PR of wave 2
-in `cargo xtask merge-plan <PRs>` - or the one PR the author named. Never
+in `cargo xtask merge-plan <PRs>` - or the one PR the author named, or
+each of the author's own `conflicts` PRs under AGENTS.md "Own blocked PRs
+first". Never
 every `CONFLICTING` PR at once: an early refresh is undone by the next
 merge to main and costs a delta review (AGENTS.md "Refresh only at merge
 time"). Order stacks parent first: if PR B contains PR A's commits (A's head

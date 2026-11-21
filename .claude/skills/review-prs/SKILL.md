@@ -148,7 +148,8 @@ That applies to our own PRs; a fork contributor's PR is left as they set
 it, and the review comment says what to fix.
 
 A conflicting PR of ours that waits for the merge batch therefore stays a
-draft until merge time. The merging session refreshes it, and then flags it
+draft until its author's agents fix it (AGENTS.md "Own blocked PRs
+first") or until merge time. The merging session refreshes it, and then flags it
 ready (`gh pr ready <N>`) right before the merge, with one PR comment naming
 the `--delta` class (SAME, MECHANICAL or DELTA) - AGENTS.md "Every PR opens
 as a draft", decided in #1221 ("Refresh only at merge time"). The review
@@ -241,7 +242,9 @@ the rule. The merging
 session bumps the number once per merge batch (`cargo xtask process-bump`)
 and comments on the pinned issue #681 (Process changes):
 `PROCESS_VERSION <n>` · PR #M · what changed · what a fork must do (usually
-"pull the process files", the command in the issue body). That comment is
+"pull the process files", the command in the issue body) · reload: each
+running session reloads `AGENTS.md`, `.claude/agents/` and
+`.claude/skills/`, and a fork runs `fork-sync`. That comment is
 how fork maintainers subscribed to #681 hear about it.
 
 ## 3. Report

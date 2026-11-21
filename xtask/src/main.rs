@@ -33,6 +33,9 @@ mod exec;
 mod fixture_inputs;
 mod heavy;
 mod lanes;
+mod light;
+#[cfg(test)]
+mod light_tests;
 #[cfg(test)]
 mod gate_maps_tests;
 #[cfg(test)]
@@ -48,6 +51,9 @@ mod known_fail_scan;
 mod known_fail_tests;
 #[cfg(test)]
 mod icons_tests;
+mod lane_split;
+#[cfg(test)]
+mod lane_split_tests;
 #[cfg(test)]
 mod lanes_tests;
 mod logo;
@@ -76,6 +82,9 @@ mod release_pack;
 #[cfg(test)]
 mod release_tests;
 mod scan;
+mod seed;
+#[cfg(test)]
+mod seed_tests;
 mod select;
 #[cfg(test)]
 mod select_tests;
@@ -83,8 +92,12 @@ mod single;
 #[cfg(test)]
 mod step_tests;
 mod suites;
+mod unit_env;
 #[cfg(test)]
 mod tests;
+mod verdict;
+#[cfg(test)]
+mod verdict_tests;
 #[cfg(test)]
 mod package_paths_tests;
 
@@ -95,6 +108,7 @@ const USAGE: &str = "\
 usage:
   cargo xtask gate quick [--base main] [--heavy]   tests the diff touches (test fns where it can)
   cargo xtask gate batch                           per-crate debug prebuilds, then parallel lanes for each test target minus SLOW_BINARIES, ui, clippy (#1941, #2727)
+  cargo xtask gate light                           the light twins of the heavy tests, in release (#2569): at review and merge time
   cargo xtask gate heavy [--base main]             the release --ignored heavy lanes the diff reaches, also through crate dependencies (#2568)
   cargo xtask gate release [--no-snapshots]        everything, plus the --ignored heavy lanes (one step per binary) and the ui snapshot lane
                                                    (--no-snapshots: not the Windows-made pixel goldens - cut.yml on Linux, #1413)
@@ -102,6 +116,8 @@ usage:
       any gate (not test): --only <step> [--only <step>...]   run only the steps whose name starts with <step> (kernel, clippy, ui)
       any gate (not test): --failed <gate-logs/run>           run only the steps that failed in that earlier run (#1702)
       any gate: --dry-run (or --plan) prints the plan without running it. Logs: gate-logs/<tier>-<timestamp>/.
+  cargo xtask gate batch --lane N/M                lane N of M of the batch plan: each step is in exactly one lane; writes lane-result.tsv (#2908)
+  cargo xtask gate-verdict <dir>...                one verdict from the lane records under the dirs: lanes, runners, times, red steps (#2908)
   cargo xtask icons [--check | --sheet <out.png> [--px N] [--zoom N]]
                                                    rasterise assets/ui/svg/*.svg to the 32 px PNGs (#661), check
                                                    them against their masters, or draw a 16 px contact sheet
@@ -159,6 +175,8 @@ pub struct GateArgs {
     pub only: Vec<String>,
     /// `--failed <gate-logs/run>` (#1702): keep only the steps that failed in that earlier run.
     pub failed: Option<String>,
+    /// `gate batch --lane N/M` (#2908): keep only the steps of that lane (`lane_split`).
+    pub lane: Option<lane_split::Lane>,
 }
 
 pub fn parse_gate(args: &[String]) -> Result<GateArgs, String> {
@@ -183,6 +201,7 @@ pub fn parse_gate(args: &[String]) -> Result<GateArgs, String> {
             "--no-snapshots" => g.no_snapshots = true,
             "--only" => g.only.push(value(a, &mut it)?),
             "--failed" => g.failed = Some(value(a, &mut it)?),
+            "--lane" => g.lane = Some(lane_split::parse(&value(a, &mut it)?)?),
             s if s.starts_with('-') => return Err(format!("unknown gate option '{s}'\n{USAGE}")),
             s if g.tier.is_empty() => g.tier = s.to_string(),
             s if g.tier == "test" && g.filter.is_none() => g.filter = Some(s.to_string()),
@@ -195,11 +214,14 @@ pub fn parse_gate(args: &[String]) -> Result<GateArgs, String> {
     if g.no_snapshots && g.tier != "release" {
         return Err(format!("--no-snapshots applies to the release tier only, not '{}'", g.tier));
     }
+    if g.lane.is_some() && g.tier != "batch" {
+        return Err(format!("--lane splits the batch tier only, not '{}'", g.tier));
+    }
     if g.tier == "test" && (!g.only.is_empty() || g.failed.is_some()) {
-        return Err("--only and --failed select steps of quick, heavy, batch or release, not of 'gate test'".into());
+        return Err("--only and --failed select steps of quick, heavy, batch, light or release, not of 'gate test'".into());
     }
     match g.tier.as_str() {
-        "quick" | "heavy" | "batch" | "release" => Ok(g),
+        "quick" | "heavy" | "batch" | "light" | "release" => Ok(g),
         "test" => match &g.filter {
             Some(f)
                 if f.split("::").all(|p| {
@@ -214,7 +236,7 @@ pub fn parse_gate(args: &[String]) -> Result<GateArgs, String> {
             None => Err(format!("gate test needs a filter\n{USAGE}")),
         },
         t => Err(format!(
-            "unknown tier '{t}' (quick | heavy | batch | release | test)\n{USAGE}"
+            "unknown tier '{t}' (quick | heavy | batch | light | release | test)\n{USAGE}"
         )),
     }
 }
@@ -235,6 +257,7 @@ fn run(args: &[String]) -> Result<i32, String> {
         Some("logo") => logo::run(&root(), &args[1..]),
         Some("docs-images") => docs_images::run(&root(), &args[1..]),
         Some("catalog") => catalog::run(&root(), &args[1..]),
+        Some("gate-verdict") => verdict::run(&args[1..]),
         Some("merge-plan") => merge_plan_git::run(&root(), &args[1..]),
         Some("process-bump") => process_bump::run(&root(), &args[1..]),
         Some("package") => {
@@ -259,6 +282,7 @@ fn gate(root: &Path, g: &GateArgs) -> Result<i32, String> {
         None => None,
     };
     let mut run = exec::Run::new(root, &g.tier, g.dry)?;
+    seed::before_gate(root, g.dry);
     if let Some(name) = &g.filter {
         let f = single::Filter {
             name,
@@ -315,8 +339,20 @@ fn gate(root: &Path, g: &GateArgs) -> Result<i32, String> {
                 }
             }
         }
+        "light" => match light::plan(root) {
+            Ok(p) => p,
+            Err(e) => {
+                println!("{e}");
+                return Ok(1);
+            }
+        },
         _ => tier_plan(root, g),
     };
+    let plan = match g.lane {
+        Some(lane) => lane_split::apply(plan, lane)?,
+        None => plan,
+    };
+    let planned = plan.steps.len();
     let plan = select::apply(plan, &g.only, failed.as_deref())?;
     if g.tier == "release" {
         match known_fail::check_issues(root, g.dry) {
@@ -328,6 +364,9 @@ fn gate(root: &Path, g: &GateArgs) -> Result<i32, String> {
         }
     }
     run.plan(&plan)?;
+    if let Some(lane) = g.lane {
+        verdict::record(&run, lane, planned);
+    }
     Ok(run.summary())
 }
 

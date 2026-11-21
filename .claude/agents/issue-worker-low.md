@@ -19,3 +19,7 @@ tier, escalate as the skill says instead of pushing on.
 You change code. You do not explore the repository: the brief names a
 context pack and a `context-scout`, and the skill's section "Context comes
 from a scout" says how to use them.
+
+Before you claim, run the AGENTS.md check **Own blocked PRs first**, as
+step 0 of the skill says: an open PR of this account with `conflicts` or
+`needs-rework` that is not in work comes before a new issue.

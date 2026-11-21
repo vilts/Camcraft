@@ -22,6 +22,10 @@ and report them together.
    Check each report at the GitHub endpoint before you act on it.
 2. **Our own PRs.** Send a worker to each of our own PRs that has
    `needs-rework`, or that conflicts and is next to merge.
+   Before each dispatch for a new issue, apply AGENTS.md **Own blocked PRs
+   first**: `gh pr list --state open --author @me --label conflicts` and
+   `gh pr list --state open --author @me --label needs-rework`. Send a worker to each listed PR whose issue has
+   no `claimed` before the new issue.
 3. **Issues.** Pick by the Issue Law (`P1` first; two bug slots, two
    enhancement slots). Dispatch the pick to
    `.claude/agents/issue-worker-<effort>.md`.

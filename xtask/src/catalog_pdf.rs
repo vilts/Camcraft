@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::catalog::{copy_dir_all, CatalogCase};
-use crate::catalog_media::{find_on_path, resolve_approx, MediaArgs};
+use crate::catalog_media::{collect_pngs, find_on_path, resolve_approx, MediaArgs};
 
 const CHROME_CANDIDATES: &[&str] = &[
     "google-chrome",
@@ -53,15 +53,14 @@ pub fn run_pdf(
             let mut md = fs::read_to_string(work.join("README.md"))
                 .map_err(|e| format!("{}: read README.md: {e}", c.id()))?;
             if let Some(shots) = rendered_dir {
-                let png = shots
-                    .join(&c.family)
-                    .join(&c.name)
-                    .join(format!("{}.png", c.name));
-                if png.is_file() {
-                    let local_png = work.join(format!("{}.png", c.name));
-                    fs::copy(&png, &local_png)
+                for (_, png) in collect_pngs(shots, std::slice::from_ref(c), false)? {
+                    let name = png
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .ok_or_else(|| format!("{}: invalid screenshot filename", c.id()))?;
+                    fs::copy(&png, work.join(name))
                         .map_err(|e| format!("{}: stage screenshot: {e}", c.id()))?;
-                    md.push_str(&format!("\n\n![{}]({}.png)\n", c.name, c.name));
+                    md.push_str(&format!("\n\n![{}: {name}](<{name}>)\n", c.name));
                 }
             }
             let md_path = work.join("catalog-case.md");

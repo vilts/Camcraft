@@ -182,7 +182,8 @@ with `gh`. `ROADMAP.md` and `DONE.md` are retired; read them only for history
     session reads it, and it needs no agent review.
   - Then the session comments on the pinned issue #681: `PROCESS_VERSION
     <n>` · PR #M (each process PR of the batch) · what changed · what a fork
-    must do.
+    must do · reload: each running session reloads `AGENTS.md`,
+    `.claude/agents/` and `.claude/skills/`, and a fork runs `fork-sync`.
   - At a cut, the release notes list the versions since the previous tag in
     a "Process changes" section.
 - **Overlapping issues stack.** An issue that changes code of an open PR
@@ -192,6 +193,19 @@ with `gh`. `ROADMAP.md` and `DONE.md` are retired; read them only for history
   gated again and merges. Never merge the parent first: `--delete-branch`
   deletes the child's base branch and GitHub closes the child PR. An overlap
   that cannot stack waits for the parent to merge.
+- **Own blocked PRs first.** Before an agent claims or starts a new issue,
+  it lists the open PRs of the current account that have `conflicts` or
+  `needs-rework`: `gh pr list --state open --author @me --label conflicts`
+  and `gh pr list --state open --author @me --label needs-rework`. It fixes
+  each one, or sends a worker to fix it, before it picks a new issue. A PR whose issue has `claimed` is
+  already in work and is skipped.
+  - `conflicts`: merge `origin/main` into the branch (never rebase, never
+    force-push), run the targeted gate and push (`resolve-conflicts`
+    skill).
+  - `needs-rework`: fix each review finding on the same branch with a plain
+    push ("Pull Request Law").
+  - The existing orders stay first: a `P1` or `P2` PR comes before other
+    PRs, and the standing order for outside PRs holds.
 - **Claim before any code.** Run `gh issue edit N --add-label claimed
   --add-assignee @me`, then comment `claimed: <session or agent name> · <UTC
   time> · worktree/branch <name> · plan: <one line>`. Do not work an issue
@@ -355,10 +369,14 @@ with `gh`. `ROADMAP.md` and `DONE.md` are retired; read them only for history
     re-read each `conflicts` PR and send each clean one to the review that it
     needs.
 - **Refresh only at merge time.** A conflicting PR has the `conflicts` label
-  and is not touched by its author's agents, by maintenance or by reviewers.
-  It takes `git merge origin/main` only when it is the next PR in a merge
-  batch, or when its author pushes a review fix and chooses to. The merging
-  session runs `cargo xtask merge-plan <PR>...` (or `--label merge-ready`).
+  and is not touched by maintenance or by reviewers. It takes `git merge
+  origin/main` only in one of three cases:
+  - its author's agents fix it under **Own blocked PRs first**;
+  - it is the next PR in a merge batch;
+  - its author pushes a review fix and chooses to.
+
+  The merging session runs `cargo xtask merge-plan <PR>...` (or `--label
+  merge-ready`).
   The planner simulates the merges with `git merge-tree` and gives the order.
   Wave 1 merges as one batch, with no refresh and no delta review. Wave 2 is
   refreshed one PR at a time against the main of that moment, and each PR
@@ -594,6 +612,19 @@ tests are in `crates/ui/tests/`; they start the real app through
   | quick | each patch, by the agent or gate-runner | ≤ 5 min | only the test binaries that the diff touches, one step for each binary; debug; no heavy lanes |
   | batch | before a batch is committed; each push to `main` | ≤ 20 min | one build for each crate, then one step for each debug test binary that is not slow (kernel and ui included), in parallel lanes; clippy |
   | release | only at a cut | - | one step for each debug test binary and the `--ignored` heavy lanes in release |
+- **The light lane** (#2569). `cargo xtask gate light` runs the light twins
+  of the heavy tests, in release, at review and merge time. A light twin is
+  next to its full test, on a smaller fixture or a reduced set. The full
+  test keeps its golden asserts and its pinned readings. A red light run is
+  a note on the PR: the author runs the full heavy steps locally, and they
+  must pass before the cut gate starts again. A local run never replaces
+  the cut gate.
+  - A twin has the ignore reason `light lane: ...` and the name
+    `<full test>_light`. The gate refuses a twin whose file has no
+    `#[ignore]`d full test.
+  - A red light run prints the note: each red step, with the command of
+    its full heavy step (`cargo xtask gate release --only "<crate> heavy:
+    <target>"`).
 - **Heavy lanes at review** (#2568). `cargo xtask gate heavy [--base main]`
   maps the diff to the heavy lanes that it reaches and runs them in release
   with `--ignored`. The reach follows the dependencies between our crates: a
@@ -782,6 +813,11 @@ has the procedure. Its rules:
   `main`. From step 1 of the cut to the tag, nothing else merges.
 - The release tier runs on the cut runner (`cut.yml`). The tagged tree is
   exactly the gated tree.
+- **Local full rerun** (#2569). After a red cut gate, the author runs the
+  red steps in full, locally, in release mode: `cargo xtask gate release
+  --failed gate-logs/<run>` (the logs of the red run), or `--only "<step>"`.
+  They must pass before the cut gate starts again. A local run never
+  replaces the cut gate.
 - Cuts and tags stay with the maintainer.
 
 **Every cut tag is published.** A cut is not complete until its tag is on
