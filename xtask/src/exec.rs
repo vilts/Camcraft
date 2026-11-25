@@ -9,8 +9,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use crate::artifacts::{Built, Package};
 use crate::checkout::{self, Reading};
-use crate::plan::{self, Plan, Step};
+use crate::plan::{Plan, Step};
 use crate::scan::re;
+pub use crate::known_fail::expect_fail_note;
 
 pub struct Run {
     pub root: PathBuf,
@@ -33,11 +34,15 @@ pub struct Run {
     pub(crate) built: Built,
     /// The unit directories under target/ when the run started (#3150); the summary prints what it added.
     units: usize,
+    /// The steps that a failed build stopped (#3601), with their note; the summary lists them as not run.
+    pub(crate) not_run: Vec<(String, String)>,
 }
 
 pub(crate) struct Done {
     pub(crate) name: String,
     pub(crate) ok: bool,
+    /// The watchdog killed the step (#3303): a STALL row, not a FAIL row.
+    pub(crate) stall: bool,
     pub(crate) secs: u64,
     pub(crate) note: String,
     /// What a green recording build step read from cargo's JSON messages (`direct::records`, #1951).
@@ -163,6 +168,7 @@ impl Run {
             void: None,
             built: Built::new(),
             units: crate::unit_env::units(root),
+            not_run: Vec::new(),
         })
     }
 
@@ -177,17 +183,22 @@ impl Run {
         let vars: Vec<(String, String)> = std::env::vars().collect();
         crate::unit_env::notes(&vars).iter().for_each(|l| println!("{l}"));
         println!("{}", crate::budget::header(self.budget, lanes));
+        println!("{}", crate::watchdog::from_env().1);
         if lanes {
             self.run_lanes(plan)?;
         } else {
-            for s in &plan.steps {
+            for (i, s) in plan.steps.iter().enumerate() {
                 if self.check(&format!("before {}", s.name)) {
                     break;
                 }
                 self.step(s)?;
-                // A failed whole-gate build fails every later step with the same error: stop (as release does).
+                // A failed build (the whole-gate one or a quick per-crate one, #3601) fails every later step
+                // with the same error: stop (as release does) and list the later steps as not run.
                 let failed = self.done.last().is_some_and(|d| !d.ok);
-                if failed && s.name == plan::DEBUG_BUILD {
+                if failed && crate::build_stop::stops(&s.name) {
+                    let note = crate::build_stop::not_run_note(&s.name);
+                    self.not_run = plan.steps[i + 1..].iter().map(|r| (r.name.clone(), note.clone())).collect();
+                    crate::build_stop::write_not_run(&self.log_dir, self.done.len() + 1, &self.not_run)?;
                     break;
                 }
             }
@@ -242,7 +253,7 @@ impl Run {
             None => println!("     (cwd {}) cargo {}", leaf(&dir), args.join(" ")),
         }
         if dry {
-            return Ok(Done { name: s.name.clone(), ok: true, secs: 0, note: "dry run".into(), built: None });
+            return Ok(Done { name: s.name.clone(), ok: true, stall: false, secs: 0, note: "dry run".into(), built: None });
         }
         let cache = if direct.is_some() { Vec::new() } else { gate_cache_env() };
         if !cache.is_empty() {
@@ -254,13 +265,20 @@ impl Run {
         let t0 = Instant::now();
         let file = File::create(&log).map_err(|e| format!("create {}: {e}", log.display()))?;
         let records = crate::direct::records(s);
-        let (code, json) = match &direct {
-            Some(d) => (crate::direct::run(d, root, file)?, None),
-            None => crate::direct::cargo(&cargo(), cache, &args, &dir, file, records.is_some())?,
+        let limit = crate::watchdog::limit_for(&args, crate::watchdog::from_env().0);
+        let (code, json, stalled) = match &direct {
+            Some(d) => {
+                let (code, stalled) = crate::direct::run(d, root, file, limit)?;
+                (code, None, stalled)
+            }
+            None => {
+                let json = records.is_some().then(|| crate::direct::json_path(&log));
+                crate::direct::cargo(&cargo(), cache, &args, &dir, file, json.as_deref(), limit)?
+            }
         };
         let mut recorded = None;
         if let (Some(name), Some(json), 0) = (records.filter(|_| !crate::direct::opted_out()), json, code) {
-            match crate::direct::record(root, &cargo(), &name, &json) {
+            match json.and_then(|j| crate::direct::record(root, &cargo(), &name, &j)) {
                 Ok(p) => {
                     println!("     {} test executable(s) of {name} recorded: their steps start no cargo", p.count());
                     recorded = Some((name, p));
@@ -271,28 +289,39 @@ impl Run {
         let secs = t0.elapsed().as_secs();
         let text = std::fs::read_to_string(&log).unwrap_or_default();
         let mut note = read_log(&text, code)?;
+        let stall = stalled.then(|| crate::watchdog::report(&s.name, &text));
         let ok = match &s.expect_fail {
             Some(k) => expect_fail_note(code, &mut note, &text, k),
             None => code == 0,
-        };
-        println!("     {} in {secs}s {note}", if ok { "ok" } else { "FAIL" });
-        Ok(Done { name: s.name.clone(), ok, secs, note, built: recorded })
+        } && stall.is_none();
+        let stall = stall.map(|n| note = n).is_some();
+        println!("     {} in {secs}s {note}", row(ok, stall));
+        if !ok && !stall {
+            let gate = crate::build_stop::gate_command();
+            crate::build_stop::metadata_note(&text, &args, &gate)?.iter().for_each(|l| println!("{l}"));
+        }
+        Ok(Done { name: s.name.clone(), ok, stall, secs, note, built: recorded })
     }
 
     /// Prints the summary table; the process exit code (0 all passed, 1 any failed).
     pub fn summary(self) -> i32 {
         println!("\n== gate summary ({}) - logs in {}", self.label, self.log_dir.display());
         for d in &self.done {
-            println!("  {:<4} {:>5}s  {}  {}", if d.ok { "ok" } else { "FAIL" }, d.secs, d.name, d.note);
+            println!("  {:<4} {:>5}s  {}  {}", row(d.ok, d.stall), d.secs, d.name, d.note);
+        }
+        for (name, note) in &self.not_run {
+            println!("  SKIP     -   {name}  {note}");
         }
         let bad = self.done.iter().filter(|d| !d.ok).count();
+        let stalled = self.done.iter().filter(|d| d.stall).count();
         let mins = self.clock.elapsed().as_secs_f64() / 60.0;
         if self.lanes {
             let serial: u64 = self.done.iter().map(|d| d.secs).sum();
             println!("  summed lane wall time {serial}s (serial estimate; not a serial benchmark)");
         }
-        println!("  wall {mins:.1} min, {} step(s), {bad} failed", self.done.len());
+        println!("  wall {mins:.1} min, {} step(s), {} failed, {stalled} stalled", self.done.len(), bad - stalled);
         if !self.dry {
+            crate::unit_sweep::lines(&crate::unit_sweep::after_run(&self.root, self.clock.elapsed())).iter().for_each(|l| println!("{l}"));
             println!("{}", crate::unit_env::added_line(self.units, crate::unit_env::units(&self.root)));
         }
         if self.label == "light" {
@@ -303,48 +332,13 @@ impl Run {
             println!("== gate VOID ({}) - the checkout moved during the run; no verdict, re-run on a checkout nobody pulls into", self.label);
             return 1;
         }
-        i32::from(bad > 0)
+        crate::watchdog::exit_code(false, bad - stalled, stalled)
     }
 }
 
-/// A known-fail step (`known_fail`) is ok only when libtest reports `k.test` itself as FAILED (the `read_log`
-/// note `failed: ... [tests: ...]` names it exactly) AND the test's panic block in `log` is the pinned
-/// assert: its `panicked at` line names `k.file` and `k.line`, and a message line starts with `k.reason`. A pass, a renamed test, a
-/// compile error, a crash of the test binary (no `test ... FAILED` line) or a failure for another reason (a
-/// planner panic, a gouge warning, another assert) is a FAIL.
-pub fn expect_fail_note(code: i32, note: &mut String, log: &str, k: &crate::known_fail::KnownFail) -> bool {
-    let test = &k.test;
-    if code == 0 {
-        *note = "KNOWN FAIL NOW PASSES (or no such test): remove its known-fail marker".into();
-        return false;
-    }
-    let named = note.starts_with("failed:")
-        && note
-            .split_once("[tests: ")
-            .and_then(|(_, rest)| rest.split_once(']'))
-            .is_some_and(|(list, _)| list.split(", ").any(|t| t == test));
-    if !named {
-        *note = format!("known fail did not fail as a test (crash, compile error or other test): {note}");
-        return false;
-    }
-    let pinned = |(at, msg): (String, String)| at.contains(&format!("{}:{}:", k.file, k.line))
-        && msg.lines().any(|l| l.starts_with(&k.reason));
-    if !panic_block(log, test).is_some_and(pinned) {
-        *note = format!("KNOWN FAIL, DIFFERENT REASON (want {:?} at {}): {note}", k.reason, k.file);
-        return false;
-    }
-    *note = format!("known fail, red as expected ({note})");
-    true
-}
-
-/// The `panicked at` line (slashes made `/`) and the message lines after it of the thread named `test`;
-/// the message ends at the next `thread '` line or the `failures:` list.
-fn panic_block(log: &str, test: &str) -> Option<(String, String)> {
-    let head = format!("thread '{test}'");
-    let mut lines = log.lines().skip_while(|l| !(l.starts_with(&head) && l.contains("panicked at ")));
-    let at = lines.next()?.replace('\\', "/");
-    let msg: Vec<&str> = lines.take_while(|l| !l.starts_with("thread '") && !l.starts_with("failures:")).collect();
-    Some((at, msg.join("\n")))
+/// The word of a step row: `ok`, `FAIL`, or `STALL` (the watchdog killed it, #3303).
+pub fn row(ok: bool, stall: bool) -> &'static str {
+    if stall { "STALL" } else if ok { "ok" } else { "FAIL" }
 }
 
 /// The VOID line when the checkout under `root` no longer reads as `guard` (or cannot be read); `None` while
@@ -389,7 +383,7 @@ pub fn read_log(text: &str, code: i32) -> Result<String, String> {
         }
         n
     } else if code != 0 {
-        format!("exit {code}")
+        crate::exit_status::note(code, text)
     } else {
         String::new()
     };

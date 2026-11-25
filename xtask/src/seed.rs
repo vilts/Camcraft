@@ -63,7 +63,7 @@ fn units(checkout: &Path) -> usize {
 }
 
 /// Takes cargo's locks of `dir` without a wait. `Ok(None)` when a lock is held (a build runs there).
-fn lock(dir: &Path, create: bool) -> Result<Option<Vec<File>>, String> {
+pub(crate) fn lock(dir: &Path, create: bool) -> Result<Option<Vec<File>>, String> {
     let mut held = Vec::new();
     for name in LOCKS {
         let path = dir.join(name);

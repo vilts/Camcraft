@@ -12,6 +12,7 @@ use regex::escape;
 
 use crate::plan::ALL_CRATES;
 use crate::scan::{self, re};
+use crate::suites;
 
 /// The asset kinds quick watches: (directory under `assets/`, file extension).
 const KINDS: [(&str, &str); 2] = [("posts", "cps"), ("machines", "mch")];
@@ -48,7 +49,13 @@ pub fn suites_for(root: &Path, a: &Asset) -> Result<Vec<(String, String)>, Strin
     let mut out = Vec::new();
     for d in ALL_CRATES {
         for b in scan::binaries(root, d) {
-            let text = scan::read(&root.join("crates").join(d).join("tests").join(format!("{b}.rs")));
+            // The entry file and each module it declares: a directory suite (`tests/<b>/main.rs`) names
+            // its assets in its child modules (#3186).
+            let mut text = String::new();
+            for source in suites::sources(&suites::entry(root, d, &b))? {
+                text.push_str(&scan::read(&source.path));
+                text.push('\n');
+            }
             let why = if file.is_match(&text) {
                 format!("names {}.{}", a.stem, a.ext)
             } else if quoted.is_match(&text) {

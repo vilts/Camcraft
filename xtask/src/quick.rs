@@ -14,6 +14,13 @@ use crate::plan::{ALL_CRATES, J, Plan, SHARED, Step, T, pkg, ps_cmp, ps_sorted};
 use crate::scan::{self, re};
 use crate::suites;
 
+#[path = "quick_describe.rs"]
+mod describe;
+#[path = "quick_subs.rs"]
+mod subs;
+
+use describe::{by_fn, describe};
+
 /// What quick does with a diff.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Quick {
@@ -41,6 +48,8 @@ struct Picks {
     ign: BTreeSet<(String, String)>,
     libs: BTreeSet<String>,
     mods: Vec<(String, String, String)>,
+    /// (suite key, submodule path): a submodule changed outside its test fns (#3706).
+    subs: BTreeSet<(String, String)>,
 }
 
 pub fn plan(root: &Path, diff: &Diff, heavy: bool) -> Result<Quick, String> {
@@ -97,9 +106,8 @@ pub fn plan(root: &Path, diff: &Diff, heavy: bool) -> Result<Quick, String> {
                 Some(s) if s.precise => suites::test_fns(s)?,
                 _ => Vec::new(),
             };
-            let before = (diff.before)(f)
-                .map(|text| scan::test_fns(&text))
-                .transpose()?;
+            let before_text = (diff.before)(f);
+            let before = before_text.as_deref().map(scan::test_fns).transpose()?;
             let mut outside = source.is_none_or(|s| !s.precise) || before.is_none();
             for hk in (diff.hunks)(f) {
                 let Some(h) = hunk_re.captures(&hk) else {
@@ -126,7 +134,9 @@ pub fn plan(root: &Path, diff: &Diff, heavy: bool) -> Result<Quick, String> {
                     set.insert((key.clone(), t.name.clone()));
                 }
             }
-            if outside {
+            if outside && let Some(m) = subs::filter(source, before_text.as_deref())? {
+                p.subs.insert((key, m));
+            } else if outside {
                 p.whole.insert(key.clone());
                 p.why
                     .insert(key, "suite changed outside its test fns".into());
@@ -168,8 +178,9 @@ pub fn plan(root: &Path, diff: &Diff, heavy: bool) -> Result<Quick, String> {
     p.mods.dedup();
     map_modules(root, &mut p, &mut plan.notes)?;
     let unmapped = map_assets(root, diff.changed, &mut p)?;
-    crate::catalog::map_catalog(root, diff.changed, &mut p.whole, &mut p.why);
+    crate::example_suites::map(root, diff.changed, &mut p.whole, &mut p.why);
     crate::fixture_inputs::map(root, diff.changed, &mut p.libs, &mut p.whole, &mut p.why)?;
+    subs::settle(&mut p);
     describe(&p, heavy, xtask, &unmapped, &mut plan.notes);
     plan.steps = steps(p, heavy, xtask);
     Ok(Quick::Plan(plan))
@@ -266,56 +277,6 @@ fn map_assets(root: &Path, changed: &[String], p: &mut Picks) -> Result<Vec<Stri
     Ok(unmapped)
 }
 
-fn by_fn(set: &BTreeSet<(String, String)>) -> Vec<(String, String)> {
-    let mut v: Vec<_> = set.iter().cloned().collect();
-    v.sort_by(|a, b| ps_cmp(&a.0, &b.0).then_with(|| ps_cmp(&a.1, &b.1)));
-    v
-}
-
-fn describe(p: &Picks, heavy: bool, xtask: bool, unmapped: &[String], notes: &mut Vec<String>) {
-    notes.push("quick plan:".into());
-    for d in ps_sorted(p.libs.iter().cloned()) {
-        notes.push(format!("  {d} lib (unit tests)"));
-    }
-    for k in ps_sorted(p.whole.iter().cloned()) {
-        let why = p.why.get(&k).map(String::as_str).unwrap_or("");
-        notes.push(format!("  {k}  whole suite - {why}"));
-    }
-    let ign_note = if heavy {
-        "  [ignored -> release --ignored]"
-    } else {
-        "  [ignored: heavy lane, skipped - pass --heavy or use `gate test <name>`]"
-    };
-    let mut both: Vec<(String, String, bool)> = by_fn(&p.fns)
-        .into_iter()
-        .map(|(k, f)| (k, f, false))
-        .collect();
-    both.extend(by_fn(&p.ign).into_iter().map(|(k, f)| (k, f, true)));
-    both.sort_by(|a, b| ps_cmp(&a.0, &b.0).then_with(|| ps_cmp(&a.1, &b.1)));
-    for (k, f, ig) in both {
-        if !p.whole.contains(&k) {
-            notes.push(format!("  {k}::{f}{}", if ig { ign_note } else { "" }));
-        }
-    }
-    if xtask {
-        notes.push("  xtask (unit tests) - xtask/ changed".into());
-    }
-    for a in unmapped {
-        notes.push(format!(
-            "  {a}: NO SUITE covers this asset - nothing posts through it in crates/*/tests"
-        ));
-    }
-    if unmapped.is_empty()
-        && p.libs.is_empty()
-        && p.whole.is_empty()
-        && p.fns.is_empty()
-        && p.ign.is_empty()
-        && !xtask
-    {
-        notes.push("  nothing in crates/ changed: no tests to run".into());
-    }
-}
-
 fn steps(mut p: Picks, heavy: bool, xtask: bool) -> Vec<Step> {
     let mut build_only: BTreeSet<String> = BTreeSet::new();
     if !heavy {
@@ -340,7 +301,7 @@ fn steps(mut p: Picks, heavy: bool, xtask: bool) -> Vec<Step> {
         let mut build: Vec<String> = targets.iter().flat_map(|t| t.1.clone()).collect();
         let mut seen: BTreeSet<String> = whole.iter().filter(|k| mine(k)).map(&bin).collect();
         let heavy_only = ps_sorted(build_only.iter().cloned());
-        let fn_keys = p.fns.iter().map(|(k, _)| k.clone());
+        let fn_keys = p.fns.iter().chain(&p.subs).map(|(k, _)| k.clone());
         let mut units = targets.len(); // targets in the build list
         for k in heavy_only.into_iter().chain(ps_sorted(fn_keys)).filter(|k| mine(k)) {
             if seen.insert(bin(&k)) {
@@ -350,7 +311,7 @@ fn steps(mut p: Picks, heavy: bool, xtask: bool) -> Vec<Step> {
         }
         // Skip the build only when one run step covers the one target of the build list (review of #1952).
         let fn_steps: BTreeSet<&String> =
-            p.fns.iter().map(|(k, _)| k).filter(|k| mine(k) && !p.whole.contains(*k)).collect();
+            p.fns.iter().chain(&p.subs).map(|(k, _)| k).filter(|k| mine(k) && !p.whole.contains(*k)).collect();
         if !build.is_empty() && !(units == 1 && targets.len() + fn_steps.len() == 1) {
             let name = format!("{d} build (--no-run)");
             out.push(Step::new(name, &["test", "-j", J, "-p", &pk, "--no-run"], d).with(&build));
@@ -392,6 +353,7 @@ fn steps(mut p: Picks, heavy: bool, xtask: bool) -> Vec<Step> {
                 out.push(Step::new(name, &[], d).with(&args));
             }
         }
+        out.extend(subs::steps(&p, d, &pk));
     }
     if xtask {
         out.push(Step::new("xtask unit tests", &["test", "-j", J, "-p", "xtask", "--", T], ""));

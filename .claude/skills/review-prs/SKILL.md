@@ -130,9 +130,9 @@ closed or gets `needs-rework`.
 
 After posting the review, read `gh pr view <N> --json mergeable`
 (re-read once if it says `UNKNOWN`):
-- clean review + `MERGEABLE` -> add `merge-ready`, remove `needs-rework`, `conflicts` and `needs-maintainer`;
+- clean review + `MERGEABLE` -> add `merge-ready`, remove `needs-rework`, `conflicts` and `needs-maintainer` in the same `gh pr edit` call;
 - clean review + `CONFLICTING` -> add `conflicts`, remove `merge-ready` and `needs-maintainer` (never green while it conflicts);
-- blocking review -> add `needs-rework`, remove `merge-ready` and `needs-maintainer`; also add `conflicts` if it conflicts;
+- blocking review -> add `needs-rework`, remove `merge-ready` and `needs-maintainer` in the same `gh pr edit` call; also add `conflicts` if it conflicts;
 - "Not built - needs a maintainer look" with no blockers -> add `needs-maintainer`, remove `merge-ready` and `needs-rework`; also add `conflicts` if it conflicts. With blockers it is `needs-rework` as above, and the comment still names the owner's decision.
 
 A PR that changes `crates/ui/tests/snapshots/*.png` is a blocking review
@@ -141,11 +141,14 @@ only at the cut (AGENTS.md "Pixel snapshots are release-lane", #255). The
 fix is to drop the PNG changes and update the structural assertions
 instead.
 
-A red or orange verdict also turns the PR back into a draft
-(`gh pr ready <N> --undo`): the author fixes it there, pushes, and flags it
-ready again for a fresh review (AGENTS.md "Every PR opens as a draft").
-That applies to our own PRs; a fork contributor's PR is left as they set
-it, and the review comment says what to fix.
+An orange verdict (`conflicts`) turns the PR back into a draft
+(`gh pr ready <N> --undo`): the author refreshes it there, pushes, and flags
+it ready again for a fresh review. A red verdict does not: the PR keeps its
+ready flag with `needs-rework`, and the author pushes the fix to it
+(AGENTS.md "Every PR opens as a draft", #3727). That applies to our own PRs;
+a fork contributor's PR is left as they set it, and the review comment says
+what to fix. The first `needs-rework` comment names the class of each finding
+and asks for one rule that closes the class.
 
 A conflicting PR of ours that waits for the merge batch therefore stays a
 draft until its author's agents fix it (AGENTS.md "Own blocked PRs
@@ -166,10 +169,17 @@ Merging a PR can turn others `CONFLICTING`, so each run also re-checks
 every open PR labelled `merge-ready` and swaps any that now conflict to
 `conflicts`.
 
-A requested change that is still open on the current head, or `merge-ready`
-beside a collaborator review that requests changes, is a disagreement
-(AGENTS.md "Only collaborators' reviews count"): no agent removes either
-label.
+`merge-ready` and `needs-rework` are never on the same PR (AGENTS.md
+"Only collaborators' reviews count", #3382). The person or agent that sets
+one of them removes the other in the same `gh pr edit` call
+(`--add-label needs-rework --remove-label merge-ready`, or the reverse),
+then posts one comment that says why. If two collaborators disagree on the
+same head, `needs-rework` stays and `merge-ready` is removed: an open change
+request wins, and the comment goes to the collaborator who set `merge-ready`.
+`conflicts` is not part of this rule: it stays an add-alongside label.
+A requested change that is still open on the current head, with `merge-ready`
+beside it, is the disagreement case above: remove `merge-ready`, keep
+`needs-rework`, and comment.
 
 Only collaborators set the review labels and the markers that count
 (AGENTS.md "Only collaborators' reviews count"; the collaborator list is
@@ -246,6 +256,26 @@ and comments on the pinned issue #681 (Process changes):
 running session reloads `AGENTS.md`, `.claude/agents/` and
 `.claude/skills/`, and a fork runs `fork-sync`. That comment is
 how fork maintainers subscribed to #681 hear about it.
+
+## 2e. Targeted tests at review, no heavy lanes for each PR (#3556)
+
+AGENTS.md "Heavy lanes at review". A review runs small targeted tests:
+the pinning tests, the touched test binaries (the quick plan), the example
+catalog suites by name where a post or a toolpath changed, and the light
+lane. The `PR-reviewer` agent does this in steps 4 and 5.
+
+- No PR gets the full heavy lanes. They run at the cut, in the cut gate on
+  the cut runner.
+- A diff that reaches a heavy lane is not "not ready" for that reason. No
+  PR is "owed heavy" (**Owed heavy result** is retired).
+- A `P1` PR under the safety floor gets one targeted heavy step: the
+  binary that holds the named heavy tests of the changed code
+  (`cargo xtask gate heavy --only "<crate> heavy: <target>"`). If it cannot
+  run, "targeted heavy step not run" is a blocker, and the PR does not get
+  `merge-ready`. A `P2` or lower PR gets no heavy step.
+- A `<!-- heavy-wave: <tree hash> -->` record (the `merge-ready` skill,
+  step 4a) is optional. Its absence is not a finding.
+- "Not run" is never a pass for a step that the rule requires.
 
 ## 3. Report
 

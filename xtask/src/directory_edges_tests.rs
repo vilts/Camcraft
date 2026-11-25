@@ -37,7 +37,7 @@ fn documented_ignore_examples_are_not_ignore_attributes() {
 fn quick_checks_old_and_new_hunk_sides_without_widening_in_test_edits() {
     let f = fixture();
     let file = "crates/app/tests/group/cases.rs";
-    for (before, after, hunk, whole) in [
+    for (before, after, hunk, outside_fns) in [
         (
             "fn helper() -> u8 { 1 }\n#[test]\nfn changed() { assert_eq!(helper(), 1); }\n",
             "#[allow(dead_code)] #[test]\nfn changed() { assert_eq!(2, 2); }\n",
@@ -64,8 +64,9 @@ fn quick_checks_old_and_new_hunk_sides_without_widening_in_test_edits() {
         let Quick::Plan(p) = quick::plan(&f.0, &diff, false).expect("two-sided plan") else {
             panic!("unexpected batch");
         };
-        let expected = if whole {
-            "test -j 6 -p camcraft-app --no-fail-fast --test group -- --test-threads=6"
+        // An edit outside the test fns of a private submodule runs that submodule (#3706).
+        let expected = if outside_fns {
+            "test -j 6 -p camcraft-app --no-fail-fast --test group -- --test-threads=6 cases::"
         } else {
             "test -j 6 -p camcraft-app --test group -- --test-threads=6 --exact cases::changed"
         };

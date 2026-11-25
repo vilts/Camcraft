@@ -20,9 +20,12 @@ pub fn name_matches(name: &str, word: &str) -> bool {
     }
 }
 
-/// True when the log text of one step shows a failure: a failed libtest result, or a cargo error line.
+/// True when the log text of one step shows a failure: a failed libtest result, a cargo error line, or the
+/// line of a step that a failed build stopped (#3601: it did not run, so a rerun must run it).
 pub fn log_failed(text: &str) -> bool {
-    text.lines().any(|l| l.starts_with("test result: FAILED") || l.starts_with("error:"))
+    text.lines().any(|l| {
+        l.starts_with("test result: FAILED") || l.starts_with("error:") || l.starts_with(crate::build_stop::NOT_RUN)
+    })
 }
 
 /// The step stems (log name without the `NN-` prefix and `.log`) of the failed steps of one run, from

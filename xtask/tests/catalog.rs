@@ -49,6 +49,28 @@ fn catalog_check_verifies_seed_case() {
     );
 }
 
+/// #2856: a case with `expect = "refusal"` has no `.nc`; `--check` rebuilds
+/// it and compares the refusal lines with `refusal.txt`.
+#[test]
+fn catalog_check_verifies_refusal_case() {
+    let out = Command::new(xtask_bin())
+        .current_dir(workspace_root())
+        .args(["catalog", "--case", "2d/drill-overfeed", "--check"])
+        .output()
+        .expect("run xtask catalog --check");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "catalog --check failed (status {:?})\nstdout:\n{stdout}\nstderr:\n{stderr}",
+        out.status.code()
+    );
+    assert!(
+        stdout.contains("checked 2d/drill-overfeed (refusal)"),
+        "expected checked 2d/drill-overfeed (refusal), got:\n{stdout}"
+    );
+}
+
 #[test]
 fn catalog_refuses_unsafe_branch_and_in_tree_output_and_bad_flags() {
     let root = workspace_root();

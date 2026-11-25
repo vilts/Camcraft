@@ -29,9 +29,14 @@ struct Module {
     path: Option<String>,
 }
 
-/// Inline module prefixes for each line, plus out-of-line module declarations.
-fn modules(text: &str) -> Result<(Vec<String>, Vec<Module>), String> {
+/// Inline module prefixes for each line, out-of-line module declarations, and `true` when the code holds
+/// a `mod` token the line scan did not read as a declaration (`mod a; mod b;` on one line,
+/// `#[cfg(test)] mod b;`, a declaration split over lines). A caller that must not miss a module file
+/// (`sources_and_missing`, #3706) then counts the file as unknown.
+fn modules(text: &str) -> Result<(Vec<String>, Vec<Module>, bool), String> {
     let declaration = re(r"^\s*(?:pub(?:\([^)]*\))?\s+)?mod\s+(\w+)\s*([;{])")?;
+    let token = re(r"\bmod\b")?;
+    let mut unsure = false;
     let path_attr = re(r#"^\s*#\[path\s*=\s*"([^"]+)"\s*\]"#)?;
     let mut stack: Vec<(String, i64)> = Vec::new();
     let (mut depth, mut lex) = (0, Lex::default());
@@ -41,10 +46,12 @@ fn modules(text: &str) -> Result<(Vec<String>, Vec<Module>), String> {
     for line in text.lines() {
         let parents: Vec<String> = stack.iter().map(|(n, _)| n.clone()).collect();
         prefixes.push(parents.join("::"));
+        let mut read = false;
         if lex == Lex::Code {
             if let Some(c) = path_attr.captures(line) {
                 path = Some(c[1].to_string());
             } else if let Some(c) = declaration.captures(line) {
+                read = true;
                 let name = c[1].to_string();
                 if &c[2] == ";" {
                     external.push(Module {
@@ -64,20 +71,33 @@ fn modules(text: &str) -> Result<(Vec<String>, Vec<Module>), String> {
                 path = None;
             }
         }
-        let (open, close) = braces::count(line, &mut lex);
+        let code = braces::code(line, &mut lex);
+        if token.find_iter(&code).count() != usize::from(read) {
+            unsure = true;
+        }
+        let open = code.chars().filter(|&c| c == '{').count() as i64;
+        let close = code.chars().filter(|&c| c == '}').count() as i64;
         depth += open - close;
         while stack.last().is_some_and(|(_, level)| *level > depth) {
             stack.pop();
         }
     }
-    Ok((prefixes, external))
+    Ok((prefixes, external, unsure))
 }
 
 /// Actual declared module files, not every .rs helper lying next to the suite.
 pub fn sources(entry: &Path) -> Result<Vec<Source>, String> {
+    Ok(sources_and_missing(entry)?.0)
+}
+
+/// [`sources`], with the count of declared `mod x;` children whose file is absent (a cfg-gated module
+/// can be), plus one for each file whose `mod` tokens the scan could not all read (`modules`). A caller that must not drop a suite by accident (`plan::may_run_ignored`, #3186) treats a
+/// missing child as unknown text.
+pub fn sources_and_missing(entry: &Path) -> Result<(Vec<Source>, usize), String> {
     let mut out = Vec::new();
-    visit(entry, "", true, &mut Vec::new(), &mut out)?;
-    Ok(out)
+    let mut missing = 0;
+    visit(entry, "", true, &mut Vec::new(), &mut out, &mut missing)?;
+    Ok((out, missing))
 }
 
 fn visit(
@@ -86,6 +106,7 @@ fn visit(
     inherited_precision: bool,
     active: &mut Vec<PathBuf>,
     out: &mut Vec<Source>,
+    missing: &mut usize,
 ) -> Result<(), String> {
     if active.len() >= 64 || active.iter().any(|p| p == file) {
         return Err(format!(
@@ -95,7 +116,10 @@ fn visit(
     }
     let text = std::fs::read_to_string(file)
         .map_err(|e| format!("suite module {}: {e}", file.display()))?;
-    let (_, modules) = modules(&text)?;
+    let (_, modules, unsure) = modules(&text)?;
+    if unsure {
+        *missing = missing.saturating_add(1);
+    }
     // Do not guess target/features for cfg-gated modules or functions. Quick can run
     // the suite whole; named selection refuses an ambiguous exact path.
     let cfg = re(r"#\s*!?\s*\[\s*cfg[^\]]*\]")?;
@@ -152,7 +176,9 @@ fn visit(
                 .filter(|s| !s.is_empty())
                 .collect::<Vec<_>>()
                 .join("::");
-            visit(&child, &name, precise, active, out)?;
+            visit(&child, &name, precise, active, out, missing)?;
+        } else {
+            *missing = missing.saturating_add(1);
         }
     }
     active.pop();
@@ -161,7 +187,7 @@ fn visit(
 
 pub fn test_fns(source: &Source) -> Result<Vec<TestFn>, String> {
     let text = scan::read(&source.path);
-    let (prefixes, _) = modules(&text)?;
+    let (prefixes, _, _) = modules(&text)?;
     let mut tests = scan::test_fns(&text)?;
     for test in &mut tests {
         let inline = prefixes

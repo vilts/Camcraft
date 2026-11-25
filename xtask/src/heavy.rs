@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use crate::plan::{ALL_CRATES, HEAVY_CRATES, Plan, heavy_steps_where};
+use crate::heavy_files::{self, Seen};
 use crate::{assets, fixture_inputs, suites};
 
 /// For each crate dir, the crate dirs that a change in it reaches: itself and every crate that depends on
@@ -67,6 +68,8 @@ fn is_heavy(dir: &str) -> bool {
 /// - a workspace manifest, lock file, cargo config or toolchain file: every heavy crate;
 /// - a file of one suite (`crates/<d>/tests/<suite>.rs`, `tests/<suite>/..`): that binary only;
 /// - other files under `crates/<d>/tests/`: the heavy lanes of `d` (shared test code or input);
+/// - a `#[cfg(test)]` module of `d` (`heavy_files::seen_by`): `d:lib` only (#3560);
+/// - `src/main.rs` or `src/bin/..` of `d`: `d:bins` and the integration binaries of `d` (#3560);
 /// - any other file of crate `d` that is not Markdown: the heavy lanes of each crate that `d` reaches;
 /// - a post script, machine file, catalog case or fixture: the heavy binaries that read it (as quick does).
 pub fn reached(root: &Path, changed: &[String]) -> Result<Reached, String> {
@@ -100,10 +103,28 @@ pub fn reached(root: &Path, changed: &[String]) -> Result<Reached, String> {
             } else {
                 r.crates.entry(d.to_string()).or_insert_with(|| format!("shared test input {f}"));
             }
-        } else if !rest.to_ascii_lowercase().ends_with(".md") {
-            for c in reach.get(d).into_iter().flatten().filter(|c| is_heavy(c)) {
-                let how = if c == d { format!("{f} changed") } else { format!("depends on {d} ({f} changed)") };
-                r.crates.entry(c.clone()).or_insert(how);
+        } else if rest.to_ascii_lowercase().ends_with(".md") {
+            continue;
+        } else {
+            let seen = rest.strip_prefix("src/").map_or(Seen::Library, |s| heavy_files::seen_by(root, d, s));
+            match seen {
+                // #3560: cfg(test) code is not in the library that the other targets and crates link.
+                Seen::UnitTestsOnly(how) if is_heavy(d) => {
+                    r.targets.entry(format!("{d}:lib")).or_insert(format!("{f} changed: {how}"));
+                }
+                // #3560: no other crate links a binary; its integration tests can run it (CARGO_BIN_EXE_*).
+                Seen::BinsOnly(how) if is_heavy(d) => {
+                    for label in std::iter::once("bins".to_string()).chain(crate::scan::binaries(root, d)) {
+                        r.targets.entry(format!("{d}:{label}")).or_insert_with(|| format!("{f} changed: {how}"));
+                    }
+                }
+                Seen::UnitTestsOnly(_) | Seen::BinsOnly(_) => {}
+                Seen::Library => {
+                    for c in reach.get(d).into_iter().flatten().filter(|c| is_heavy(c)) {
+                        let how = if c == d { format!("{f} changed") } else { format!("depends on {d} ({f} changed)") };
+                        r.crates.entry(c.clone()).or_insert(how);
+                    }
+                }
             }
         }
     }
@@ -142,6 +163,14 @@ pub fn plan(root: &Path, changed: &[String]) -> Result<Plan, String> {
         let none = if planned { "" } else { " [no #[ignore]d test: no step]" };
         plan.notes.push(format!("  {d} heavy: {label} - {how}{none}"));
     }
+    // #3560: each heavy target that the diff does not reach is named, so that a review says "not run".
+    let all: Vec<String> = heavy_steps_where(root, &|_, _| true).into_iter().skip(1).map(|s| s.name).collect();
+    let reached = plan.steps.iter().skip(1).count();
+    let skipped: Vec<&String> = all.iter().filter(|n| !plan.steps.iter().any(|s| &s.name == *n)).collect();
+    for n in &skipped {
+        plan.notes.push(format!("  not run: {n} - the diff does not reach it"));
+    }
+    plan.notes.push(format!("  heavy reach: {reached} step(s) reached, {} skipped (not run)", skipped.len()));
     if plan.steps.is_empty() {
         plan.notes.push("  the diff reaches no heavy lane: nothing to run".into());
     }

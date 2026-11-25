@@ -42,6 +42,212 @@ fn write_file(path: &Path, text: &str) {
     fs::write(path, text).expect("write file");
 }
 
+fn links_fixture(tag: &str) -> TempDir {
+    let tmp = TempDir::new(tag);
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let kinds = "crates/app/src/operation/kinds.rs";
+    write_file(
+        &tmp.0.join(kinds),
+        &fs::read_to_string(root.join(kinds)).expect("kind registry"),
+    );
+    for page in [
+        "operations/operations-2d.md",
+        "operations/operations-3d.md",
+        "operations/operations-turning.md",
+        "operations/operations-edm.md",
+        "operations/operations-plasma.md",
+        "operations/operations-probing.md",
+        "multi-axis/operations-multiaxis.md",
+    ] {
+        let path = format!("site/content/guide/{page}");
+        let text = fs::read_to_string(root.join(&path)).expect("operation page");
+        let headings = text
+            .lines()
+            .filter(|line| line.starts_with("## "))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        write_file(&tmp.0.join(&path), &format!("{headings}\n"));
+    }
+    write_file(
+        &tmp.0.join("examples/catalog/2d/sample/case.toml"),
+        "kinds = [\"Face\"]\nmachine = \"3-axis mill\"\nexpect = \"post\"\n",
+    );
+    tmp
+}
+
+#[test]
+fn catalog_check_rejects_missing_case_metadata() {
+    let tmp = links_fixture("missing-metadata");
+    fs::remove_file(tmp.0.join("examples/catalog/2d/sample/case.toml")).expect("remove metadata");
+    let err = catalog::run(&tmp.0, &["--check".into()]).expect_err("missing metadata must refuse");
+    assert!(
+        err.contains("sample") && err.contains("case.toml"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn catalog_check_rejects_unknown_case_kind() {
+    let tmp = links_fixture("unknown-kind");
+    write_file(
+        &tmp.0.join("examples/catalog/2d/sample/case.toml"),
+        "kinds = [\"Imaginary operation\"]\nmachine = \"3-axis mill\"\nexpect = \"post\"\n",
+    );
+    let err = catalog::run(&tmp.0, &["--check".into()]).expect_err("unknown kind must refuse");
+    assert!(
+        err.contains("sample") && err.contains("Imaginary operation"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn catalog_check_rejects_missing_case_link() {
+    let tmp = links_fixture("missing-link");
+    let err = catalog::run(&tmp.0, &["--check".into()]).expect_err("unlinked case must refuse");
+    assert!(err.contains("example links"), "got: {err}");
+}
+
+#[test]
+fn catalog_check_rejects_dangling_case_link() {
+    let tmp = links_fixture("dangling-link");
+    let page = tmp.0.join("site/content/guide/operations/operations-2d.md");
+    let text = fs::read_to_string(&page).expect("read page");
+    write_file(&page, &text.replacen(
+        "## Face\n",
+        "## Face\n\n**Example cases**\n\n- [2d/no-such-case](https://github.com/NeoTech/Camcraft/tree/main/examples/catalog/2d/no-such-case)\n",
+        1,
+    ));
+    let err = catalog::run(&tmp.0, &["--check".into()]).expect_err("dangling link must refuse");
+    assert!(
+        err.contains("no-such-case") && err.contains("unknown case"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn catalog_links_generate_idempotently_and_check_without_touching_prose() {
+    let tmp = links_fixture("roundtrip");
+    let page = tmp.0.join("site/content/guide/operations/operations-2d.md");
+    let prose = "A paragraph with **formatting** and a [guide link](@/guide/_index.md).";
+    let source = fs::read_to_string(&page).expect("read page");
+    write_file(
+        &page,
+        &source.replacen("## Face\n", &format!("## Face\n\n{prose}\n"), 1),
+    );
+    let cases = catalog::discover_cases(&tmp.0).expect("discover fixture");
+    catalog::links::sync(&tmp.0, &cases, false).expect("generate links");
+    let once: Vec<_> = catalog::links::PAGES
+        .iter()
+        .map(|p| fs::read(tmp.0.join("site/content/guide").join(p)).expect("generated page"))
+        .collect();
+    let text = fs::read_to_string(&page).expect("generated 2D page");
+    assert!(text.contains(prose));
+    assert_eq!(
+        text.matches(
+            "[2d/sample](https://github.com/NeoTech/Camcraft/tree/main/examples/catalog/2d/sample)"
+        )
+        .count(),
+        1
+    );
+    catalog::links::sync(&tmp.0, &cases, false).expect("regenerate links");
+    catalog::links::sync(&tmp.0, &cases, true).expect("generated links check");
+    for (p, expected) in catalog::links::PAGES.iter().zip(once) {
+        assert_eq!(
+            fs::read(tmp.0.join("site/content/guide").join(p)).expect("page"),
+            expected,
+            "{p}"
+        );
+    }
+}
+
+#[test]
+fn catalog_metadata_rejects_missing_duplicate_and_empty_fields() {
+    let valid = "kinds = [\"Face\"]\nmachine = \"mill\"\nexpect = \"post\"\n";
+    for key in ["kinds", "machine", "expect"] {
+        let missing = valid
+            .lines()
+            .filter(|line| !line.starts_with(key))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let err = catalog::links::metadata::parse(&missing).expect_err("missing field");
+        assert!(err.contains("missing") && err.contains(key), "got: {err}");
+        let duplicate = valid
+            .lines()
+            .find(|line| line.starts_with(key))
+            .expect("field");
+        let err = catalog::links::metadata::parse(&format!("{valid}{duplicate}\n"))
+            .expect_err("duplicate field");
+        assert!(err.contains("duplicate") && err.contains(key), "got: {err}");
+    }
+    for value in ["[]", "[\"\"]", "[\"Face\", \"Face\"]"] {
+        let text = valid.replace("[\"Face\"]", value);
+        assert!(
+            catalog::links::metadata::parse(&text).is_err(),
+            "accepted kinds = {value}"
+        );
+    }
+    for key in ["machine", "expect"] {
+        let line = valid
+            .lines()
+            .find(|line| line.starts_with(key))
+            .expect("field");
+        assert!(
+            catalog::links::metadata::parse(&valid.replace(line, &format!("{key} = \" \"")))
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn catalog_metadata_rejects_invalid_syntax_by_name() {
+    for text in [
+        "kinds = [\"Face\",,]\nmachine = \"mill\"\nexpect = \"post\"",
+        "kinds = [\"Face\"\nmachine = \"mill\"\nexpect = \"post\"",
+        "kinds = \"Face\"\nmachine = \"mill\"\nexpect = \"post\"",
+        "kinds = [\"Face\"]\nmachine = mill\nexpect = \"post\"",
+        "kinds [\"Face\"]\nmachine = \"mill\"\nexpect = \"post\"",
+        "kinds = [\"Face\"]\nmachine = \"mill\"\nexpect = \"unterminated",
+        "kinds = [\"Face\"]\nmachine = \"mill\"\nexpect = \"post\"\nextra = \"x\"",
+        "kinds = [\"Face\"]\nmachine = \"mill\"expect = \"post\"",
+    ] {
+        let err = catalog::links::metadata::parse(text).expect_err("bad metadata must refuse");
+        assert!(!err.is_empty(), "must explain rejected metadata: {text}");
+    }
+}
+
+#[test]
+fn catalog_metadata_accepts_multiline_arrays_comments_and_literal_strings() {
+    let parsed = catalog::links::metadata::parse(
+        "# case metadata\nkinds = [\n  \"Face\", # first\n  '2D Pocket',\n]\nmachine = \"mill's #1 axis\"\nexpect = 'post' # trailing comment #1\n# final comment\n",
+    ).expect("supported flat TOML");
+    assert_eq!(parsed["kinds"], ["Face", "2D Pocket"]);
+    assert_eq!(parsed["machine"], ["mill's #1 axis"]);
+    assert_eq!(parsed["expect"], ["post"]);
+}
+
+#[test]
+fn catalog_seed_links_face_pocket_and_drill() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("workspace root");
+    let cases = catalog::discover_cases(root).expect("catalog cases");
+    catalog::links::sync(root, &cases, true).expect("committed metadata and links check");
+    let text = fs::read_to_string(root.join("site/content/guide/operations/operations-2d.md"))
+        .expect("2D page");
+    for heading in ["Face", "2D Pocket", "Drill"] {
+        let section = text
+            .split(&format!("## {heading}\n"))
+            .nth(1)
+            .expect("kind heading")
+            .split("\n## ")
+            .next()
+            .expect("kind section");
+        assert!(section.contains("[2d/first-part](https://github.com/NeoTech/Camcraft/tree/main/examples/catalog/2d/first-part)"), "{heading} lacks seed link");
+    }
+}
+
 #[test]
 fn parse_flags_and_rejects_contradictions() {
     let ok = catalog::parse(&[

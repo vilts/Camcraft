@@ -175,3 +175,16 @@ fn log_note_names_failed_tests_and_slow_tests() {
     let ok = "test b::long has been running for over 120 seconds\ntest result: ok. 1 passed\n";
     assert_eq!(exec::read_log(ok, 0).expect("note"), "slow: b::long (>120s)");
 }
+
+#[test]
+fn a_directory_suite_gets_a_heavy_step_only_when_a_module_holds_an_ignore() {
+    // The live directory suite `crates/motion/tests/rest_adaptive` (`main.rs` with `mod sim;`): its `mod`
+    // line alone no longer plans a heavy step (#3186). Its step follows the `#[ignore` text of its files.
+    let entry = crate::suites::entry(&root(), "motion", "rest_adaptive");
+    assert!(entry.ends_with("main.rs"), "rest_adaptive is a directory suite: {}", entry.display());
+    let sources = crate::suites::sources(&entry).expect("suite sources");
+    assert!(sources.len() > 1, "rest_adaptive declares a child module");
+    let ignored = sources.iter().any(|s| scan::read(&s.path).contains("ignore"));
+    let planned = heavy().iter().any(|s| s.name == "motion heavy: rest_adaptive");
+    assert_eq!(planned, ignored, "rest_adaptive heavy step follows its ignored tests");
+}

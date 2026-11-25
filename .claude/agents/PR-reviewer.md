@@ -122,7 +122,7 @@ merge.
       line or a per-OS pinned value (issue 1402), also run the touched
       suites locally (steps 3-4, those binaries only).
    With a green or red runner verdict and no local suites owed, skip steps 3
-   and 4, then continue at step 5. The heavy check is required on both paths.
+   and 4, then continue at step 5. The step 5 check is required on both paths.
 3. **Worktree + trial merge** (local path: no runner, or the runner path
    sent you here).
    `git fetch origin && git fetch origin pull/<N>/head:pr-<N>-review`,
@@ -144,20 +144,33 @@ merge.
    background a run and wait on it: reviewers have stalled for an hour
    waiting on a run that had already died. Time box ~40 min of build+test.
 5. **Heavy check on both paths** (AGENTS.md "Heavy lanes at review").
-   This step is required after runner results and after local tests. The
-   runner runs quick and clippy only. Its green result is not a heavy result.
+   This step is required after runner results and after local tests. Do not
+   run the full heavy lanes for a PR (#3556): they run at the cut, in the
+   cut gate on the cut runner. A diff that reaches a heavy lane is not a
+   finding for that reason, and no PR is "owed heavy" (AGENTS.md
+   **Owed heavy result** is retired).
    If no local worktree exists, create it and trial-merge as in step 3, then
    return here. Do not repeat the local quick tests in step 4.
-   Run `cargo xtask gate heavy --base <main ref> --dry-run` in the review
-   worktree. It lists the release `--ignored` lanes that the diff reaches.
-   If no lanes are reached, record that result. Otherwise check the PR body
-   for a green author run of all reached lanes on this head. Rely on that
-   result only if the head and all reached lanes match, and say so.
-   If the author result is absent, stale or incomplete, run
-   `cargo xtask gate heavy --base <main ref>` locally (outside the step 4
-   time box, one command, FOREGROUND). If the reached lanes cannot run,
-   report "heavy lanes not run" as a blocker, never a pass. A red reached
-   heavy test is a blocker. Continue to step 6 only after this check.
+   - Example catalog: if the diff changes a post or a toolpath, run the
+     example catalog suites (`example_catalog*` of `camcraft-app`) by test
+     name, for the cases that the diff touches.
+   - Light lane: run `cargo xtask gate light` once. A red light run is a
+     note on the PR (AGENTS.md **The light lane**), not a blocker by itself.
+   - `P1` under the safety floor (wrong output): one targeted heavy step.
+     `cargo xtask gate heavy --base <main ref> --dry-run` shows the reach.
+     Take the binary that holds the named heavy tests of the changed code,
+     and accept the author's green result of that step on this head (named
+     in the PR body). If it is absent or stale, run it yourself (outside
+     the step 4 time box, one command, FOREGROUND):
+     `cargo xtask gate heavy --base <main ref> --only "<crate> heavy: <target>"`.
+     Never run the whole lane. If the step cannot run, report "targeted
+     heavy step not run" as a blocker, never a pass. A red targeted step is
+     a blocker.
+   - `P2` or lower: no heavy step.
+   A `<!-- heavy-wave: <tree hash> -->` record (#3460) is optional
+   information. Its absence is not a finding. A record with `FAIL` on this
+   head is a finding: name the red step.
+   Continue to step 6 only after this check.
 6. **Law check against AGENTS.md** - for each, cite file:line on a finding:
    - Prime Directive: no `unwrap()/expect()/panic!` outside tests; numeric
      casts and indexing safe; degenerate input refused by name; nothing that
@@ -171,7 +184,11 @@ merge.
      names that crate; (b) no new `camcraft-*` dependency line without a
      `docs/decisions/` entry listing the items, why the caller cannot pass
      them in, and what rebuilds; (c) new code in `crates/app/src` reads or
-     writes the ECS world, project file, a command, MCP or the CLI.
+     writes the ECS world, project file, a command, MCP or the CLI; (d) a
+     PR that adds a new top-level file under `crates/*/tests/` has a
+     one-line reason in its body, or the file belongs to `ISOLATED`
+     (`xtask/src/lanes.rs`) or `SLOW_BINARIES` (`xtask/src/plan.rs`). If
+     not, request a change (AGENTS.md **New tests join a directory suite**).
    - Program order / rest-machining / posting / project round-trip laws if it
      touches them; project-format bumps need a forward migration and are a
      breaking change (`!` or `BREAKING CHANGE:`).
@@ -211,19 +228,25 @@ merge.
      "on the self-hosted runner: <run url>" (and main's sha from the run
      summary), "locally", or both (Windows-only readings, ui re-runs);
      a runner run that gave no verdict is named with the fallback taken;
-   - Heavy lanes: each reached lane (`<crate> heavy: <target>`) with its
-     result and who ran it (the author's run that the PR body names, or
-     this review), or "the diff reaches no heavy lane";
+   - Targeted tests (step 5): the example catalog tests that ran (or "no
+     post or toolpath change"), the light lane result, and for a `P1` PR
+     under the safety floor the targeted heavy step (`<crate> heavy:
+     <target>`) with its result and who ran it. "Not run" is never a pass
+     for a required step;
    - Requested before merge (numbered, each with file:line and the fix);
    - Questions / notes (not blocking);
    - closing line: "A maintainer will approve and merge by hand."
    Be courteous to the contributor; no `@name` pings except the PR author when
    asking them something.
 8. **Label** per the `review-prs` skill, step 2b: read `gh pr view <N> --json
-   mergeable` (re-read once on `UNKNOWN`), then, unless the PR is a disagreement
-   (AGENTS.md "Only collaborators' reviews count": leave both labels as they are,
-   say so in the report), set exactly one state label
-   and remove the others - clean + `MERGEABLE` → `merge-ready`; clean +
+   mergeable` (re-read once on `UNKNOWN`), then set exactly one state label
+   and remove the others in the same `gh pr edit` call, with one comment that
+   says why. `merge-ready` and `needs-rework` are never on the same PR
+   (AGENTS.md "Only collaborators' reviews count", #3382). If a collaborator's
+   change request is open on the head and another collaborator set
+   `merge-ready`, remove `merge-ready`, keep `needs-rework`, and address the
+   comment to that collaborator (`--add-label needs-rework --remove-label
+   merge-ready`; the reverse when you set `merge-ready`) - clean + `MERGEABLE` → `merge-ready`; clean +
    `CONFLICTING` → `conflicts`; blockers → `needs-rework` (plus `conflicts`
    if it conflicts); "Not built" with no blockers → `needs-maintainer`. On
    red or orange, one of our own PRs goes back to draft (`gh pr ready <N>

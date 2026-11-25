@@ -84,7 +84,11 @@ pub fn test_fns(text: &str) -> Result<Vec<TestFn>, String> {
     let test_attr = re(r"(?i)^\s*(?:#\[[^\]]*\]\s*)*#\[test\]")?;
     let ignore_attr = re(r"(?i)^\s*(?:#\[[^\]]*\]\s*)*#\[ignore(?:\s*=|\s*\])")?;
     let lead = re(r"(?i)^\s*(///|#\[)")?;
-    let fn_re = re(r"(?i)^\s*(?:#\[[^\]]*\]\s*)*(pub\s+)?(async\s+)?fn\s+(\w+)")?;
+    // `pub(crate)` / `pub(super)` / `pub(in ..)` and the qualifiers `const`, `async`, `unsafe`,
+    // `extern "C"` (#3711: a scoped `pub fn` line was read as an attribute of the next test).
+    let fn_re = re(
+        r#"(?i)^\s*(?:#\[[^\]]*\]\s*)*(pub(?:\([^)]*\))?\s+)?((?:const|async|unsafe|extern(?:\s+"[^"]*")?)\s+)*fn\s+(\w+)"#,
+    )?;
     let lines: Vec<&str> = text.lines().collect();
     let n = lines.len();
     let mut out = Vec::new();
@@ -95,7 +99,9 @@ pub fn test_fns(text: &str) -> Result<Vec<TestFn>, String> {
             continue;
         }
         let mut s = i;
-        while s > 0 && lead.is_match(lines[s - 1]) {
+        // A lead line that holds a fn (`#[allow(dead_code)] pub fn helper() {}`) is that fn, not an
+        // attribute of this test (#3711: the walk took it, and the loop did not move on).
+        while s > 0 && lead.is_match(lines[s - 1]) && !fn_re.is_match(lines[s - 1]) {
             s -= 1;
         }
         let mut ignored = false;
@@ -129,7 +135,7 @@ pub fn test_fns(text: &str) -> Result<Vec<TestFn>, String> {
             end: e + 1,
             ignored,
         });
-        i = e + 1;
+        i = e.saturating_add(1).max(i.saturating_add(1));
     }
     Ok(out)
 }

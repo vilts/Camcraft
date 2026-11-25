@@ -15,6 +15,13 @@ use crate::catalog_media::{self, MediaArgs};
 use crate::catalog_pdf;
 use crate::exec;
 
+#[path = "catalog_links.rs"]
+pub(crate) mod links;
+#[path = "catalog_refusal.rs"]
+pub(crate) mod refusal;
+
+use links::metadata::{self, Expect};
+
 const USAGE: &str = "\
 usage:
   cargo xtask catalog [--case <family/case>] [--check]
@@ -98,6 +105,11 @@ pub fn run(root: &Path, raw: &[String]) -> Result<i32, String> {
     let cases = select_cases(root, args.case.as_deref())?;
     let do_rebuild = args.rebuild || (!args.check && !args.media.screenshots && !args.media.pdf);
 
+    // Validate the whole catalog even with --case: guide links cross case boundaries.
+    if args.check || do_rebuild {
+        links::sync(root, &discover_cases(root)?, args.check)?;
+    }
+
     if args.check {
         check_cases(root, &cases)?;
     } else if do_rebuild {
@@ -135,7 +147,7 @@ pub fn map_catalog(
     why: &mut BTreeMap<String, String>,
 ) {
     if changed.iter().any(|f| f.starts_with("examples/catalog/"))
-        && root.join("crates/app/tests/example_catalog.rs").is_file()
+        && crate::suites::entry(root, "app", "example_catalog").is_file()
     {
         whole.insert("app:example_catalog".into());
         why.entry("app:example_catalog".into())
@@ -221,7 +233,16 @@ pub fn validate_layout(case: &CatalogCase, require_outputs: bool) -> Result<(), 
         let proj = format!("{}.camproj", case.name);
         let nc = format!("{}.nc", case.name);
         require_non_empty(&case.project_path(), &id, &proj)?;
-        require_non_empty(&case.nc_path(), &id, &nc)?;
+        match metadata::expect_of(&case.dir).map_err(|e| format!("{id}: {e}"))? {
+            Expect::Post => require_non_empty(&case.nc_path(), &id, &nc)?,
+            // #2856: a refused post writes no program; the refusal is the result.
+            Expect::Refusal => {
+                if case.nc_path().exists() {
+                    return Err(format!("{id}: expect = \"refusal\", but {nc} exists"));
+                }
+                require_non_empty(&case.dir.join(refusal::FILE), &id, refusal::FILE)?;
+            }
+        }
     }
     Ok(())
 }
@@ -287,7 +308,12 @@ fn rebuild_cases(root: &Path, cases: &[CatalogCase]) -> Result<(), String> {
     }
     let cli = build_cli(root)?;
     for c in cases {
-        run_case_script(&cli, &c.dir, &c.id())?;
+        if metadata::expect_of(&c.dir).map_err(|e| format!("{}: {e}", c.id()))? == Expect::Refusal {
+            let got = refusal::run(&cli, &c.dir, c)?;
+            refusal::write(c, &got)?;
+        } else {
+            run_case_script(&cli, &c.dir, &c.id())?;
+        }
         validate_layout(c, true)?;
         println!("rebuilt {}", c.id());
     }
@@ -307,6 +333,11 @@ fn check_cases(root: &Path, cases: &[CatalogCase]) -> Result<(), String> {
             copy_dir_all(&c.dir, &work)?;
             let _ = fs::remove_file(work.join(format!("{}.camproj", c.name)));
             let _ = fs::remove_file(work.join(format!("{}.nc", c.name)));
+            if metadata::expect_of(&c.dir).map_err(|e| format!("{}: {e}", c.id()))? == Expect::Refusal {
+                refusal::check(c, &refusal::run(&cli, &work, c)?)?;
+                println!("checked {} (refusal)", c.id());
+                continue;
+            }
             run_case_script(&cli, &work, &c.id())?;
             let want = fs::read(c.nc_path())
                 .map_err(|e| format!("{}: read committed .nc: {e}", c.id()))?;
