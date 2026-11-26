@@ -226,3 +226,39 @@ fn the_wire_machine_editor_states_tank_and_flushing() {
     assert_eq!(draft.flushing, Some(camcraft_app::machine::Flushing::High));
     assert_eq!(draft.tank, Some(camcraft_app::machine::Tank::Submerged), "the other choice is untouched");
 }
+
+/// #2686: the wire section states the flushing of the skim passes. The
+/// choice is offered only with the rough cut's flushing stated, and it
+/// goes when that is taken back (the machine law: no skim flushing
+/// without a flushing).
+#[test]
+fn the_wire_machine_editor_states_the_skim_flushing_only_with_a_flushing() {
+    use camcraft_app::machine::Flushing;
+    let skim = |h: &Harness<'static, crate::state::State>| {
+        let n = h.get_by(|n| n.role() == Role::ComboBox && n.label().as_deref() == Some("Skim flushing"));
+        (n.value(), n.accesskit_node().is_disabled())
+    };
+    let h = editor_harness(wire_machine(), "wire-test.mch");
+    assert_eq!(skim(&h), (Some("not stated".to_owned()), true), "no flushing stated: not offered");
+
+    let mut m = wire_machine();
+    if let Some(e) = m.edm.as_mut() {
+        e.flushing = Some(Flushing::High);
+    }
+    let mut h = editor_harness(m, "wire-test.mch");
+    assert_eq!(skim(&h), (Some("not stated".to_owned()), false));
+    h.get_by(|n| n.role() == Role::ComboBox && n.label().as_deref() == Some("Skim flushing")).click();
+    h.run_steps(3);
+    h.get_by_label("low").click();
+    h.run_steps(3);
+    let draft = |h: &Harness<'static, crate::state::State>| h.state().machine_editor.as_ref().and_then(|ed| ed.machine.edm.clone()).expect("the draft states edm");
+    assert_eq!((draft(&h).flushing, draft(&h).skim_flushing), (Some(Flushing::High), Some(Flushing::Low)));
+
+    // Taking the flushing back takes the skim flushing with it.
+    if let Some(e) = h.state_mut().machine_editor.as_mut().and_then(|ed| ed.machine.edm.as_mut()) {
+        e.flushing = None;
+    }
+    h.run_steps(3);
+    assert_eq!(draft(&h).skim_flushing, None);
+    assert!(draft(&h).is_sane(), "the draft stays a machine the Apply takes");
+}

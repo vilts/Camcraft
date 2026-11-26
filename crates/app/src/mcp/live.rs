@@ -11,6 +11,7 @@
 use super::selection::SelectionContext;
 use super::{tool_err, Server};
 use crate::commands::History;
+use crate::project::DiskStamp;
 use crate::script::Env;
 
 use flecs_ecs::prelude::World;
@@ -33,7 +34,8 @@ pub enum GateKind {
     Posting,
     /// Machine mount or machine definition edits (`load_machine`, `edit_machine`). Never auto-approved.
     MachineEdit,
-    /// Setup post or workholding limit edits (`set_setup_post`, `set_workholding_max_rpm`, `set_setup_nose_to_axis`).
+    /// Setup post or workholding limit edits (`set_setup_post`, `set_workholding_max_rpm`, `set_setup_nose_to_axis`,
+    /// `set_sheet_job`: its allowance is a floor the post holds the program to).
     LimitEdit,
     /// File writes (`save_project`, `export_tool_library`, `export_fixture_dxf` with `path`).
     FileWrite,
@@ -55,9 +57,9 @@ impl GateKind {
 #[must_use]
 pub fn requires_approval(tool: &str, args: &Value) -> Option<GateKind> {
     match tool {
-        "post" => Some(GateKind::Posting),
+        "post" | "export_agie_inspection" => Some(GateKind::Posting),
         "load_machine" | "edit_machine" => Some(GateKind::MachineEdit),
-        "set_setup_post" | "set_workholding_max_rpm" | "set_setup_nose_to_axis" => {
+        "set_setup_post" | "set_workholding_max_rpm" | "set_setup_nose_to_axis" | "set_sheet_job" => {
             Some(GateKind::LimitEdit)
         }
         "save_project" | "export_tool_library" => Some(GateKind::FileWrite),
@@ -161,11 +163,19 @@ fn refusal_message(tool: &str, kind: GateKind) -> String {
     }
 }
 
-/// Caller-supplied live gate and UI selection context for [`answer_live_with`].
+/// Caller-supplied live gate, UI selection context and read-only state for
+/// [`answer_live_with`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct LiveOptions {
     pub gate: LiveGate,
     pub selection: Option<SelectionContext>,
+    /// The window's project is open read-only (`camcraft-ui --read-only`,
+    /// #3609): `save_project` refuses to save over `doc_path`.
+    pub read_only: bool,
+    /// #3608: the window's disk stamp of `doc_path`, so that an agent's save
+    /// over a file whose copy on disk changed is refused as in a headless
+    /// session.
+    pub doc_stamp: Option<DiskStamp>,
 }
 
 /// What one live line did.
@@ -177,6 +187,10 @@ pub struct LiveAnswer {
     /// may have changed (a read-only tool too - the caller refreshes its
     /// views, which is cheap and never wrong).
     pub tool: Option<String>,
+    /// #3608: the session's disk stamp after the call - new after a save -
+    /// for the window to keep when it is the stamp of the window's file.
+    /// `None` when the call did not run.
+    pub doc_stamp: Option<DiskStamp>,
 }
 
 /// Answer one wire line against `world` and `history` using the default
@@ -210,13 +224,13 @@ pub fn answer_live_with(
             let reply = msg
                 .get("id")
                 .map(|id| json!({ "jsonrpc": "2.0", "id": id, "result": tool_err(why) }).to_string());
-            return LiveAnswer { reply, tool: None };
+            return LiveAnswer { reply, tool: None, doc_stamp: None };
         }
         if let Err(why) = options.gate.check(name, &args) {
             let reply = msg
                 .get("id")
                 .map(|id| json!({ "jsonrpc": "2.0", "id": id, "result": tool_err(&why) }).to_string());
-            return LiveAnswer { reply, tool: None };
+            return LiveAnswer { reply, tool: None, doc_stamp: None };
         }
     }
     let mut server = Server {
@@ -226,12 +240,17 @@ pub fn answer_live_with(
             logs: Vec::new(),
             errors: Vec::new(),
             doc_path: doc_path.map(Path::to_path_buf),
+            doc_read_only: options.read_only,
+            doc_stamp: options.doc_stamp.clone(),
             posted: None,
             last_value: Value::Null,
             selection: options.selection.clone(),
         },
+        // The live bridge answers one line at a time: no background lane.
+        bg: None,
+        gate: None,
     };
     let reply = server.handle_line(line);
     *history = std::mem::take(&mut server.env.history);
-    LiveAnswer { reply, tool }
+    LiveAnswer { reply, tool, doc_stamp: server.env.doc_stamp.take() }
 }

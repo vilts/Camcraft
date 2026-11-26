@@ -93,11 +93,14 @@ fn old_is_sane(t: &Tool) -> bool {
             ToolKind::Wire => crate::wire::refusal(t).is_none(),
             ToolKind::Electrode => crate::electrode::is_sane(t),
             ToolKind::ThreadMill | ToolKind::ThreadMillSingle => crate::thread_mill::is_sane(t),
+            ToolKind::TSlot | ToolKind::Keyseat | ToolKind::Dovetail | ToolKind::Lollipop => {
+                crate::undercut::refusal(t).is_none()
+            }
             _ => true,
         }
 }
 
-const KINDS: [ToolKind; 18] = [
+const KINDS: [ToolKind; 22] = [
     ToolKind::EndMill,
     ToolKind::BallNose,
     ToolKind::BullNose,
@@ -116,6 +119,10 @@ const KINDS: [ToolKind; 18] = [
     ToolKind::Electrode,
     ToolKind::ThreadMill,
     ToolKind::ThreadMillSingle,
+    ToolKind::TSlot,
+    ToolKind::Keyseat,
+    ToolKind::Dovetail,
+    ToolKind::Lollipop,
 ];
 
 /// Each kind's place, with no catch-all: a new `ToolKind` does not compile
@@ -141,6 +148,13 @@ fn kind_slot(kind: ToolKind) -> usize {
         ToolKind::Electrode => 15,
         ToolKind::ThreadMill => 16,
         ToolKind::ThreadMillSingle => 17,
+        ToolKind::TSlot => 18,
+        ToolKind::Keyseat => 19,
+        ToolKind::Dovetail => 20,
+        ToolKind::Lollipop => 21,
+        // #3369: the form mill's law is new (no old verdict to agree
+        // with); `form_mill_tests` pins it, so it stays out of KINDS.
+        ToolKind::FormMill => 22,
     }
 }
 
@@ -165,7 +179,9 @@ fn agree(t: &Tool, what: &str) {
 fn the_named_law_gives_the_old_verdict_everywhere() {
     let values = [0.0, -1.0, 0.25, 1.0, 3.0, 6.0, 59.0, 61.0, 179.0, 180.0, 501.0, f64::NAN, f64::INFINITY];
     let mut n = 0usize;
-    for (name, base) in catalog() {
+    // #3368: a flat or ball tip is new; `taper_tests` pins its rules.
+    // #3369: a form mill is new too; `form_mill_tests` pins its rules.
+    for (name, base) in catalog().into_iter().filter(|(_, t)| t.tip_form.is_sharp() && t.form.is_none()) {
         for kind in KINDS {
             let tool = Tool { kind, ..base.clone() };
             agree(&tool, name);

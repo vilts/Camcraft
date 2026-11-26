@@ -45,7 +45,7 @@ fn clamped(tilt: Option<Tilt>) -> (World, History, String) {
     let params = OpParams::Face {
         holes: Default::default(),
         tilt,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         stepover: 3.0,
         clearance_z: Height::fixed(40.0),
         cut_z: Height::fixed(29.5),
@@ -54,6 +54,7 @@ fn clamped(tilt: Option<Tilt>) -> (World, History, String) {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     history.execute(&world, CreateOperation::new(&world, "Face1", "EM-0400-2FL", SrcRef::Stock, params).expect("op"));
     history.execute(&world, GenerateOperation::new(&world, "Face1").expect("generate"));

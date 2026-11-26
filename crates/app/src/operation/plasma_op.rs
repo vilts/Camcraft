@@ -43,6 +43,7 @@ pub(super) fn seed_plasma_profile(c: &Carried) -> OpParams {
         pierce_height: None,
         cut_height: None,
         pierce_delay: None,
+        picks: crate::path_picks::PathPicks::default(),
     })
 }
 
@@ -50,7 +51,7 @@ pub(super) fn seed_plasma_profile(c: &Carried) -> OpParams {
 ///
 /// `model_excess` is how much coarser than promised the model the part
 /// silhouette is read from is (#1053): the kerf law gives it back.
-pub fn plasma_params(op: &PlasmaOp, tool: &Tool, hs: &ResolvedHeights, model_excess: f64) -> Result<PlasmaParams, GenError> {
+pub fn plasma_params(op: &PlasmaOp, tool: &Tool, hs: &ResolvedHeights, model_excess: f64, file_tolerance: bool) -> Result<PlasmaParams, GenError> {
     if tool.kind != ToolKind::Torch {
         return Err(GenError::Invalid(format!(
             "a plasma profile mounts a plasma torch, not a {} - its diameter is the kerf width",
@@ -85,6 +86,7 @@ pub fn plasma_params(op: &PlasmaOp, tool: &Tool, hs: &ResolvedHeights, model_exc
         cut_height: op.cut_height,
         pierce_delay: op.pierce_delay,
         model_excess,
+        file_tolerance,
     })
 }
 
@@ -99,9 +101,9 @@ pub(super) fn generate_plasma(
     hs: &ResolvedHeights,
     picks: Option<(Vec<Loop>, Vec<Vec<Point2>>)>,
     base: impl FnOnce() -> Result<Region, GenError>,
-    (facets, model_excess): (&[Triangle], f64),
+    (facets, model_excess, file_tolerance): (&[Triangle], f64, bool),
 ) -> Result<(Toolpath, Vec<Warning>), GenError> {
-    let p = plasma_params(op, tool, hs, model_excess)?;
+    let p = plasma_params(op, tool, hs, model_excess, file_tolerance)?;
     let part = if facets.is_empty() {
         Region::empty()
     } else {

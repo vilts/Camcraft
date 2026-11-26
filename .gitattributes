@@ -1,13 +1,67 @@
+# Set default behavior to automatically normalize text files to LF on Windows and Linux.
+* text=auto eol=lf
+
 # Golden outputs are compared byte for byte (the post writes LF line
 # ends): pin them to LF in every checkout, whatever core.autocrlf says.
-crates/app/tests/golden/** text eol=lf
+crates/*/tests/golden/** text eol=lf
+crates/*/tests/recorded/** text eol=lf
+crates/*/tests/fixtures/** text eol=lf
+
+# The Agie control reads CRLF records. Preserve the tested native bytes.
+crates/post/tests/golden/agie-setup/* -text whitespace=trailing-space,space-before-tab,cr-at-eol
+
+# Explicit binary rules for 3D geometry fixtures so Git never alters them.
+# Follows fixture rules so binary fixtures retain binary attributes.
+*.step binary
+*.stp binary
+*.stl binary
+
+# Machine definitions and fixture descriptions are included or parsed with LF.
+crates/*/tests/**/*.mch text eol=lf
+assets/machines/**/*.mch text eol=lf
+
+# 3D models and test fixtures are parsed with LF line ends.
+# The STL rule is for ASCII STL only: a binary STL fixture needs its own
+# later `-text` line, or Git changes its bytes on `git add`.
+testdata/**/*.step text diff merge eol=lf
+testdata/**/*.stp text diff merge eol=lf
+testdata/**/*.stl text diff merge eol=lf
+testdata/**/*.obj text diff merge eol=lf
+
+# Skill and agent definitions are parsed by xtask tests with LF.
+.claude/** text eol=lf
+
+# GitHub workflows and scripts run on Linux and are parsed with LF line ends.
+.github/** text eol=lf
+
 # Tester-kit programs are pinned byte for byte by their tests, like the goldens.
 docs/tester-kits/**/*.nc text eol=lf
 # Shipped example programs, including the catalog, are pinned byte for byte.
 examples/**/*.nc text eol=lf
+# The catalog refusal goldens are compared byte for byte by example_catalog.
+examples/catalog/**/refusal.txt text eol=lf
+
+# Tracked text that tests read and search for multi-line text (#3553): a CR
+# before the LF breaks the search. Pin each tree to LF in every checkout.
+# xtask light_tests and heavy_plan_tests read AGENTS.md.
+AGENTS.md text eol=lf
+# xtask catalog_links_tests and catalog_tests read the site guide pages.
+site/**/*.md text eol=lf
+# script_heidenhain_klartext edits this stream by text (a "...Z 15000\n" match).
+crates/post/tests/klartext/contour.cnc text eol=lf
 
 # Shell scripts run on macOS / Linux: a CR would break the shebang.
 *.sh text eol=lf
 
 # Solidcraft designs are ZIP containers: never touch their bytes.
 *.sc binary
+
+# Binary assets and image fixtures that Git must not touch or re-encode.
+# Kept after fixture rules so image fixtures never inherit text normalization.
+*.png binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# Agie controller files have byte-exact CRLF record terminators.
+crates/app/tests/golden/nc/agie-native/* -text whitespace=trailing-space,space-before-tab,cr-at-eol

@@ -61,7 +61,8 @@ use super::crease::{add3, chain, cmp_pt, scale3, sub3, vkey, vkey_scale, Seg};
 use super::params::{scallop_stepover, validate, Finish3DParams};
 use super::raster::placement_guard;
 use super::rings::leg_clears;
-use super::support::{build_sups, column_clear, dist2_pt_tri, Sup};
+use super::grid::SupSet;
+use super::support::{build_sups, column_clear, dist2_pt_tri};
 
 /// The boundary-seeded geodesic distance field over the welded
 /// vertices: zero on open-edge vertices, Dijkstra everywhere else.
@@ -155,7 +156,7 @@ fn vertex_normals(facets: &[Triangle], tris: &[[usize; 3]], nverts: usize) -> Ve
 /// tangency reads `r`, grazing bite up to `tol` is the same debt a
 /// certified ring start carries). The foot is on real geometry by
 /// construction - the point came off a real facet edge.
-fn resting(c: Point3, p: &Finish3DParams, r: f64, sups: &[Sup]) -> bool {
+fn resting(c: Point3, p: &Finish3DParams, r: f64, sups: &SupSet) -> bool {
     if !c.is_finite() {
         return false;
     }

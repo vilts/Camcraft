@@ -506,6 +506,7 @@ fn a_tap_job_posts_on_the_1100mx_and_is_refused_on_the_770m() {
                 stepped: false,
             }],
             cross: Vec::new(),
+            picks: Default::default(),
         };
         let src = SrcRef::Entity("puck".into());
         h.execute(&world, CreateOperation::new(&world, "Tap1", "TAP-M6", src, drill).expect("tap op"));

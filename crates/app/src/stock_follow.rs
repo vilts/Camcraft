@@ -122,22 +122,20 @@ pub fn keep_square(
 /// The refusal for a stock turned off the machine axes (#2177).
 pub const OBLIQUE_STOCK: &str =
     "the stock stands turned off the machine axes - the simulation cuts only a stock square to them; set the stock again";
-/// The refusal for a cylinder stock whose axis is not vertical (#2177).
-pub const LAID_CYLINDER: &str =
-    "the cylinder stock lies on its side - the simulation cuts only an upright cylinder; set the stock again";
-
 /// #2177: the stock as the simulation models it - one law for the
 /// program sim, the carried body and the viewport's traced stock. An
 /// unturned stock is returned as it is (bytes for bytes). A box turned
 /// by a quarter-turn multiple (within [`SQUARE_TOL`]: a locate's float
 /// noise included) is the same solid as an unturned box with its sides
 /// swapped; an upright cylinder (axis up or down) is an unturned one
-/// with its floor at its lower end. A stock made from the model is read
+/// with its floor at its lower end. A cylinder along X or Y keeps its
+/// placement for the analytic laid-cylinder builder (#2758).
+/// A stock made from the model is read
 /// from its placed mesh, so any turn stands. Anything else is refused
 /// by name.
 ///
 /// # Errors
-/// [`OBLIQUE_STOCK`] or [`LAID_CYLINDER`].
+/// [`OBLIQUE_STOCK`].
 pub fn sim_frame(shape: &StockShape, loc: Location) -> Result<(StockShape, Location), String> {
     if loc.rot == crate::geometry::IDENTITY_Q || matches!(shape, StockShape::FromModel { .. }) {
         return Ok((shape.clone(), loc));
@@ -168,7 +166,7 @@ pub fn sim_frame(shape: &StockShape, loc: Location) -> Result<(StockShape, Locat
             let pos = Point3::new(loc.pos.x, loc.pos.y, z);
             Ok((shape.clone(), Location { pos, rot: crate::geometry::IDENTITY_Q }))
         }
-        StockShape::Cylinder { .. } => Err(LAID_CYLINDER.into()),
+        StockShape::Cylinder { .. } => Ok((shape.clone(), loc)),
         StockShape::FromModel { .. } => Ok((shape.clone(), loc)),
     }
 }
@@ -204,7 +202,7 @@ mod tests {
         let flipped = Location { rot: quat_from_euler(std::f64::consts::PI, 0.0, 0.0), ..at };
         let (_, l) = sim_frame(&c, flipped).expect("upside down is upright");
         assert!((l.pos.z + 13.0).abs() < 1e-9, "{l:?}");
-        assert_eq!(sim_frame(&c, side), Err(LAID_CYLINDER.into()));
+        assert_eq!(sim_frame(&c, side), Ok((c.clone(), side)));
         let m = StockShape::FromModel { source: "part".into() };
         assert_eq!(sim_frame(&m, oblique), Ok((m.clone(), oblique)), "the placed mesh stands");
     }

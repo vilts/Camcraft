@@ -106,10 +106,13 @@ pub fn program_id(info: &ProgramInfo, index: usize) -> Result<ProgramId, String>
             "program {index} would be number {number}, past O{PROGRAM_NUMBER_MAX} - state a lower program number"
         ));
     }
-    Ok(ProgramId { number, numbered: info.number.is_some(), comment: info.comment.clone().unwrap_or_default() })
+    Ok(ProgramId { number, numbered: info.number.is_some(), comment: info.comment.clone().unwrap_or_default(), notes: Vec::new() })
 }
 
-/// [`program_id`] of the document's own identity.
+/// [`program_id`] of the document's own identity, with the header notes
+/// of a model checked at reduced accuracy (#2996).
 pub fn document_program_id(world: &World, index: usize) -> Result<ProgramId, String> {
-    program_id(&program_info(world), index)
+    let mut id = program_id(&program_info(world), index)?;
+    id.notes = crate::fidelity_note::program_notes(world);
+    Ok(id)
 }

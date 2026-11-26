@@ -3,9 +3,12 @@
 //! Weldon, or a standalone ER chuck), set its gauge length and projection, and Apply
 //! holder - which queues the one undoable
 //! `SetToolBody::library`. #2018: one Weldon row for each taper, its
-//! bore the library's standard bore for the tool's shank. The holder lands as a drawn profile, so the
-//! Profile table above edits it like any other. Provenance: our own
-//! pane over `app::holder_library`; no vendor material consulted.
+//! bore the library's standard bore for the tool's shank. #2016: the tool keeps a reference to the
+//! entry; the Profile table above shows its outline, and an edited
+//! point makes it a drawn profile of its own. Provenance: our own
+//! pane over `app::holder_library`; no vendor material consulted. #3895:
+//! the tool library window's assembly group draws the same fields; #3930:
+//! the tool shape window no longer does.
 
 use egui::{Color32, Ui};
 
@@ -17,23 +20,28 @@ use crate::state::State;
 const NOTE: Color32 = Color32::from_rgb(0x9E, 0xA8, 0xB8);
 const BAD: Color32 = Color32::from_rgb(230, 90, 80);
 
-/// The picker under the Profile section.
-pub(super) fn holder_picker(ui: &mut Ui, state: &mut State, u: Unit) {
+/// #3895: the picker without its Apply holder button - the pick, the
+/// gauge length, the projection and what the pick is. The tool library
+/// window's assembly group adds its own rows before the button. #3930:
+/// that group is the one place that draws the picker.
+pub(super) fn holder_fields(ui: &mut Ui, state: &mut State, u: Unit) {
     ui.separator();
     ui.strong("Holder library");
     let picked = state.tool_profile_ui.library.clone();
     let mut choose = None;
-    egui::ComboBox::from_label("Library holder")
-        .selected_text(picked.as_deref().unwrap_or("choose a holder"))
-        .width(170.0)
-        .show_ui(ui, |ui| {
-            for r in holder_library::picker_rows() {
-                let n = r.name();
-                if ui.selectable_label(picked.as_deref() == Some(n.as_str()), &n).on_hover_text(describe_row(&r, u)).clicked() {
-                    choose = Some(n);
+    super::layout::prop_row(ui, "Library holder", |ui| {
+        egui::ComboBox::from_id_salt("tool_library_holder")
+            .selected_text(picked.as_deref().unwrap_or("choose a holder"))
+            .width(170.0)
+            .show_ui(ui, |ui| {
+                for r in holder_library::picker_rows() {
+                    let n = r.name();
+                    if ui.selectable_label(picked.as_deref() == Some(n.as_str()), &n).on_hover_text(describe_row(&r, u)).clicked() {
+                        choose = Some(n);
+                    }
                 }
-            }
-        });
+            });
+    });
     if let Some(n) = choose {
         state.pick_library_holder(&n);
     }
@@ -42,18 +50,18 @@ pub(super) fn holder_picker(ui: &mut Ui, state: &mut State, u: Unit) {
     let shank = state.editor_stored_tool().map(|t| t.shank_d);
     let pick = state.tool_profile_ui.library.clone();
     if let Some(n) = &pick {
-        ui.horizontal(|ui| {
-            ui.label(format!("gauge length {}", u.suffix()));
-            super::tool_profile_page::len_cell(ui, u, &mut state.tool_profile_ui.gauge);
-        })
-        .response
-        .on_hover_text("from the gauge line (the spindle face) to the holder's nose face");
-        ui.horizontal(|ui| {
-            ui.label(format!("projection {}", u.suffix()));
-            super::tool_profile_page::len_cell(ui, u, &mut state.tool_profile_ui.projection);
-        })
-        .response
-        .on_hover_text("from the tool tip to the holder's nose face (the tool's stickout)");
+        super::layout::prop_row_hint(
+            ui,
+            "Gauge length",
+            "from the gauge line (the spindle face) to the holder's nose face",
+            |ui| super::fields::num_row(ui, u, &mut state.tool_profile_ui.gauge),
+        );
+        super::layout::prop_row_hint(
+            ui,
+            "Projection",
+            "from the tool tip to the holder's nose face (the tool's stickout)",
+            |ui| super::fields::num_row(ui, u, &mut state.tool_profile_ui.projection),
+        );
         // What the pick is: a Weldon row, or the entry it names.
         let row = holder_library::picker_rows().into_iter().find(|r| r.name() == *n);
         let what = row.map(|r| describe_row(&r, u)).or_else(|| holder_library::find(n).ok().map(|e| describe(&e, u)));
@@ -75,9 +83,14 @@ pub(super) fn holder_picker(ui: &mut Ui, state: &mut State, u: Unit) {
             }
         }
     }
+}
+
+/// "Apply holder": queue the one `SetToolBody::library` of the pick.
+pub(super) fn apply_holder_button(ui: &mut Ui, state: &mut State) {
+    let pick = state.tool_profile_ui.library.is_some();
     if ui
-        .add_enabled(pick.is_some(), egui::Button::new("Apply holder"))
-        .on_hover_text("drop the library holder into the tool's holder (one undo step); it then edits as a Custom profile")
+        .add_enabled(pick, egui::Button::new("Apply holder"))
+        .on_hover_text("set the library holder as the tool's holder (one undo step); the tool keeps the holder by name until its profile is edited")
         .clicked()
     {
         state.queue_apply_tool_holder();

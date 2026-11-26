@@ -106,6 +106,7 @@ fn drill_op() -> Operation {
             plunge_feed: 80.0,
             holes: vec![hole],
             cross: vec![],
+            picks: Default::default(),
         },
     )
 }

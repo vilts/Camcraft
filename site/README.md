@@ -32,6 +32,10 @@ python3 -m unittest discover -s site/tests -v
 
 They build the site under a URL prefix and check the guide navigation,
 legacy redirects, internal links and operation reference pictures.
+The `site` job of `.github/workflows/release.yml` runs the same command
+with its pinned Zola (`ZOLA=/tmp/zola`) before it builds the site, so a red
+site test fails the release's site (#1832). Each Zola test reads the binary
+from `ZOLA` and falls back to `zola` on `PATH`; without either it errors.
 
 The version shown on the site comes from `version.toml`, which the release
 workflow writes from the workspace version before it builds. Without it the

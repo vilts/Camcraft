@@ -26,7 +26,7 @@
 //! is the generic pattern of desktop property inspectors. No vendor
 //! material, strings or layouts copied.
 
-use egui::{Align, Button, Color32, DragValue, Id, Label, Layout, Response, RichText, Ui, Vec2};
+use egui::{Align, Button, Color32, DragValue, Id, Label, Layout, Response, RichText, TextEdit, Ui, Vec2};
 
 /// The label column's minimum width when the pane has room.
 pub const LABEL_W: f32 = 120.0;
@@ -83,6 +83,18 @@ pub fn prop_row_hint<R>(ui: &mut Ui, label: &str, help: &str, add: impl FnOnce(&
     let out = prop_row(ui, label, add);
     hint(ui, help);
     out
+}
+
+/// A property row whose control is a single-line text field, named by the
+/// row's label (#1119). `width` sizes the field; the label keeps its cell.
+pub fn text_row(ui: &mut Ui, label: &str, text: &mut String, id_salt: &str, width: f32) -> Response {
+    prop_row(ui, label, |ui| {
+        let mut r = ui.add(TextEdit::singleline(text).id_salt(id_salt).desired_width(width));
+        if let Some(l) = row_label_id(ui) {
+            r = r.labelled_by(l);
+        }
+        r
+    })
 }
 
 /// A checkbox as a property row: the caption is the row's label, the
@@ -175,13 +187,22 @@ pub fn group_open<R>(
     let state = egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
     let mut toggled = false;
     let mut on = true;
-    let header = state.show_header(ui, |ui| {
+    let mut title_clicked = false;
+    let mut header = state.show_header(ui, |ui| {
         if let Some(e) = enabled {
             toggled = ui.checkbox(e, "").on_hover_text(format!("use {title}")).changed();
             on = *e;
         }
-        ui.label(RichText::new(title).strong());
+        // The title folds the group as the arrow does: a header that names
+        // a group reads as its handle.
+        title_clicked = ui
+            .add(Label::new(RichText::new(title).strong()).sense(egui::Sense::click()))
+            .on_hover_cursor(egui::CursorIcon::PointingHand)
+            .clicked();
     });
+    if title_clicked {
+        header.toggle();
+    }
     let body = header.body(|ui| {
         if on {
             Some(egui::Frame::NONE.inner_margin(egui::Margin { left: 2, right: 0, top: 0, bottom: 2 }).show(ui, |ui| super::field_ring::in_group(ui, id, add)).inner)

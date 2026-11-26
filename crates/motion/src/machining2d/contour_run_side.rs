@@ -20,7 +20,7 @@ use super::face::GenError;
 
 /// How far (mm) beside the run the side probes read the section: well
 /// above the slicer's lattice, well below any real feature.
-const PROBE: f64 = 0.05;
+pub(super) const PROBE: f64 = 0.05;
 /// How far (mm) above each cut level the section is read, so a floor
 /// that lies exactly on the level counts as the floor it is, not as
 /// material beside the run.

@@ -40,13 +40,29 @@ mod pick_button;
 mod gcode_highlight;
 mod gcode_view;
 mod debug_info;
+// #1696: the Report door - the window that fills GitHub's new-issue form
+// in, and the screenshot it puts on the clipboard.
+mod report;
+// #2744: the shared report names each path by its last component only.
+mod report_scrub;
 mod status_alert;
 
 mod stock_info;
+mod browser_open;
 mod donate;
+// #2384: the Home button and the recent projects start page.
+pub(crate) mod home;
+// #2428: top-band Settings dropdown and startup update-available notice.
+mod settings_drop;
+mod update_notice;
 mod machine_page;
 mod tool_list_page;
 mod stock_page;
+mod stock_profiles;
+mod dxf_units_dialog;
+mod dxf_drop;
+mod op_source;
+mod stock_axis_rows;
 // pub: M13.4's ColorVision layer - the viewport, the traced stock and
 // the overlay lines read the palette; `cvd` is its maths.
 pub mod colorvision;
@@ -65,6 +81,9 @@ mod op_icons;
 mod tool_icons;
 mod layout;
 mod load_field;
+mod pass_start_row;
+// #2339: the Panel setups window (save, load and delete dock arrangements).
+mod panel_setups;
 // pub(crate) past egui_app: `State::machine_editor` names its draft
 // type (M3.3 stage C), so state.rs has to see through the door.
 pub(crate) mod machine_editor;
@@ -87,14 +106,20 @@ mod spindle_row;
 mod approach_page;
 mod lead_page;
 mod start_exit_rows;
+mod turning_start_exit_rows;
+mod predrilled_page;
 pub(crate) mod op_tabs;
 mod painted;
+mod sim_steps;
+mod ribbon_cell;
 mod tree_badges;
 mod tree_glyphs;
 mod pages;
 // #739: the WCS page, split out of pages.rs.
 mod wcs_page;
 mod step_budget_row;
+// #1339: the model page's "Vouch for this mesh" row.
+mod vouch_row;
 // #1094: the stock page's raw-stock-only checkbox.
 mod raw_stock_row;
 mod stock_material_row;
@@ -102,22 +127,37 @@ mod stock_material_row;
 mod tool_body_assembly_page;
 mod tool_body_lathe_page;
 mod tool_body_page;
+// #3894: the orbitable model view shared by the body page and the tool library window.
+mod tool_model_view;
 // #630: the tool editor's lathe orientation row.
 mod tool_orientation_row;
 // #894: the Thread operation's pitch and hand rows.
 mod thread_page;
 // #894: the thread mills' pitch and form rows.
 mod tool_thread_mill_row;
+// #1444: the undercut cutters' seeding and dovetail flank angle row.
+mod tool_undercut_row;
+// #3368: a chamfer mill's tip form and tip diameter rows.
+mod tool_taper_tip_row;
+// #3369: a form mill's preset list, number rows and pilot length.
+mod tool_form_mill_row;
 // #898: the tool editor's catalog rows (part number, vendor, ...).
 mod tool_catalog_rows;
 mod tool_settings;
-mod tool_library;
+// #3930: a saved tool's Properties summary and its "Edit in tool library" door.
+mod tool_summary;
+// #2014: the tool Properties' label-left property grid and its groups.
+mod tool_settings_grid;
+// #3892: the tool library window (U1 of #3663).
+mod tool_library_dialog;
 mod tool_preview;
 // #890: the tool editor's per-material cutting data.
 mod tool_cutting_rows;
 mod tool_turning_row;
 mod tool_profile_page;
-// #793: the built-in taper holder picker in the Profile section.
+// #2007/#3914: what the Properties tool preview draws, with the cutter outline memo.
+mod tool_preview_inputs;
+// #793: the built-in taper holder picker (#3930: the tool library window's assembly group).
 mod tool_holder_picker;
 // #93 slice 2: the Profile tab's drawn cutter, neck and shank.
 mod tool_cutter_page;
@@ -126,6 +166,7 @@ mod setup_wcs_pick;
 // #870: the WCS page's footer (Set origin beside Close) and origin line.
 mod wcs_footer;
 // #343: a setup's own node pages (settings, machine, post, fixtures, tools).
+mod agie_inspection;
 mod setup_pages;
 mod setup_settings_page;
 mod setup_post_page;
@@ -149,6 +190,8 @@ mod wcs_pick_row;
 // #316: the setup page's "relative to the previous setup" control.
 mod setup_relative_pick;
 mod setup_workholding_row;
+// #3070: the guided sheet job checklist on the setup's Settings page.
+mod setup_sheet_job_row;
 // The operation dialog, split out of `pages` with the property grid
 // (user review 2026-11-06): the frame, the Geometry pick block, the
 // params dispatcher and its kind-family pages, the shared widgets.
@@ -166,17 +209,25 @@ pub(crate) use pockets_page::row_text as pockets_row_text;
 mod probe_page;
 // #670: the Plasma Profile's page.
 mod plasma_page;
+mod waterjet_page;
 mod wire_page;
 // #541: the Sinker Burn's fields.
 mod sinker_page;
+// #3333: the sinker kinds' Start point / Exit point groups.
+mod sinker_pick_rows;
 mod trochoid_page;
+// #1444: the Slot Undercut kind's fields.
+mod undercut_page;
 mod kind_editors;
+mod deburr_page;
 mod mill2d_more_page;
+mod vcarve_page;
 mod mill2d_page;
 // #1815: 2D Pocket's "Rest machining" group on the Passes tab.
 mod rest_pocket_page;
 mod mill3d_page;
 mod multiaxis_page;
+mod multiaxis_deburr_page;
 mod op_page;
 // #144: macOS Cmd+Q / app-menu Quit routed through the guarded Quit.
 #[cfg(not(target_arch = "wasm32"))]
@@ -188,11 +239,17 @@ mod thread_infeed_page;
 mod turning_page;
 // #107: Save / Don't Save / Cancel over unsaved changes.
 mod unsaved_prompt;
+// #1874: the length unit of a STEP file that states none.
+pub(crate) mod step_units_prompt;
+// #3608: Save As / Cancel / Overwrite when the project file changed.
+mod overwrite_prompt;
 mod panes;
 // #441: the ribbon's Theme door and its dropdown.
 mod theme_drop;
 mod recent_drop;
 mod file_drop;
+// #2950: dropped .mch and .cps files go to the machine and post lists.
+mod setup_file_drop;
 mod gen_overlay;
 // #343: the browser tree, split from panes (rows / pane / operation menu).
 mod browser_tree;
@@ -200,7 +257,7 @@ mod browser_tree;
 mod tree_entry;
 mod browser_pane;
 mod tree_menu;
-mod fixture_menu;
+pub(crate) mod fixture_menu;
 // #339 slice 6: the fixture library's Save / Insert dialogs.
 pub(crate) mod fixture_library_dialog;
 pub(crate) mod fixture_vise_dialog;
@@ -234,10 +291,12 @@ pub mod theme_files;
 // the view cube's pick law straight.
 pub(crate) mod viewcube;
 pub(crate) mod viewport_bar;
+pub(crate) mod display_menu;
 pub(crate) mod move_handles;
 pub(crate) mod turn_handles;
 pub(crate) mod viewport_layout;
 pub(crate) mod world;
+mod world_verts;
 
 #[cfg(test)]
 mod tests;
@@ -272,11 +331,15 @@ mod footer_tests;
 #[cfg(test)]
 mod dialog_tests;
 #[cfg(test)]
+mod boundary_offset_tests;
+#[cfg(test)]
 mod field_focus_tests;
 #[cfg(test)]
 mod coolant_tests;
 #[cfg(test)]
 mod thread_hand_tests;
+#[cfg(test)]
+mod part_kerf_tests;
 #[cfg(test)]
 mod thread_mill_page_tests;
 #[cfg(test)]
@@ -290,6 +353,8 @@ mod program_info_tests;
 #[cfg(test)]
 mod post_dialog_tests;
 #[cfg(test)]
+mod setup_post_gap_tests;
+#[cfg(test)]
 mod colorvision_tests;
 #[cfg(test)]
 mod viewport_ground_tests;
@@ -302,9 +367,15 @@ mod ribbon_icon_tests;
 #[cfg(test)]
 mod plasma_ribbon_tests;
 #[cfg(test)]
+mod waterjet_ribbon_tests;
+#[cfg(test)]
 mod machine_mode_tests;
 #[cfg(test)]
 mod debug_info_tests;
+#[cfg(test)]
+mod report_tests;
+#[cfg(test)]
+mod gpu_test_lock;
 #[cfg(test)]
 mod fresh_op_tests;
 #[cfg(test)]
@@ -350,10 +421,13 @@ mod sinker_pass_tests;
 mod sinker_machine_tests;
 #[cfg(test)]
 mod rest_pocket_tests;
+#[cfg(test)]
+mod predrilled_page_tests;
 
 /// Entry for `--ui egui`; returns the process exit code. `--headless`
-/// selects the no-window proof (seeded document, fallback adapter, View3D
-/// readback); anything else opens the windowed shell.
+/// selects the no-window proof (seeded document, or the file named on the
+/// command line (#2648); fallback adapter, View3D readback); anything else
+/// opens the windowed shell.
 pub fn run(args: &[String]) -> i32 {
     // M4.2: the backend pick is validated before anything opens - a bad
     // name refuses by name (exit 2, the `--ui` shape), never silently auto.
@@ -387,17 +461,27 @@ pub fn run(args: &[String]) -> i32 {
         if pick != gpu::GpuPick::Auto || want.is_some() {
             diag_info!("gpu: --headless pins the fallback adapter for determinism; backend and adapter picks ignored");
         }
-        run_headless()
+        // #2648: a file named on a headless start opens there too, or is
+        // refused by name (rc 2) - never ignored.
+        match crate::launch_file::command(&crate::cli_options::files(args)) {
+            Ok(open) => run_headless(open),
+            Err(msg) => {
+                diag_warn!("egui shell headless: {msg}");
+                2
+            }
+        }
     } else {
-        run_windowed(pick, want, mcp_port)
+        // #2462: the file named on the command line opens in the window;
+        // #3609: read-only with `--read-only`.
+        run_windowed(pick, want, mcp_port, &crate::cli_options::files(args), crate::cli_options::start_mode(args), crate::cli_options::read_only(args))
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn run_headless() -> i32 {
-    match shell::headless::run() {
-        Ok(()) => {
-            diag_info!("egui shell headless: seeded document, command world, View3D green");
+fn run_headless(open: Option<crate::state::CommandKind>) -> i32 {
+    match shell::headless::run(open) {
+        Ok(drawn) => {
+            diag_info!("egui shell headless: {drawn}, View3D green");
             0
         }
         Err(err) => {
@@ -410,21 +494,21 @@ fn run_headless() -> i32 {
 /// #31: the headless proof blocks on the adapter and the readback; the
 /// browser build refuses it by name like the windowed entry.
 #[cfg(target_arch = "wasm32")]
-fn run_headless() -> i32 {
+fn run_headless(_open: Option<crate::state::CommandKind>) -> i32 {
     diag_warn!("{WASM_NO_WINDOW}");
     2
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn run_windowed(pick: gpu::GpuPick, want: Option<String>, mcp_port: Option<u16>) -> i32 {
-    shell_window::run_windowed(pick, want, mcp_port)
+fn run_windowed(pick: gpu::GpuPick, want: Option<String>, mcp_port: Option<u16>, files: &[String], start: crate::cli_options::StartMode, read_only: bool) -> i32 {
+    shell_window::run_windowed(pick, want, mcp_port, files, start, read_only)
 }
 
 /// #31: the browser build has no winit window to open - its shell is the
 /// web runner still owed on that issue - so the windowed entry refuses by
 /// name instead of pretending.
 #[cfg(target_arch = "wasm32")]
-fn run_windowed(_pick: gpu::GpuPick, _want: Option<String>, _mcp_port: Option<u16>) -> i32 {
+fn run_windowed(_pick: gpu::GpuPick, _want: Option<String>, _mcp_port: Option<u16>, _files: &[String], _start: crate::cli_options::StartMode, _read_only: bool) -> i32 {
     diag_warn!("{WASM_NO_WINDOW}");
     2
 }

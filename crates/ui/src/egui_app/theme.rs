@@ -20,6 +20,9 @@ use egui::{Color32, CornerRadius, Margin, Stroke, Style, Visuals, vec2};
 
 use super::contrast;
 
+mod live;
+pub use live::{current, set_current};
+
 pub mod clamp;
 mod dropdown;
 mod tables;
@@ -396,34 +399,6 @@ const fn geom_legal(t: &Tokens) -> bool {
 const _: () = assert!(geom_legal(&Tokens::DARK));
 const _: () = assert!(geom_legal(&Tokens::LIGHT));
 
-/// The live theme in force, one cell per process. Every consumer reads
-/// it through `current()`; the ONLY writer is `set_current`, and the
-/// only caller of that is the shell's per-frame theme sync (M6.1 C) -
-/// no pane, command, or system pokes a table in. The default is DARK,
-/// so a process that never syncs (the kittest frames, the headless
-/// proof) renders exactly the pre-C shell.
-static LIVE: std::sync::OnceLock<std::sync::RwLock<Tokens>> = std::sync::OnceLock::new();
-
-fn live() -> &'static std::sync::RwLock<Tokens> {
-    LIVE.get_or_init(|| std::sync::RwLock::new(Tokens::DARK))
-}
-
-/// The theme in force. A poisoned cell still answers (Tokens is Copy,
-/// so a panicked writer left either the old or the new table - both
-/// legal); the read never crashes the frame.
-#[must_use]
-pub fn current() -> Tokens {
-    *live().read().unwrap_or_else(|p| p.into_inner())
-}
-
-/// Install a token table as the live theme WITHOUT touching any
-/// context - the half of the swap the sync chooses not to take (a
-/// refused file theme keeps the previous table live; only the status
-/// line says so). `apply` is the paired install; nothing else writes.
-pub fn set_current(t: &Tokens) {
-    *live().write().unwrap_or_else(|p| p.into_inner()) = *t;
-}
-
 /// Install a token table into a context: visuals and spacing together,
 /// so no theme can half-apply (Prime Directive, chrome edition). BOTH of
 /// egui's theme slots get the table (#506): egui follows the OS
@@ -445,3 +420,6 @@ pub fn apply_to(ctx: &egui::Context, t: &Tokens) {
 pub fn apply(ctx: &egui::Context) {
     apply_to(ctx, &current());
 }
+
+#[cfg(test)]
+mod live_tests;

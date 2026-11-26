@@ -8,6 +8,11 @@ use super::types::{Mode, VerifyContext, Warning};
 use crate::cl::{Move, MoveKind, Toolpath};
 use crate::geo2d::{Loop, Point2};
 
+mod radius;
+pub(super) mod wall;
+
+use wall::edge_is_wall;
+
 /// Sample spacing of the solid law (b2) along each move, mm - the
 /// operation layer's containment step.
 const SOLID_STEP: f64 = 0.25;
@@ -47,7 +52,7 @@ const ARC_READ_SHARE: f64 = 0.25;
 pub(super) fn judged(mode: Mode) -> bool {
     !matches!(
         mode,
-        Mode::Engrave | Mode::Envelope | Mode::Revolve | Mode::Radial | Mode::Cone | Mode::Rotary
+        Mode::Engrave | Mode::Carve | Mode::Envelope | Mode::Revolve | Mode::Radial | Mode::Cone | Mode::Rotary | Mode::Undercut
     )
 }
 
@@ -82,21 +87,30 @@ pub(super) fn tangency(
     // them at the plain tolerance, every other loop tightened.
     let rims: Vec<&Loop> = cx.region.loops().iter().filter(|l| cx.is_rim(l)).collect();
     let leave = (-cx.stock_to_leave).max(0.0);
-    let (tight, plain) = ((r - leave - cx.tightened(cx.gouge_tol)).max(0.0), (r - leave - cx.gouge_tol).max(0.0));
-    let floor_of = |l: &Loop| if rims.iter().any(|x| std::ptr::eq(*x, l)) { plain } else { tight };
+    let radius = radius::Radius::new(path, cx);
+    let zones = super::corner_relief::valid_zones(cx.corner_reliefs, r, cx.stock_to_leave, cx.gouge_tol, cx.stock);
     for (i, m) in path.moves.iter().enumerate() {
         if m.kind == MoveKind::Rapid {
             continue;
         }
+        let r = radius.at(m);
+        let (tight, plain) = ((r - leave - cx.tightened(cx.gouge_tol)).max(0.0), (r - leave - cx.gouge_tol).max(0.0));
+        let floor_of = |l: &Loop| if rims.iter().any(|x| std::ptr::eq(*x, l)) { plain } else { tight };
         let section = cx.model.map(|f| rest.islands_at(f, m.from.z.min(m.to.z) + lift));
         if let Some(None) = section {
             warns.push(Warning::Gouge { at: i }); // cannot prove the slice
             continue;
         }
         let section = section.flatten();
+        let on_relief = !zones.is_empty() && m.arc.is_none() && {
+            let a = Point2::new(m.from.x, m.from.y);
+            let b = Point2::new(m.to.x, m.to.y);
+            let z_min = m.from.z.min(m.to.z);
+            zones.iter().any(|rc| super::corner_relief::move_on_zone(a, b, z_min, m.from.z.max(m.to.z), r, cx.gouge_tol, rc))
+        };
         let chords = segments(m, cx.mode, chord_tol, cx.stock_top_z + cx.z_tol);
         let mut ends = chords.first().map(|c| c.0).into_iter().chain(chords.iter().map(|c| c.1));
-        if section.as_ref().is_some_and(|s| ends.any(|p| s.contains(p))) {
+        if !on_relief && section.as_ref().is_some_and(|s| ends.any(|p| s.contains(p))) {
             warns.push(Warning::Gouge { at: i });
             continue;
         }
@@ -108,15 +122,21 @@ pub(super) fn tangency(
         // excess chord error back out of the tolerance - the true wall
         // of a convex feature stands that far outside these loops -
         // except on a rim the operation declares (#1057, `loop_tol`).
-        let mut loops = cx.region.loops().iter().chain(section.iter().flat_map(|s| s.loops().iter()));
-        let gouged = loops.any(|l| {
+        // #2657: in Boundary mode with a model, only region edges that
+        // stand as walls in `section` are judged - open rims (such as a
+        // Face's outer rim or through-holes at the cut plane) stay open.
+        let boundary_with_model = cx.mode == Mode::Boundary && cx.model.is_some();
+        let near_chords = |(p, q, l): (Point2, Point2, &Loop)| {
             let floor = floor_of(l);
-            let pts = l.points();
-            (0..pts.len()).any(|k| {
-                let (p, q) = (pts[k], pts[(k + 1) % pts.len()]);
-                chords.iter().any(|&(a, b)| dist2_segs(a, b, p, q) < floor * floor)
-            })
+            chords.iter().any(|&(a, b)| dist2_segs(a, b, p, q) < floor * floor)
+        };
+        // #3831: the cheap distance test first; both are pure, so no verdict moves.
+        let region_gouged = edges(cx.region).any(|e| {
+            near_chords(e)
+                && (!boundary_with_model || section.as_ref().is_some_and(|s| edge_is_wall(e.0, e.1, s)))
         });
+        let section_gouged = !on_relief && section.as_ref().is_some_and(|s| edges(s).any(near_chords));
+        let gouged = region_gouged || section_gouged;
         // The whole-move wall reading (#43, XY arcs since #905, XZ / YZ
         // arcs since #946): every move along its whole XY trace, so a
         // wall corner between two of an arc's joints is measured, not
@@ -130,11 +150,6 @@ pub(super) fn tangency(
     }
 }
 
-/// How far off a region edge's midpoint the wall probe stands, mm: well
-/// past float dust on a section that shares the edge, well inside any
-/// feature the tolerance could care about.
-const WALL_PROBE: f64 = 0.05;
-
 /// The Boundary-mode whole-move reading (issue #43): a straight move, an
 /// XY arc on its true circle (#905, [`super::arc_wall`]), or an XZ / YZ
 /// arc on its true XY footprint (#946, [`super::arc_wall_plane`]), measured
@@ -146,7 +161,7 @@ const WALL_PROBE: f64 = 0.05;
 /// - every edge of the model section is a wall (part material on its
 ///   one side, by construction);
 /// - with a model, a region edge is a wall when the section holds a
-///   probe [`WALL_PROBE`] off its midpoint on either side - a Face's
+///   probe `WALL_PROBE` off its midpoint on either side - a Face's
 ///   rim over air (or stock) is open, a Contour's outline at a level
 ///   the part still stands is a wall;
 /// - without a model there is no material to probe: a move that
@@ -165,19 +180,8 @@ fn wall_gouge(
         return true;
     }
     if has_model {
-        let walled = |(p, q, _): (Point2, Point2, &Loop)| {
-            let (dx, dy) = (q.x - p.x, q.y - p.y);
-            let len = dx.hypot(dy);
-            if len <= f64::EPSILON {
-                return false;
-            }
-            let (nx, ny) = (-dy / len * WALL_PROBE, dx / len * WALL_PROBE);
-            let (mx, my) = (0.5 * (p.x + q.x), 0.5 * (p.y + q.y));
-            section.is_some_and(|s| {
-                s.contains(Point2::new(mx + nx, my + ny)) || s.contains(Point2::new(mx - nx, my - ny))
-            })
-        };
-        edges(region).any(|e| walled(e) && near(e))
+        // #3831: the cheap distance test first; both are pure.
+        edges(region).any(|e| near(e) && section.is_some_and(|s| edge_is_wall(e.0, e.1, s)))
     } else {
         !crosses_rim(trace, region) && edges(region).any(near)
     }
@@ -309,7 +313,17 @@ pub(super) fn solid(
             allow: cx.tightened(cx.gouge_tol) + (-cx.stock_to_leave).max(0.0),
             hole_walls: false,
         };
-        for w in super::solid_hits(path, f, cutter, &law) {
+        let zones: Vec<_> = super::corner_relief::valid_zones(
+            cx.corner_reliefs,
+            cx.tool.radius,
+            cx.stock_to_leave,
+            cx.gouge_tol,
+            cx.stock,
+        )
+        .into_iter()
+        .copied()
+        .collect();
+        for w in super::solid_hits_relieved(path, f, cutter, &law, &zones) {
             if !warns.contains(&w) {
                 warns.push(w);
             }
@@ -348,5 +362,41 @@ mod tests {
             "sub-band wobble is no rim crossing"
         );
         assert!(wall_gouge(&trace, &region, None, false, &|_| 0.1));
+    }
+
+    #[test]
+    fn tangency_excuses_open_rim_with_model_and_convicts_wall_below_top() {
+        use crate::geometry::{Point3, cube};
+        // Plate z 0..10 (outer wall below model top z 15) + boss z 10..15.
+        let mut model = cube(Point3::new(-20.0, -30.0, 0.0), Point3::new(20.0, 30.0, 10.0)).facets.to_vec();
+        model.extend(cube(Point3::new(5.0, -10.0, 10.0), Point3::new(15.0, 10.0, 15.0)).facets.iter().cloned());
+        let region = Region::new(vec![Loop::new(vec![
+            Point2::new(-20.0, -30.0), Point2::new(20.0, -30.0),
+            Point2::new(20.0, 30.0), Point2::new(-20.0, 30.0),
+        ]).unwrap()]).unwrap();
+        let tool = super::super::types::ToolGeom {
+            radius: 5.0, nose_radius: 0.0, flute_len: 20.0,
+            shank_radius: 5.0, shank_len: 30.0, holder_radius: 16.0, holder_len: 40.0,
+        };
+        let cx = VerifyContext {
+            region: &region, model: Some(&model), tool: &tool, mode: Mode::Boundary,
+            stock_top_z: 15.0, clearance_z: 30.0, gouge_tol: 0.01, z_tol: 1e-6, ..Default::default()
+        };
+        let run = |moves: Vec<Move>| {
+            let path = Toolpath { moves, ..Toolpath::default() };
+            let mut warns = Vec::new();
+            tangency(&path, &cx, &Rest::new(&path, &cx, cx.gouge_tol, &[]), 0.0, cx.gouge_tol, &mut warns);
+            warns
+        };
+        // At z 10, (-18.227, -5) is 1.773 mm inside the open x = -20 rim: clean.
+        assert_eq!(run(vec![
+            Move::new(MoveKind::Plunge, Point3::new(-18.227, -5.0, 30.0), Point3::new(-18.227, -5.0, 10.0), Some(100.0)),
+            Move::new(MoveKind::Feed, Point3::new(-25.0, -5.0, 10.0), Point3::new(-18.227, -5.0, 10.0), Some(500.0)),
+        ]), Vec::new());
+        // At z 8 (below z 10 wall top, below z 15 model top), x = -24.95 is 4.95 mm from wall: gouge.
+        assert_eq!(run(vec![
+            Move::new(MoveKind::Plunge, Point3::new(-24.95, -5.0, 30.0), Point3::new(-24.95, -5.0, 8.0), Some(100.0)),
+            Move::new(MoveKind::Feed, Point3::new(-24.95, -5.0, 8.0), Point3::new(-24.95, 5.0, 8.0), Some(500.0)),
+        ]), vec![Warning::Gouge { at: 0 }, Warning::Gouge { at: 1 }]);
     }
 }

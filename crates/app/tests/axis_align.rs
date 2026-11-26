@@ -230,7 +230,7 @@ fn near_normal_and_degenerate_picks_are_refused_by_name() {
     says(&w, &y_only(vec![face], false), "is a face");
     let (e1, _) = edge(&w, [0.0, 0.0, 10.0], [20.0, 0.0, 10.0]);
     says(&w, &y_only(vec![e1, p.clone()], false), "one straight edge, or two points");
-    says(&w, &y_only(vec![GeoSel { entity: "nothing".into(), feature: p.feature }], false), "no longer in the model");
+    says(&w, &y_only(vec![GeoSel { entity: "nothing".into(), feature: p.feature.clone() }], false), "no longer in the model");
     let at = Location { pos: Point3::new(10.0, 10.0, -1.0), ..Default::default() };
     h.execute(&w, SetStock::new(&w, StockShape::Box { dx: 30.0, dy: 30.0, dz: 12.0 }, at).expect("stock"));
     let stock = camcraft_app::setup::stock_entity_name(&w, Some("Setup1"));

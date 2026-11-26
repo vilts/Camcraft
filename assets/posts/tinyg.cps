@@ -18,12 +18,14 @@ minimumRevision = 1;
 extension = "gcode";
 setCodePage = "utf-8";
 capabilities = 1; // reference contract: integer feature mask (bit 1 = milling)
+axisInversion = true; // verified on the engine's mirrored stream for a flipped WCS X/Y and an inverted machine X/Y (#2475): trace equivalence test + golden
 workOffsetIndex = true; // reads the 1-based WorkOffset number (#1385)
 workOffsetMax = 6;      // G54..G59, per the public control documentation cited above
 coolantModes = true; // reads PARAM Coolant (#112/#150)
 afterModes = true;   // reads PARAM AfterOperation (#110)
 programUnits = "mm inch"; // #902: writes the document's unit (postOptions.Units), G21 / G20
 endUnits = "G20 G21";     // #2189: switches end units before M30 when asked
+explains = "paren"; // #1389: trailing RS-274 comments; shared helper guards their text
 
 declaredOptions = {
   showSequenceNumbers: {
@@ -58,12 +60,14 @@ var sRpm = 0;              // spindle/T order follows the stream: PARAMs,
 var spindleWait = false;   // TOOL, SECTION - the preamble writes them
 var toolWait = false;      // when the first motion needs them legal
 var tNo = 0;
+var loadedTool = null;     // #3445: the tool this program wrote M6 for; null = unknown
 var coolant = "";          // the M-code this section started, if any
 var coolantAsk = "flood";  // the section's PARAM Coolant (#112), flood when unstated
 var afterAsk = "";         // the section's PARAM AfterOperation (#110), none when unstated
 var setupNext = null;      // #1647: null means no marker; a cleaned name may be empty
 var coolantOp = "";        // the section's OperationName, for refusals (#150)
 var sectionOpen = false;   // preamble written (a legacy .cl carries no SECTION)
+var wcsFlip = "";          // #1649: the flipped WCS axes ("X", "Y", "XY") - the engine mirrored the section
 var orgX = 0, orgY = 0, orgZ = 0; // the WCS slot origin (OriginX/Y/Z PARAMs)
 var inch = false;          // the document's unit is inch (onOpen, #902: postOptions.Units)
 var smoothTol = 0;         // #616: the section's PARAM Smoothing, mm (0: none asked)
@@ -146,6 +150,8 @@ function block(words) {  // join the non-empty words onto one line
   }
   var line = prefix + body;
   if (line.length > LINE_CAP) { msg("a program line of " + line.length + " bytes is over TinyG's " + LINE_CAP + "-byte line limit"); return; }
+  var c = explain(a);
+  if (c && line.length + 1 + c.length <= 80) line += " " + c;
   writeln(line);
 }
 function writeHeaderExtras() {
@@ -165,6 +171,7 @@ function writeHeaderExtras() {
 }
 function xyz(p) { return [wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ)]; }
 function wo(letter, v, o) { return has(v) ? letter + fu(v - o) : ""; }  // axis word, origin-relative
+function arcWord(k, v) { return wo(k, v, k === "X" ? orgX : (k === "Y" ? orgY : orgZ)); }  // #3442: a position word as written, for arcFate
 function msg(s) {  // counted warning where the host offers message()
   if (typeof message === "function") message(s); else writeln("(" + s + ")");
 }
@@ -272,6 +279,8 @@ function joinDash(parts) {  // the non-empty parts, " - " between
 // led by "- ", so user text stays a note.
 var ACTIVE = /^\s*msg/i;
 function note(s) { block(["(" + (ACTIVE.test(s) ? "- " + s : s) + ")"]); }
+// Program notes use this dialect without truncating the stated bound.
+function onComment(s) { note(commentText(s)); }
 function commentParam(name, value) {
   if (name === "SetupName") setupName = clean(value);
   else if (name === "OperationName") opName = clean(value);
@@ -314,8 +323,20 @@ function onOpen() {
   inch = typeof postOptions !== "undefined" && postOptions && postOptions.Units === "inch"; // #902: the document's unit, never the machine file's
   var nm = (typeof machine !== "undefined" && machine.name) || "CAMCRAFT";
   note(clean(nm) || "CAMCRAFT");
+  invertedNotes();
   writeHeaderExtras();
   block([inch ? "G20" : "G21", "G17", "G90", "G91.1", "G94", "G64"]);
+}
+// The machine's inverted linear axes (#375): the engine has mirrored the
+// stream into the controller's frame, and the header says so, one note
+// for each axis. A standard machine lists none.
+function invertedNotes() {
+  var a = (typeof machine !== "undefined" && machine && machine.invertedAxes) || [];
+  var where = { X: "LEFT", Y: "TOWARD THE FRONT", Z: "DOWN" };
+  for (var i = 0; i < a.length; i++) {
+    var l = String(a[i]);
+    note("MACHINE " + l + "+ MOVES " + (where[l] || "THE OTHER WAY") + " - INVERTED AXIS");
+  }
 }
 
 // #495 / #710: where "straight up" is. TinyG's machine coordinates are
@@ -378,6 +399,7 @@ function onParameter(name, value) {
   else if (name === "OriginX" && has(value)) orgX = Number(value);
   else if (name === "OriginY" && has(value)) orgY = Number(value);
   else if (name === "OriginZ" && has(value)) orgZ = Number(value);
+  else if (name === "WcsFlip") wcsFlip = String(value || "");
   else if (name === "ClearancePlane") { seeZ(value); clearZ = has(value) ? Number(value) : null; }  // #1616
   else if (name === "RetractPlane") hopZ = has(value) ? Number(value) : null;  // #1616
   else if (name === "StockZTop" && has(value)) stockTop = Number(value);
@@ -448,8 +470,19 @@ function startPreamble() {
   secStarted += 1;
   if (optStr("showSequenceNumbers", "off") === "op-start") seqNextForce = true;
   opNotes();
+  // #1649: the operator reads why every sign on a flipped axis is the other one.
+  if (wcsFlip) note("WCS " + wcsFlip.split("").join(" AND ") + " FLIPPED - PROGRAM MIRRORED");
   block(["G17", "G90", wcsWord]);
+  if (toolWait && loadedTool === tNo) {
+    // #3445: a tool this program loaded, with no stop since, is still in
+    // the spindle: Z goes up, and no M6 / M0 stops the program.
+    toolNote();
+    retract();
+    xyUnknown = true;
+    toolWait = false;
+  }
   if (toolWait) {
+    loadedTool = tNo;
     toolNote();
     block(["M5"]);
     block(["M9"]);
@@ -495,8 +528,9 @@ function afterOp() {
     retract();
     note("SETUP CHANGE - NEXT: " + (next || "UNNAMED SETUP"));
   }
-  if (ask === "optional-stop") { block(["M1"]); return; }
-  if (ask === "stop") { block(["M0"]); return; }
+  // The operator may take the tool out at either stop (#3445).
+  if (ask === "optional-stop") { block(["M1"]); loadedTool = null; return; }
+  if (ask === "stop") { block(["M0"]); loadedTool = null; return; }
   if (ask === "home") {
     msg(coolantWho() + "going home after an operation is not posted by the TinyG post - the G28/G30 positions are set at the machine and it cannot see them; pick Optional stop or Program stop");
     return;
@@ -520,7 +554,7 @@ function endPreamble() {
 }
 
 function onSection() { startPreamble(); }
-function onSectionEnd() { endPreamble(); clearZ = null; hopZ = null; }  // #1616: the next section states its own planes
+function onSectionEnd() { endPreamble(); wcsFlip = ""; clearZ = null; hopZ = null; }  // #1616: the next section states its own planes
 
 // ------------------------------------------------------------- motions
 // X and Y are unknown at the program's start and after every tool change
@@ -620,6 +654,9 @@ function onLinear() {
 // No firmware implementation or another CAM's output used.
 function onCircular() {
   startPreamble();
+  // #3442: an arc whose written ends coincide is no arc block (arcFate, PRELUDE).
+  var fate = arcFate(arcWord, arcIncOf(fu));  // #3474: I J K are increments from the start
+  if (fate !== "arc") { if (fate === "linear") onLinear(); return; }
   if (!tiltOk(properties)) return;
   if (spindleStopped("arc move " + (properties.CircularDirection === "CW" ? "G2" : "G3"))) return;
   var p = properties, c = p.IJKIncrement || {};

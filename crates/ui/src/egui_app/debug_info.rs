@@ -11,6 +11,7 @@ use egui::{Button, Image, Response, RichText, Ui, Vec2};
 use camcraft_app::{machine, model, operation, setup, units};
 
 use super::icons::{Icon, IconSet};
+use super::report_scrub::{self, file_name_only};
 use crate::build_info;
 use crate::state::State;
 
@@ -32,9 +33,25 @@ pub(super) fn button(ui: &mut Ui, icons: Option<&IconSet>) -> Response {
 }
 
 /// The report, one `key: value` line each - plain text, so it pastes into
-/// an issue as it reads here.
+/// an issue as it reads here. It stays on this machine, so it names the
+/// project and machine files by their full paths.
 pub(crate) fn report(state: &State) -> String {
+    report_with(state, false)
+}
+
+/// The same report for a page that leaves this machine (the Report door's
+/// GitHub URL, #2744): the project and machine files by name only. A full
+/// path usually holds the user's name, and the browser sends it to GitHub.
+/// After the build, each path in ANY field (status, GPU, machine vendor and
+/// model) shrinks to its last component: a status such as `open failed:
+/// <path>` names a path that is not the project's.
+pub(crate) fn shared_report(state: &State) -> String {
+    report_scrub::scrub_paths(&report_with(state, true))
+}
+
+fn report_with(state: &State, names_only: bool) -> String {
     let world = &state.world;
+    let shown = |p: &std::path::Path| if names_only { file_name_only(p) } else { p.display().to_string() };
     let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
     let mut lines = vec![
         format!("CamCraft {} ({profile} build)", build_info::VERSION),
@@ -44,14 +61,15 @@ pub(crate) fn report(state: &State) -> String {
         format!("GPU: {}", state.gpu_line.as_deref().unwrap_or("none (headless)")),
         format!(
             "Project: {}",
-            state.project_path.as_ref().map_or_else(|| "unsaved".to_owned(), |p| p.display().to_string())
+            state.project_path.as_deref().map_or_else(|| "unsaved".to_owned(), shown)
         ),
         format!("Units: {}", units::of(world).label()),
     ];
     let (path, def) = machine::of(world);
     let kind = format!("{:?}", machine::kind_of(world));
+    let machine_file = if path.is_empty() { "none".to_owned() } else { shown(std::path::Path::new(&path)) };
     lines.push(match def {
-        Some(m) => format!("Machine: {} {} ({kind}, from {})", m.vendor, m.model, or_none(&path)),
+        Some(m) => format!("Machine: {} {} ({kind}, from {machine_file})", m.vendor, m.model),
         None => format!("Machine: none stated ({kind})"),
     });
     let entities = model::named_entities(world);
@@ -70,6 +88,7 @@ pub(crate) fn report(state: &State) -> String {
         status(operation::OpStatus::Never),
     ));
     lines.push(state.frame_rate.report_line(camcraft_app::clock::Instant::now()));
+    // The shared form scrubs the paths of the status (`shared_report`).
     lines.push(format!("Status: {}", or_none(&state.status)));
     lines.join("\n")
 }

@@ -42,7 +42,7 @@ fn document(fixture: bool, bottom: Option<f64>) -> (World, History) {
     h.execute(&world, ImportModel::from_mesh("part", cube(p(0.0, 0.0, 0.0), p(20.0, 10.0, 8.0))));
     h.execute(&world, MoveModel::new(&world, "part", at(40.0, 20.0, 50.0)).expect("placed"));
     if fixture {
-        h.execute(&world, ImportModel::from_mesh("vise", Mesh { facets: vise().into() }));
+        h.execute(&world, ImportModel::from_mesh("vise", Mesh::from_facets(vise())));
         h.execute(&world, TagFixture::new(&world, "vise", None).expect("mark the vise"));
     }
     h.execute(&world, CreateSetup::new(&world, None, None).expect("Setup1"));

@@ -54,7 +54,7 @@ Open **Setup > Tools** and add two catalog cutters:
   would push the wider `8 mm` shank against uncut stock wall and trip a reach
   refusal.
 - **Drill (`DR-0600`):** `6 mm` twist drill (`18 mm` flute length, `7500 RPM`,
-  `150 mm/min` feed) for the four `Ø6.2 mm` corner mounting holes.
+  `115 mm/min` feed) for the four `Ø6.2 mm` corner mounting holes.
 
 On dry wood, MDF or plywood, set **Coolant = Off** in each operation so the
 post does not switch on flood coolant (`M8`). See
@@ -74,7 +74,7 @@ part rigid until the very last cut (see
    `Top of stock + 5 mm`, and **Coolant = Off**. The detected through-holes
    include `1 mm` breakthrough past full diameter (plus the `1.803 mm` `118°`
    drill point) below the `12 mm` stock: the posted drill bottom is
-   `-14.803 mm` in `G54` (`G73 X53 Y50 Z-14.803 R0 Q4 F150` for the
+   `-14.803 mm` in `G54` (`G73 X53 Y50 Z-14.803 R0 Q4 F115` for the
    first hole). Check this depth before running the drill.
 2. **`2D Pocket1` (Milling 2D > 2D Pocket).** Pick the floor face of the
    `50 × 30 × 4 mm` central recess using `EM-0600-4FL`. Use `Waterline`

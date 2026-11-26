@@ -112,6 +112,7 @@ fn chamfer() -> OpParams {
     OpParams::Chamfer2D {
         width: 1.0,
         angle_deg: 45.0,
+        minimum_cone_radius: 0.0,
         clearance_z: Height::fixed(30.0),
         retract_z: None,
         top_z: Height::of(HeightReference::TopOfModel, 0.0),
@@ -121,6 +122,7 @@ fn chamfer() -> OpParams {
         side: Side::Auto,
         tolerance: 0.01,
         tilt: None,
+        picks: Default::default(),
     }
 }
 

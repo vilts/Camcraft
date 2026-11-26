@@ -30,6 +30,7 @@ fn thread(passes: ThreadPasses) -> OpParams {
         hand: crate::cl::ThreadHand::Right,
         external: false,
         passes,
+        picks: Default::default(),
     }
 }
 
@@ -101,6 +102,7 @@ fn threading_stamp_keeps_dips_and_existing_controls_after_split() {
         plunge_feed: 40.0,
         infeed_plan: plan,
         hand,
+        picks: Default::default(),
     };
     let right = crate::cl::ThreadHand::Right;
     let b = digest(&world, &params(base, right));

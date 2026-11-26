@@ -28,6 +28,8 @@ use crate::cl::{ArcMove, Move, MoveKind, Toolpath};
 use crate::geometry::Point3;
 use serde_json::Value;
 use std::f64::consts::PI;
+/// Operation steps (#2608), so `camcraft_app::sim` re-exports them.
+pub use crate::sim_steps::OpStarts;
 
 /// Axis traverse rates, mm/min, read off the machine's X/Y/Z rapids.
 /// The default stands in when a machine file names no usable axis:

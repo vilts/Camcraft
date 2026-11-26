@@ -9,7 +9,8 @@
 //! pick ink, the vertex cross arm when a vertex is picked, and for each
 //! picked model its display-off flag, its entity, the allocation of its
 //! `Arc<Features>` (immutable; a landing replaces it) and the pose the
-//! viewport draws it in. A hit is the line set a fresh build gives. The
+//! viewport draws it in (a DXF sketch: its drawing allocation and its
+//! stock-relative world pose). A hit is the line set a fresh build gives. The
 //! lines are display only: no generator, check or post reads them.
 
 use std::cell::{Cell, RefCell};
@@ -37,6 +38,16 @@ impl PartialEq for Feats {
     }
 }
 
+/// A DXF sketch drawing, compared by allocation (#1864): a re-import
+/// replaces the `Arc`, so the chains the build reads changed.
+struct Drawing(Weak<camcraft_app::sketch_data::SketchData>);
+
+impl PartialEq for Drawing {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ptr_eq(&other.0)
+    }
+}
+
 /// One picked model as the build reads it.
 #[derive(PartialEq)]
 struct Body {
@@ -44,6 +55,7 @@ struct Body {
     hidden: bool,
     entity: Option<Entity>,
     features: Option<Feats>,
+    sketch: Option<Drawing>,
     pose: Option<Location>,
 }
 
@@ -68,6 +80,9 @@ impl Key {
             .into_iter()
             .map(|name| {
                 let entity = model::find_by_name(&state.world, name);
+                // A sketch's lines ride `sketch::world_pose` (the stock top);
+                // key on that, so a stock move or height change rebuilds.
+                let sketch_pose = entity.and_then(|e| camcraft_app::sketch::world_pose(&state.world, &e));
                 Body {
                     name: name.to_owned(),
                     hidden: state.hidden_in_view(name),
@@ -75,7 +90,10 @@ impl Key {
                     features: entity
                         .and_then(|e| model::features_of(&state.world, &e))
                         .map(|f| Feats(Arc::downgrade(&f))),
-                    pose: entity.and_then(|e| camcraft_app::setup_align::view_pose(&state.world, &e)),
+                    sketch: camcraft_app::sketch::find(&state.world, name)
+                        .map(|(_, s)| Drawing(Arc::downgrade(&s.data))),
+                    pose: sketch_pose
+                        .or_else(|| entity.and_then(|e| camcraft_app::setup_align::view_pose(&state.world, &e))),
                 }
             })
             .collect();

@@ -91,7 +91,7 @@ fn jaw(x: [f64; 2], y: [f64; 2]) -> FixtureBox {
 /// part when `turns`, else standing - grown by `margin`.
 fn struck(path: &Toolpath, jaw: FixtureBox, turns: bool, margin: f64) -> Result<Vec<usize>, String> {
     let body = LatheClearance::of(&cuboid([3.0, -3.0, -4.0], [12.0, 3.0, 4.0])).map_err(|e| e.to_string())?;
-    let params = OpParams::ProfileFinish { tolerance: 0.05, clearance_z: Height::fixed(30.0), top_z: Height::fixed(16.0), bottom_z: Height::fixed(0.0), feed: 150.0, plunge_feed: 80.0 };
+    let params = OpParams::ProfileFinish { tolerance: 0.05, clearance_z: Height::fixed(30.0), top_z: Height::fixed(16.0), bottom_z: Height::fixed(0.0), feed: 150.0, plunge_feed: 80.0, picks: Default::default() };
     let part = cylinder(6.0, -16.0, 16.0);
     let boxes = [jaw];
     let steel: (&[FixtureBox], &[FixtureBox]) = if turns { (&boxes, &[]) } else { (&[], &boxes) };
@@ -157,7 +157,7 @@ fn the_gate_names_a_part_it_cannot_read_never_passing_it_clear() -> Result<(), S
     // unjudged against the jaw - an `Err` by name, never an empty `Ok`.
     let world = crate::world::new_world();
     let body = LatheClearance::of(&cuboid([3.0, -3.0, -4.0], [12.0, 3.0, 4.0])).map_err(|e| e.to_string())?;
-    let params = OpParams::ProfileFinish { tolerance: 0.05, clearance_z: Height::fixed(30.0), top_z: Height::fixed(16.0), bottom_z: Height::fixed(0.0), feed: 150.0, plunge_feed: 80.0 };
+    let params = OpParams::ProfileFinish { tolerance: 0.05, clearance_z: Height::fixed(30.0), top_z: Height::fixed(16.0), bottom_z: Height::fixed(0.0), feed: 150.0, plunge_feed: 80.0, picks: Default::default() };
     let op = crate::schema::Operation {
         tool: "TN-1600-0R8".into(),
         src: crate::operation::SrcRef::Entity("ghost".into()),

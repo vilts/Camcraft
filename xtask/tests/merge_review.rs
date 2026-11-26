@@ -1,6 +1,9 @@
 //! Provenance: issue #2388's stale collaborator review marker regression, exercised through the real CLI.
 #![cfg(unix)]
 
+#[path = "merge_review/trial.rs"]
+mod trial;
+
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;

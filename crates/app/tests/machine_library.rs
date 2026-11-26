@@ -104,6 +104,52 @@ fn every_shipped_machine_lists_and_validates_clean() {
     assert!(x.1.contains("-14 .. 14 in"), "{x:?}");
 }
 
+/// AGIE C2.1 (June 2002), sections 1.1 and 5.2. Exercise the catalogue
+/// read used when assigning the machine in the setup picker.
+#[test]
+fn agiecut_classic_2s_exposes_the_sourced_axes_and_wire_sizes() {
+    let entry = library::builtins()
+        .into_iter()
+        .find(|e| e.name == "AGIECUT Classic 2S (template)")
+        .expect("Classic 2S template in the library");
+    assert_eq!(entry.kind, Some(Kind::WireEdm));
+    assert_eq!(entry.units, "mm");
+    let (_, machine) = library::read_for_assign(&entry.source).expect("assignable template");
+    let uv = Some((-70.0, 70.0));
+    let axes: Vec<_> = machine.axes.iter().map(|a| (a.name.as_str(), a.travel, a.rapid)).collect();
+    assert_eq!(axes, [
+        ("X", None, Some(900.0)),
+        ("Y", None, Some(900.0)),
+        ("Z", None, Some(600.0)),
+        ("U", uv, Some(600.0)),
+        ("V", uv, Some(600.0)),
+    ]);
+    let edm = machine.edm.expect("EDM capabilities");
+    assert_eq!(edm.wire_diameters, [0.20, 0.25, 0.30, 0.33]);
+    assert_eq!((edm.lower_guide_z, edm.upper_guide_z, edm.max_taper_deg), (None, None, None));
+    assert!(edm.conditions.is_empty());
+}
+
+/// #3038: the WorkBee 1000x1500 takes the smaller value on each axis of
+/// the owner's figure (1200 x 800) and Ooznest's page (1270 x 770, 88 mm
+/// Z, 2500 mm/min). Z rates stay unstated.
+#[test]
+fn ooznest_workbee_states_the_smaller_envelope_and_feed() {
+    let entry = library::builtins()
+        .into_iter()
+        .find(|e| e.name == "Ooznest WorkBee 1000x1500 (Estlcam)")
+        .expect("WorkBee in the library");
+    assert_eq!(entry.kind, Some(Kind::Mill));
+    assert_eq!(entry.units, "mm");
+    let (_, machine) = library::read_for_assign(&entry.source).expect("assignable machine");
+    let axes: Vec<_> = machine.axes.iter().map(|a| (a.name.as_str(), a.travel, a.rapid)).collect();
+    assert_eq!(axes, [
+        ("X", Some((-1200.0, 1200.0)), Some(2500.0)),
+        ("Y", Some((-770.0, 770.0)), Some(2500.0)),
+        ("Z", Some((-88.0, 88.0)), None),
+    ]);
+}
+
 /// Every `.mch` in `assets/machines` is a library entry, except the
 /// post-grammar default (`3axis-vmc.mch` is the static mirror form the
 /// post reads, not a checker-grammar machine file).
@@ -193,7 +239,7 @@ fn required_keys_per_kind_refuse_by_name() {
 #[test]
 fn other_stated_values_refuse_by_name() {
     let t = mill(|v| *at(v, "/general/kind") = "drill press".into());
-    one_refusal(&t, "general.kind", "not mill, lathe, mill-turn, plasma, waterjet, wire_edm or sinker_edm");
+    one_refusal(&t, "general.kind", "not mill, router, lathe, mill-turn, plasma, waterjet, wire_edm or sinker_edm");
     let t = mill(|v| *at(v, "/kinematics/default/units/length") = "cm".into());
     one_refusal(&t, "units.length", "not mm or inch");
     let t = mill(|v| *at(v, "/tooling/number_of_tools") = 0.into());
@@ -202,6 +248,93 @@ fn other_stated_values_refuse_by_name() {
         at(v, "/kinematics/default/parts/0/parts/0/parts/0/parts/0")["name"] = "Y".into();
     });
     one_refusal(&t, "Y", "stated twice");
+}
+
+/// #2374: `controller.post` names a built-in post that serves the
+/// machine's kind, or the file is refused at that key.
+#[test]
+fn the_named_post_must_be_a_built_in_post_that_serves_the_machine() {
+    let named = |post: serde_json::Value| mill(|v| at(v, "/controller")["post"] = post);
+    assert_eq!(validate_text(&named("grblHAL".into())), vec![], "a mill post on a mill");
+    one_refusal(&named("Fanuc 0i".into()), "controller.post", "not a built-in post");
+    one_refusal(&named("Fanuc Lathe".into()), "controller.post", "does not serve a mill");
+    one_refusal(&named(7.into()), "controller.post", "must be the name of a post");
+    one_refusal(&named("".into()), "controller.post", "must be the name of a post");
+    // A lathe names a lathe post.
+    let lathe = mill(|v| {
+        *at(v, "/general/kind") = "lathe".into();
+        at(v, "/controller")["post"] = "Tormach PathPilot Lathe".into();
+    });
+    assert!(!keys(&lathe).contains(&"controller.post".to_owned()), "{:?}", validate_text(&lathe));
+}
+
+/// #2374: the file editor's Post field is a dropdown of the built-in posts
+/// that serve the machine's kind. A stated name off that list stays in
+/// view, so the editor shows it with its refusal.
+#[test]
+fn the_editor_offers_the_built_in_posts_that_serve_the_machine() {
+    let post_field = |text: String| {
+        let v: serde_json::Value = serde_json::from_str(&text).expect("json");
+        let all = camcraft_app::machine::fields::groups(&v).into_iter().flat_map(|g| g.fields);
+        all.into_iter().find(|f| f.pointer == "/controller/post").expect("a Post field")
+    };
+    let has = |f: &camcraft_app::machine::fields::Field, n: &str| f.choices.iter().any(|c| c == n);
+    let f = post_field(mill(|_| {}));
+    assert_eq!((f.label.as_str(), f.value.as_str()), ("Post", ""), "unstated");
+    let mill_posts = posting::BUILTINS.iter().map(|(n, _)| *n).filter(|n| posting::post_serves(n, Kind::Mill));
+    assert_eq!(f.choices, mill_posts.map(str::to_owned).collect::<Vec<_>>());
+    assert!(has(&f, "grblHAL") && !has(&f, "Fanuc Lathe"), "{:?}", f.choices);
+    let lathe = post_field(mill(|v| *at(v, "/general/kind") = "lathe".into()));
+    assert!(has(&lathe, "Tormach PathPilot Lathe") && !has(&lathe, "grblHAL"), "{:?}", lathe.choices);
+    let odd = post_field(mill(|v| at(v, "/controller")["post"] = "Fanuc Lathe".into()));
+    assert_eq!(odd.value, "Fanuc Lathe");
+    assert!(has(&odd, "Fanuc Lathe"), "a stated name stays in view: {:?}", odd.choices);
+    assert!(odd.refusal_keys.contains(&"controller.post".to_owned()), "its refusal sits on the field");
+}
+
+/// #2374: a mounted machine that names its post is offered that post;
+/// the mount never changes the post by itself, taking the offer rides
+/// undo, a `.cps` file post is never offered over, and a machine that
+/// names none offers as before.
+#[test]
+fn a_machine_that_names_its_post_is_offered_it_and_the_choice_rides_undo() {
+    use camcraft_app::commands::{History, LoadMachine, SelectPost};
+    use camcraft_app::posting::OfferWhy;
+    use camcraft_app::schema::PostRef;
+    let world = camcraft_app::world::new_world();
+    let mut h = History::default();
+    h.execute(&world, LoadMachine::builtin(&world, "grblHAL 3-axis").expect("mount"));
+    assert_eq!(posting::post_of(&world), PostRef::Builtin, "the mount leaves Fanuc in place");
+    let offer = posting::post_offer(&world).expect("the machine's own post is offered");
+    assert_eq!((&offer.post, offer.why), (&PostRef::Named("grblHAL".into()), OfferWhy::Machine));
+    h.execute(&world, SelectPost::new(&world, offer.post).expect("take the offer"));
+    assert!(posting::post_offer(&world).is_none(), "the machine's post is the setup's: no offer");
+    h.undo(&world);
+    assert_eq!(posting::post_of(&world), PostRef::Builtin, "undo brings Fanuc back");
+    let own = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../assets/posts/grblhal.cps");
+    let own = PostRef::File(own.to_string_lossy().into_owned());
+    h.execute(&world, SelectPost::new(&world, own).expect("a file post"));
+    assert!(posting::post_offer(&world).is_none(), "a file post is never offered over");
+    h.undo(&world);
+    h.execute(&world, LoadMachine::builtin(&world, "VMC 3-axis").expect("mount"));
+    assert!(posting::post_offer(&world).is_none(), "a machine naming no post: a mill post serves, no offer");
+}
+
+/// #2374 with #2303 and #2481: the generic LinuxCNC and Grbl machines that
+/// main shipped after this branch name their posts, as `MACHINES` pairs them.
+#[test]
+fn the_linuxcnc_machine_is_offered_the_linuxcnc_post() {
+    use camcraft_app::commands::{History, LoadMachine};
+    use camcraft_app::posting::OfferWhy;
+    use camcraft_app::schema::PostRef;
+    for (machine, post) in [("LinuxCNC 3-axis", "LinuxCNC"), ("Grbl 3-axis", "Grbl 1.1")] {
+        let world = camcraft_app::world::new_world();
+        let mut h = History::default();
+        h.execute(&world, LoadMachine::builtin(&world, machine).expect("mount"));
+        assert_eq!(posting::post_of(&world), PostRef::Builtin, "{machine}: the mount leaves Fanuc in place");
+        let offer = posting::post_offer(&world).expect("the machine's own post is offered");
+        assert_eq!((&offer.post, offer.why), (&PostRef::Named(post.into()), OfferWhy::Machine), "{machine}");
+    }
 }
 
 #[test]

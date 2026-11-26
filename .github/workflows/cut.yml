@@ -62,7 +62,7 @@ concurrency:
 jobs:
   gate:
     if: ${{ inputs.stage == 'gate' }}
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, camcraft-cut]
     timeout-minutes: 300
     permissions:
       contents: read
@@ -148,7 +148,7 @@ jobs:
 
   tag:
     if: ${{ inputs.stage == 'tag' }}
-    runs-on: [self-hosted, linux]
+    runs-on: [self-hosted, camcraft-cut]
     timeout-minutes: 20
     permissions:
       contents: write   # push the tag

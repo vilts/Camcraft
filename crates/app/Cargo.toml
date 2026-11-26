@@ -16,11 +16,6 @@ camcraft-motion = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-truck-stepio = { workspace = true }
-truck-topology = { workspace = true }
-truck-polymesh = { workspace = true }
-truck-meshalgo = { workspace = true }
-ruststep = { workspace = true }
 clipper2-rust = { workspace = true }
 rayon = { workspace = true }
 png = { workspace = true }
@@ -29,8 +24,20 @@ tracing-subscriber = { workspace = true }
 # The job-script host (M5.3 F): the batch lane runs the tree's single
 # hard-pinned boa engine, same one post/js.rs sandboxes.
 boa_engine = { workspace = true }
+# #1945: AI endpoint URLs (pure Rust; wasm-safe).
+url = { workspace = true }
 
 # #31: std's Instant panics on wasm32-unknown-unknown; app/src/clock.rs
 # aliases this one there instead.
+# #1945: the AI provider HTTP client and the OS keychain - native only,
+# so the browser build (crates/ui shell_web) never links sockets.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+reqwest = { workspace = true }
+tokio = { workspace = true }
+keyring = { workspace = true }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-time = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

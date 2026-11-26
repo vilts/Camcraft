@@ -217,7 +217,7 @@ pub(super) fn axial_reach(
         let entry = top::cut_by(Some(c.entry_z), pb).unwrap_or(c.entry_z);
         let top = top_over(part, stock, xy.x, xy.y, body, pb).unwrap_or(entry).max(entry.min(r_z));
         let depth = top - bottom_z;
-        if matches!(c.kind, CycleKind::Tap | CycleKind::FloatingTap | CycleKind::Bore | CycleKind::BackBore | CycleKind::Ream) {
+        if matches!(c.kind, CycleKind::Tap | CycleKind::FloatingTap | CycleKind::Bore | CycleKind::BackBore | CycleKind::Ream | CycleKind::FineBore) {
             shank_fits(c, holes, top, depth, flute, tool, name, unit)?;
         } else if depth.is_nan() || depth > flute + TOL {
             return Err(too_deep(

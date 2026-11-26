@@ -347,6 +347,7 @@ fn judge_ball(p: &Toolpath, facets: &[Triangle]) -> Vec<Warning> {
         holder_len: tool.holder_len,
         body: None,
         neck: None,
+        undercut: None,
     };
     let cx = VerifyContext {
         region: &region,

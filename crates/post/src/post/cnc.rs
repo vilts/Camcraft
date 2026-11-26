@@ -105,6 +105,14 @@ pub enum Record {
     /// hooks is refused by name - a cut posted without its torch is
     /// a dry run at best, and a mill post's spindle words at worst.
     Torch(super::cnc_torch::TorchRec),
+    /// The waterjet header of a section (#1882): abrasive on or off and
+    /// the stated dwells (`cnc_jet`). It precedes the section's
+    /// `SECTION`, and its properties hold until `ENDSECTION`.
+    Waterjet(super::cnc_jet::WaterjetRec),
+    /// A jet event (#1882): opened before the next motion record, or
+    /// closed after the previous one. A script without the jet hooks is
+    /// refused by name.
+    Jet(super::cnc_jet::JetRec),
 }
 
 /// One feed/rapid/plunge/arc record. Coordinates are millimeters
@@ -233,6 +241,7 @@ pub fn cycle_name(kind: CycleKind) -> &'static str {
         CycleKind::Bore => "BORE",
         CycleKind::BackBore => "BACKBORE",
         CycleKind::Ream => "REAM",
+        CycleKind::FineBore => "FINEBORE",
     }
 }
 
@@ -308,6 +317,8 @@ impl Record {
             Record::Guard(g) => format!("probe protected move → {}", pos(g.to[0], g.to[1], g.to[2])),
             Record::Plasma(p) => p.label(),
             Record::Torch(t) => t.label(),
+            Record::Waterjet(w) => w.label(),
+            Record::Jet(j) => j.label(),
             Record::Found(f) => match f.set_wcs {
                 Some(w) => format!("probe result · set G{} · tol {:.3} mm", 54 + u32::from(w), f.tol_mm),
                 None => format!("probe result · confirm · tol {:.3} mm", f.tol_mm),
@@ -347,6 +358,10 @@ fn q(v: f64) -> String {
 /// joined (`X1000`) and legacy positional forms.
 pub fn serialize(records: &[Record]) -> String {
     let mut s = String::from("; HSMW-CNC v1\n");
+    // The true position before each record (#3442): an arc's start, for
+    // the lattice law of `cnc_arc_lattice`. None where a record leaves it
+    // unknown here; an arc after it is written as it is.
+    let mut pos: Option<[f64; 3]> = None;
     for r in records {
         match r {
             Record::Param { name, value } => {
@@ -363,6 +378,8 @@ pub fn serialize(records: &[Record]) -> String {
                 s.push_str(if *begin { "SECTION\n" } else { "ENDSECTION\n" });
             }
             Record::Move(m) => {
+                let short = super::cnc_arc_lattice::short_arc_on_lattice(pos, m);
+                pos = Some([m.x, m.y, m.z]);
                 let f = m
                     .feed
                     .map(|f| format!(" F {}", (f * 1000.0).round() as i64))
@@ -374,7 +391,10 @@ pub fn serialize(records: &[Record]) -> String {
                     .abc
                     .map(|[a, b, c]| format!(" A {} B {} C {}", q(a), q(b), q(c)))
                     .unwrap_or_default();
-                match m.center {
+                // #3442, #3474: a short arc whose ends round to one
+                // micrometre, or to one ray from the rounded centre, is
+                // written as the straight move it is on the lattice.
+                match m.center.filter(|_| !short) {
                     // The center words name the plane (M11.2 A): I J
                     // is XY - byte-identical to every pre-M11.2
                     // stream - I K is XZ, J K is YZ.
@@ -393,6 +413,7 @@ pub fn serialize(records: &[Record]) -> String {
                     None => s.push_str(&format!(
                         "{} X {} Y {} Z {}{f}{abc}\n",
                         match m.kind {
+                            _ if short => "Feed",
                             MoveKind::Rapid => "Rapid",
                             MoveKind::Feed => "Feed",
                             MoveKind::Plunge => "Plunge",
@@ -404,6 +425,7 @@ pub fn serialize(records: &[Record]) -> String {
                 }
             }
             Record::Cycle(c) => {
+                pos = Some([c.x, c.y, c.r_z]);
                 let f = c
                     .feed
                     .map(|f| format!(" F {}", (f * 1000.0).round() as i64))
@@ -453,12 +475,23 @@ pub fn serialize(records: &[Record]) -> String {
             }
             Record::Thread(Some(t)) => s.push_str(&t.line()),
             Record::Thread(None) => s.push_str("THREAD END\n"),
-            Record::Touch(t) => s.push_str(&super::probe_rec::write_touch(t)),
+            Record::Touch(t) => {
+                pos = None;
+                s.push_str(&super::probe_rec::write_touch(t))
+            }
             Record::Found(f) => s.push_str(&super::probe_rec::write_found(f)),
-            Record::Retreat(r) => s.push_str(&super::probe_rec::write_retreat(r)),
-            Record::Guard(g) => s.push_str(&super::probe_rec::write_guard(g)),
+            Record::Retreat(r) => {
+                pos = None;
+                s.push_str(&super::probe_rec::write_retreat(r))
+            }
+            Record::Guard(g) => {
+                pos = None;
+                s.push_str(&super::probe_rec::write_guard(g))
+            }
             Record::Plasma(p) => s.push_str(&p.line()),
             Record::Torch(t) => s.push_str(&t.line()),
+            Record::Waterjet(w) => s.push_str(&w.line()),
+            Record::Jet(j) => s.push_str(&j.line()),
         }
     }
     s
@@ -667,6 +700,15 @@ pub fn parse(text: &str) -> Result<Vec<Record>, CncError> {
             }
             if let Some(w) = t.strip_prefix("TORCH ") {
                 out.push(Record::Torch(super::cnc_torch::parse_torch(w).map_err(fail)?));
+                continue;
+            }
+            // #1882: the waterjet records, read in both spellings.
+            if let Some(w) = t.strip_prefix("WATERJET").filter(|w| w.is_empty() || w.starts_with(' ')) {
+                out.push(Record::Waterjet(super::cnc_jet::parse_header(w).map_err(fail)?));
+                continue;
+            }
+            if let Some(w) = t.strip_prefix("JET ") {
+                out.push(Record::Jet(super::cnc_jet::parse_jet(w).map_err(fail)?));
                 continue;
             }
             continue; // any other comment is nothing to the post
@@ -999,6 +1041,14 @@ pub fn parse(text: &str) -> Result<Vec<Record>, CncError> {
                     Record::Torch(super::cnc_torch::parse_torch(words).map_err(fail)?)
                 });
             }
+            "WATERJET" | "JET" => {
+                let words = line.trim_start()[head.len()..].trim_start();
+                out.push(if head == "WATERJET" {
+                    Record::Waterjet(super::cnc_jet::parse_header(words).map_err(fail)?)
+                } else {
+                    Record::Jet(super::cnc_jet::parse_jet(words).map_err(fail)?)
+                });
+            }
             "FOUND" => {
                 let f = super::probe_rec::parse_found(&mut it).map_err(fail)?;
                 out.push(Record::Found(f));
@@ -1022,6 +1072,7 @@ fn cycle_kind(name: &str) -> Option<CycleKind> {
         "BORE" => CycleKind::Bore,
         "BACKBORE" => CycleKind::BackBore,
         "REAM" => CycleKind::Ream,
+        "FINEBORE" => CycleKind::FineBore,
         _ => return None,
     })
 }

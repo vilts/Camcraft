@@ -102,6 +102,7 @@ fn part() -> Mesh {
 fn bore() -> OpParams {
     OpParams::Bore {
         break_through: None,
+        pass_start: camcraft_app::machining2d::PassStart::Auto,
         links: camcraft_app::links::Links::PLANAR,
         clearance_z: Height::fixed(40.0),
         retract_z: None,
@@ -114,6 +115,7 @@ fn bore() -> OpParams {
         climb: true,
         tolerance: 0.01,
         holes: vec![Hole { xy: Point2::new(0.0, 0.0), radius: 8.0, entry_z: MOUTH, floor_z: FLOOR, through: false, stepped: false }],
+        picks: Default::default(),
     }
 }
 

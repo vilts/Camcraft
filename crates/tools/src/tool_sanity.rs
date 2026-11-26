@@ -98,6 +98,14 @@ impl Tool {
                 return Some(format!("spindle speed {} rpm is over the tool's turning max rpm {m}", self.rpm));
             }
         }
+        // #3368: a chamfer mill's tip form and tip diameter.
+        if let Some(why) = crate::taper::refusal(self) {
+            return Some(why);
+        }
+        // #3369: a form mill's outline, and no outline on another kind.
+        if let Some(why) = crate::form_mill::refusal(self) {
+            return Some(why);
+        }
         self.kind_rule()
     }
 
@@ -155,6 +163,7 @@ impl Tool {
             ToolKind::Wire => crate::wire::refusal(self),
             ToolKind::Electrode => self.electrode_rule(),
             ToolKind::ThreadMill | ToolKind::ThreadMillSingle => self.thread_mill_rule(),
+            ToolKind::TSlot | ToolKind::Keyseat | ToolKind::Dovetail | ToolKind::Lollipop => crate::undercut::refusal(self),
             // No kind rule, or each guarded rule above held. Each kind is
             // named, with no catch-all: a new `ToolKind` does not compile
             // until this match names it (#2505).
@@ -170,7 +179,8 @@ impl Tool {
             | ToolKind::Form
             | ToolKind::Taper
             | ToolKind::Probe
-            | ToolKind::Torch => None,
+            | ToolKind::Torch
+            | ToolKind::FormMill => None,
         }
     }
 

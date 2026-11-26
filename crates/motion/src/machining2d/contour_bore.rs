@@ -269,7 +269,7 @@ fn seg_dist(a: Point2, b: Point2, q: Point2) -> f64 {
 
 /// The level ramp's angle (degrees): the links' own where it is a real
 /// descent angle, else the default (a file that never set it).
-fn level_angle(deg: f64) -> f64 {
+pub(super) fn level_angle(deg: f64) -> f64 {
     if deg.is_finite() && deg > 0.0 && deg < 90.0 { deg } else { crate::links::DEFAULT_RAMP_ANGLE }
 }
 
@@ -285,7 +285,7 @@ fn within_angle(st: Point2, e: Point2, dz: f64, deg: f64) -> bool {
 /// moves to the start at `tz`, rapids to `zf` and ramps. `false` (nothing
 /// pushed) when the path is too short for the angle.
 #[allow(clippy::too_many_arguments)]
-fn zig_onto(b: &mut PathBuilder, path: &[Point2], leg: Point2, tz: f64, zf: f64, z: f64, deg: f64, max_len: f64, fd: f64) -> bool {
+pub(super) fn zig_onto(b: &mut PathBuilder, path: &[Point2], leg: Point2, tz: f64, zf: f64, z: f64, deg: f64, max_len: f64, fd: f64) -> bool {
     let (Some(&e), Some((pre, n))) = (path.first(), plan_zig_capped(path, zf - z, deg, max_len)) else {
         return false;
     };

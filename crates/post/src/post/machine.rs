@@ -5,6 +5,7 @@
 //! published post-processor documentation (behavior only, per the
 //! Clean-Room Protocol). The grammar and every key name are ours.
 
+use super::machine_rotary::is_rotary_letter;
 use serde_json::{json, Value};
 
 /// Parse the file text (syntax only; absent fields default at read
@@ -56,11 +57,11 @@ pub fn mirror(m: &crate::machine::Machine) -> Value {
         if let Some(f) = a.feed {
             speeds.insert("normal".to_owned(), json!(f));
         }
-        axes.push(json!({
-            "letter": a.name,
-            "direction": direction,
-            "speeds": Value::Object(speeds),
-        }));
+        let mut axis = json!({ "letter": a.name, "direction": direction, "speeds": Value::Object(speeds) });
+        if let (Some((lo, hi)), Some(o)) = (a.travel, axis.as_object_mut()) {
+            o.insert("travel".to_owned(), json!([lo, hi])); // #1882
+        }
+        axes.push(axis);
     }
     // Rates the script reads as ceilings: the fastest stated axis -
     // and stated axes are LINEAR only. A rotary's deg/min is not a
@@ -80,6 +81,9 @@ pub fn mirror(m: &crate::machine::Machine) -> Value {
     let mut head = serde_json::Map::new();
     if let Some(s) = m.spindle_max {
         head.insert("spindle".to_owned(), json!({"max": s}));
+    }
+    if let Some(s) = m.spindle_min {
+        head.entry("spindle").or_insert_with(|| json!({}))["min"] = json!(s);
     }
     if !m.spindle_ranges.is_empty() {
         // #170: the hand-changed speed ranges, [[low, high], ...] rpm.
@@ -149,12 +153,19 @@ pub fn mirror(m: &crate::machine::Machine) -> Value {
     {
         o.insert("kind".to_owned(), json!("plasma"));
     }
+    // #1882: a vendor-tree waterjet keeps its kind through the CLI mirror.
+    if crate::machine::kind(Some(m)) == crate::machine::Kind::Waterjet
+        && let Some(o) = out.as_object_mut()
+    {
+        o.insert("kind".to_owned(), json!("waterjet"));
+    }
     // #533: a wire or sinker EDM says its kind and its `edm` words (the
     // control's codes, D5, and whether it threads by itself) for the
     // EDM posts' machine check; every other mirror is unchanged. #542:
     // a sinker's `edm` also carries what the sinker post reads - its
     // orbit words, pickup and condition table (lengths already mm) - so
-    // a wire mirror keeps exactly main's two keys.
+    // a wire mirror keeps main's two keys, plus its condition table when
+    // the file states one (#3214).
     let k = crate::machine::kind(Some(m));
     if matches!(k, crate::machine::Kind::WireEdm | crate::machine::Kind::SinkerEdm)
         && let Some(o) = out.as_object_mut()
@@ -168,6 +179,14 @@ pub fn mirror(m: &crate::machine::Machine) -> Value {
             eo.insert("orbits".to_owned(), json!(e.orbits));
             eo.insert("pickup".to_owned(), json!(e.pickup));
             eo.insert("conditions".to_owned(), serde_json::to_value(&e.conditions).unwrap_or_else(|_| json!([])));
+        } else if let (Some(e), Some(eo)) = (m.edm.as_ref(), edm.as_object_mut())
+            && !e.conditions.is_empty()
+        {
+            // #3214: a wire's stated condition table (gaps already mm), so
+            // the Sodick post can state the gap the kerf used and flag an
+            // EXAMPLE row. Only when stated: a wire file with no table
+            // mirrors exactly as before.
+            eo.insert("conditions".to_owned(), serde_json::to_value(&e.conditions).unwrap_or_else(|_| json!([])));
         }
         // #1499: a wire's stated tank and flushing, as their words - only
         // when stated, so a mirror that states neither is main's.
@@ -177,6 +196,10 @@ pub fn mirror(m: &crate::machine::Machine) -> Value {
             }
             if let Some(f) = e.flushing {
                 eo.insert("flushing".to_owned(), json!(f.word()));
+            }
+            // #2686: the skim passes' flushing, only when stated.
+            if let Some(f) = e.skim_flushing {
+                eo.insert("skim_flushing".to_owned(), json!(f.word()));
             }
         }
         o.insert("edm".to_owned(), edm);
@@ -194,6 +217,7 @@ pub fn mirror(m: &crate::machine::Machine) -> Value {
     }
     if let Some(o) = out.as_object_mut() {
         super::machine_rotary::mirror_controller(m, o);
+        super::machine_installation::mirror(m, o);
     }
     out
 }
@@ -211,9 +235,18 @@ fn f64_or(v: Option<&Value>, default: f64) -> f64 {
     v.and_then(|x| x.as_f64()).unwrap_or(default)
 }
 
-/// The flattened object the script's `machine` global sees, per the
-/// format doc: name, rate maxima, spindle bound, coolant names.
+/// Return the properties of the script's `machine` global. Direct callers
+/// receive `{"error": reason}` if the installation facts fail validation.
+/// The post engine returns that error before it runs any script hooks.
 pub fn script_props(m: &Value) -> Value {
+    match super::machine_installation::checked_input(m) {
+        Ok(input) => flatten(&input),
+        Err(reason) => json!({ "error": reason }),
+    }
+}
+
+/// Project the machine prepared by the engine into the JavaScript host's properties.
+pub(super) fn flatten(m: &Value) -> Value {
     // An axes-array form contributes the max rapid across axes (the
     // post uses rapidRate as a ceiling, so the max is the permissive
     // bound).
@@ -265,14 +298,17 @@ pub fn script_props(m: &Value) -> Value {
             let n = spindle_heads(get(m, &["kinematics", "default", "parts"]));
             (n > 0).then_some(n as u64)
         });
-    json!({
+    let mut props = json!({
         "name": get(m, &["name"]).and_then(Value::as_str).unwrap_or(""),
         "capabilities": get(m, &["capabilities"]).cloned().unwrap_or_else(|| json!({})),
         "rapidRate": f64::max(rapid, axes_rapid),
         "feedRateMax": feed,
         "spindleMax": spindle,
+        "spindleMin": f64_or(m.pointer("/kinematics/static/head/spindle/min").or(m.get("spindleMin")), 0.0),
         "coolants": coolants,
         "rotaries": rotaries,
+        // #1882: the linear axes' stated strokes, mm ([min, max] or null).
+        "travel": super::machine_travel::linear(m),
         "rtcp": rtcp,
         "signConvention": sign_convention,
         "spindles": spindles.map_or(Value::Null, |n| json!(n)),
@@ -295,6 +331,13 @@ pub fn script_props(m: &Value) -> Value {
             .or(get(m, &["rigidTapping"]))
             .and_then(Value::as_bool)
             .unwrap_or(true),
+        // #2303: true only when the file STATES rigid tapping (a spindle
+        // encoder); `rigidTapping` above reads unstated as "not limited",
+        // which a post that needs the encoder cannot take as a yes.
+        "rigidTappingStated": get(m, &["kinematics", "static", "head", "rigidTapping"])
+            .or(get(m, &["rigidTapping"]))
+            .and_then(Value::as_bool)
+            == Some(true),
         // #495: the machine-coordinate Z a post retracts to (mm), or
         // null when the machine does not state one; `model` is the
         // machine's model name through either door (the mirror's
@@ -323,7 +366,9 @@ pub fn script_props(m: &Value) -> Value {
         // length), so the raw door needs no unit scaling here.
         "edm": get(m, &["edm"]).filter(|e| e.is_object()).cloned().unwrap_or(Value::Null),
         "invertedAxes": super::invert::stated(m).map(|(_, l)| l).unwrap_or_default(),
-    })
+    });
+    super::machine_installation::script_props(m, &mut props);
+    props
 }
 
 /// The stated safe Z retract (#495), mm: the mirror's `safeRetractZ`,
@@ -365,12 +410,4 @@ fn spindle_heads(parts: Option<&Value>) -> usize {
             ) + spindle_heads(p.get("parts"))
         })
         .sum()
-}
-
-/// The RS-274 rotary addresses: A turns about X, B about Y, C about Z.
-/// Everything else in an axes list is linear by our grammar (a Q
-/// slide is a slide - stage C's stated law, re-echoed at the raw
-/// door, where letters are all a bare file says).
-fn is_rotary_letter(letter: Option<&str>) -> bool {
-    matches!(letter, Some("A") | Some("B") | Some("C"))
 }

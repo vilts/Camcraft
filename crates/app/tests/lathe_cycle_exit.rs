@@ -159,6 +159,7 @@ fn both_lathe_posts_leave_a_face_drilled_hole_at_the_streams_exit() {
         plunge_feed: 80.0,
         holes: vec![hole],
         cross: vec![],
+        picks: Default::default(),
     };
     create(&world, &mut history, "AX1", "DR-0400", params);
     let records = posting::stream_records(&world).expect("every op generated");

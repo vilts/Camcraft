@@ -197,14 +197,10 @@ fn outline_chains(world: &World, name: &str) -> Vec<GeoSel> {
 }
 
 #[test]
-fn a_self_touching_single_body_still_stops_at_its_top_level() {
-    // The two half blocks as ONE model: a self-touching shell whose
-    // seam walls stand inside it. The union law is per BODY - one body
-    // is sliced as one soup, which meets the seam as a non-manifold
-    // contact - so the depth law still fails closed below the top
-    // level and names the skipped levels. Since #1927 a picked ring that
-    // keeps only that top plane is refused, and the refusal names the
-    // unreadable mesh, never the side: Outside of this outline is air.
+fn touching_closed_solids_in_one_model_cut_as_their_union() {
+    // #2845: one model can contain two complete closed solids. Their
+    // shared face is interior to the union, just as when each solid is
+    // imported as its own model. The cut must match the one-block cut.
     let mut facets: Vec<_> = half(-20.0, 0.0).facets.to_vec();
     facets.extend(half(0.0, 20.0).facets.iter().copied());
     let world = world_with(
@@ -217,16 +213,15 @@ fn a_self_touching_single_body_still_stops_at_its_top_level() {
     let params = contour(10.0, 0.0, Side::Outside);
     let o = op(SrcRef::Selection(picks), params.clone(), Default::default());
     assert_eq!(operation::region_of(&world, &o).expect("the outline bounds one area").loops().len(), 1);
-    let err = run(&world, &o).expect_err("no level below the top is proven clear");
-    assert!(err.contains("meets its wall at no level below the part top Z 10.000"), "only the top level: {err}");
-    assert!(err.contains("levels below skipped (0.000)"), "the skipped levels are named: {err}");
-    assert!(err.contains("non-manifold"), "the mesh is named as the cause: {err}");
-    assert!(!err.contains("set Side") && !err.contains("stands in the part material"), "the side is not blamed: {err}");
-    // And the one-block reference cuts below it.
-    // #2004: the ladder is the one level Z 0 (no air level at Z 10).
-    let (single, _) = run(&block_world(), &one_block_op(&params)).expect("cut");
-    let zs = feed_levels(&single);
-    assert!(!zs.is_empty() && zs.iter().all(|z| *z < 10.0 - EPS), "{zs:?}");
+    let (across, wa) = run(&world, &o).expect("the closed solids cut as their union");
+    let (single, ws) = run(&block_world(), &one_block_op(&params)).expect("reference cut");
+    assert_same_cut(&across, &single);
+    assert_eq!(wa, ws, "the union verifies as the one-block cut does: {:?}", across.notes);
+    assert!(
+        !across.notes.iter().any(|n| n.contains("levels below skipped")),
+        "no level is skipped on the union: {:?}",
+        across.notes
+    );
 }
 
 fn feed_length_at(t: &Toolpath, z: f64) -> f64 {

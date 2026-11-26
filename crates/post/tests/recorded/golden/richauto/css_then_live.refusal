@@ -1,0 +1,4 @@
+; richauto.cps refused css_then_live: 3 warning(s), the program is never released
+warning: operation Cross mill: is C-axis live-tool work (the spindle turns as C under a radial live tool), but this post script does not declare liveTooling - use a lathe post that voices the C axis
+warning: constant surface speed (G96) is unsupported by the 3-axis RichAuto DSP A11 post
+warning: single-tool RichAuto DSP A11 refuses mid-program tool change from T1 to T2

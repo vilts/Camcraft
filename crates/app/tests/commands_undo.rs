@@ -360,7 +360,7 @@ fn cat_tool(name: &str) -> camcraft_app::tools::Tool {
 }
 
 fn face_params() -> OpParams {
-    OpParams::Face { holes: Default::default(), tilt: None, blend_turns: false,
+    OpParams::Face { holes: Default::default(), tilt: None, blend_turns: false, blend_radius: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
         cut_z: Height::fixed(4.5),
@@ -369,6 +369,7 @@ fn face_params() -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -529,7 +530,7 @@ fn set_geometry_refusals_never_write_the_world() {
     let before = op_src(&world, "G1");
 
     // Op that does not exist: NotFound.
-    let ghost = GeoSel { entity: "part".into(), feature: top };
+    let ghost = GeoSel { entity: "part".into(), feature: top.clone() };
     assert!(matches!(
         SetOperationGeometry::new(&world, "no-op", vec![ghost.clone()]),
         Err(CommandError::NotFound(_))
@@ -544,7 +545,7 @@ fn set_geometry_refusals_never_write_the_world() {
         SetOperationGeometry::new(
             &world,
             "G1",
-            vec![GeoSel { entity: "gone".into(), feature: top }]
+            vec![GeoSel { entity: "gone".into(), feature: top.clone() }]
         ),
         Err(CommandError::NotFound(_))
     ));

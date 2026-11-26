@@ -98,6 +98,12 @@ fn every_catalog_row_paints_its_kind_glyph() {
     h.run();
     crate::actions::target(&mut h.state_mut().state, UiTarget::Tool(String::new()));
     h.run();
+    // #3892: the seeded document has tools, so the window opens on the
+    // Document source; the catalog is its other source.
+    if let Some(view) = h.state_mut().state.tool_library.as_mut() {
+        view.source = crate::state::ToolSource::Catalog;
+    }
+    h.run();
     h.run();
     for (name, ct) in tools::catalog() {
         let label = format!("{name}  \u{d8}");

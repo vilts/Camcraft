@@ -29,6 +29,7 @@ impl SelectPost {
     /// real names, so a stranger is a corrupt project, and a corrupt
     /// project's post choice is refused the same way.
     pub fn new(world: &World, next: PostRef) -> Result<Self, CommandError> {
+        let next = posting::agie::current_ref(next);
         validate(&next)?;
         let prev = posting::document_post_of(world);
         if prev == next {
@@ -46,7 +47,7 @@ impl SelectPost {
 pub(crate) fn validate(next: &PostRef) -> Result<(), CommandError> {
     match next {
         PostRef::File(path) => {
-            let text = std::fs::read_to_string(path)
+            let text = crate::session_files::read_post(path)
                 .map_err(|e| CommandError::Invalid(format!("post script {path}: {e}")))?;
             engine::run(&text, &serde_json::Value::Null, "")
                 .map_err(|e| CommandError::Invalid(format!("post script {path} does not run: {e}")))?;

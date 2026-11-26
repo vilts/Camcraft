@@ -55,6 +55,9 @@ fn electrode() -> Tool {
         catalog: Default::default(),
         cutting: Vec::new(),
         outline: Vec::new(),
+        tip_form: Default::default(),
+        tip_diameter: 0.0,
+        form: None,
     }
 }
 
@@ -72,10 +75,12 @@ fn burn() -> OpParams {
         pass: SinkerPass::Single,
         cavity_x: 0.0,
         cavity_y: 0.0,
+        cavity_outline: Vec::new(),
         orbit: None,
         layer: None,
         wear_lost: None,
         wear_over: None,
+        picks: Default::default(),
     })
 }
 

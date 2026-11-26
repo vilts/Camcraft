@@ -14,8 +14,8 @@ use crate::geometry::Triangle;
 use crate::machine::{ConditionField, Kind};
 use crate::machining2d::GenError;
 use crate::sinker::{SinkerDatum, SinkerParams};
-use crate::sinker_undersize::{inverted, judge, SinkerPass, Undersize};
-use crate::sinker_wear::burn_compensated;
+use crate::sinker_undersize::{inverted, judge, judge_outline, SinkerPass, Undersize};
+use crate::sinker_wear::burn_compensated_between;
 use crate::tools::{Tool, ToolKind};
 use crate::verify::Warning;
 
@@ -48,10 +48,12 @@ pub(super) fn burn_draft(c: &Carried) -> SinkerBurnOp {
         pass: super::SinkerPass::Single,
         cavity_x: 0.0,
         cavity_y: 0.0,
+        cavity_outline: Vec::new(),
         orbit: None,
         layer: None,
         wear_lost: None,
         wear_over: None,
+        picks: crate::path_picks::PathPicks::default(),
     }
 }
 
@@ -258,13 +260,22 @@ pub(super) fn generate_sinker(
             gap,
             undersize: r.undersize,
             orbit: op.orbit,
-            // #1152: a body electrode is judged on its outline's extents.
+            // #1152: the legacy size law distinguishes body extents from a rectangle.
             outline: camcraft_tools::electrode::outline(tool).is_some(),
         };
-        p.stand = Some(judge(&u, op.condition.trim())?);
+        p.stand = Some(if op.cavity_outline.is_empty() {
+            judge(&u, op.condition.trim())?
+        } else {
+            let outline = camcraft_tools::electrode::outline(tool)
+                .ok_or_else(|| GenError::Invalid("sinker burn: a cavity outline requires an electrode outline".into()))?;
+            judge_outline(&u, &op.cavity_outline, outline, op.condition.trim())?
+        });
     }
     let w = super::sinker_wear_op::sinker_wear(op, cond_wear);
-    let path = burn_compensated(&p, &w)?;
+    // #3333: the start and exit picks, as the orbit's start and end
+    // angles. The generator's own door: an impossible pick is refused.
+    let ends = op.orbit_ends().map_err(GenError::Invalid)?;
+    let path = burn_compensated_between(&p, &w, &ends)?;
     let mut warns = Vec::new();
     if let Some(PassRead { undersize, rough: Some((_, rough)) }) = read
         && op.pass == SinkerPass::Finish

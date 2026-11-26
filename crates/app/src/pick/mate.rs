@@ -49,9 +49,9 @@ pub fn mate_datum(world: &World, g: &GeoSel, pose: Location) -> Result<MateDatum
         [w.x, w.y, w.z]
     };
     let label = || super::geo_label(world, g);
-    match g.feature {
+    match &g.feature {
         FeatureSel::Vertex(id) => {
-            let vi = feature::resolve_vertex(&features, id).ok_or_else(|| gone(world, g))?;
+            let vi = feature::resolve_vertex(&features, *id).ok_or_else(|| gone(world, g))?;
             let v = features.verts.get(vi as usize).ok_or_else(|| gone(world, g))?;
             let p = place(*v);
             if !p.iter().all(|c| c.is_finite()) {
@@ -60,7 +60,7 @@ pub fn mate_datum(world: &World, g: &GeoSel, pose: Location) -> Result<MateDatum
             Ok(MateDatum::Point(p))
         }
         FeatureSel::Face(fid) => {
-            let f = features.faces.iter().find(|f| f.id == fid).ok_or_else(|| gone(world, g))?;
+            let f = features.faces.iter().find(|f| f.id == *fid).ok_or_else(|| gone(world, g))?;
             if f.kind == feature::FaceKind::Degenerate {
                 return Err(format!("{} is degenerate (no usable plane) - pick another face", label()));
             }
@@ -85,6 +85,9 @@ pub fn mate_datum(world: &World, g: &GeoSel, pose: Location) -> Result<MateDatum
         }
         FeatureSel::Chain(_) => {
             Err(format!("{} is an edge - pick a flat face or a vertex", label()))
+        }
+        FeatureSel::SketchChain(_) | FeatureSel::SketchLayer(_) => {
+            Err(format!("{} is a DXF sketch pick - pick a flat face or a vertex", label()))
         }
     }
 }

@@ -1,0 +1,170 @@
+// Example catalog case: turning/cone-thread (#2392, #2394).
+// A spun profile: a cone with a threaded end, on a 2-axis lathe.
+// Builds cone-thread.camproj and posts cone-thread.nc headlessly through
+// CamCraft's undoable command verbs. Run with CWD = this case directory:
+//   camcraft-cli script build.camscript
+
+// Two models on the same axis: the turned blank (the part before the neck
+// and the thread are cut) and the finished part. The facing and profile
+// operations cut to the blank. The neck, the thread and the part-off cut
+// to the finished part.
+cam.import("model/cone-blank.obj", "cone-blank");
+cam.import("model/cone-thread.obj", "cone-thread");
+// Embed both meshes so opening the project does not depend on the working directory.
+cam.call("set_model_link", { model: "cone-blank", path: null });
+cam.call("set_model_link", { model: "cone-thread", path: null });
+
+// A 30 mm bar on the Z axis: z 0 at the chuck, z 79 at the free end.
+cam.call("set_stock", {
+  cylinder: { diameter: 30.0, height: 79.0 }
+});
+
+// The 2-axis lathe (assets/machines/lathe.mch) and the Fanuc-style lathe
+// post (assets/posts/fanuc-lathe.cps). A setup carries the post.
+cam.call("load_machine", { builtin: "Lathe" });
+cam.call("add_setup", { name: "Turning" });
+cam.call("set_setup_post", { post: "Fanuc Lathe" });
+
+// T1: a turning insert with a 0.8 mm nose. T2: a 3 mm grooving blade.
+cam.call("add_tool", { catalog: "TN-1600-0R8" });
+cam.call("add_tool", { catalog: "GT-0300" });
+// T3: a 60 degree threading insert, 1.2 mm wide. The insert must be
+// narrower than the 1.5 mm pitch and must reach the 0.92 mm thread depth.
+// The catalog inserts (0.866 mm and 1.732 mm wide) do not fit this pitch.
+cam.call("add_tool", {
+  name: "TD-1200-60",
+  definition: {
+    kind: "thread",
+    diameter: 16.0,
+    width: 1.2,
+    tip_angle: 60.0,
+    flute_len: 8.0,
+    shank_d: 16.0,
+    shank_len: 60.0,
+    holder_d: 0.0,
+    holder_len: 0.0,
+    corner_r: 0.0,
+    nose_radius: 0.0,
+    pitch: 0.0,
+    rpm: 800.0,
+    feed: 120.0,
+    material_group: "aluminum"
+  }
+});
+
+// All heights are fixed Z values on the bar's axis.
+var z = function (v) { return { reference: "fixed", offset: v }; };
+
+// 1. Face the free end: 1 mm off the bar, down to the part's end face.
+cam.call("add_operation", {
+  kind: "Facing",
+  name: "Face",
+  tool: "TN-1600-0R8",
+  source: "cone-blank",
+  params: {
+    tolerance: 0.05,
+    clearance_z: z(84.0),
+    top_z: z(79.0),
+    bottom_z: z(78.0),
+    stepdown: 0.5,
+    feed: 150.0,
+    plunge_feed: 80.0
+  }
+});
+
+// 2. Rough the profile: the thread diameter, the cone and the shoulder.
+// The window starts on the collar (z 18), below the shoulder at z 20.
+cam.call("add_operation", {
+  kind: "Profile Rough",
+  name: "Rough profile",
+  tool: "TN-1600-0R8",
+  source: "cone-blank",
+  params: {
+    tolerance: 0.05,
+    clearance_z: z(84.0),
+    top_z: z(78.0),
+    bottom_z: z(18.0),
+    stepdown: 1.0,
+    stock_to_leave: 0.25,
+    feed: 150.0,
+    plunge_feed: 80.0
+  }
+});
+
+// 3. Finish the profile in one ride of the nose.
+cam.call("add_operation", {
+  kind: "Profile Finish",
+  name: "Finish profile",
+  tool: "TN-1600-0R8",
+  source: "cone-blank",
+  params: {
+    tolerance: 0.05,
+    clearance_z: z(84.0),
+    top_z: z(78.0),
+    bottom_z: z(18.0),
+    feed: 100.0,
+    plunge_feed: 80.0
+  }
+});
+
+// 4. Cut the neck (thread relief): one plunge of the 3 mm blade.
+cam.call("add_operation", {
+  kind: "Groove Finish",
+  name: "Neck",
+  tool: "GT-0300",
+  source: "cone-thread",
+  params: {
+    tolerance: 0.05,
+    clearance_z: z(84.0),
+    top_z: z(63.0),
+    bottom_z: z(60.0),
+    feed: 60.0,
+    plunge_feed: 40.0
+  }
+});
+
+// 5. Cut the M10x1.5 thread: four passes of 0.25 mm to the 0.92 mm depth.
+// The window ends at the end face and starts above the neck.
+cam.call("add_operation", {
+  kind: "Threading",
+  name: "Thread",
+  tool: "TD-1200-60",
+  source: "cone-thread",
+  params: {
+    tolerance: 0.05,
+    clearance_z: z(84.0),
+    top_z: z(78.0),
+    bottom_z: z(63.5),
+    pitch: 1.5,
+    depth: 0.92,
+    infeed: 0.25,
+    feed: 100.0,
+    plunge_feed: 40.0
+  }
+});
+
+// 6. Part off at the part's floor (z 15).
+cam.call("add_operation", {
+  kind: "Parting",
+  name: "Part off",
+  tool: "GT-0300",
+  source: "cone-thread",
+  params: {
+    tolerance: 0.05,
+    clearance_z: z(84.0),
+    top_z: z(78.0),
+    bottom_z: z(15.0),
+    stepdown: 0.5,
+    feed: 60.0,
+    plunge_feed: 40.0
+  }
+});
+
+cam.generate();
+var verdict = cam.verify();
+if (!verdict.ok) {
+  throw new Error("catalog verify failed: " + JSON.stringify(verdict));
+}
+cam.save("cone-thread.camproj");
+cam.post({ to: "cone-thread.nc" });
+cam.report();

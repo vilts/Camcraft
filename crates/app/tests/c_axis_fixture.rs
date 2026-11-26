@@ -84,7 +84,7 @@ fn world() -> (World, History) {
     h.execute(&world, LoadMachine::new(&world, "millturn.mch".into(), Some(mill_turn())).expect("machine"));
     let params = OpParams::RotaryContour {
         tolerance: 0.05,
-        clearance_z: Height::fixed(25.0),
+        clearance_z: Height::fixed(40.0),
         retract_z: None,
         top_z: Height::fixed(6.0),
         bottom_z: Height::fixed(-8.0),
@@ -94,6 +94,8 @@ fn world() -> (World, History) {
         lead_deg: 0.0,
         lag_deg: 0.0,
         max_tilt_deg: 60.0,
+        stated_axis: None,
+        picks: Default::default(),
     };
     let op = CreateOperation::new(&world, "OP", "BN-0600", SrcRef::Entity("bar".into()), params);
     h.execute(&world, op.expect("create"));

@@ -33,7 +33,7 @@ fn editor_on(tool: &str) -> Harness<'static, ShellUi> {
     harness.run();
     rack(&mut harness.state_mut().state, &[tool]);
     harness.run();
-    crate::actions::open_tool_editor(&mut harness.state_mut().state, tool);
+    crate::actions::open_tool_shape_editor(&mut harness.state_mut().state, tool);
     harness.run();
     harness.run();
     harness
@@ -64,7 +64,7 @@ fn a_turning_tool_places_its_holder_in_the_lathe_frame_as_one_undoable_command()
     let mut harness = editor_on(INSERT);
     assert!(harness.query_by_label("Import body…").is_some(), "Import body… stands on a turning tool");
     assert!(harness.query_by_label("Body frame").is_none(), "a lathe steel has one frame, no switch");
-    assert!(harness.query_by_label_contains("the holder is not judged").is_some(), "a bare turning tool says so");
+    assert!(harness.query_by_label_contains("the holder is not checked for collisions").is_some(), "a bare turning tool says so");
     place(&mut harness, PLACED);
     assert!(frame_of(&harness.state().state, INSERT).is_none(), "importing alone never touches the world");
     for label in ["Pick tip", "Pick radial", "Pick spindle", "Insert zone", "Apply body"] {
@@ -72,7 +72,7 @@ fn a_turning_tool_places_its_holder_in_the_lathe_frame_as_one_undoable_command()
     }
     assert!(harness.query_by_label("Pick axis").is_none(), "no spindle-axis placement on a lathe steel");
     assert!(
-        harness.query_by_label_contains("placed: radial 2.0 to 120.0, spindle -26.0 to -1.0 mm from the tip").is_some(),
+        harness.query_by_label_contains("Placed: radial 2.0 to 120.0, spindle -26.0 to -1.0 mm from the tip").is_some(),
         "the note reads the body in the turning frame"
     );
     harness.get_by_label("Apply body").click();
@@ -106,7 +106,7 @@ fn a_turning_tool_places_its_holder_in_the_lathe_frame_as_one_undoable_command()
 fn a_lathe_placement_that_is_no_frame_is_refused_by_name_in_the_editor() {
     let mut harness = editor_on(INSERT);
     place(&mut harness, LathePlacement { along: [1.0, 0.2, 0.0], ..PLACED });
-    assert!(harness.query_by_label_contains("placement: the lathe body's radial and spindle directions are not square").is_some());
+    assert!(harness.query_by_label_contains("Placement error: the lathe body's radial and spindle directions are not square").is_some());
     harness.get_by_label("Apply body").click();
     harness.run();
     harness.run();

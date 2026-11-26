@@ -1,0 +1,3 @@
+kinds = ["Taper Turning"]
+machine = "Lathe"
+expect = "post"

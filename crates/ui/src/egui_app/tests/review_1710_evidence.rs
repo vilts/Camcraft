@@ -76,6 +76,7 @@ fn viewport(h: &mut Harness<'static, ShellUi>) {
 #[test]
 #[ignore = "manual PR review evidence capture; requires GPU and writes evidence PNGs"]
 fn review_1710_wcs_page_and_viewport_evidence() {
+    let _gpu = crate::headless_gpu::gpu_guard(); // #3605: viewport() makes devices
     let _guard = snapshot_guard();
     let out = std::env::temp_dir().join("camcraft-review-1710");
     let before =

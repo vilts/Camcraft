@@ -277,6 +277,7 @@ mod tests {
             hand: ThreadHand::Right,
             external: false,
             passes: crate::machining2d::ThreadPasses::default(),
+            picks: Default::default(),
         }
     }
 
@@ -292,6 +293,12 @@ mod tests {
         let b = bores(&tool, &thread(None), true);
         assert_eq!(b.len(), 1);
         assert!((b[0].major - b[0].minor - 0.5413 * 1.5).abs() < 1e-12, "{b:?}");
+        assert_eq!(b[0].exit, None, "a blind hole has no exit face");
+        let mut through_op = thread(None);
+        if let OpParams::Thread { holes, .. } = &mut through_op {
+            holes[0].through = true;
+        }
+        assert_eq!(bores(&tool, &through_op, true)[0].exit, Some(-10.0));
         // A single-form mill cutting a 1 mm pitch inside its 0.5 to 1.5
         // range: the grant is the 1 mm thread's depth, not the coarsest's.
         let single = Tool { kind: crate::tools::ToolKind::ThreadMillSingle, pitch_min: 0.5, flute_len: 2.0, ..tool.clone() };

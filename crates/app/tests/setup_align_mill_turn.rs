@@ -1,7 +1,8 @@
 //! #2287: part alignment on a mill-turn machine - turning ops, live-tool
 //! cross-drilling (`detect_holes` + `"Fanuc Lathe"` post) and milling ops
-//! (`PostRef::Builtin`) cut like their baked mesh twins, while Probe,
-//! 5-axis/rotary and 3+2 tilted ops keep their alignment refusals.
+//! (`PostRef::Builtin`) cut like their baked mesh twins, while the
+//! 5-axis/rotary and 3+2 tilted ops keep their alignment refusals
+//! (Probe joined the verified kinds with #2285).
 //!
 //! Provenance: our own synthetic fixtures and `cross_support`'s drilled bar;
 //! no vendor material consulted.
@@ -169,14 +170,17 @@ fn mill_turn_turning_and_cross_drill_match_baked() {
             ("FC1", OpParams::Facing {
                 tolerance: 0.05, clearance_z: Height::fixed(26.0),
                 top_z: Height::fixed(22.0), bottom_z: Height::fixed(20.0), stepdown: 1.0, feed: 150.0, plunge_feed: 80.0,
+                picks: Default::default(),
             }),
             ("PR1", OpParams::ProfileRough {
                 tolerance: 0.05, clearance_z: Height::fixed(25.0),
                 top_z: Height::fixed(20.0), bottom_z: Height::fixed(-2.0), stepdown: 1.0, stock_to_leave: 0.25, feed: 150.0, plunge_feed: 80.0,
+                picks: Default::default(),
             }),
             ("PF1", OpParams::ProfileFinish {
                 tolerance: 0.05, clearance_z: Height::fixed(25.0),
                 top_z: Height::fixed(20.0), bottom_z: Height::fixed(-2.0), feed: 120.0, plunge_feed: 60.0,
+                picks: Default::default(),
             }),
         ];
         for (name, params) in ops {
@@ -237,7 +241,7 @@ fn mill_turn_turning_and_cross_drill_match_baked() {
 }
 
 #[test]
-fn mill_turn_milling_ops_match_baked_while_probe_5axis_and_tilt_stay_refused() {
+fn mill_turn_milling_ops_match_baked_while_5axis_and_tilt_stay_refused() {
     let raw = unturn(&stepped_pad());
     let mill_doc = |mesh: Mesh, do_align: bool| -> (World, Result<(), String>, Option<Mesh>) {
         let w = new_world();
@@ -287,7 +291,7 @@ fn mill_turn_milling_ops_match_baked_while_probe_5axis_and_tilt_stay_refused() {
         "unaligned contour must cut a different XY footprint"
     );
 
-    // Probe, 5-axis, rotary and 3+2 tilted ops stay refused on aligned mill-turn.
+    // 5-axis, rotary and 3+2 tilted ops stay refused on aligned mill-turn.
     let mut tilted = seed_params(OpType::Face.ordinal());
     if let OpParams::Face { tilt, .. } = &mut tilted {
         *tilt = Some(Tilt { basis_version: 1, a_deg: 15.0, b_deg: 0.0, origin: [0.0; 3] });
@@ -306,7 +310,7 @@ fn mill_turn_milling_ops_match_baked_while_probe_5axis_and_tilt_stay_refused() {
     let err = setup_align::generation_problem(&tw, &tilted_op).expect("tilted stays refused");
     assert!(err.contains("tilted plane is not supported yet"), "{err}");
 
-    for ty in [OpType::Probe, OpType::Contour5D, OpType::RotaryContour] {
+    for ty in [OpType::Contour5D, OpType::RotaryContour] {
         let params = seed_params(ty.ordinal());
         let op = Operation {
             tool: "EM-0600-4FL".into(),
@@ -322,4 +326,19 @@ fn mill_turn_milling_ops_match_baked_while_probe_5axis_and_tilt_stay_refused() {
         let err = setup_align::generation_problem(&tw, &op).expect("unverified kind stays refused on mill-turn");
         assert!(err.contains("not supported yet in an aligned setup"), "{ty:?}: {err}");
     }
+
+    // #2285: the Probe's pick seeds in the setup frame, so the mill side
+    // of the mill-turn admits it too - the door no longer refuses it.
+    let probe_op = Operation {
+        tool: "PRB-0400".into(),
+        src: SrcRef::Entity("pad".into()),
+        params: seed_params(OpType::Probe.ordinal()),
+        stamp: None,
+        setup: Some("Setup1".into()),
+        area: AreaControls::default(),
+        coolant: CoolantMode::default(),
+        after: AfterOperation::default(),
+        suppressed: false,
+    };
+    assert_eq!(setup_align::generation_problem(&tw, &probe_op), None, "Probe is verified aligned");
 }

@@ -26,9 +26,9 @@ use solidcore::kernel::CancelToken;
 
 use crate::KernelError;
 use crate::solidcore_impl::SolidcoreKernel;
-use crate::solidcore_step::{StepSolid, build_record};
+use crate::solidcore_step::{RecordSource, StepSolid, build_record};
 
-pub use sha256::hex_digest;
+pub use sha256::{hex_digest, Sha256};
 pub use zip::looks_like_zip;
 
 const OP: &str = "import_solidcraft";
@@ -182,7 +182,7 @@ fn import_guarded(
         return Err(timed_out("decoding the final body"));
     }
     let solid =
-        build_record(k, 0, body.name, body.record, Vec::new()).map_err(|(stage, why)| {
+        build_record(k, RecordSource::Solidcraft, body.name, body.record, Vec::new()).map_err(|(stage, why)| {
             if stop.is_cancelled() {
                 timed_out("building the final body")
             } else {

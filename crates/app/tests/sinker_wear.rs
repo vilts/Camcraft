@@ -98,10 +98,12 @@ fn burn(layer: Option<f64>, measured: Option<(f64, f64)>) -> OpParams {
         pass: SinkerPass::Single,
         cavity_x: 0.0,
         cavity_y: 0.0,
+        cavity_outline: Vec::new(),
         orbit: None,
         layer,
         wear_lost: measured.map(|m| m.0),
         wear_over: measured.map(|m| m.1),
+        picks: Default::default(),
     })
 }
 

@@ -1,7 +1,7 @@
 //! Provenance: issue #1545 adversarial STEP fixtures derived from our box.step.
-//! Gate map (M4.4): covers app::geometry::import::step, app::geometry::import::step_guard.
+//! Gate map (M4.4): covers app::geometry::import::step, camcraft_kernel::step_curve_guard.
 
-use camcraft_app::geometry::import::{self, step, Format};
+use camcraft_app::geometry::import::{self, Format};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -26,7 +26,7 @@ fn fixture(swept: bool, rational: bool) -> Vec<u8> {
 fn refusal(swept: bool, rational: bool) -> String {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
-        let result = step::with_face_eval_cap(100_000, || import::parse_model(&fixture(swept, rational), Format::Step));
+        let result = import::parse_model(&fixture(swept, rational), Format::Step);
         let _ = tx.send(result);
     });
     match rx.recv_timeout(Duration::from_secs(20)).expect("curve subdivision must finish within 20 seconds") {

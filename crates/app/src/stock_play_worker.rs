@@ -43,7 +43,6 @@
 //!   by name. Dropping the handle stops and joins the thread: no
 //!   playback outlives its document.
 
-use std::collections::HashSet;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
@@ -56,8 +55,12 @@ use crate::stock_play::{settle_frac, FieldPlay, PlayIndex, PlaySeed, Precalc};
 mod precalc;
 use precalc::{precalc, refuse};
 use camcraft_sim::play_precalc_mailbox::Mailbox;
-use crate::stock_view::{CutLayer, FieldView, Packed, PackedBase};
-use crate::stock_sim::preview::{pack_cut, pack_cut_patch, LatticeMeta};
+use crate::stock_view::{FieldView, PackedBase};
+use crate::stock_sim::LayerCutter;
+
+#[path = "stock_play_worker_frame.rs"]
+mod frame;
+use frame::{snapshot, Chain};
 
 /// The publication floor: at most ~20 views a second while cutting.
 pub const MIN_PUBLISH: Duration = Duration::from_millis(50);
@@ -131,10 +134,18 @@ impl PlayWorker {
     /// Start a worker over `seed` (the fields are built on the worker,
     /// so the call returns at once). `Err` only when no thread spawns.
     pub fn spawn(seed: PlaySeed) -> Result<Self, String> {
-        Self::start(seed, None)
+        Self::start(seed, None, None)
     }
 
-    fn start(seed: PlaySeed, budget: Option<usize>) -> Result<Self, String> {
+    /// `spawn` in the layer mode (#2629, GPU stock sim S3b): the ops that
+    /// the f32 twin can cut are cut by `cutter` into a dense layer, and
+    /// every frame is the whole packed layer. Only for an eye that reads
+    /// the packed frame alone (`FieldView::stock` lacks those ops' cut).
+    pub fn spawn_layered(seed: PlaySeed, cutter: Arc<LayerCutter>) -> Result<Self, String> {
+        Self::start(seed, None, Some(cutter))
+    }
+
+    fn start(seed: PlaySeed, budget: Option<usize>, cutter: Option<Arc<LayerCutter>>) -> Result<Self, String> {
         let index = seed.index();
         let shared = Arc::new(Shared::default());
         if budget.is_some() {
@@ -143,7 +154,7 @@ impl PlayWorker {
         let inner = Arc::clone(&shared);
         let handle = std::thread::Builder::new()
             .name("camcraft-playback".into())
-            .spawn(move || run(&inner, seed, budget))
+            .spawn(move || run(&inner, seed, budget, cutter))
             .map_err(|e| format!("playback worker would not start: {e}"))?;
         Ok(PlayWorker { shared, index, handle: Some(handle), shown: AtomicUsize::new(usize::MAX), shown_frac: AtomicU64::new(0) })
     }
@@ -277,68 +288,7 @@ fn next_target(shared: &Shared, pos: (usize, f64), published: Option<(usize, f64
     }
 }
 
-/// Cells in a brick (the field's 8^3): the patch-size yardstick.
-const BRICK_TEXELS: usize = 512;
-
-/// What the worker last published: the patch base of the next frame.
-#[derive(Default)]
-struct Chain {
-    seq: u64,
-    last: Option<Last>,
-}
-
-enum Last {
-    Full,
-    Patch { from: u64, set: HashSet<[i32; 3]> },
-}
-
-fn texels(meta: &LatticeMeta) -> usize {
-    meta.dims.iter().fold(1usize, |n, &d| n.saturating_mul(d as usize))
-}
-
-/// This frame's cut layer relation: `Some((from, bricks))` for a patch
-/// over frame `from`, `None` for the whole layer (the module law).
-fn delta(
-    dirty: Option<HashSet<[i32; 3]>>,
-    last: Option<Last>,
-    untaken: bool,
-    seq: u64,
-) -> Option<(u64, HashSet<[i32; 3]>)> {
-    match (dirty?, last?) {
-        // The frame before still sits untaken and this one replaces
-        // it: the patch must also carry that frame's bricks.
-        (d, Last::Patch { from, mut set }) if untaken => {
-            set.extend(d);
-            Some((from, set))
-        }
-        (_, Last::Full) if untaken => None,
-        (d, _) => Some((seq.saturating_sub(1), d)),
-    }
-}
-
-fn snapshot(shared: &Shared, play: &mut FieldPlay, base: Option<&Arc<PackedBase>>, chain: &mut Chain) -> PlayFrame {
-    let dirty = play.take_dirty();
-    let mut view = play.view();
-    if let (Some(base), Some(f)) = (base, view.stock.field()) {
-        chain.seq = chain.seq.saturating_add(1);
-        let seq = chain.seq;
-        let untaken = lock(&shared.out).is_some_and(|g| matches!(g.latest, Some(Ok(_))));
-        let d = delta(dirty, chain.last.take(), untaken, seq)
-            .filter(|(_, set)| set.len().saturating_mul(BRICK_TEXELS) < texels(&base.meta));
-        let (cut, last) = match d {
-            Some((from, set)) => {
-                let patch = Arc::new(pack_cut_patch(f, &base.meta, &set));
-                (CutLayer::Patch { from, patch }, Last::Patch { from, set })
-            }
-            None => (CutLayer::Full(Arc::new(pack_cut(f, &base.meta))), Last::Full),
-        };
-        chain.last = Some(last);
-        view.packed = Some(Packed { base: Arc::clone(base), seq, cut });
-    }
-    PlayFrame { at: play.at(), frac: play.frac(), view: Arc::new(view) }
-}
-
-fn run(shared: &Shared, seed: PlaySeed, budget: Option<usize>) {
+fn run(shared: &Shared, seed: PlaySeed, budget: Option<usize>, cutter: Option<Arc<LayerCutter>>) {
     let mut play = match FieldPlay::from_seed(seed) {
         Ok(p) => p,
         Err(e) => return refuse(shared, budget, e),
@@ -348,6 +298,9 @@ fn run(shared: &Shared, seed: PlaySeed, budget: Option<usize>) {
         let v = play.view();
         PackedBase::of(&v.stock, v.target.as_deref()).map(|(b, _)| Arc::new(b))
     };
+    if let (Some(cutter), Some(base)) = (cutter, base.as_ref()) {
+        frame::enable_layer(&mut play, base, cutter);
+    }
     if let Some(budget) = budget
         && !precalc(shared, &mut play, budget)
     {
@@ -398,7 +351,7 @@ fn run(shared: &Shared, seed: PlaySeed, budget: Option<usize>) {
         let pos = (play.at(), play.frac());
         let fresh = published.is_none_or(|p: (usize, f64)| (p.0, p.1.to_bits()) != (pos.0, pos.1.to_bits()));
         if fresh && (landed || due) {
-            publish(shared, Ok(snapshot(shared, &mut play, base.as_ref(), &mut chain)));
+            publish(shared, snapshot(shared, &mut play, base.as_ref(), &mut chain));
             published = Some(pos);
             last = Some(Instant::now());
         }

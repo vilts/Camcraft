@@ -33,7 +33,7 @@ use camcraft_app::world::new_world;
 fn face_params(cut_z: f64, clear_z: f64) -> OpParams {
     OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 4.0,
         clearance_z: Height::fixed(clear_z),
@@ -43,6 +43,7 @@ fn face_params(cut_z: f64, clear_z: f64) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -295,7 +296,9 @@ fn rotated_wcs_carries_pocket_slot_circular_and_drill_ops() {
         *bottom_z = Height::fixed(b.max.z - 2.0);
     }
     let mut drill = retype_params(&face_params(19.5, 25.0), OpType::Drill.ordinal());
-    if let OpParams::Drill { holes, clearance_z, retract_z, top_z, bottom_z, .. } = &mut drill {
+    if let OpParams::Drill { holes, clearance_z, retract_z, top_z, bottom_z, feed, plunge_feed, .. } = &mut drill {
+        // #2598: DR-0600's own feed; the face seed's 1200 / 300 is refused.
+        (*feed, *plunge_feed) = (115.0, 115.0);
         *clearance_z = Height::fixed(b.max.z + 5.0);
         *retract_z = None;
         *top_z = Height::fixed(b.max.z);

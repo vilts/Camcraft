@@ -90,7 +90,7 @@ fn first_in_solid(t: &Toolpath, floor: f64) -> Option<(usize, Point3)> {
 }
 
 fn pocket(strategy: PocketStrategy, bottom: f64, stepdown: f64) -> OpParams {
-    OpParams::Pocket { rest: None,
+    OpParams::Pocket { pass_start: Default::default(), rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 4.0,
@@ -112,6 +112,8 @@ fn pocket(strategy: PocketStrategy, bottom: f64, stepdown: f64) -> OpParams {
         optimal_load: 0.4,
         blend_turns: false,
         tilt: None,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     }
 }
 

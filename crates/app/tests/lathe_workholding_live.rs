@@ -135,7 +135,7 @@ fn wrapped(m: Machine, chuck: Option<f64>) -> World {
     }
     let params = OpParams::RotaryContour {
         tolerance: 0.05,
-        clearance_z: Height::fixed(25.0),
+        clearance_z: Height::fixed(40.0),
         retract_z: None,
         top_z: Height::fixed(6.0),
         bottom_z: Height::fixed(-8.0),
@@ -145,6 +145,8 @@ fn wrapped(m: Machine, chuck: Option<f64>) -> World {
         lead_deg: 0.0,
         lag_deg: 0.0,
         max_tilt_deg: 60.0,
+        stated_axis: None,
+        picks: Default::default(),
     };
     let op = CreateOperation::new(&world, "W1", "BN-0600", SrcRef::Entity("bar".into()), params);
     h.execute(&world, op.expect("create"));

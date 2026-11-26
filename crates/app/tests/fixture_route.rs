@@ -71,9 +71,11 @@ fn two_pockets() -> (World, History) {
         tab_height: 1.0,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         links: Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     };
     let op = CreateOperation::new(&world, "Contour1", "EM-0400-2FL", SrcRef::Entity("part".into()), params);
     h.execute(&world, op.expect("contour op"));

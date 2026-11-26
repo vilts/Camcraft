@@ -3,8 +3,9 @@
 //! electrode whose tool record carries its section, and the program
 //! verdict burns that section with the outline atom: the pocket it was
 //! made for is judged clean, a smaller pocket is convicted as a gouge,
-//! and the rectangle of the same two sizes (what the box atom would
-//! burn) is convicted in the pocket's corners. The record survives the
+//! and replacing the body with a rectangle of the same two sizes is
+//! refused before the burn. With legacy extent parameters, the box burns
+//! a corner that the independent stock verdict convicts. The record survives the
 //! project file, and a re-cut outline marks its burn stale.
 //!
 //! Gate map (#1152): covers app::stock_sim (simulate_document over the
@@ -22,7 +23,7 @@ mod pocket_support;
 use flecs_ecs::prelude::World;
 
 use camcraft_app::commands::{
-    AddTool, ChangeTool, CreateOperation, ElectrodeFromFaces, GenerateOperation, History, ImportModel, LoadMachine, SetStock,
+    AddTool, ChangeTool, CreateOperation, EditOperationParams, ElectrodeFromFaces, GenerateOperation, History, ImportModel, LoadMachine, SetStock,
 };
 use camcraft_app::geometry::feature::{self, FaceKind};
 use camcraft_app::geometry::Mesh;
@@ -103,10 +104,11 @@ fn burn(e: &ElectrodeBox, pass: SinkerPass, condition: &str) -> OpParams {
         pass,
         cavity_x: e.cavity.0,
         cavity_y: e.cavity.1,
+        cavity_outline: if e.body { e.ring.iter().map(|p| [p.x - e.center.0, p.y - e.center.1]).collect() } else { Vec::new() },
         orbit: None,
         layer: None,
         wear_lost: None,
-        wear_over: None,
+        wear_over: None, picks: Default::default(),
     })
 }
 
@@ -158,12 +160,19 @@ fn a_rounded_pockets_faces_yield_an_electrode_whose_burn_is_judged_clean() {
         sim.dev.max_gouge_at
     );
 
-    // The contrast: the rectangle of the same two sizes - the record
-    // without its outline, what the box atom burns - passes the same
-    // size law and is convicted in the pocket's rounded corners. The
-    // verdict burns the section, not its bounds.
+    // A rectangular replacement cannot certify the stored cavity outline.
     let boxed = Tool { outline: Vec::new(), ..t.clone() };
     h.execute(&world, ChangeTool::new(&world, "E-F", boxed).expect("a rectangular electrode"));
+    let Err(why) = GenerateOperation::new(&world, "Burn E-F") else { panic!("a box cannot certify the cavity outline") };
+    assert!(why.to_string().contains("a cavity outline requires an electrode outline"), "{why}");
+
+    // The legacy extent law permits the box. The independent verdict
+    // must still convict its square corners in the rounded pocket.
+    let mut legacy = burn(&finish, SinkerPass::Finish, "F1");
+    if let OpParams::SinkerBurn(op) = &mut legacy {
+        op.cavity_outline.clear();
+    }
+    h.execute(&world, EditOperationParams::new(&world, "Burn E-F", legacy).expect("legacy extent parameters"));
     h.execute(&world, GenerateOperation::new(&world, "Burn E-F").expect("generates"));
     let sim = simulate_document(&world).expect("judged");
     assert!(sim.dev.gouge_cells > 0 && sim.dev.max_gouge > 1.0, "a square corner in a round one: max gouge {}", sim.dev.max_gouge);
@@ -223,6 +232,7 @@ fn the_same_electrode_in_a_smaller_cavity_is_convicted_as_a_gouge() {
     let mut small = burn(&e, SinkerPass::Finish, "F1");
     if let OpParams::SinkerBurn(op) = &mut small {
         (op.cavity_x, op.cavity_y) = (18.0, 10.0);
+        op.cavity_outline = rounded_rect(9.0, 5.0, 2.0, 4).into_iter().map(|(x, y)| [x, y]).collect();
     }
     h.execute(&world, CreateOperation::new(&world, "Finish", "E", SrcRef::Stock, small).expect("a sinker burn"));
     let why = match GenerateOperation::new(&world, "Finish") {
@@ -233,7 +243,7 @@ fn the_same_electrode_in_a_smaller_cavity_is_convicted_as_a_gouge() {
         }
         Err(err) => err.to_string(),
     };
-    assert!(why.contains("wider than the 18.000 cavity") || why.contains("past size"), "{why}");
+    assert!(why.contains("electrode is too large"), "{why}");
 }
 
 #[test]
@@ -252,13 +262,22 @@ fn an_l_cavitys_electrode_keeps_its_notch_and_gouges_nothing() {
     assert!(sim.dev.max_rest > 0.15, "the rough leaves stock: {}", sim.dev.max_rest);
     // Its finish burns the L to size. (A mitred inside corner stands
     // off 8 um further than the inset; no column centre lies in that.)
-    electrode_and_burn(&world, &mut h, &picks, "E-LF", "F1", SinkerPass::Finish);
+    let finish = electrode_and_burn(&world, &mut h, &picks, "E-LF", "F1", SinkerPass::Finish);
     let sim = simulate_document(&world).expect("judged");
     assert!(sim.dev.is_clean(), "max rest {} at {:?}, max gouge {} at {:?}", sim.dev.max_rest, sim.dev.max_rest_at, sim.dev.max_gouge, sim.dev.max_gouge_at);
-    // The contrast: the box of the L's two sizes burns the corner the
-    // part keeps.
+    // A rectangular replacement cannot certify the L's walls.
     let boxed = Tool { outline: Vec::new(), ..tool(&world, "E-LF") };
     h.execute(&world, ChangeTool::new(&world, "E-LF", boxed).expect("a rectangular electrode"));
+    let Err(why) = GenerateOperation::new(&world, "Burn E-LF") else { panic!("a box cannot certify the L outline") };
+    assert!(why.to_string().contains("a cavity outline requires an electrode outline"), "{why}");
+
+    // Under the legacy extent law, the independent verdict must convict
+    // the box that burns the notch the part keeps.
+    let mut legacy = burn(&finish, SinkerPass::Finish, "F1");
+    if let OpParams::SinkerBurn(op) = &mut legacy {
+        op.cavity_outline.clear();
+    }
+    h.execute(&world, EditOperationParams::new(&world, "Burn E-LF", legacy).expect("legacy extent parameters"));
     h.execute(&world, GenerateOperation::new(&world, "Burn E-LF").expect("generates"));
     let sim = simulate_document(&world).expect("judged");
     let at = sim.dev.max_gouge_at.expect("a gouge");
@@ -270,9 +289,8 @@ fn a_cavity_turned_from_the_axes_is_judged_on_its_outlines_extents() {
     // A diamond: its corners are sharp and not square to the axes, so
     // the inward offset moves them further than the undersize and the
     // electrode's two sizes are under "cavity less twice the undersize".
-    // The size law judges an outline's extents one way only (never
-    // over), so the rough is the right electrode and is burned; the
-    // rectangle of those sizes is held both ways and refused by name.
+    // The wall offsets accept the rough. A rectangular replacement
+    // lacks the electrode outline needed to certify the cavity.
     let ring = [(10.0, 0.0), (0.0, 6.0), (-10.0, 0.0), (0.0, -6.0)];
     let (world, mut h) = doc(block_with_pocket(30.0, 30.0, &ring, FLOOR, TOP));
     let picks = faces_in(&world, (-10.0, -6.0), (10.0, 6.0));
@@ -293,7 +311,32 @@ fn a_cavity_turned_from_the_axes_is_judged_on_its_outlines_extents() {
         }
         Err(err) => err.to_string(),
     };
-    assert!(why.contains("undersizes its electrode"), "{why}");
+    assert!(why.contains("a cavity outline requires an electrode outline"), "{why}");
+}
+
+#[test]
+fn a_diamond_cavity_finish_is_generated_and_judged_clean() {
+    let ring = [(10.0, 0.0), (0.0, 6.0), (-10.0, 0.0), (0.0, -6.0)];
+    let (world, mut h) = doc(block_with_pocket(30.0, 30.0, &ring, FLOOR, TOP));
+    let picks = faces_in(&world, (-10.0, -6.0), (10.0, 6.0));
+    assert_eq!(picks.len(), 5, "the floor and four walls");
+    let e = electrode_and_burn(&world, &mut h, &picks, "E-DF", "F1", SinkerPass::Finish);
+    let op = model::find_by_name(&world, "Burn E-DF").expect("the finish operation");
+    assert_eq!(status_of(&world, &op), OpStatus::Ok, "the diamond finish is generated");
+    let sim = simulate_document(&world).expect("the finish is judged");
+    assert!(
+        sim.dev.is_clean(),
+        "the diamond finish leaves max rest {} at {:?}, max gouge {} at {:?}",
+        sim.dev.max_rest, sim.dev.max_rest_at, sim.dev.max_gouge, sim.dev.max_gouge_at
+    );
+    let mut edited = burn(&e, SinkerPass::Finish, "F1");
+    if let OpParams::SinkerBurn(p) = &mut edited {
+        p.cavity_outline.insert(1, [5.0, 2.99]);
+    }
+    h.execute(&world, EditOperationParams::new(&world, "Burn E-DF", edited).expect("an outline edit"));
+    assert_eq!(status_of(&world, &op), OpStatus::Stale, "a wall edit with unchanged extents changes the stamp");
+    assert!(h.undo(&world));
+    assert_eq!(status_of(&world, &op), OpStatus::Ok);
 }
 
 #[test]
@@ -313,6 +356,9 @@ fn a_body_electrode_survives_the_project_file_and_a_recut_outline_restales_its_b
     project::load(&back, &path).expect("load");
     let _ = std::fs::remove_file(&path);
     assert!(text.contains("\"outline\""), "the section is written");
+    assert!(text.contains("\"cavity_outline\""), "the finished cavity is written");
+    let loaded_op = model::find_by_name(&back, "Burn E-F").expect("the saved burn");
+    assert_eq!(status_of(&back, &loaded_op), OpStatus::Ok, "the cavity outline survives the saved stamp");
     assert_eq!(tool(&back, "E-F"), t, "the record survives save and load");
     assert!(!tool(&back, "E-F").outline.is_empty());
     // A rectangular electrode writes no outline key: its file is as before.

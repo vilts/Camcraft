@@ -184,3 +184,56 @@ fn law_f_still_blocks_a_real_rest_and_a_real_gouge_by_name() {
     // And the honest station posts.
     assert!(verdict(&f, facing_pass()).iter().all(|w| !matches!(w, Warning::Envelope { .. })), "the facing station is clean");
 }
+
+/// #2880: a revolved bar with a cone, a neck Z60..Z63 (R4) and M10x1.5
+/// 60-degree V thread grooves Z63..Z78 (R5 major, R4.08 root).
+fn cone_neck_thread_facets() -> Vec<Triangle> {
+    let major = 5.0_f64;
+    let depth = 0.92_f64;
+    let root = major - depth;
+    let half = depth * 30.0_f64.to_radians().tan();
+    let mut m = vec![
+        (0.0, 0.0), (10.0, 0.0), (10.0, 20.0), (major, 60.0),
+        (4.0, 60.0), (4.0, 63.0), (major, 63.0),
+    ];
+    for k in 0..10 {
+        let c = 63.75 + k as f64 * 1.5;
+        m.push((major, c - half));
+        m.push((root, c));
+        m.push((major, c + half));
+    }
+    m.push((major, 78.0));
+    m.push((0.0, 78.0));
+    revolve(&m)
+}
+
+#[test]
+fn thread_valleys_and_neck_step_at_window_edge_are_not_false_rest() {
+    // #2880: (1) riding the thread major diameter over 1.5 mm pitch V
+    // grooves must not read the 45-degree meridian seam of the valleys
+    // as rest; (2) ending a cone pass right at the neck step Z60 (or
+    // starting a thread pass right at Z63) never enters the Z60..Z63
+    // neck and must not read the neck step as rest; (3) entering the
+    // neck and stopping short at Z61.5 still convicts.
+    let f = cone_neck_thread_facets();
+    let major_ride = vec![feed(p(5.8, 0.0, 63.0), p(5.8, 0.0, 78.0))];
+    let rep = stock_sim::envelope_scan_turned(&f, &major_ride, NOSE, TOL, (Some(LatheAxis::Z), 0.0)).expect("scan");
+    let gate = TOL + rep.cell * rep.cell / (2.0 * NOSE);
+    assert!(rep.rest_mm <= gate, "thread major ride Z63..Z78: rest {} > gate {gate}", rep.rest_mm);
+
+    let cone_to_neck = vec![
+        feed(p(10.8, 0.0, 20.0), p(5.8, 0.0, 60.0)),
+        feed(p(5.8, 0.0, 60.0), p(12.0, 0.0, 60.0)),
+    ];
+    let rep = stock_sim::envelope_scan_turned(&f, &cone_to_neck, NOSE, TOL, (Some(LatheAxis::Z), 0.0)).expect("scan");
+    let gate = TOL + rep.cell * rep.cell / (2.0 * NOSE);
+    assert!(rep.rest_mm <= gate, "cone pass ending at neck step Z60: rest {} > gate {gate}", rep.rest_mm);
+
+    let short_in_neck = vec![
+        feed(p(10.8, 0.0, 20.0), p(5.8, 0.0, 60.0)),
+        feed(p(5.8, 0.0, 60.0), p(5.8, 0.0, 61.5)),
+        feed(p(5.8, 0.0, 61.5), p(12.0, 0.0, 61.5)),
+    ];
+    let rep = stock_sim::envelope_scan_turned(&f, &short_in_neck, NOSE, TOL, (Some(LatheAxis::Z), 0.0)).expect("scan");
+    assert!(rep.rest_mm > 0.2, "a pass entering the neck and stopping short still convicts: {}", rep.rest_mm);
+}

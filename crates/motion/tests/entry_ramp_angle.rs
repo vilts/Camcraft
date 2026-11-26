@@ -63,8 +63,9 @@ fn contour_with_links(links: Links, climb: bool) -> Toolpath {
             tab_height: 0.0,
             entry: Entry3D::Ramp,
             helix_radius: 1.0,
-            blend_turns: false,
+            blend_turns: false, blend_radius: None,
             links,
+            picks: Default::default(),
         },
     )
     .expect("a legal inside contour")
@@ -78,6 +79,7 @@ fn circular_with_links(links: Links, climb: bool) -> Toolpath {
     circular(
         &region(),
         &CircularParams {
+            pass_start: Default::default(),
             links,
             center: Point2::new(0.0, 0.0),
             radius: 3.0,

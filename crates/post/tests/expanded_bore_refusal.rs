@@ -58,11 +58,14 @@ fn heidenhain_refuses_expanded_bore() { assert_bore_refused("heidenhain"); }
 fn tinyg_refuses_expanded_bore() { assert_bore_refused("tinyg"); }
 
 #[test]
+fn grbl_refuses_expanded_bore() { assert_bore_refused("grbl"); }
+
+#[test]
 fn carvera_refuses_expanded_bore() { assert_bore_refused("carvera"); }
 
 #[test]
 fn ordinary_drilling_remains_available() {
-    for post in ["heidenhain", "tinyg", "carvera"] {
+    for post in ["heidenhain", "tinyg", "grbl", "carvera"] {
         for dwell in [0.0, 0.5] {
             let out = output(post, CycleKind::Drill, dwell);
             assert!(out.warnings.is_empty(), "{post} drill dwell {dwell}: {:?}", out.warnings);

@@ -1,6 +1,6 @@
 [package]
 name = "camcraft-kernel"
-description = "The B-rep kernel seam (M12.1 stage 1): a thin trait over solidcore (the SMLib port) with a truck-backed reference impl, plus the dual-kernel agreement bench. No other crate depends on it yet. Clean-room implementation, public sources only."
+description = "The B-rep kernel seam (M12.1 stage 1): a thin trait over solidcore (the SMLib port) with a truck-backed reference impl, plus the dual-kernel agreement bench. camcraft-geometry reads STEP and Solidcraft models through it. Clean-room implementation, public sources only."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -24,30 +24,26 @@ serde_json = { workspace = true }
 # The SMLib port (tangency-labs, Apache-2.0, pure Rust, forbid(unsafe_code))
 # and its STEP reader, at ONE commit of the owner's fork (#916): the STEP
 # crate is unpublished and depends by path on the kernel beside it, so the
-# kernel comes from the same tree. Always `rev = "<full sha>"` (the fork's
-# tag camcraft-pin-2026-11-11), never a branch or tag name; moving the pin
+# kernel comes from the same tree. Always `rev = "<full sha>"` (moved by #917 /
+# #2781 to the fork's commit 2016386), never a branch or tag name; moving the pin
 # is the procedure in docs/decisions/916-solidcore-step-bench.md.
-solidcore = { git = "https://github.com/NeoTech/solidcore", rev = "55d0e7638b9e1ebbf91ab8c10657e595c114ecda" }
-solidcore-step = { git = "https://github.com/NeoTech/solidcore", rev = "55d0e7638b9e1ebbf91ab8c10657e595c114ecda" }
-solidcore-convert = { git = "https://github.com/NeoTech/solidcore", rev = "55d0e7638b9e1ebbf91ab8c10657e595c114ecda" }
+solidcore = { git = "https://github.com/NeoTech/solidcore", rev = "fa67b3f560b7a8d59e99cb728f72f85e91dee2da" }
+solidcore-step = { git = "https://github.com/NeoTech/solidcore", rev = "fa67b3f560b7a8d59e99cb728f72f85e91dee2da" }
+solidcore-convert = { git = "https://github.com/NeoTech/solidcore", rev = "fa67b3f560b7a8d59e99cb728f72f85e91dee2da" }
+# The `Trims` seam the STEP reader takes a pcurve kernel through (#917,
+# `solidcore_trims`). Same commit; already in Cargo.lock through solidcore-step.
+solidcore-ops = { git = "https://github.com/NeoTech/solidcore", rev = "fa67b3f560b7a8d59e99cb728f72f85e91dee2da" }
 # The record type the STEP reader hands out, and solidcore's mesher over it
 # (#940: the machining mesh, `machining_mesh`). Same commit as the kernel.
 # solidcore-tess turns rayon off on wasm32 in its own manifest.
-solidcore-record = { git = "https://github.com/NeoTech/solidcore", rev = "55d0e7638b9e1ebbf91ab8c10657e595c114ecda" }
-solidcore-tess = { git = "https://github.com/NeoTech/solidcore", rev = "55d0e7638b9e1ebbf91ab8c10657e595c114ecda" }
+solidcore-record = { git = "https://github.com/NeoTech/solidcore", rev = "fa67b3f560b7a8d59e99cb728f72f85e91dee2da" }
+solidcore-tess = { git = "https://github.com/NeoTech/solidcore", rev = "fa67b3f560b7a8d59e99cb728f72f85e91dee2da" }
 truck-shapeops = { version = "=0.4.0", default-features = false, optional = true }
 truck-modeling = { version = "=0.6.0", optional = true }
 truck-meshalgo = { workspace = true, optional = true }
 
 [dev-dependencies]
 camcraft-kernel = { path = ".", features = ["truck"] }
-# The STEP bench (#916, tests/step_agreement.rs) only: truck's STEP reader
-# and mesher exactly as crates/app imports with them today (the workspace
-# pins). Dev-only on purpose: the library gains no truck-stepio.
-truck-stepio = { workspace = true }
-truck-meshalgo = { workspace = true }
-# The bench's face meter (#1697, tests/step_util/truck_guard.rs) builds a
-# CompressedShell of metered faces; truck-stepio does not re-export the type.
-# Already in the workspace (crates/app), at the same pin.
-truck-topology = { workspace = true }
-ruststep = { workspace = true }
+# #2790: the STEP bench's truck side (truck-stepio, ruststep, truck-topology)
+# is a recorded reading now (tests/step_agreement/rows.rs); no truck STEP
+# crate is a dependency of this crate.

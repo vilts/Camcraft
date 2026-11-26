@@ -9,9 +9,12 @@
 //! The grant is narrow on purpose. A hit is excused only when BOTH hold:
 //! - the facet is the thread's own material: the hole's minor wall
 //!   (near-vertical, every vertex on the declared minor circle within
-//!   [`WALL_BAND`]), or the face the hole opens through (a facet with a
+//!   [`WALL_BAND`]), the face the hole opens through (a facet with a
 //!   vertex on the minor circle, wholly at or above the hole's entry
-//!   height, where the thread breaks out at its mouth). Either way the
+//!   height, where the thread breaks out at its mouth), or - for a
+//!   through hole - the exit face where it opens out of the bottom
+//!   (no vertex above the exit height, and every on-circle vertex at
+//!   the exit height). Either way the
 //!   facet's NEAREST POINT to the axis must be on the band too, not only
 //!   its vertices: a chord between two on-circle vertices (a D-bore's
 //!   flat, a coarse polygon's side) dips inside the circle by its
@@ -54,14 +57,16 @@ pub const CHORD_CREDIT: f64 = crate::stock_sim::DEV_TOL;
 const WALL_NZ: f64 = 0.1;
 
 /// One threaded hole: its axis in XY, the declared minor radius (the
-/// model's wall), the major radius the helix is cut to, and the height
-/// the hole opens at (its entry).
+/// model's wall), the major radius the helix is cut to, the height
+/// the hole opens at (its entry), and - for a through hole - the height
+/// it exits at.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ThreadBore {
     pub xy: Point2,
     pub minor: f64,
     pub major: f64,
     pub top: f64,
+    pub exit: Option<f64>,
 }
 
 impl ThreadBore {
@@ -93,7 +98,22 @@ impl ThreadBore {
                 return Some(nearest);
             }
         }
-        (t.a.z.min(t.b.z).min(t.c.z) >= self.top - WALL_BAND).then_some(nearest)
+        let at_top = t.a.z.min(t.b.z).min(t.c.z) >= self.top - WALL_BAND;
+        let at_exit = self.exit.is_some_and(|exit| self.at_exit(t, exit, on));
+        (at_top || at_exit).then_some(nearest)
+    }
+
+    /// Whether `t` lies on a through hole's exit face at `exit`: no
+    /// vertex rises above the exit plane (within [`WALL_BAND`], so a
+    /// blind floor or an intermediate shelf never passes), and every
+    /// vertex on the minor circle stands at `exit` (so a lower plate or
+    /// feature below the exit never passes, even when the exit face
+    /// itself slopes downward away from the hole).
+    fn at_exit(&self, t: &Triangle, exit: f64, on: impl Fn(f64) -> bool) -> bool {
+        t.a.z.max(t.b.z).max(t.c.z) <= exit + WALL_BAND
+            && [t.a, t.b, t.c]
+                .into_iter()
+                .all(|p| !on(self.rho(p)) || p.z >= exit - WALL_BAND)
     }
 
     /// The plan distance from the axis to triangle `t`: 0 when the axis
@@ -130,6 +150,7 @@ pub(super) fn excused(bores: &[ThreadBore], t: &Triangle, p: Point3, q: Point3, 
         b.minor.is_finite()
             && b.major >= b.minor
             && b.top.is_finite()
+            && b.exit.is_none_or(|e| e.is_finite() && e <= b.top)
             && b.wall_radius(t).is_some_and(|wall| b.holds(wall, p, q, rho, allow))
     })
 }
@@ -139,7 +160,7 @@ mod tests {
     use super::*;
 
     fn bore(minor: f64) -> ThreadBore {
-        ThreadBore { xy: Point2::new(0.0, 0.0), minor, major: minor + 0.5413, top: 20.0 }
+        ThreadBore { xy: Point2::new(0.0, 0.0), minor, major: minor + 0.5413, top: 20.0, exit: None }
     }
 
     /// A vertical wall facet on the chord between plan points `a` and `b`.
@@ -179,5 +200,33 @@ mod tests {
         // A mouth facet outside the circle still is.
         let m = Triangle::new(Point3::new(5.0, 0.0, 20.0), Point3::new(9.0, 1.0, 20.0), Point3::new(9.0, -1.0, 20.0));
         assert!(bore(5.0).wall_radius(&m).is_some());
+    }
+
+    #[test]
+    fn a_through_hole_exit_face_is_excused_while_blind_and_shelves_are_not() {
+        let through = ThreadBore { exit: Some(10.0), ..bore(5.0) };
+        let exit_facet = |z_rim: f64, z_out: f64| {
+            let (a, b) = (on(5.0, 0.0), on(5.0, 3.75));
+            Triangle::new(Point3::new(a.0, a.1, z_rim), Point3::new(b.0, b.1, z_rim), Point3::new(9.0, 0.0, z_out))
+        };
+        let flat_exit = exit_facet(10.0, 10.0);
+        // A blind hole has no exit face at z 10.
+        assert_eq!(bore(5.0).wall_radius(&flat_exit), None);
+        // A through hole excuses its flat exit face, and one sloping away below it.
+        assert!(through.wall_radius(&flat_exit).is_some());
+        assert!(through.wall_radius(&exit_facet(10.0, 9.0)).is_some());
+        // An intermediate shelf between exit and top, or a lower surface below exit, is not excused.
+        assert_eq!(through.wall_radius(&exit_facet(15.0, 15.0)), None);
+        assert_eq!(through.wall_radius(&exit_facet(9.0, 9.0)), None);
+        // A step reaching inside the exit circle is never excused.
+        let inner = Triangle::new(Point3::new(5.0, 0.0, 10.0), Point3::new(3.0, 1.0, 10.0), Point3::new(3.0, -1.0, 10.0));
+        assert_eq!(through.wall_radius(&inner), None);
+        // Inside the major cylinder on the exit face passes; past it convicts.
+        let cut = Point3::new(2.5, 0.0, 9.5);
+        assert!(excused(&[through], &flat_exit, cut, cut, 3.0, 0.01));
+        assert!(!excused(&[through], &flat_exit, Point3::new(2.6, 0.0, 9.5), Point3::new(2.6, 0.0, 9.5), 3.0, 0.01));
+        // Non-finite or inverted exit fails closed.
+        assert!(!excused(&[ThreadBore { exit: Some(f64::NAN), ..through }], &flat_exit, cut, cut, 3.0, 0.01));
+        assert!(!excused(&[ThreadBore { exit: Some(21.0), ..through }], &flat_exit, cut, cut, 3.0, 0.01));
     }
 }

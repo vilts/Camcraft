@@ -145,7 +145,9 @@ fn the_setup_page_is_laid_out_in_groups_like_the_wcs_page() {
     // #1648, #1926: the work offset picker and the feature picks live on the WCS page, not here.
     gone(&h, OFFSET);
     gone(&h, FEATURES);
-    gone(&h, "Pick for WCS");
+    for label in ["Pick origin", "Pick X axis", "Pick Y axis", "Pick Z axis"] {
+        gone(&h, label);
+    }
     gone(&h, "Set WCS from features");
     assert_between(&h, GROUPS[3], foot(&h), &["Delete Setup2", "Open Setup2 fixtures"]);
     // Stock follows its source: a fresh setup's own stock entity, stated at the foot.
@@ -295,4 +297,74 @@ fn open_fixtures_activates_the_setup_and_opens_its_fixtures_page() {
         "its Fixtures page is open: {:?}",
         h.state().state.ui_target
     );
+}
+
+/// #3070: a milling setup's page carries the "Sheet job" checklist between
+/// the part orientation and the setup's actions, the allowance row always
+/// shown; Apply lands ONE undoable `SetSheetJob` (stock, WCS, record),
+/// Clear shows once a job is stated, and one undo puts it all back.
+#[test]
+fn the_sheet_job_checklist_applies_one_undoable_step() {
+    use crate::egui_app::setup_sheet_job_row::{ALLOWANCE_LABEL, APPLY, CLEAR, GROUP};
+    let mut h = setups(1, "Setup1");
+    open(&mut h, "Setup1");
+    assert_group(&h, GROUP, GROUPS[3], &["    Sheet length (X)", ALLOWANCE_LABEL, APPLY]);
+    assert!(top(&h, GROUPS[2]) < top(&h, GROUP), "under the part orientation");
+    assert!(h.query_by_label_contains("No sheet job stated").is_some());
+    gone(&h, CLEAR);
+    h.get_by_label(APPLY).click();
+    h.run_steps(3);
+    let world = &h.state().state.world;
+    let job = camcraft_app::sheet_job::of(world, "Setup1");
+    assert_eq!(job.map(|j| j.allowance), Some(0.3), "the shown allowance, applied: {}", h.state().state.status);
+    assert!(camcraft_app::model::stock_world_aabb_for(world, Some("Setup1")).is_some(), "the sheet is the stock");
+    assert!(h.query_by_label_contains("Stated: Z0 on the sheet top").is_some());
+    assert!(h.query_by_label(CLEAR).is_some(), "Clear shows once stated");
+    let st = &mut h.state_mut().state;
+    assert!(st.history.undo(&st.world), "one undo step");
+    assert_eq!(camcraft_app::sheet_job::of(&st.world, "Setup1"), None);
+    assert!(camcraft_app::model::stock_world_aabb_for(&st.world, Some("Setup1")).is_none(), "the same undo removes the stock it made");
+}
+
+/// #3070: the command sets the ACTIVE setup's stock, so Apply on another
+/// setup's page is refused by name and changes nothing.
+#[test]
+fn the_sheet_job_checklist_refuses_an_inactive_setup() {
+    let mut h = setups(2, "Setup2");
+    open(&mut h, "Setup1");
+    let before = h.state().state.history.done_len();
+    h.get_by_label(crate::egui_app::setup_sheet_job_row::APPLY).click();
+    h.run_steps(3);
+    let st = &h.state().state;
+    assert_eq!(camcraft_app::sheet_job::of(&st.world, "Setup1"), None);
+    assert_eq!(st.history.done_len(), before, "nothing entered the history");
+}
+
+/// #2410: the Sheet job group is a router option. A router machine shows
+/// it, a mill hides it, and a stated job stays shown on the mill (a stated
+/// option is never hidden). The page reads `router_offer`, as MCP does.
+#[test]
+fn the_sheet_job_group_shows_on_a_router_and_not_on_a_mill() {
+    use crate::egui_app::setup_sheet_job_row::{APPLY, GROUP};
+    use camcraft_app::commands::{LoadMachine, SetSheetJob};
+    let mount = |h: &mut H, name: &str| {
+        let st = &mut h.state_mut().state;
+        let cmd = LoadMachine::builtin(&st.world, name).unwrap_or_else(|e| panic!("{name}: {e}"));
+        st.history.execute(&st.world, cmd);
+    };
+    let mut h = setups(1, "Setup1");
+    mount(&mut h, "Tormach 24R");
+    open(&mut h, "Setup1");
+    assert!(h.query_by_label(GROUP).is_some(), "a router shows the Sheet job group");
+    h.get_by_label(APPLY).click();
+    h.run_steps(3);
+    mount(&mut h, "VMC 3-axis");
+    open(&mut h, "Setup1");
+    assert!(h.query_by_label(GROUP).is_some(), "a stated job stays shown on a mill");
+    let st = &mut h.state_mut().state;
+    let clear = SetSheetJob::clear(&st.world).unwrap_or_else(|e| panic!("clear: {e}"));
+    st.history.execute(&st.world, clear);
+    open(&mut h, "Setup1");
+    gone(&h, GROUP);
+    gone(&h, APPLY);
 }

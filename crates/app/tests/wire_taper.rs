@@ -67,19 +67,23 @@ fn punch_with(text: &str, taper: f64, burnout: Option<f64>) -> (World, Result<()
     );
     h.execute(&world, ImportModel::from_mesh("block", block()));
     let op = WireContourOp {
+        lead_arc_radius: None,
         top_z: Height::fixed(12.0),
         bottom_z: Height::fixed(0.0),
         condition: "C110".into(),
         side: WireSide::Punch,
-        start: Some([-30.0, 0.0]),
+        picks: camcraft_app::path_picks::PathPicks { start: vec![camcraft_app::path_picks::PathPick::xy(camcraft_app::geo2d::Point2::new(-30.0, 0.0))], exit: Vec::new() },
         tabs: None,
         // The punch drops into a stated capture (#539's hold law).
         capture: true,
+        both_pieces_restrained: false,
+        stock_centered_in_xy_travel: false,
         taper_deg: taper,
         four_axis: None,
         burnout,
         clearance: camcraft_app::operation::DEFAULT_CLEARANCE,
         skims: Vec::new(),
+        sharp_corners: false,
     };
     // #1800: the taper door refuses at the command, so its words come back as `made`.
     let c = match CreateOperation::new(&world, "Punch1", "EDM-W025", SrcRef::Entity("block".into()), OpParams::WireContour(op)) {
@@ -133,7 +137,7 @@ fn a_tapered_punch_posts_its_golden_and_its_cl_shows_the_poses() {
     assert!(comp < on && on < off && off < cut, "{text}");
     let moves = &lines[on + 1..off];
     assert!(moves.iter().all(|l| l.starts_with("G1 X") && l.contains(" U") && l.contains(" V")), "{text}");
-    assert!(moves.last().is_some_and(|l| l.ends_with("U0 V0")), "the lead-out stands the wire upright: {text}");
+    assert!(moves.last().is_some_and(|l| l.ends_with("U0. V0.")), "the lead-out stands the wire upright: {text}");
 }
 
 /// Done means: a zero taper is the vertical cut's golden byte for byte,
@@ -176,6 +180,54 @@ fn a_uv_offset_past_the_stroke_or_the_guides_is_refused_by_name() {
         let err = post(&world, &format!("uv{i}")).expect_err(want);
         assert!(err.contains("Punch1") && err.contains(want), "{want}: {err}");
     }
+}
+
+/// The base of this tapered cut fits between the guides. Its top must fit too.
+#[test]
+fn work_above_the_upper_guide_blocks_the_post() {
+    let short = FIXTURE.replace("\"upper_guide_z\": 25.0", "\"upper_guide_z\": 5.0");
+    let (world, made) = punch(&short, 3.0);
+    made.expect("the tapered punch generates");
+    let err = post(&world, "upper-guide").expect_err("the upper guide is inside the work");
+    assert!(err.contains("Punch1: work top Z12.000 is above the upper guide Z5.000"), "{err}");
+}
+
+/// #2923: the bottom of the work must fit above the lower guide too. A
+/// vertical cut, so no U/V law can refuse first: the words are the span's own.
+#[test]
+fn work_below_the_lower_guide_blocks_the_post() {
+    let high = FIXTURE.replace("\"lower_guide_z\": -5.0", "\"lower_guide_z\": 1.0");
+    let (world, made) = punch(&high, 0.0);
+    made.expect("the vertical punch generates");
+    // `post` asserts that no NC file is written for a refused program.
+    let err = post(&world, "lower-guide").expect_err("the lower guide is inside the work");
+    assert!(err.contains("Punch1: work bottom Z0.000 is below the lower guide Z1.000, outside the guides' reach"), "{err}");
+}
+
+#[test]
+fn guide_limits_use_the_setup_origin_and_include_stock_above_the_part() {
+    use camcraft_app::commands::{SetStock, SetWcsOrigin};
+    use camcraft_app::schema::Location;
+    use camcraft_app::stock::StockShape;
+
+    let guides = FIXTURE
+        .replace("\"lower_guide_z\": -5.0", "\"lower_guide_z\": -9.7")
+        .replace("\"upper_guide_z\": 25.0", "\"upper_guide_z\": 2.3");
+    let (world, made) = punch(&guides, 0.0);
+    made.expect("the vertical punch generates");
+    let mut history = History::default();
+    let origin = Location { pos: Point3::new(0.0, 0.0, 9.7), ..Location::default() };
+    history.execute(&world, SetWcsOrigin::new(&world, origin).expect("set the work origin"));
+    let mut post_stock = |stock_height, tag| {
+        let shape = StockShape::Box { dx: 80.0, dy: 50.0, dz: stock_height };
+        history.execute(&world, SetStock::new(&world, shape, Location::default()).expect("stock"));
+        history.execute(&world, GenerateOperation::new(&world, "Punch1").expect("regenerate"));
+        post(&world, tag)
+    };
+    // Both guides meet a face of the 12 mm work. In world Z the upper guide is 9.7 + 2.3.
+    post_stock(12.0, "guide-at-stock").expect("the work fits up to the stated upper guide");
+    let err = post_stock(12.001, "guide-in-stock").expect_err("the stock extends beyond the upper guide");
+    assert!(err.contains("Punch1: work top Z2.301 is above the upper guide Z2.300"), "{err}");
 }
 
 /// Done means: a taper whose lower edge burns into the part blocks the

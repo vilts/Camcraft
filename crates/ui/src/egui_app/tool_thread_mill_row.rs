@@ -15,7 +15,8 @@ use camcraft_app::tools::ToolKind;
 
 use crate::state::{State, ToolUi};
 
-use super::fields::{field, num, num_plain};
+use super::fields::{num_plain_row, num_row};
+use super::layout::prop_row_hint;
 
 /// Seed the numbers a thread-mill kind reads when the draft does not
 /// state usable ones yet (the kind was just picked): a 60-degree form,
@@ -54,19 +55,20 @@ pub(super) fn thread_mill_rows(ui: &mut Ui, state: &mut State) {
     }
     let u = state.units();
     if kind == ToolKind::ThreadMillSingle {
-        field(ui, "Finest pitch");
-        num(ui, u, &mut state.tool_ui.pitch_min);
-        field(ui, "Coarsest pitch");
-        num(ui, u, &mut state.tool_ui.pitch);
-        ui.label("one row of teeth: it cuts any pitch in this range, one turn per thread - the operation states the pitch");
+        prop_row_hint(ui, "Finest pitch", "one row of teeth: it cuts any pitch in this range, one turn per thread", |ui| {
+            num_row(ui, u, &mut state.tool_ui.pitch_min)
+        });
+        prop_row_hint(ui, "Coarsest pitch", "the operation states the pitch between these two", |ui| {
+            num_row(ui, u, &mut state.tool_ui.pitch)
+        });
     } else {
-        field(ui, "Thread pitch");
-        num(ui, u, &mut state.tool_ui.pitch);
-        ui.label("rows of teeth ground to this one pitch - the flute length over the pitch is how many threads one revolution cuts");
+        prop_row_hint(ui, "Thread pitch", "rows of teeth ground to this one pitch - the flute length over the pitch is the threads per turn", |ui| {
+            num_row(ui, u, &mut state.tool_ui.pitch)
+        });
     }
-    field(ui, "Form angle (deg)");
-    num_plain(ui, &mut state.tool_ui.tip_angle);
-    ui.label("the included angle of the teeth - 60 for metric and unified threads; the diameter is across the tooth crests");
+    prop_row_hint(ui, "Form angle (deg)", "the included angle of the teeth - 60 for metric and unified threads", |ui| {
+        num_plain_row(ui, &mut state.tool_ui.tip_angle)
+    });
 }
 
 #[cfg(test)]

@@ -37,12 +37,18 @@ use crate::cl::{MoveKind, PathBuilder, Toolpath};
 use crate::entry::Entry3D;
 use crate::geo2d::{Loop, Point2, Region};
 use crate::geometry::Point3;
-use crate::links::Links;
+use crate::links::{Link, Links};
 use crate::ring_zig::MIN_ARC_CHORD;
 
 use super::arcs::{ARC_FIT_TOL, Seg};
+use super::circular_helix::{Descents, descents, ring_phase};
 use super::face::GenError;
-use super::levels::{Cert, Motion, cut_levels, run_level_walks};
+use super::levels::{Cert, Motion, run_level_walks};
+use super::{PASS_START_NOTE, PassStart};
+
+#[path = "circular_levels.rs"]
+mod circular_levels;
+use circular_levels::{ring_levels, stock_top};
 
 /// One circular ride's numbers. The circle is authored (center and
 /// radius), not picked - this is the interpolation kernel, and a
@@ -70,6 +76,8 @@ pub struct CircularParams {
     /// Fall ring by ring down the paraboloid instead of running every
     /// ring down the whole flat ladder.
     pub vault: bool,
+    /// Radial order of the rings, independent of climb and entry phase.
+    pub pass_start: PassStart,
     pub entry: Entry3D,
     pub helix_radius: f64,
     /// Level transitions and links (M11.2 C/D) within each ring's
@@ -175,15 +183,17 @@ pub(crate) fn ring_chords(rho: f64, tol: f64) -> usize {
 }
 
 /// The ring's closed circle as a polygon of [`ring_chords`] chords,
-/// CCW for climb, the start pushed once more so the circuit joins
+/// CCW for climb, starting at vertex `phase` (#3109: a later ring's
+/// helix starts clear of earlier ones; 0 is the +X vertex), the
+/// start pushed once more so the circuit joins
 /// (trace's closure law - an unclosed ring would leave its own width
 /// uncut at the seam). The polygon is what the descents (the ramp
 /// along the first cut, the links) walk; the cut itself rides
 /// [`ring_walk`]'s true arcs.
-fn ring_loop(center: Point2, rho: f64, climb: bool) -> Vec<Point2> {
+fn ring_loop(center: Point2, rho: f64, climb: bool, phase: usize) -> Vec<Point2> {
     let n = ring_chords(rho, ARC_FIT_TOL);
     let mut pts: Vec<Point2> = Vec::with_capacity(n + 1);
-    for k in 0..n {
+    for k in phase..phase.saturating_add(n) {
         let t = if climb {
             PI * 2.0 * k as f64 / n as f64
         } else {
@@ -231,77 +241,108 @@ pub fn circular(_region: &Region, p: &CircularParams) -> Result<Toolpath, GenErr
     }
     // The cutter-center disk: the region every dive and link chord
     // must stay inside (the pocket's law, its disk's shape).
-    let center_region: Option<Region> = {
-        let mut pts: Vec<Point2> = Vec::with_capacity(RING_MAX_CHORDS + 1);
-        for k in 0..RING_MAX_CHORDS {
-            let t = PI * 2.0 * k as f64 / RING_MAX_CHORDS as f64;
-            pts.push(Point2::new(p.center.x + rc * t.cos(), p.center.y + rc * t.sin()));
-        }
-        pts.push(pts[0]);
-        Loop::new(pts)
-            .ok()
-            .and_then(|l| Region::new(vec![l]).ok())
-    };
-    let mut motion = Motion::new(p.clearance_z, p.retract_z, p.feed, p.plunge_feed);
+    let center_region = disk(p.center, rc);
+    let forced = p.pass_start != PassStart::Auto;
+    let top = if forced { stock_top(p) } else { p.links.approach.entry_top(p.top_z) };
+    if forced && p.clearance_z < top {
+        return Err(GenError::Invalid("the clearance plane must clear the stock above the rings".into()));
+    }
+    // A forced ring may enter uncut stock above Top Z. Use clearance for
+    // any hop whose configured plane lies inside that stock.
+    let retract = p.retract_z.filter(|&z| !forced || z >= top);
+    let mut motion = Motion::new(p.clearance_z, retract, p.feed, p.plunge_feed);
     if p.entry != Entry3D::Plunge {
         motion = motion
             .with_entry(p.entry, p.helix_radius)
             .with_arc_radius(p.tool_diameter);
     }
-    let motion = motion.with_arc_radius(p.tool_diameter).with_links(p.links, p.helix_radius).with_top(p.links.approach.entry_top(p.top_z)).with_ring_zig();
-    let cert = center_region.as_ref().map(Cert::Region);
+    let mut links = p.links;
+    if p.entry == Entry3D::Ramp {
+        // #1807: start just above the remaining material, including stock
+        // carried over Top Z; retain a smaller configured entry gap.
+        links.approach.plunge_height = links.approach.plunge_height.min(0.1);
+        if links.level == Link::Clearance
+            && links.arm(p.entry) == Entry3D::Ramp
+            && !links.approach.ramp_to_depth
+        {
+            // A closed ring ends at its next ramp start. Reuse the proved
+            // keep-down link; each new ring still enters from clearance.
+            links.level = Link::KeepDown;
+        }
+    }
+    let motion = motion.with_arc_radius(p.tool_diameter).with_links(links, p.helix_radius).with_top(top).with_ring_zig();
+    // #3109: on a flat disk every ring's helix shares each level's band.
+    let helix = (!p.vault || forced) && (p.entry == Entry3D::Helix || p.links.transition == Some(Entry3D::Helix));
+    let mut flown = Descents::default();
 
     let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
-    // Ring-major: each circle runs its own ladder to its own floor
-    // before the next starts. The nesting is exact (a disk's rings
-    // cannot interfere), so the order costs no re-crossing anywhere,
-    // and on the vault it is what keeps every cut above the bowl.
-    let mut k: usize = 0;
-    loop {
+    if retract != p.retract_z && links.level != Link::Clearance {
+        b.note("Circular: links that need a lift use clearance because the retract plane is inside the stock");
+    }
+    // Use the same radius expression in either order, including the last
+    // positive remainder. A quotient rounded to an integer can contribute
+    // an extra candidate at the axis; the positivity test discards it.
+    super::face::pass_budget("stepover", rc, p.stepover)?;
+    let last = (rc / p.stepover).floor() as usize;
+    for index in 0..=last {
+        let k = if p.pass_start == PassStart::Inside { last - index } else { index };
         let rho = rc - p.stepover * k as f64;
         if rho <= 0.0 {
-            break;
-        }
-        let ring = ring_loop(p.center, rho, p.climb);
-        let runs = vec![ring_walk(p.center, &ring, p.climb)];
-        let pass = vec![ring];
-        // #2004 review: stock over Top Z makes the plane at Top Z a cut
-        // on the vault too - the rim keeps it as its first level and no
-        // plane at Top Z is dropped (the pre-#2004 vault ladder).
-        let over = super::levels::stock_over(p.top_z, p.links.approach.stock_top, 1e-9 * p.top_z.abs().max(1.0));
-        let zs = if p.vault {
-            // This ring's floor: the bowl at the band's outer edge.
-            // The ladder starts where the previous ring settled (the
-            // rim's first cut opens at the top plane itself).
-            let floor = p.bowl_z((rho + r).min(p.radius));
-            if k == 0 {
-                // The rim ring: Top Z is the material top, never a
-                // level of its own (#2004), unless stock stands over it.
-                super::levels::cut_levels_under(p.top_z, p.links.approach.stock_top, floor, p.stepdown)
-            } else {
-                // An inner ring: the previous ring's floor is a real
-                // cut for this one - the strip inside the previous
-                // ring's band still stands at the stock top, and it
-                // opens at that plane. Keep it as the first level.
-                let prev = p.bowl_z((rho + p.stepover + r).min(p.radius));
-                levels_from(prev, floor, p.stepdown)
-            }
-        } else {
-            super::levels::cut_levels_under(p.top_z, p.links.approach.stock_top, p.bottom_z, p.stepdown)
-        }
-        // #871: a part-way refusal hands back the rings cut so far.
-        .map_err(|e| e.with_ghost_moves(b.moves()))?;
-        // #2004: a vault plane at Top Z cuts air - the rim ring's floor
-        // (the bowl meets the top at the radius) and an inner ring's
-        // opening plane under a rim that cut nothing. A ring with no
-        // plane under Top Z is not walked. Stock over Top Z keeps them.
-        let zs = if p.vault && !over { under_top(zs, p.top_z) } else { zs };
-        if zs.is_empty() {
-            k += 1;
             continue;
         }
+        let zs = ring_levels(p, k, rho).map_err(|e| e.with_ghost_moves(b.moves()))?;
+        if zs.is_empty() {
+            continue;
+        }
+        // The last Inside helix on a flat floor starts on the rim. A polygon
+        // with a wall margin cannot locate its internally tangent orbit.
+        // Use the same analytic disk for choosing the phase and flying it.
+        let rim_helix = k == 0 && p.pass_start == PassStart::Inside && helix;
+        let band;
+        let cert = if (forced && p.vault) || rim_helix {
+            let room = if k == 0 {
+                &center_region
+            } else {
+                band = disk(p.center, rho);
+                &band
+            };
+            let tess = room.as_ref().ok_or_else(|| {
+                let site = if p.vault { "vault ring" } else { "rim helix" };
+                GenError::Invalid(format!("cannot certify the {site} at radius {rho:.6}")).with_ghost_moves(b.moves())
+            })?;
+            Some(Cert::RingDisk { center: p.center, radius: rho, tess })
+        } else {
+            center_region.as_ref().map(Cert::Region)
+        };
+        if forced && cert.is_none() {
+            return Err(GenError::Invalid("cannot certify the circular entry region".into()).with_ghost_moves(b.moves()));
+        }
+        let phase = match (&cert, helix) {
+            (Some(room), true) => {
+                let at = |i: usize| ring_loop(p.center, rho, p.climb, i).first().copied().unwrap_or(p.center);
+                ring_phase(ring_chords(rho, ARC_FIT_TOL), at, room, p.helix_radius, &flown)
+            }
+            _ => 0,
+        };
+        let ring = ring_loop(p.center, rho, p.climb, phase);
+        let runs = vec![ring_walk(p.center, &ring, p.climb)];
+        let pass = vec![ring];
+        if forced {
+            b.note_once(&format!("{PASS_START_NOTE} {}: the first ring can cut the full tool width in solid stock", p.pass_start.label()));
+        }
+        // #2898: climb straight up off the last ring's floor; this ring's
+        // entry traverses at clearance, over the core still to be cut.
+        let at = b.at();
+        if at.z < p.clearance_z {
+            b.push(MoveKind::Rapid, Point3::new(at.x, at.y, p.clearance_z), None);
+        }
+        let before = b.moves_len();
         run_level_walks(&mut b, &pass, &zs, &motion, Some(&runs), cert.as_ref(), cert.as_ref());
-        k += 1;
+        if helix
+            && let Err(why) = flown.add(descents(b.moves().get(before..).unwrap_or(&[])))
+        {
+            return Err(GenError::Invalid(why).with_ghost_moves(b.moves()));
+        }
     }
     let cur = b.at();
     b.push(MoveKind::Rapid, Point3::new(cur.x, cur.y, p.clearance_z), None);
@@ -317,81 +358,18 @@ pub fn circular(_region: &Region, p: &CircularParams) -> Result<Toolpath, GenErr
     Ok(path)
 }
 
-/// An inner vault ring's ladder: the plane `top` (the previous ring's
-/// floor, where this ring's new strip opens) and then the shared
-/// [`cut_levels`] below it - the ladder this ring has always cut. A span
-/// of zero or less is the one plane at `bottom`, as `cut_levels` says.
-fn levels_from(top: f64, bottom: f64, stepdown: f64) -> Result<Vec<f64>, GenError> {
-    let below = cut_levels(top, bottom, stepdown)?;
-    if top - bottom <= 0.0 {
-        return Ok(below);
+/// Inscribed polygon for entry room. Every possible ring phase is a
+/// vertex of its own band's polygon.
+fn disk(center: Point2, radius: f64) -> Option<Region> {
+    let mut pts = Vec::with_capacity(RING_MAX_CHORDS + 1);
+    for k in 0..RING_MAX_CHORDS {
+        let t = 2.0 * PI * k as f64 / RING_MAX_CHORDS as f64;
+        pts.push(Point2::new(center.x + radius * t.cos(), center.y + radius * t.sin()));
     }
-    Ok(std::iter::once(top).chain(below).collect())
-}
-
-/// The vault planes strictly under Top Z (a plane at Top Z removes
-/// nothing, #2004); `1e-9` of the span absorbs the bowl's float noise.
-fn under_top(zs: Vec<f64>, top: f64) -> Vec<f64> {
-    let tol = 1e-9 * top.abs().max(1.0);
-    zs.into_iter().filter(|&z| z < top - tol).collect()
+    pts.push(*pts.first()?);
+    Region::new(vec![Loop::new(pts).ok()?]).ok()
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// #2004: the rim ring and a flat disk start a stepdown under Top Z;
-    /// an inner vault ring keeps the previous ring's floor as its first
-    /// level (its new strip opens there), the same ladder as before.
-    #[test]
-    fn an_inner_vault_ring_keeps_its_opening_plane() {
-        assert_eq!(levels_from(8.0, 0.0, 5.0).ok(), Some(vec![8.0, 3.0, 0.0]));
-        assert_eq!(levels_from(8.0, 0.0, 50.0).ok(), Some(vec![8.0, 0.0]));
-        assert_eq!(levels_from(2.0, 2.0, 5.0).ok(), Some(vec![2.0]));
-        assert!(levels_from(8.0, 0.0, 0.0).is_err());
-        assert_eq!(cut_levels(8.0, 0.0, 5.0).ok(), Some(vec![3.0, 0.0]));
-        // The rim ring's floor at Top Z and an opening plane at Top Z go.
-        assert_eq!(under_top(vec![13.0], 13.0), Vec::<f64>::new());
-        assert_eq!(under_top(vec![13.0, 8.32], 13.0), vec![8.32]);
-        assert_eq!(under_top(vec![8.0, 3.0], 13.0), vec![8.0, 3.0]);
-    }
-
-    /// #1558: the polygon's chord count comes from the tolerance, not a
-    /// fixed 512 - its sagitta stays within it, and it is the fewest
-    /// power of two that does (capped at the cutter-center disk's 512).
-    #[test]
-    fn ring_chords_are_sized_by_the_tolerance() {
-        for rho in [0.05, 0.5, 1.0, 3.0, 25.0, 100.0] {
-            let n = ring_chords(rho, ARC_FIT_TOL);
-            let sag = |n: usize| rho * (1.0 - (PI / n as f64).cos());
-            assert!(sag(n) <= ARC_FIT_TOL, "rho {rho}: {n} chords sag {}", sag(n));
-            assert!(n == 8 || sag(n / 2) > ARC_FIT_TOL, "rho {rho}: {n} is not the fewest");
-            assert!(n.is_power_of_two() && RING_MAX_CHORDS.is_multiple_of(n));
-            let ring = ring_loop(Point2::new(0.0, 0.0), rho, true);
-            assert_eq!(ring.len(), n + 1, "closed");
-        }
-        assert_eq!(ring_chords(1.0, ARC_FIT_TOL), 32, "R1 (the issue's ring): 32, not 512");
-        assert_eq!(ring_chords(f64::NAN, ARC_FIT_TOL), RING_MAX_CHORDS);
-    }
-
-    /// #1558 review: ring ramps are the circular kernel's opt-in; every
-    /// other ladder starts without it (and `push_zig_ring` re-proves
-    /// the ring itself, so a wrong opt-in still posts chords).
-    #[test]
-    fn ring_ramps_are_opt_in() {
-        assert!(!Motion::new(5.0, None, 100.0, 50.0).ring_zig);
-        assert!(Motion::new(5.0, None, 100.0, 50.0).with_ring_zig().ring_zig);
-    }
-
-    /// #1558 review: a ring narrower than MIN_ARC_CHORD walks its
-    /// polygon, never two half-turn arcs a post could round into full
-    /// circles; a wider one walks the arcs.
-    #[test]
-    fn a_sub_resolution_ring_walks_its_polygon() {
-        let c = Point2::new(1.0, 2.0);
-        for (rho, arcs) in [(0.004, false), (0.0005, false), (0.006, true), (1.0, true)] {
-            let walk = ring_walk(c, &ring_loop(c, rho, true), true);
-            assert_eq!(walk.iter().all(|s| matches!(s, Seg::Arc { .. })), arcs, "rho {rho}");
-        }
-    }
-}
+#[path = "circular_tests.rs"]
+mod tests;

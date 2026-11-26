@@ -1,4 +1,5 @@
-//! Gate map: covers ui::egui_app::heights_page, ui::operations.
+//! Gate map: covers ui::egui_app::heights_page,
+//! ui::egui_app::mill2d_more_page, ui::operations.
 //! Regression pins for height relationship notes in the production Heights page.
 //! Provenance: the asymmetric fixture and local tool-axis display law from #2416.
 use super::*;
@@ -50,17 +51,62 @@ fn tilted_corner_note_uses_the_same_local_frame_as_its_top_row() {
     let mut state = asymmetric_tilted_pocket();
     state.op_ui.params = OpParams::Chamfer2D {
         width: 1.0, angle_deg: 45.0,
+        minimum_cone_radius: 2.0,
         clearance_z: Height::of(R::TopOfStock, 10.0), retract_z: None,
         top_z: Height::of(R::TopOfStock, 0.0),
         feed: 800.0, plunge_feed: 200.0, climb: true,
         side: camcraft_app::machining2d::Side::Outside,
         tolerance: 0.01, tilt: state.op_ui.params.tilt(),
+        picks: Default::default(),
     };
     let mut harness = heights_tab(state);
     harness.run();
     assert!(harness.query_by_label("(= 11.000 along tool axis)").is_some());
-    assert!(harness.query_by_label("the corner stands at 10.000 - derived: width x tan(angle) below the top plane").is_some(),
-        "the corner is one unit below the local top, not below setup Z");
+    assert!(harness.query_by_label("the virtual cone tip stands at 8.000 - derived: (tip offset + width) x tan(angle) below the top plane").is_some(),
+        "the tip is radius plus width below the local top, not below setup Z");
+}
+
+#[test]
+fn chamfer_geometry_exposes_tip_offset() {
+    let mut state = asymmetric_tilted_pocket();
+    state.op_ui.params = OpParams::Chamfer2D {
+        width: 1.0,
+        angle_deg: 45.0,
+        minimum_cone_radius: 2.0,
+        clearance_z: Height::of(R::TopOfStock, 10.0),
+        retract_z: None,
+        top_z: Height::of(R::TopOfStock, 0.0),
+        feed: 800.0,
+        plunge_feed: 200.0,
+        climb: true,
+        side: camcraft_app::machining2d::Side::Outside,
+        tolerance: 0.01,
+        tilt: state.op_ui.params.tilt(),
+        picks: Default::default(),
+    };
+    let mut harness = Harness::builder()
+        .with_size(Vec2::new(600.0, 900.0))
+        .build_ui_state(
+            |ui, state: &mut State| {
+                super::super::params_page::params_fields(
+                    ui,
+                    state,
+                    super::super::op_tabs::SEC_GEO,
+                )
+            },
+            state,
+        );
+    harness.run();
+    assert!(
+        harness.query_by_label("Tip offset").is_some(),
+        "the Geometry page exposes the cone-band offset"
+    );
+    harness.get_by_label("Tip offset").hover();
+    harness.run_steps(8);
+    assert!(
+        harness.query_by_label_contains("moves the tool away from the selected edge and lowers it").is_some(),
+        "the field explains what the offset changes and what 0 means"
+    );
 }
 
 
@@ -74,8 +120,10 @@ fn clearance_stock_contour() -> State {
         climb: true, side: Side::Outside, lead: Lead::None, tolerance: 0.01,
         tab_count: 0, tab_width: 0.0, tab_height: 0.0,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
-        helix_radius: 1.0, blend_turns: false,
+        helix_radius: 1.0, blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     });
     state.pending.push_back(CommandKind::SetStock {
         shape: StockShape::Box { dx: 40.0, dy: 40.0, dz: 10.0 },
@@ -119,9 +167,10 @@ fn clearance_stock_advice_follows_draft_height_and_prior_face_before_generate() 
     let builds = crate::height_memo::advice_builds();
     let state = harness.state_mut();
     let face = OpParams::Face {
-        holes: Default::default(), blend_turns: false, tilt: None,
+        holes: Default::default(), blend_turns: false, blend_radius: None, tilt: None,
         stepover: 4.0, clearance_z: Height::fixed(20.0), cut_z: Height::fixed(5.0),
         top_z: None, stepdown: None, feed: 1200.0, plunge_feed: 300.0, climb: true,
+        picks: Default::default(),
     };
     state.history.execute(&state.world, CreateOperation::new(
         &state.world, "Face", "EM-0400-2FL", SrcRef::Stock, face,

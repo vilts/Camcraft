@@ -93,6 +93,7 @@ fn face_washer(part: Vec<Triangle>) -> Result<(), String> {
         stepdown: 0.05,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     let cmd = CreateOperation::new(&world, "F1", "TN-1600-0R8", SrcRef::Entity("part".into()), p).expect("create");
     history.execute(&world, cmd);

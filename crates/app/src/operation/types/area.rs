@@ -63,7 +63,7 @@ pub struct ExtraBoundary {
 /// Which side of an open (or closed) boundary is machined. Inside is the
 /// side that holds more of the operation's own area (what the selection
 /// or source encloses) - the part's side; Outside the other one.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ChainSide {
     Inside,
     Outside,
@@ -82,14 +82,21 @@ pub struct OpenBoundary {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AreaControls {
     pub containment: Option<Containment>,
-    /// Grow (+) or shrink (-) the boundary, mm.
+    /// Grow (+) or shrink (-) the boundary, mm: the selection's area, or
+    /// the line the user picked for an open boundary.
     pub offset: f64,
+    /// #3338: grow (+) or shrink (-) only the outer boundary of an open
+    /// boundary (the stock side it runs on to), mm. A closed area has no
+    /// outer boundary and ignores it. An old project's one `offset`
+    /// loads into both (`project::area`).
+    pub outer_offset: f64,
     pub corner: CornerStyle,
     /// Extend past exterior edges (edges with no part material beyond
     /// them), mm; 0 is off.
     pub extension: f64,
     pub extra: Vec<ExtraBoundary>,
     pub open: Option<OpenBoundary>,
+    pub do_not_touch: super::avoid::DoNotTouch,
 }
 
 /// Largest offset / extension the door accepts, mm: far past any
@@ -97,6 +104,18 @@ pub struct AreaControls {
 pub const AREA_DISTANCE_MAX: f64 = 10_000.0;
 
 impl AreaControls {
+    /// Any 2D Boundary region control differs from the identity.
+    #[must_use]
+    pub fn has_boundary_edits(&self) -> bool {
+        self.containment.is_some()
+            || self.offset != 0.0
+            || self.outer_offset != 0.0
+            || self.corner != CornerStyle::Round
+            || self.extension != 0.0
+            || !self.extra.is_empty()
+            || self.open.is_some()
+    }
+
     /// The identity - nothing stamped, nothing saved, nothing changed.
     #[must_use]
     pub fn is_default(&self) -> bool {
@@ -104,10 +123,15 @@ impl AreaControls {
     }
 
     /// Door sanity, no world: finite in-range distances, no empty pick
-    /// list, and nothing but the identity on a kind without an area.
+    /// list, and nothing but the identity on a kind without support.
     #[must_use]
     pub fn is_sane_for(&self, params: &OpParams) -> bool {
-        if self.is_default() {
+        if !self.do_not_touch.is_default()
+            && (!super::avoid::do_not_touch_applies(params.kind()) || !self.do_not_touch.is_sane())
+        {
+            return false;
+        }
+        if !self.has_boundary_edits() {
             return true;
         }
         if !area_applies(params.kind()) {
@@ -115,6 +139,7 @@ impl AreaControls {
         }
         let dist = |v: f64| v.is_finite() && v.abs() <= AREA_DISTANCE_MAX;
         dist(self.offset)
+            && dist(self.outer_offset)
             && dist(self.extension)
             && self.extension >= 0.0
             && self.extra.iter().all(|b| match &b.shape {
@@ -124,7 +149,7 @@ impl AreaControls {
             && self.open.as_ref().is_none_or(|o| !o.picks.is_empty())
     }
 
-    /// Every pick the controls reference (boundaries and the open one),
+    /// Every pick the controls reference (boundaries, open chain, and Do not touch),
     /// for the stamp and the stale-reason walk.
     pub fn picks(&self) -> impl Iterator<Item = &GeoSel> {
         self.extra
@@ -135,6 +160,7 @@ impl AreaControls {
             })
             .flatten()
             .chain(self.open.iter().flat_map(|o| o.picks.iter()))
+            .chain(self.do_not_touch.picks.iter())
     }
 }
 
@@ -174,6 +200,8 @@ pub fn area_unsupported(kind: OpType) -> Option<String> {
         // endpoints and width and bound where it may cut.
         OpType::Slot => format!("a {kind} is authored by its two endpoints and width, seeded from two picked opposite edges or a face and kept inside them - move those instead of a boundary"),
         OpType::TrochoidalSlot => format!("a {kind} is authored by its two endpoints and width - move those instead of a boundary"),
+        // #1443: the carved region is the pick itself.
+        OpType::VCarve => format!("a {kind} carves the closed region that is picked - pick the region instead of a boundary"),
         OpType::Circular => format!("a {kind} is authored by its centre and radius, typed or fitted to a picked round rim or face - set those instead of a boundary"),
         // The cone's ride is the wall itself: an offset or clipped
         // outline would be ridden where nothing was picked.
@@ -185,14 +213,15 @@ pub fn area_unsupported(kind: OpType) -> Option<String> {
             format!("{kind} rides its hole list - edit the holes instead of a boundary")
         }
         OpType::Probe => format!("a {kind} touches its picked feature - there is no area to bound"),
-        OpType::PlasmaProfile => {
+        OpType::PlasmaProfile | OpType::WaterjetProfile => {
             format!("a {kind} cuts its picked contours through the plate - pick the contours instead of a boundary")
         }
         OpType::WireContour => {
             format!("a {kind} cuts its picked profile through the workpiece - pick the profile instead of a boundary")
         }
-        OpType::Deburr => format!("{kind} breaks the model's own exposed edges - there is no area to bound"),
+        OpType::Deburr | OpType::MultiAxisDeburr => format!("{kind} breaks the model's own exposed edges - there is no area to bound"),
         OpType::SinkerBurn | OpType::SinkerSideBurn => format!("a {kind} burns its electrode's own face - there is no area to bound"),
+        OpType::SlotUndercut => format!("a {kind} cuts its authored slot at depth - there is no area to bound"),
         // Mesh-driven with a moving tool axis: the model's own shadow.
         OpType::Contour5D
         | OpType::Parallel5D
@@ -205,6 +234,11 @@ pub fn area_unsupported(kind: OpType) -> Option<String> {
         | OpType::Flow5D
         | OpType::MultiAxisContour => {
             format!("{kind} is mesh-driven with a moving tool axis - its area is the model's own shadow, not a boundary")
+        }
+        // The flow band's picks ARE its pattern (#2826): the ground
+        // between the chains is the model's own skin.
+        OpType::RotaryFlow => {
+            format!("a {kind} machines the helical band its picked guide chains span - there is no boundary to edit")
         }
         // The turning family: the limit is the turned silhouette.
         OpType::Facing

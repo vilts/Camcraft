@@ -81,6 +81,7 @@ fn plasma_op_with(comp: PlasmaComp) -> OpParams {
         pierce_height: None,
         cut_height: None,
         pierce_delay: None,
+        picks: Default::default(),
     })
 }
 

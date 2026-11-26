@@ -15,6 +15,7 @@
 use serde_json::{Map, Number, Value};
 
 use super::validate::Refusal;
+use super::Kind;
 
 /// How a field's text is written back.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,6 +42,9 @@ pub struct Field {
     pub refusal_keys: Vec<String>,
     /// The value as the file states it; empty = unstated.
     pub value: String,
+    /// #2374: the values a dropdown offers; empty = typed text. An empty
+    /// pick leaves the key unstated, like an empty text.
+    pub choices: Vec<String>,
 }
 
 /// One collapsible group of fields.
@@ -93,8 +97,22 @@ impl<'a> Grid<'a> {
 
     fn add(&mut self, label: String, key: String, pointer: String, kind: FieldKind, refusal_keys: &[String]) {
         let value = text_of(self.raw.pointer(&pointer));
-        self.group.fields.push(Field { label, key, pointer, kind, refusal_keys: refusal_keys.to_vec(), value });
+        self.group.fields.push(Field { label, key, pointer, kind, refusal_keys: refusal_keys.to_vec(), value, choices: Vec::new() });
     }
+}
+
+/// #2374: the built-in posts that serve the file's kind (every one while
+/// the kind cannot be read), and the stated name when it is off that
+/// list, so the editor shows it with its refusal rather than hiding it.
+fn post_choices(raw: &Value, stated: &str) -> Vec<String> {
+    let declared = raw.pointer("/general/kind").and_then(Value::as_str).and_then(Kind::from_word);
+    let kind = declared.or_else(|| super::parse_mch(&raw.to_string()).ok().map(|m| super::kind(Some(&m))));
+    let serves = |n: &&str| kind.is_none_or(|k| crate::posting::post_serves(n, k));
+    let mut out: Vec<String> = crate::posting::BUILTINS.iter().map(|(n, _)| *n).filter(serves).map(str::to_owned).collect();
+    if !stated.is_empty() && !out.iter().any(|n| n == stated) {
+        out.push(stated.to_owned());
+    }
+    out
 }
 
 /// An axis part with its pointer: (letter, pointer, rotary).
@@ -147,6 +165,11 @@ pub fn groups(raw: &Value) -> Vec<FieldGroup> {
     g.add(s("Model"), s("general.model"), s("/general/model"), T, &[s("general.model")]);
     g.add(s("Vendor"), s("general.vendor"), s("/general/vendor"), T, &[]);
     g.add(s("Kind"), s("general.kind (mill, lathe, mill-turn or plasma)"), s("/general/kind"), T, &[s("general.kind")]);
+    // #2374: the post the machine names, picked from the built-in posts.
+    g.add(s("Post"), s("controller.post (a built-in post)"), s("/controller/post"), T, &[s("controller.post")]);
+    if let Some(f) = g.group.fields.last_mut() {
+        f.choices = post_choices(raw, &f.value);
+    }
     out.push(g.group);
 
     let axes = axes_with_pointers(raw);

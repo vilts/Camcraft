@@ -90,12 +90,21 @@ fn document(case: Case) -> (World, History) {
 
 fn deburr() -> OpParams {
     OpParams::Deburr {
-        width: 1.0,
+        width: 1.0 * std::f64::consts::SQRT_2, // #1890: the chord of a 1.0 mm setback
         clearance_z: Height::fixed(30.0),
         top_z: Height::of(HeightReference::TopOfModel, -1.0),
         bottom_z: Height::of(HeightReference::TopOfModel, -1.5),
         feed: 800.0,
         plunge_feed: 200.0,
+        // #1888: the edge filters at rest - every exposed edge rides.
+        exclude_edges: Vec::new(),
+        min_edge_angle_deg: 0.0,
+        exclude_holes: false,
+        hole_min_diameter: 0.0,
+        hole_max_diameter: 0.0,
+        unreachable: camcraft_app::finishing3d::UnreachableEdges::SkipWithNote,
+        sizing: camcraft_app::finishing3d::DeburrBreak::default(),
+        picks: Default::default(),
     }
 }
 

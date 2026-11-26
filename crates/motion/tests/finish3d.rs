@@ -197,6 +197,7 @@ fn ppattern(top_z: f64, bottom_z: f64, pattern: FinishPattern) -> Finish3DParams
 
 fn params(top_z: f64, bottom_z: f64) -> Finish3DParams {
     Finish3DParams {
+        gap_link: camcraft_motion::finishing3d::GapLink::Jump,
         pattern: FinishPattern::Waterline,
         stepover: None,
         tool_diameter: 2.0 * R,
@@ -218,6 +219,7 @@ fn params(top_z: f64, bottom_z: f64) -> Finish3DParams {
         entry_ramp: false,
         steep_stepover: None,
         pencil_reference: None,
+        waterlines: true,
     }
 }
 
@@ -419,20 +421,22 @@ fn box_walls_are_pure_structure() {
 
 #[test]
 #[ignore = "verdict lane: envelope scan over the 12x96 dome - minutes in debug, seconds in release; run at milestone close with -- --ignored"]
-fn overhang_is_caught_by_the_measurement() {
-    // The module's entry law, stated twice by its own history. This
-    // fixture used to DOCUMENT the violation: a vertical plunge over
-    // an overhang breaks the tangent promise, a sphere run past its
-    // equator is exactly that, and the assert demanded the envelope
-    // CAUGHT the gouge the generator committed (silent gouge being
-    // the worst failure mode without exception). M2.5 A's verdict
-    // lane fixed the generator - the rings' entry plunge is now
-    // column-certified - so the violation never reaches the measure.
-    // The law the same assert now protects is stronger: the refused
-    // entries speak (a counted note), the cut moves stay inside
-    // budget, and the ground under the equator stands as REPORTED
-    // rest, never quietly skipped.
+fn overhang_entries_are_refused_without_false_hidden_rest() {
+    // A sphere past its equator has overhanging walls, but this closed,
+    // convex solid has only one material interval in each XY column.
+    // The entry law refuses unsafe plunges. The envelope must judge the
+    // hidden half without inventing a lower material top at a meridian.
     let f = sphere_cap(20.0, 0.9 * PI, 10, 96);
+    for (x, y) in [(5.0, 5.0), (-5.0, 5.0), (-5.0, -5.0), (5.0, -5.0)] {
+        let intervals = camcraft_sim::solid_rest::column_crossings(&f, x, y)
+            .intervals()
+            .expect("closed convex sphere column");
+        assert_eq!(
+            intervals.len(),
+            1,
+            "false meridian interval at ({x}, {y}): {intervals:?}"
+        );
+    }
     let t = waterline(&f, &params(16.0, -16.0)).expect("sphere waterline");
     let rep = envelope(&f, &t);
     assert!(
@@ -445,12 +449,17 @@ fn overhang_is_caught_by_the_measurement() {
         "the refused entries went quiet: {:?}",
         t.notes
     );
+    assert_eq!(rep.hidden, camcraft_motion::stock_sim::HiddenRest::Judged);
+    assert!(
+        rep.rest_mm <= gate(rep.cell),
+        "a convex sphere has no hidden floor: {rep:?}"
+    );
     let warns = verify_finish(&f, &t, 20.0);
     assert!(
-        warns
+        !warns
             .iter()
             .any(|w| matches!(w, camcraft_motion::verify::Warning::Envelope { .. })),
-        "the verifier's word is missing: {warns:?}"
+        "safe overhang entries report a false envelope failure: {warns:?}"
     );
 }
 

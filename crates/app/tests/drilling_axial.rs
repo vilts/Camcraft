@@ -163,6 +163,7 @@ fn axial_params(holes: Vec<Hole>, bottom_z: Option<Height>) -> OpParams {
         plunge_feed: 80.0,
         holes,
         cross: vec![],
+        picks: Default::default(),
     }
 }
 
@@ -254,6 +255,19 @@ fn an_off_axis_hole_refuses_by_name() {
     // #677: the refusal marks the off-axis hole's mouth.
     let at = e.location();
     assert!(at.is_some_and(|p| p.x == 3.0 && p.y == 0.0 && p.z.is_finite()), "marks the hole at (3, 0): {at:?}");
+}
+
+/// #3328: the axial holes share the spindle axis, so an XY pick cannot
+/// name a first or a last one. The pick is refused by name, never dropped.
+#[test]
+fn a_start_or_exit_pick_on_the_axial_hole_refuses_by_name() {
+    let (world, _h) = lathe_world();
+    let mut params = axial_params(vec![hole(0.0, 0.0, BORE)], None);
+    if let Some(picks) = params.path_picks_mut() {
+        picks.start = vec![camcraft_app::path_picks::PathPick::xy(Point2::new(0.0, 0.0))];
+    }
+    let e = operation::generate(&world, &op("bar", params), "").expect_err("the lathe's axial hole takes no pick");
+    assert!(format!("{e}").contains("not taken on a lathe's axial hole"), "{e}");
 }
 
 #[test]

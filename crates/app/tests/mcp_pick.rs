@@ -231,12 +231,14 @@ fn a_picked_pocket_floor_loop_generates_verifies_and_undoes() {
     assert!((lo[2] - 10.0).abs() < 1e-6, "the deepest cut is the picked floor, z 10: {lo:?}");
 
     // The area controls: one undo step through the same door.
-    let area = c.ok("set_operation_area", json!({ "operation": "P1", "area": { "offset": -0.5, "corner": "sharp" } }));
+    let area = c.ok("set_operation_area", json!({ "operation": "P1", "area": { "offset": -0.5, "outer_offset": -2.0, "corner": "sharp" } }));
     assert_eq!(area["area"]["offset"], json!(-0.5), "{area}");
+    assert_eq!(area["area"]["outer_offset"], json!(-2.0), "#3338: its own field: {area}");
     assert_eq!(area["area"]["corner"], json!("sharp"));
     c.ok("undo", json!({}));
     let g = c.ok("get_operation_geometry", json!({ "operation": "P1" }));
     assert_eq!(g["area"]["offset"], json!(0.0), "{g}");
+    assert_eq!(g["area"]["outer_offset"], json!(0.0), "{g}");
     assert_eq!(g["area"]["corner"], json!("round"));
     assert_eq!(g["source"]["picks"], want_picks);
 

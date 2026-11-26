@@ -66,11 +66,12 @@ fn revolve(meridian: &[(f64, f64)]) -> Mesh {
 }
 
 /// The app threading suite's bar: wall r 6, a 60-degree V every 2.0
-/// from z 8 to z 14, 1.2 deep.
+/// from z 8 to z 14, 1.2 deep, ending at the free face z 14 + half so a
+/// G76 cycle starting at z 16 starts in free air (#2878).
 fn threaded() -> Mesh {
     let half = DEPTH * (30.0_f64).to_radians().tan();
     let root = MAJOR - DEPTH;
-    let mut m = vec![(0.0, -16.0), (MAJOR, -16.0), (MAJOR, 8.0 - half)];
+    let mut m = vec![(0.0, -26.0), (MAJOR, -26.0), (MAJOR, 8.0 - half)];
     let mut c = 8.0;
     while c <= 14.0 + 1e-9 {
         m.push((root, c));
@@ -80,9 +81,7 @@ fn threaded() -> Mesh {
         }
         c += PITCH;
     }
-    m.push((MAJOR, 14.0 + half));
-    m.push((MAJOR, 40.0));
-    m.push((0.0, 40.0));
+    m.push((0.0, 14.0 + half));
     revolve(&m)
 }
 
@@ -95,8 +94,9 @@ fn thread_world() -> (World, History) {
 fn thread_world_hand(hand: ThreadHand) -> (World, History) {
     let world = new_world();
     let mut history = History::default();
-    let at = Location { pos: Point3::new(0.0, 0.0, -16.0), ..Location::default() };
-    let cmd = SetStock::new(&world, camcraft_app::stock::StockShape::Cylinder { diameter: 12.0, height: 56.0 }, at);
+    let end_z = 14.0 + DEPTH * (30.0_f64).to_radians().tan();
+    let at = Location { pos: Point3::new(0.0, 0.0, -26.0), ..Location::default() };
+    let cmd = SetStock::new(&world, camcraft_app::stock::StockShape::Cylinder { diameter: 12.0, height: end_z + 26.0 }, at);
     history.execute(&world, cmd.expect("bar stock"));
     let lathe = Machine {
         model: "TestBench lathe".into(),
@@ -114,7 +114,7 @@ fn thread_world_hand(hand: ThreadHand) -> (World, History) {
     let params = OpParams::Threading {
         tolerance: 0.05,
         clearance_z: Height::fixed(24.0),
-        top_z: Height::fixed(14.3),
+        top_z: Height::fixed(16.3),
         bottom_z: Height::fixed(7.7),
         pitch: PITCH,
         depth: DEPTH,
@@ -123,6 +123,7 @@ fn thread_world_hand(hand: ThreadHand) -> (World, History) {
         plunge_feed: 40.0,
         infeed_plan: Default::default(),
         hand,
+        picks: Default::default(),
     };
     let cmd = CreateOperation::new(&world, "TH1", "TD-1732-60", SrcRef::Entity("bar".into()), params);
     history.execute(&world, cmd.expect("create"));
@@ -189,7 +190,7 @@ fn a_g76_thread_posts_to_the_lathe_golden() {
     // the three passes verified. R0 had it rough to 1.2 and cut the
     // root once more.
     assert!(text.contains("M03\n") && !text.contains("M04"), "{text}");
-    assert!(text.contains("G00 X12.1 Z14.\nG76 P010000 Q400 R0.4\n"), "{text}");
+    assert!(text.contains("G00 X12.1 Z16.\nG76 P010000 Q400 R0.4\n"), "{text}");
     assert!(text.contains("G76 X9.6 Z8. P1200 Q400 F2.\n"), "{text}");
     assert_eq!(text.matches("G76").count(), 2, "one two-block cycle: {text}");
     assert!(!text.contains("G32"), "the passes are the control's now: {text}");
@@ -236,8 +237,9 @@ fn the_thread_record_survives_the_round_trip() {
     assert!((t.major_diameter - 12.0).abs() < 1e-6 && (t.minor_diameter - 9.6).abs() < 1e-6, "{t:?}");
     assert!((t.lead - PITCH).abs() < 1e-12 && (t.height - DEPTH).abs() < 1e-6, "{t:?}");
     assert!((t.first_depth - 0.4).abs() < 1e-6 && (t.min_depth - 0.4).abs() < 1e-6, "{t:?}");
-    assert!((t.start.z - 14.0).abs() < 1e-6 && (t.end.z - 8.0).abs() < 1e-6, "{t:?}");
+    assert!((t.start.z - 16.0).abs() < 1e-6 && (t.end.z - 8.0).abs() < 1e-6, "{t:?}");
     assert_eq!(t.hand, ThreadHand::Right);
+    assert!(t.start_in_air, "free-end start clears the face");
     assert_eq!(path.moves[t.first].to, t.start);
     assert!(t.last + 1 < path.moves.len(), "the out-rapid stays outside the span");
     // The stream text: write, read, write again - identical, and the
@@ -249,8 +251,8 @@ fn the_thread_record_survives_the_round_trip() {
     let (a, b) = (thread_rec(&records), thread_rec(&back));
     assert!((a.lead - b.lead).abs() < 1e-9 && (a.height - b.height).abs() < 1e-6, "{a:?} vs {b:?}");
     assert!((a.end[2] - b.end[2]).abs() < 1e-6 && a.spring_passes == b.spring_passes);
-    assert!(text.contains(" HAND right\n"), "the stream states the hand: {text}");
-    assert_eq!((a.hand, b.hand), (ThreadHand::Right, ThreadHand::Right));
+    assert!(text.contains(" HAND right AIR 1\n"), "the stream states hand and air: {text}");
+    assert_eq!((a.hand, b.hand, a.start_in_air, b.start_in_air), (ThreadHand::Right, ThreadHand::Right, true, true));
     // The project file: the cached record and the option both survive.
     history.execute(&world, SetPostOptions::new(&world, g76()).expect("G76"));
     let file = std::env::temp_dir().join(format!("camcraft-g76-{}.json", std::process::id()));
@@ -262,7 +264,7 @@ fn the_thread_record_survives_the_round_trip() {
     let loaded = camcraft_app::model::toolpath_of(&other, &e2).expect("cache").path;
     assert_eq!(loaded.threads.len(), 1, "the record survives the file");
     let l = loaded.threads[0];
-    assert_eq!((l.first, l.last, l.spring_passes, l.hand), (t.first, t.last, t.spring_passes, t.hand));
+    assert_eq!((l.first, l.last, l.spring_passes, l.hand, l.start_in_air), (t.first, t.last, t.spring_passes, t.hand, t.start_in_air));
     assert_eq!(loaded.moves[l.first].to, l.start, "still opens on its move");
     for (x, y) in [(l.lead, t.lead), (l.height, t.height), (l.minor_diameter, t.minor_diameter), (l.end.z, t.end.z)] {
         assert!((x - y).abs() < 1e-6, "{l:?} vs {t:?}");
@@ -341,14 +343,14 @@ fn a_right_hand_thread_posts_toward_the_chuck_under_m03() {
     assert!(refused.is_empty(), "{refused:?}");
     assert!(text.contains("G97 S800 M03\n") && !text.contains("M04"), "{text}");
     let zs = g32_zs(&text);
-    assert_eq!(zs.len(), 18, "three passes of six half-turns: {text}");
-    for pass in zs.chunks(6) {
+    assert_eq!(zs.len(), 24, "three passes of eight half-turns (Z16..Z8): {text}");
+    for pass in zs.chunks(8) {
         assert!(pass.windows(2).all(|w| w[1] < w[0]), "every G32 pass descends: {pass:?}");
-        assert_eq!((pass[0], pass[5]), (13.0, 8.0), "{pass:?}");
+        assert_eq!((pass[0], pass[7]), (15.0, 8.0), "{pass:?}");
     }
     let (g76, refused) = post(&world, &records, g76());
     assert!(refused.is_empty(), "{refused:?}");
-    assert!(g76.contains("M03") && g76.contains("G00 X12.1 Z14.\n") && g76.contains("G76 X9.6 Z8. "), "{g76}");
+    assert!(g76.contains("M03") && g76.contains("G00 X12.1 Z16.\n") && g76.contains("G76 X9.6 Z8. "), "{g76}");
 }
 
 #[test]
@@ -368,8 +370,8 @@ fn a_left_hand_thread_posts_toward_the_chuck_under_m04() {
     assert!(text.contains("G97 S800 M04\n") && !text.contains("M03"), "{text}");
     assert!(text.contains("MOUNT THE INSERT FOR M04"), "{text}");
     let zs = g32_zs(&text);
-    assert_eq!(zs.len(), 18, "{text}");
-    assert!(zs.chunks(6).all(|p| p.windows(2).all(|w| w[1] < w[0])), "toward the chuck: {zs:?}");
+    assert_eq!(zs.len(), 24, "{text}");
+    assert!(zs.chunks(8).all(|p| p.windows(2).all(|w| w[1] < w[0])), "toward the chuck: {zs:?}");
     let (g76, refused) = post(&world, &records, g76());
     assert!(refused.is_empty(), "{refused:?}");
     assert!(g76.contains("M04") && g76.contains("G76 X9.6 Z8. "), "{g76}");
@@ -413,7 +415,7 @@ fn the_hand_is_never_dropped() {
     assert!(out.warnings.iter().any(|w| w.contains("does not declare threadHands")), "{:?}", out.warnings);
     // The stream text states the hand, and a record without it is refused.
     let line = cnc::serialize(&records);
-    assert!(line.contains(" HAND right\n"), "{line}");
+    assert!(line.contains(" HAND right AIR 1\n"), "{line}");
     let bare = line.replace(" HAND right", "");
     assert!(cnc::parse(&bare).is_err_and(|e| e.to_string().contains("HAND")), "a THREAD record without its hand parses");
 }

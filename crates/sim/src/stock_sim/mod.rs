@@ -77,6 +77,7 @@ mod carry_side;
 mod columns;
 mod cut;
 mod dexel;
+mod laid_cylinder;
 mod dexel_ball;
 mod dexel_arc;
 // #541: the sinker electrode's box atom.
@@ -86,11 +87,17 @@ mod dexel_bull;
 mod dexel_outline;
 mod deviate;
 mod edge_break;
+mod corner_relief;
 mod wall_anchor;
 // #1595: the mark an Engrave or Trace declared.
 mod mark;
 mod display;
 mod dual;
+// #2626: the f32 twin of the GPU cell cut and its brick work list.
+mod cut_twin;
+mod cut_twin_work;
+// #2629 (GPU stock sim S3b): the playback layer of the twin-able ops.
+mod layer_play;
 mod field;
 mod field_arc;
 mod field_batch;
@@ -110,6 +117,8 @@ mod field_shell;
 mod field_solid;
 mod field_sweep;
 mod field_turn;
+// #1444: the undercut cutter's head and neck solids.
+mod field_undercut;
 mod gouge;
 mod hermite;
 mod kernel;
@@ -145,10 +154,19 @@ pub use dexel::{reach, Dexel};
 pub use dexel_box::{simulate_box, BOX_ARC_REFUSAL};
 pub use dexel_outline::{simulate_outline, OUTLINE_ARC_REFUSAL};
 pub use edge_break::credit_breaks;
-pub use wall_anchor::on_walls;
+pub use corner_relief::credit_corner_reliefs;
+pub use wall_anchor::{models_a_bevel, on_walls};
 pub use mark::{credit_marks, Mark};
 // The floor a mark must leave on the part's underside (#1595).
 pub use crate::verify::MARK_FLOOR;
+pub use cut_twin::{cell_cut, from_ordered_bits, ordered_bits, TileChord, TwinChord, TwinTool, TWIN_ULPS};
+pub use cut_twin_work::{
+    run_twin, run_twin_items_onto, twin_cut, twin_items, twin_refusal, twin_work, TwinItem, TwinWork, WorkItem,
+    TWIN_MAX_CELLS_PER_CHORD,
+};
+pub use layer_play::{
+    cpu_layer_cutter, layer_tool, merge_max, LayerCutter, LayerKey, LayerPlay, LayerSpan, LAYER_KEYS, LAYER_KEY_BUDGET,
+};
 pub use field::SdfField;
 pub use field_body::Lattice;
 pub use field_carry::{box_signed, CarriedField, Clip, ClipRefusal};

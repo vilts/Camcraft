@@ -1,0 +1,69 @@
+// Provenance: original hole-work demonstration of CamCraft commands (#2862).
+// Run camcraft-cli script build.camscript from this directory.
+cam.import("model/hole-work.obj", "hole-work");
+cam.call("set_model_link", { model: "hole-work", path: null });
+cam.call("set_stock", { box: { dx: 90.0, dy: 90.0, dz: 20.0 } });
+cam.call("add_tool", { catalog: "DR-0600", holder: "none" });
+cam.call("add_tool", { catalog: "EM-0600-4FL", holder: "none" });
+cam.call("edit_tool", { name: "DR-0600", patch: { flute_len: 25.0 } });
+cam.call("edit_tool", { name: "EM-0600-4FL", patch: { flute_len: 25.0 } });
+cam.call("add_tool", { catalog: "TM-0600-P125", holder: "none" });
+cam.call("add_tool", { catalog: "DR-0600", name: "TAP-DRILL", holder: "none" });
+cam.call("edit_tool", {
+  name: "TAP-DRILL", patch: { diameter: 6.6, shank_d: 6.6, flute_len: 25.0 }
+});
+function height(z) { return { reference: "fixed", offset: z }; }
+function hole(x, y, radius, floor) {
+  return { xy: [x, y], radius: radius, entry_z: 20.0, floor_z: floor,
+    through: floor === 0, stepped: false };
+}
+cam.call("add_operation", {
+  kind: "Drill", name: "Bolt circle", tool: "DR-0600", source: "hole-work",
+  params: {
+    clearance_z: height(30), top_z: height(20), cycle: "drill",
+    peck: 0.0, dwell: 0.0, feed: 120.0, plunge_feed: 80.0,
+    holes: [hole(0, 30, 3, 0), hole(30, 0, 3, 0),
+      hole(0, -30, 3, 0), hole(-30, 0, 3, 0)]
+  }
+});
+cam.call("add_operation", {
+  kind: "Bore", name: "Bore", tool: "EM-0600-4FL", source: "hole-work",
+  params: {
+    clearance_z: height(30), top_z: height(20), stepdown: 2.0,
+    stock_to_leave: 0.0, feed: 300.0, plunge_feed: 150.0,
+    holes: [hole(-30, 30, 8, 0)]
+  }
+});
+cam.call("add_operation", {
+  kind: "Circular", name: "Circular", tool: "EM-0600-4FL", source: "hole-work",
+  params: {
+    center: [30.0, 30.0], radius: 5.0, stepover: 2.0,
+    clearance_z: height(30), top_z: height(20), bottom_z: height(0),
+    stepdown: 2.0, feed: 300.0, plunge_feed: 150.0,
+    stock_to_leave: 0.0, climb: true, entry: "plunge", helix_radius: 1.0
+  }
+});
+cam.call("add_operation", {
+  kind: "Drill", name: "Tap drill", tool: "TAP-DRILL", source: "hole-work",
+  params: {
+    clearance_z: height(30), top_z: height(20), cycle: "drill",
+    peck: 0.0, dwell: 0.0, feed: 120.0, plunge_feed: 80.0,
+    holes: [hole(0, 0, 3.3, 4)]
+  }
+});
+cam.call("add_operation", {
+  kind: "Thread", name: "Thread", tool: "TM-0600-P125", source: "hole-work",
+  params: {
+    clearance_z: height(30), top_z: height(20), infeed: 0.25,
+    feed: 300.0, plunge_feed: 150.0, pitch: 1.25, hand: "right",
+    external: false, climb: true, holes: [hole(0, 0, 3.3235, 8)]
+  }
+});
+cam.generate();
+var verdict = cam.verify();
+if (!verdict.ok) {
+  throw new Error("catalog verify failed: " + JSON.stringify(verdict));
+}
+cam.save("hole-work.camproj");
+cam.post({ to: "hole-work.nc" });
+cam.report();

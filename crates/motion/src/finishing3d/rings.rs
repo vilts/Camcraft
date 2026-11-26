@@ -1,14 +1,15 @@
 //! Split from `finishing3d.rs` by M5.0.1; structure only.
 
-use crate::cl::{lattice, MoveKind, PathBuilder, Toolpath};
+use crate::cl::{lattice, MoveKind, PathBuilder};
 use crate::geo2d::{Loop, Point2};
 use crate::geometry::{Point3, Triangle};
 use crate::machining2d::{fit_arcs, GenError};
 
-use super::ladder::levels;
-use super::params::{BLEND_MZ, Finish3DParams, FinishPattern, SPLIT_MZ, TOUCH_EPS, dirs, validate};
+use super::gaplink::straight_ok;
+use super::params::{BLEND_MZ, Finish3DParams, FinishPattern, SPLIT_MZ, TOUCH_EPS};
 use super::scan::{level_region, push_walk};
-use super::support::{Sup, build_sups, closest_pt_tri, column_clear, dist2_pt_tri};
+use super::grid::SupSet;
+use super::support::{build_sups, closest_pt_tri, column_clear, dist2_pt_tri};
 
 #[path = "rings_overhang.rs"]
 mod overhang;
@@ -98,7 +99,7 @@ pub(super) fn leg_clears(facets: &[Triangle], a: Point3, b: Point3, r: f64, tol:
 /// (unclassifiable - ring samples are tangencies by construction)
 /// rides: a redundant cut costs a pass, a skipped one can leave
 /// raw material, and the Prime Directive ranks those differently.
-fn touches_steep(sups: &[Sup], c: Point3, r: f64, tol: f64, band: bool) -> bool {
+fn touches_steep(sups: &SupSet, c: Point3, r: f64, tol: f64, band: bool) -> bool {
     let lim = r + tol + TOUCH_EPS;
     let mut touched = false;
     let mut steep = false;
@@ -183,7 +184,7 @@ fn split_true_runs(pts: &[Point2], flags: &[bool], closed: bool) -> Vec<(Vec<Poi
 /// a ring of one level.
 fn ring_runs(
     order: &[Point2],
-    sups: &[Sup],
+    sups: &SupSet,
     cz: f64,
     r: f64,
     tol: f64,
@@ -226,6 +227,22 @@ pub(super) fn emit_rings_with_trim(
     last: &mut Option<f64>,
     trim_columns: bool,
 ) -> Result<bool, GenError> {
+    emit_rings_seamed(b, p, facets, zs, ds, last, trim_columns, None)
+}
+
+/// [`emit_rings_with_trim`] with the user's start and exit points
+/// (#3330, `ring_seam`): `None` walks every ring exactly as before.
+#[allow(clippy::too_many_arguments)] // the ladder's flat inputs plus the seam
+pub(super) fn emit_rings_seamed(
+    b: &mut PathBuilder,
+    p: &Finish3DParams,
+    facets: &[Triangle],
+    zs: &[f64],
+    ds: &[(f64, f64)],
+    last: &mut Option<f64>,
+    trim_columns: bool,
+    mut seam: Option<&mut super::ring_seam::SeamRun<'_>>,
+) -> Result<bool, GenError> {
     let r = p.tool_diameter * 0.5;
     let hop = p.retract_z.unwrap_or(p.clearance_z).min(p.clearance_z);
     // The partition's eyes (M2.5 A): SteepShallow is the one pattern
@@ -239,6 +256,10 @@ pub(super) fn emit_rings_with_trim(
     // (M2.5 A verdict lane: a plunge that digs through a canopy on
     // its way to a ring cuts nothing - it lies).
     let sups = build_sups(facets, r);
+    let model_top = facets
+        .iter()
+        .map(|f| f.a.z.max(f.b.z).max(f.c.z))
+        .fold(f64::NEG_INFINITY, f64::max);
     let steep = matches!(p.pattern, FinishPattern::SteepShallow);
     // Blend is the same walk with the border moved down the tilt to
     // the band line (M2.5 D): a run of the ladder survives when it
@@ -331,7 +352,7 @@ pub(super) fn emit_rings_with_trim(
             let cur = b.at();
             // The plane the air moves park above the ring entry:
             // the ramp's approach column certifies from its centers.
-            let approach_z = match *last {
+            let nominal_z = match *last {
                 None => cur.z,
                 Some(lz) if lz != z_tip => p.clearance_z,
                 Some(_) => hop,
@@ -344,6 +365,26 @@ pub(super) fn emit_rings_with_trim(
             // gouge the cone verdict measured (2.4963 mm at the
             // spire's first ring, tip 30 under a clearance of 25).
             .max(z_tip);
+            // #3633: check the XY rapid at the same-level retract before
+            // certifying the entry from that plane. Ramps use their own
+            // start XY, which can differ from the ring's first point.
+            let same_level = *last == Some(z_tip);
+            let approach_z_at = |x, y| {
+                if same_level
+                    && nominal_z < p.clearance_z
+                    && nominal_z < model_top
+                    && !straight_ok(
+                        Point3::new(cur.x, cur.y, nominal_z),
+                        Point3::new(x, y, nominal_z),
+                        r,
+                        &sups,
+                    )
+                {
+                    p.clearance_z
+                } else {
+                    nominal_z
+                }
+            };
             // A closed ring is a CYCLE: its start vertex is a choice,
             // not a law. When the head's plunge column is blocked -
             // the descent grazes a shoulder that the level loop itself
@@ -356,10 +397,20 @@ pub(super) fn emit_rings_with_trim(
             // partition gave it. The question asked of the candidates
             // is the refusal's own, spent identically: never a softer
             // currency than the column law's r - tol.
+            // #3330: a picked start seats the ring there; its column is
+            // judged below and refused by name, never moved.
+            if closed && seam.as_deref_mut().is_some_and(|s| s.seat(&mut poly)) {
+                entry = poly[0];
+                walk = fit_arcs(&poly, p.tolerance * 0.25);
+            }
             if closed && !p.entry_ramp {
-                let (cz, top, lim) = (z_tip + r, approach_z + r, r - p.tolerance);
-                let blocked = |q: &Point2| !column_clear(q.x, q.y, cz, top, lim, &sups);
+                let blocked = |q: &Point2| {
+                    !column_clear(q.x, q.y, z_tip + r, approach_z_at(q.x, q.y) + r, r - p.tolerance, &sups)
+                };
                 if blocked(&entry) {
+                    if let Some(s) = seam.as_deref().filter(|s| s.start().is_some()) {
+                        return Err(s.blocked_start(z_tip));
+                    }
                     let n = poly.len() - 1; // poly[n] == poly[0]
                     let stride = (n / 256).max(1);
                     for i in (stride..n).step_by(stride) {
@@ -395,6 +446,7 @@ pub(super) fn emit_rings_with_trim(
                                 None
                             } else {
                                 let cs = Point3::new(c.x + r * n.x, c.y + r * n.y, c.z + r * n.z);
+                                let approach_z = approach_z_at(cs.x, cs.y);
                                 if cs.z > approach_z + r {
                                     Some(Err("the ramp start sits above the approach plane".into()))
                                 } else if !leg_clears(
@@ -408,7 +460,7 @@ pub(super) fn emit_rings_with_trim(
                                 } else if !leg_clears(facets, cs, c, r, p.tolerance) {
                                     Some(Err("the diagonal bites the wall".into()))
                                 } else {
-                                    Some(Ok(cs))
+                                    Some(Ok((cs, approach_z)))
                                 }
                             }
                         }
@@ -417,14 +469,14 @@ pub(super) fn emit_rings_with_trim(
                     None
                 };
                 let ramped = match ramp {
-                    Some(Ok(cs)) => Some(cs),
+                    Some(Ok(entry)) => Some(entry),
                     Some(Err(why)) => {
                         b.note(format!("ramp entry at z {z_tip:.4} refused: {why}"));
                         None
                     }
                     None => None,
                 };
-                if let Some(cs) = ramped {
+                if let Some((cs, approach_z)) = ramped {
                     // Air to the start column at the approach plane...
                     match *last {
                         None => b.push(MoveKind::Rapid, Point3::new(cs.x, cs.y, approach_z), None),
@@ -455,6 +507,7 @@ pub(super) fn emit_rings_with_trim(
                         Some(p.plunge_feed),
                     );
                 } else {
+                    let approach_z = approach_z_at(entry.x, entry.y);
                     // The column law (M2.5 A verdict lane): the tangent
                     // stop is clear by construction - the DESCENT must
                     // answer for itself. Under a canopy no vertical
@@ -496,6 +549,16 @@ pub(super) fn emit_rings_with_trim(
                         Some(p.plunge_feed),
                     );
                 }
+                // #3330: a picked exit runs the lap on to the pick; the
+                // retract column there is judged up to the clearance plane.
+                if let (true, Some(s)) = (closed, seam.as_deref_mut())
+                    && let Some(f) = s.run_on(&mut poly)
+                {
+                    if !column_clear(f.x, f.y, z_tip + r, p.clearance_z.max(z_tip) + r, r - p.tolerance, &sups) {
+                        return Err(s.blocked_exit(z_tip));
+                    }
+                    walk = fit_arcs(&poly, p.tolerance * 0.25);
+                }
                 push_walk(b, &walk, z_tip, p.feed);
                 *last = Some(z_tip);
                 any = true;
@@ -508,29 +571,4 @@ pub(super) fn emit_rings_with_trim(
         ));
     }
     Ok(any)
-}
-
-/// The waterline: the ring ladder alone. One closed cut at each level
-/// of the scallop stepdown ladder, wherever a ball of radius `r`
-/// resting tip-deep at that Z touches the surface.
-pub fn waterline(facets: &[Triangle], p: &Finish3DParams) -> Result<Toolpath, GenError> {
-    validate(p, facets)?;
-    let r = p.tool_diameter * 0.5;
-    let zs = levels(p, r, facets)?;
-    let ds = dirs(r, p.tolerance);
-    let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
-    let mut last: Option<f64> = None;
-    // #1015: a level refused part-way hands back the rings above it.
-    if !emit_rings(&mut b, p, r, facets, &zs, &ds, &mut last).map_err(|e| e.with_ghost_moves(b.moves()))? {
-        return Err(GenError::Empty(
-            "no surface reaches within one ball radius of the requested depths".into(),
-        ));
-    }
-    let cur = b.at();
-    b.push(MoveKind::Rapid, Point3::new(cur.x, cur.y, p.clearance_z), None);
-    let path = b.finish();
-    if !path.all_finite() {
-        return Err(GenError::Invalid("waterline path left the finite horizon".into()));
-    }
-    Ok(path)
 }

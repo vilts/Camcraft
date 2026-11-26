@@ -12,7 +12,7 @@
 //!
 //! Gate map (M4.4): covers assets/posts/fanuc.cps, haas.cps, mazak.cps,
 //! doosan-dnm.cps, sinumerik.cps, tormach.cps, grblhal.cps, heidenhain.cps,
-//! tinyg.cps, carvera.cps (their cycle maps), camcraft_post::post::cnc
+//! tinyg.cps, carvera.cps, linuxcnc.cps (their cycle maps), camcraft_post::post::cnc
 //! (the REAM cycle word), camcraft_post::post::engine.
 
 mod recorded;
@@ -24,7 +24,7 @@ use camcraft_post::post::{cnc, dump, engine, Dump};
 use std::path::{Path, PathBuf};
 
 /// Posts that write a canned cycle word for drilling.
-const CANNED: [&str; 7] = ["fanuc", "haas", "mazak", "doosan-dnm", "sinumerik", "tormach", "grblhal"];
+const CANNED: [&str; 8] = ["fanuc", "haas", "mazak", "doosan-dnm", "sinumerik", "tormach", "grblhal", "linuxcnc"];
 /// Posts that write the expanded chain for a ream.
 const EXPANDED: [&str; 3] = ["heidenhain", "tinyg", "carvera"];
 /// Posts that write no drilling at all.

@@ -40,7 +40,11 @@ fn condition_undersize(world: &World, setup: Option<&str>, op: &SinkerBurnOp) ->
 /// Does `other` burn the same cavity at the same point as `op`?
 fn same_cavity(op: &SinkerBurnOp, other: &SinkerBurnOp) -> bool {
     let near = |a: f64, b: f64| (a - b).abs() <= SIZE_SLACK;
-    near(op.x, other.x) && near(op.y, other.y) && near(op.cavity_x, other.cavity_x) && near(op.cavity_y, other.cavity_y)
+    near(op.x, other.x)
+        && near(op.y, other.y)
+        && near(op.cavity_x, other.cavity_x)
+        && near(op.cavity_y, other.cavity_y)
+        && op.cavity_outline == other.cavity_outline
 }
 
 /// The rough burn a finish follows: the nearest Sinker Burn before it

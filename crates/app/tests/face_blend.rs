@@ -20,7 +20,7 @@ use camcraft_app::world::new_world;
 fn face_params(blend: bool) -> OpParams {
     OpParams::Face { holes: Default::default(),
         tilt: None,
-        blend_turns: blend,
+        blend_turns: blend, blend_radius: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
         cut_z: Height::fixed(19.5),
@@ -29,6 +29,7 @@ fn face_params(blend: bool) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 

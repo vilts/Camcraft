@@ -51,7 +51,8 @@ fn faced_doc() -> World {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
+        picks: Default::default(),
     };
     let cmd = CreateOperation::new(&world, "Face1", "EM-0400-2FL", SrcRef::Stock, params);
     history.execute(&world, cmd.expect("create face"));
@@ -202,4 +203,62 @@ fn the_worker_publishes_the_move_in_flight() {
     let end = frames_until_at(&w, k + 1, 0.0);
     play.seek(k + 1).expect("direct end");
     assert!(same(&frame(&end.last().expect("a frame").view.stock), &frame(&play.view().stock)), "then the move completes");
+}
+
+#[test]
+fn partial_move_cuts_undercut_head_and_neck_on_a_copy() {
+    use camcraft_app::geo2d::Point2;
+    use camcraft_app::operation::SlotUndercutOp;
+    use camcraft_app::tools::ToolKind;
+
+    let world = new_world();
+    let mut history = History::default();
+    let loc = Location { pos: Point3::ZERO, rot: IDENTITY_Q };
+    let cmd = SetStock::new(&world, StockShape::Box { dx: 20.0, dy: 20.0, dz: 20.0 }, loc);
+    history.execute(&world, cmd.expect("box stock"));
+    let tslot = camcraft_app::undercut::cutter(ToolKind::TSlot, 12.0, 4.0, 4.0, 20.0, 0.0);
+    history.execute(&world, AddTool::new(&world, "TS-12", tslot).expect("t-slot cutter"));
+    let params = OpParams::SlotUndercut(SlotUndercutOp {
+        a: Point2::new(-10.0, 0.0),
+        b: Point2::new(10.0, 0.0),
+        bulge: 0.0,
+        width: 12.0,
+        run_in: 12.0,
+        neck_slot: 5.0,
+        clearance_z: Height::fixed(28.0),
+        retract_z: Some(Height::fixed(24.0)),
+        top_z: Height::fixed(20.0),
+        bottom_z: Height::fixed(6.0),
+        stepover: 4.0,
+        feed: 120.0,
+        plunge_feed: 60.0,
+        climb: true,
+        picks: Default::default(),
+    });
+    history.execute(&world, CreateOperation::new(&world, "Undercut1", "TS-12", SrcRef::Stock, params).expect("op"));
+    history.execute(&world, GenerateOperation::new(&world, "Undercut1").expect("generate"));
+
+    let budget = 20.0 * 20.0 * 20.0 / 0.8;
+    let mut play = FieldPlay::with_budget(&world, false, budget).expect("play");
+    let total = play.total();
+    assert!(total > 0);
+    let e = model::find_by_name(&world, "Undercut1").expect("op");
+    let tp = model::toolpath_of(&world, &e).expect("path").path;
+    let k = tp
+        .moves
+        .iter()
+        .position(|m| m.kind == camcraft_app::cl::MoveKind::Feed && m.from.x >= -10.0 - 1e-6 && m.to.x > m.from.x)
+        .expect("slot cutting pass");
+    play.seek(k).expect("to pass start");
+    let before = play.view().stock.distance(Point3::new(0.0, 4.0, 8.0));
+    assert!(before < 0.0, "mid-slot starts as stock before cutting pass");
+    assert!(play.seek_to(k, 0.6).expect("partial undercut move"));
+    assert!(play.view().stock.distance(Point3::new(0.0, 4.0, 8.0)) > 0.0, "partial undercut head reaches midpoint");
+    assert!(play.view().stock.distance(Point3::new(0.0, 0.0, 15.0)) > 0.0, "partial undercut neck reaches midpoint");
+    assert!(play.view().stock.distance(Point3::new(8.0, 4.0, 8.0)) < 0.0, "partial undercut stops before end");
+    assert!(play.view().stock.distance(Point3::new(0.0, 4.5, 15.0)) < 0.0, "roof stays stock during partial move");
+    assert!(play.seek_to(k + 1, 0.0).expect("complete pass"));
+    assert!(play.view().stock.distance(Point3::new(8.0, 4.0, 8.0)) > 0.0, "completed pass finishes slot");
+    assert!(play.seek_to(k, 0.0).expect("scrub back"));
+    assert!(play.view().stock.distance(Point3::new(0.0, 4.0, 8.0)) < 0.0, "scrubbing back restores pre-pass stock");
 }

@@ -38,6 +38,7 @@ fn box_facets(min: [f64; 3], max: [f64; 3]) -> Vec<Triangle> {
 
 fn params() -> Pocket3DParams {
     Pocket3DParams {
+        pass_start: Default::default(),
         links: camcraft_motion::links::Links::ROUGH3D,
         tool_diameter: 8.0,
         stepover: 3.0,

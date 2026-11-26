@@ -20,20 +20,29 @@ fn rs_files(dir: &Path, out: &mut String) {
         } else if p.extension().is_some_and(|x| x == "rs")
             && let Ok(t) = fs::read_to_string(&p)
         {
-            {
-                // join string-literal line continuations ("...\<newline>   ...")
-                let mut joined = String::new();
-                let mut it = t.split("\\\n");
-                if let Some(first) = it.next() {
-                    joined.push_str(first);
-                }
-                for part in it {
-                    joined.push_str(part.trim_start());
-                }
-                out.push_str(&joined);
-            }
+            out.push_str(&join_continuations(&t));
         }
     }
+}
+
+/// #3619: a checkout with `core.autocrlf=true` holds CRLF line ends, so
+/// bring every text that the test reads to LF before it is searched.
+fn normalise_eol(t: &str) -> String {
+    t.replace("\r\n", "\n")
+}
+
+/// Join string-literal line continuations ("...\<newline>   ...").
+fn join_continuations(t: &str) -> String {
+    let t = normalise_eol(t);
+    let mut joined = String::new();
+    let mut it = t.split("\\\n");
+    if let Some(first) = it.next() {
+        joined.push_str(first);
+    }
+    for part in it {
+        joined.push_str(part.trim_start());
+    }
+    joined
 }
 
 /// Backticked spans of `### ` headings, split at `<...>` and `...`
@@ -80,8 +89,10 @@ fn stems(page: &str) -> Vec<String> {
 #[test]
 fn troubleshooting_messages_still_exist_in_the_sources() {
     // #1908 grouped the guide by job stage: the page is under reference/.
-    let page = fs::read_to_string(root().join("site/content/guide/reference/troubleshooting.md"))
-        .expect("troubleshooting page is readable");
+    let page = normalise_eol(
+        &fs::read_to_string(root().join("site/content/guide/reference/troubleshooting.md"))
+            .expect("troubleshooting page is readable"),
+    );
     let mut src = String::new();
     for entry in fs::read_dir(root().join("crates"))
         .expect("crates dir")
@@ -99,5 +110,19 @@ fn troubleshooting_messages_still_exist_in_the_sources() {
     assert!(
         stale.is_empty(),
         "troubleshooting.md quotes message stems no longer in crates/*/src (reworded or removed?): {stale:#?}"
+    );
+}
+
+/// #3619: a source with CRLF line ends and a backslash continuation joins
+/// like an LF source, so the stem spans the two lines.
+#[test]
+fn join_continuations_accepts_crlf_line_ends() {
+    let lf = "let m = \"the stem that spans \\\n        two lines\";\n";
+    let crlf = lf.replace('\n', "\r\n");
+    assert!(join_continuations(lf).contains("the stem that spans two lines"));
+    let joined = join_continuations(&crlf);
+    assert!(
+        joined.contains("the stem that spans two lines"),
+        "CRLF continuation was not joined: {joined:?}"
     );
 }

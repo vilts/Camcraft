@@ -332,9 +332,11 @@ fn judge(
     let tol = crate::model_fidelity::program_tol(world)?;
     let breaks = super::breaks::program_breaks(world, cut, true, frame, &facets, tol);
     let marks = super::marks::program_marks(world, cut, true, frame);
+    let reliefs = super::program_corner_reliefs(world, cut, true, frame);
     held.verdict_snapshot(&facets, tol, |dev, tops| {
         super::credit_breaks(dev, tops, &facets, &breaks);
         super::credit_marks(dev, tops, &facets, &marks);
+        super::credit_corner_reliefs(dev, tops, &facets, &reliefs);
     })
 }
 

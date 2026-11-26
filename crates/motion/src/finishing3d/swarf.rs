@@ -7,7 +7,7 @@ use crate::machining2d::GenError;
 
 use super::ladder::levels;
 use super::params::{dirs, validate, Finish3DParams};
-use super::raster::{raster_pass, raster_pass_spaced, rings_and_tail_with_trim};
+use super::raster::{note_waterlines_off, raster_pass, raster_pass_spaced, rings_and_tail_with_trim};
 use super::rings::emit_rings_with_trim;
 use super::support::build_sups;
 
@@ -88,15 +88,25 @@ pub fn swarf_multi(
         // #1015: a rung refuses with the rungs before it built.
         let ghost = |e: GenError, b: &PathBuilder| e.with_ghost_moves(b.moves());
         emitted |= raster_pass_spaced(&mut b, &q, r, &sups, (ux, uy), emitted, spacing.tolerance).map_err(|e| ghost(e, &b))?;
-        let zs = levels(&spacing, r, facets).map_err(|e| ghost(e, &b))?;
-        let mut last = Some(q.clearance_z);
-        emitted |= emit_rings_with_trim(&mut b, &q, facets, &zs, &ds, &mut last, false)
-            .map_err(|e| ghost(e, &b))?;
+        if p.waterlines {
+            let zs = levels(&spacing, r, facets).map_err(|e| ghost(e, &b))?;
+            let mut last = Some(q.clearance_z);
+            emitted |= emit_rings_with_trim(&mut b, &q, facets, &zs, &ds, &mut last, false)
+                .map_err(|e| ghost(e, &b))?;
+        } else if p.top_z < p.bottom_z {
+            return Err(ghost(GenError::Invalid("waterline bottom is above its top".into()), &b));
+        }
     }
     if !emitted {
-        return Err(GenError::Empty(
-            "no surface reaches within one ball radius of the requested depths".into(),
-        ));
+        let msg = if p.waterlines {
+            "no surface reaches within one ball radius of the requested depths"
+        } else {
+            "no shallow surface inside the requested depths, and the waterline ring pass is off - enable waterlines to cut steep flanks"
+        };
+        return Err(GenError::Empty(msg.into()));
+    }
+    if !p.waterlines {
+        note_waterlines_off(&mut b, p, r, facets);
     }
     let cur = b.at();
     b.push(MoveKind::Rapid, Point3::new(cur.x, cur.y, p.clearance_z), None);

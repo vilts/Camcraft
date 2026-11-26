@@ -60,7 +60,7 @@ fn world_with(machine: Option<&str>, tools: &[&str]) -> (World, History) {
 
 fn face() -> OpParams {
     OpParams::Face { holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -70,6 +70,7 @@ fn face() -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -81,6 +82,7 @@ fn groove() -> OpParams {
         bottom_z: Height::fixed(-6.8),
         feed: 150.0,
         plunge_feed: 60.0,
+        picks: Default::default(),
     }
 }
 
@@ -224,6 +226,8 @@ fn the_refusal_names_a_fitting_catalog_entry() {
         (OpType::Finish3D, "'BN-0600' (6 mm ball-nose)"),
         (OpType::FormTurning, "'FG-0600-04' (4 mm form gauge)"),
         (OpType::WireContour, "'EDM-W025' (0.25 mm wire)"),
+        (OpType::WaterjetProfile, "'WJ-KERF-080' (0.8 mm waterjet nozzle)"),
+        (OpType::SlotUndercut, "'TS-2000-0600' (20 mm T-slot cutter)"),
     ] {
         let why = tool_gate::create_refusal(&world, ty.info()).expect("empty rack");
         assert!(why.contains(&format!("add {want} from the catalog?")), "{why}");
@@ -244,4 +248,29 @@ fn no_catalog_entry_of_the_kind_means_no_hint() {
         catalog().into_iter().filter(|(_, t)| t.kind != ToolKind::Drill).collect();
     let hint = tool_gate::catalog_suggestion(&no_drills, OpType::Drill.info().tool_kinds);
     assert_eq!(hint.as_deref(), Some("add 'TAP-M6' (6 mm tap) from the catalog?"));
+}
+
+/// #3170: two entries of one kind at the same size tie; the lower name
+/// wins, so the hint never depends on the catalog's file order (the
+/// router starter cutters of #3159 sit before the metal ladder).
+#[test]
+fn a_size_tie_picks_by_name_not_file_order() {
+    let named = |hint: Option<String>| {
+        hint.and_then(|h| h.split('\'').nth(1).map(str::to_owned)).unwrap_or_default()
+    };
+    let pair = |a: &'static str, b: &'static str| vec![(a, catalog_tool(a)), (b, catalog_tool(b))];
+    let ball = [ToolKind::BallNose];
+    for order in [pair("Router ball nose 6 mm", "BN-0600"), pair("BN-0600", "Router ball nose 6 mm")] {
+        assert_eq!(named(tool_gate::catalog_suggestion(&order, &ball)), "BN-0600");
+    }
+    let mut reversed = catalog();
+    reversed.reverse();
+    for (kinds, want) in [
+        (&[ToolKind::BallNose][..], "BN-0600"),
+        (&[ToolKind::EndMill][..], "EM-0600-4FL"),
+        (&[ToolKind::Taper][..], "CM-0600-90"),
+    ] {
+        assert_eq!(named(tool_gate::catalog_suggestion(&catalog(), kinds)), want);
+        assert_eq!(named(tool_gate::catalog_suggestion(&reversed, kinds)), want);
+    }
 }

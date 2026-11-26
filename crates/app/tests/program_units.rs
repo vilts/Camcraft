@@ -108,7 +108,8 @@ fn is_motion(line: &str) -> bool {
 
 /// The inch program is the mm program in inches: the same lines and
 /// words, the unit word swapped, every length / 25.4 (to its four
-/// decimals) and every feed / 25.4 (to its two), everything else equal.
+/// decimals) and every feed / 25.4 (to its two; Haas to its four since
+/// #3694), everything else equal.
 fn same_program_in_inch(stem: &str, g: &str, mm: &str, inch: &str, (mm_word, inch_word): (&str, &str)) {
     let (a, b): (Vec<&str>, Vec<&str>) = (mm.lines().collect(), inch.lines().collect());
     assert_eq!(a.len(), b.len(), "{stem} on {g}: line count differs\nmm:\n{mm}\ninch:\n{inch}");
@@ -132,7 +133,9 @@ fn same_program_in_inch(stem: &str, g: &str, mm: &str, inch: &str, (mm_word, inc
                 }
                 (Some(('F', vx)), Some(('F', vy))) => {
                     let want = vx / 25.4;
-                    // mm/min is whole before the divide, in/min at two decimals.
+                    // mm/min is whole before the divide, in/min at two decimals
+                    // (Haas: mm/min at three, in/min at four since #3694; the bound
+                    // holds for both).
                     assert!((vy - want).abs() <= 0.5 / 25.4 + 0.005 + 1e-9, "{stem} on {g}: {x} -> {y} (want {want:.3})");
                 }
                 _ => assert_eq!(x, y, "{stem} on {g}: `{la}` vs `{lb}`"),
@@ -270,9 +273,10 @@ fn rotary_angle_words_are_degrees_in_an_inch_program() {
     let rtcp = "PARAM ClearancePlane 20\nTOOL 1 T1\nPARAM SpindleSpeed 6000\nSECTION\nRapid X 0 Y 0 Z 20000 A 37500 B 0 C 0\nFeed X 20000 Y 0 Z 0 F 300000 A 0 B 12250 C 0\nFeed X 25400 Y 5000 Z 0 F 300000 A -45000 B 12250 C 0\nENDSECTION\n";
     let index = "PARAM ClearancePlane 10\nTOOL 1 T1\nPARAM SpindleSpeed 6000\nSECTION\nRapid X 0 Y 0 Z 10000 A 90000\nFeed X 50000 Y 0 Z -1000 F 400000 A 90000\nRapid X 50000 Y 0 Z 10000 A 127500\nFeed X 0 Y 0 Z -1000 F 400000 A 127500\nENDSECTION\n";
     let cases: [(&str, &str, &str, &[&str]); 3] = [
-        ("fanuc", "assets/machines/tilthead.mch", rtcp, &["A37.5", "B0.", "A0.", "B12.25", "A-45."]),
-        ("doosan-dnm", "assets/machines/tilthead.mch", rtcp, &["A37.5", "B0.", "A0.", "B12.25", "A-45."]),
-        ("doosan-dnm", "assets/machines/doosan-dnm.mch", index, &["A90.", "A127.5"]),
+        // #3540: the last two words are the program end's return to zero.
+        ("fanuc", "assets/machines/tilthead.mch", rtcp, &["A37.5", "B0.", "A0.", "B12.25", "A-45.", "A0.", "B0."]),
+        ("doosan-dnm", "assets/machines/tilthead.mch", rtcp, &["A37.5", "B0.", "A0.", "B12.25", "A-45.", "A0.", "B0."]),
+        ("doosan-dnm", "assets/machines/doosan-dnm.mch", index, &["A90.", "A127.5", "A0."]),
     ];
     for (stem, mch_rel, stream, want) in cases {
         let cps = read(&format!("assets/posts/{stem}.cps"));
@@ -297,7 +301,7 @@ fn rotary_angle_words_are_degrees_in_an_inch_program() {
 /// inches word by word, on every mill golden.
 #[test]
 fn grbl_family_posts_write_the_mm_program_in_inches() {
-    for (stem, machine) in [("grblhal", "grblHAL 3-axis"), ("tinyg", "TinyG 3-axis")] {
+    for (stem, machine) in [("grblhal", "grblHAL 3-axis"), ("tinyg", "TinyG 3-axis"), ("grbl", "Grbl 3-axis")] {
         let cps = read(&format!("assets/posts/{stem}.cps"));
         let text = camcraft_app::posting::builtin_machine_text(machine)
             .unwrap_or_else(|why| panic!("the library ships {machine}: {why}"));

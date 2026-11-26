@@ -81,6 +81,7 @@ fn plasma_op() -> PlasmaOp {
         pierce_height: None,
         cut_height: None,
         pierce_delay: None,
+        picks: Default::default(),
     }
 }
 

@@ -57,7 +57,7 @@ fn mach4_posts_full_app_setup_cleanly() {
 
     let params = OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -67,6 +67,7 @@ fn mach4_posts_full_app_setup_cleanly() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     history.execute(&world, CreateOperation::new(&world, "Face1", tool_name, SrcRef::Stock, params).expect("create"));
     history.execute(&world, GenerateOperation::new(&world, "Face1").expect("generate"));

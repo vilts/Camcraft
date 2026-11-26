@@ -34,8 +34,10 @@ use crate::geometry::Point3;
 use crate::entry::Entry3D;
 use crate::machining2d::{
     ARC_FIT_TOL, GenError, PocketParams, PocketStrategy, ProofTally, Return, Seg, adaptive_passes, choose_entry,
-    crossing_free, in_air, fit_proved, microlift_link, plan_passes, push_segs,
+    crossing_free, in_air, fit_proved, microlift_link, plan_passes, push_segs, zigzag_ringed_passes,
+    SeamWrap,
 };
+use super::level_side::{side_rings, start_side};
 
 /// Said once per path where the rest pass runs under Adaptive.
 pub const REST_RINGS: &str =
@@ -135,12 +137,29 @@ pub(super) fn plan_level(
     stock: Option<&Region>,
 ) -> Result<LevelPlan, GenError> {
     let step = p.tiling_step();
+    // #3361: Pass starts at (Waterline and Offset rings only).
+    let side = start_side(b, p, (rest, shell, seam.is_some()), stock);
+    if matches!(p.strategy, PocketStrategy::Zigzag | PocketStrategy::Auto) {
+        // #3129: the level's rows close with a ring on each boundary loop,
+        // so no cusp stands between row ends on a wall or an island.
+        // #3168: on the rotary wrap a loop that REACHES a cover end
+        // within the seam's reach wraps the seam - its cover-end edges
+        // are the seam's two copies at one azimuth - so that ring drops
+        // the seam edges and keeps one period per arc: the rows cut the
+        // seam columns, and no azimuth is cut twice. A loop that spans
+        // a period mid-cover touches no cover end and closes as the
+        // no-seam case does. (The merge drops main's `seam.is_none()`
+        // guard: it kept seam levels off the ring path while the ring
+        // code could not wrap a seam - this PR makes it wrap.)
+        let seam_wrap = seam.map(|s| SeamWrap { lo: s.lo, hi: s.hi, period: s.period, reach: s.reach });
+        return Ok(LevelPlan::rings(zigzag_ringed_passes(center, step, p.climb, seam_wrap)?, p.helix_radius));
+    }
     if p.strategy != PocketStrategy::Adaptive {
-        return Ok(LevelPlan::rings(plan_passes(center, step, p.climb, p.strategy)?, p.helix_radius));
+        return Ok(LevelPlan::rings(side_rings(b, center, p, p.strategy, &side, z)?, p.helix_radius));
     }
     if rest || shell {
         b.note_once(if rest { REST_RINGS } else { SHELL_RINGS });
-        let passes = plan_passes(center, step, p.climb, PocketStrategy::OffsetRings)?;
+        let passes = side_rings(b, center, p, PocketStrategy::OffsetRings, &side, z)?;
         return Ok(LevelPlan::rings(passes, p.helix_radius));
     }
     let what = match seam {
@@ -242,7 +261,7 @@ pub(super) fn plan_level(
 /// The tail every ring-cut level's note ends with (issue #983): the
 /// level by name - its Z, or on the wrap its developed radius.
 pub(super) fn rings_tag(what: &str) -> String {
-    format!(" - Offset rings cut {what} instead")
+    format!("{}{what} instead", crate::machining2d::RINGS_FALLBACK)
 }
 
 /// The level cut by Offset rings at the load step instead of the HSM

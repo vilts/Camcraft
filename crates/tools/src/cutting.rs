@@ -64,6 +64,14 @@ pub enum WorkMaterial {
     GreyCastIron,
     Brass,
     Plastics,
+    // #3068: the router materials. Appended: the table is indexed in
+    // ALL order and project files store the word, never the index.
+    Softwood,
+    Hardwood,
+    Mdf,
+    Plywood,
+    Acrylic,
+    Hdpe,
 }
 
 /// A cutting-speed (m/min) and feed-per-tooth (mm, at a 10 mm cutter)
@@ -78,8 +86,8 @@ pub struct Window {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct MaterialRow {
     pub material: WorkMaterial,
-    /// ISO 513 group letter ('O' for the plastics row, which ISO 513
-    /// does not class).
+    /// ISO 513 group letter ('O' for the plastics and wood rows, which
+    /// ISO 513 does not class).
     pub iso: char,
     /// Specific cutting force at a 1 mm x 1 mm chip, N/mm^2 (Kienzle).
     pub kc11: f64,
@@ -96,7 +104,11 @@ const fn w(vc: (f64, f64), fz10: (f64, f64)) -> Window {
 /// The table. Our own numbers inside public handbook ranges (module
 /// provenance); kc1.1 sits at the high side of the printed values so
 /// the power estimate errs toward a warning, never toward a stall.
-pub const TABLE: [MaterialRow; 6] = [
+/// The router rows (#3068) read their 10 mm chip load through the
+/// router curve ([`crate::cutting_router::router_scale`]); their speeds
+/// sit at the low side of the woodworking and plastics ranges, and HSS
+/// takes about 0.7 of the carbide chip load.
+pub const TABLE: [MaterialRow; 12] = [
     MaterialRow { material: WorkMaterial::Aluminium6061, iso: 'N', kc11: 700.0, mc: 0.25,
         hss: w((100.0, 250.0), (0.04, 0.08)), carbide: w((250.0, 600.0), (0.05, 0.10)) },
     MaterialRow { material: WorkMaterial::MildSteel, iso: 'P', kc11: 1500.0, mc: 0.25,
@@ -109,16 +121,34 @@ pub const TABLE: [MaterialRow; 6] = [
         hss: w((60.0, 100.0), (0.04, 0.08)), carbide: w((150.0, 300.0), (0.05, 0.10)) },
     MaterialRow { material: WorkMaterial::Plastics, iso: 'O', kc11: 250.0, mc: 0.25,
         hss: w((100.0, 250.0), (0.05, 0.12)), carbide: w((200.0, 500.0), (0.06, 0.15)) },
+    MaterialRow { material: WorkMaterial::Softwood, iso: 'O', kc11: 80.0, mc: 0.25,
+        hss: w((150.0, 350.0), (0.17, 0.25)), carbide: w((300.0, 700.0), (0.24, 0.36)) },
+    MaterialRow { material: WorkMaterial::Hardwood, iso: 'O', kc11: 150.0, mc: 0.25,
+        hss: w((120.0, 300.0), (0.13, 0.20)), carbide: w((250.0, 600.0), (0.19, 0.29)) },
+    MaterialRow { material: WorkMaterial::Mdf, iso: 'O', kc11: 120.0, mc: 0.25,
+        hss: w((150.0, 350.0), (0.17, 0.25)), carbide: w((300.0, 700.0), (0.24, 0.36)) },
+    MaterialRow { material: WorkMaterial::Plywood, iso: 'O', kc11: 120.0, mc: 0.25,
+        hss: w((120.0, 300.0), (0.15, 0.22)), carbide: w((250.0, 600.0), (0.21, 0.32)) },
+    MaterialRow { material: WorkMaterial::Acrylic, iso: 'O', kc11: 350.0, mc: 0.25,
+        hss: w((80.0, 200.0), (0.10, 0.15)), carbide: w((150.0, 400.0), (0.14, 0.22)) },
+    MaterialRow { material: WorkMaterial::Hdpe, iso: 'O', kc11: 200.0, mc: 0.25,
+        hss: w((100.0, 250.0), (0.12, 0.18)), carbide: w((200.0, 500.0), (0.17, 0.26)) },
 ];
 
 impl WorkMaterial {
-    pub const ALL: [WorkMaterial; 6] = [
+    pub const ALL: [WorkMaterial; 12] = [
         WorkMaterial::Aluminium6061,
         WorkMaterial::MildSteel,
         WorkMaterial::Stainless304,
         WorkMaterial::GreyCastIron,
         WorkMaterial::Brass,
         WorkMaterial::Plastics,
+        WorkMaterial::Softwood,
+        WorkMaterial::Hardwood,
+        WorkMaterial::Mdf,
+        WorkMaterial::Plywood,
+        WorkMaterial::Acrylic,
+        WorkMaterial::Hdpe,
     ];
 
     #[must_use]
@@ -130,6 +160,12 @@ impl WorkMaterial {
             WorkMaterial::GreyCastIron => "Grey cast iron",
             WorkMaterial::Brass => "Brass",
             WorkMaterial::Plastics => "Plastics (POM)",
+            WorkMaterial::Softwood => "Softwood (pine, spruce)",
+            WorkMaterial::Hardwood => "Hardwood (oak, maple)",
+            WorkMaterial::Mdf => "MDF",
+            WorkMaterial::Plywood => "Plywood",
+            WorkMaterial::Acrylic => "Acrylic (PMMA)",
+            WorkMaterial::Hdpe => "HDPE",
         }
     }
 
@@ -143,6 +179,12 @@ impl WorkMaterial {
             WorkMaterial::GreyCastIron => "grey_cast_iron",
             WorkMaterial::Brass => "brass",
             WorkMaterial::Plastics => "plastics_pom",
+            WorkMaterial::Softwood => "softwood",
+            WorkMaterial::Hardwood => "hardwood",
+            WorkMaterial::Mdf => "mdf",
+            WorkMaterial::Plywood => "plywood",
+            WorkMaterial::Acrylic => "acrylic",
+            WorkMaterial::Hdpe => "hdpe",
         }
     }
 
@@ -155,6 +197,29 @@ impl WorkMaterial {
     pub fn row(self) -> &'static MaterialRow {
         // The table is indexed in ALL order (pinned by a test).
         &TABLE[self as usize]
+    }
+
+    /// A router material (#3068): its chip load reads the router curve
+    /// by cutter diameter, not the metal bands of [`fz_scale`].
+    #[must_use]
+    pub const fn router(self) -> bool {
+        matches!(
+            self,
+            WorkMaterial::Softwood
+                | WorkMaterial::Hardwood
+                | WorkMaterial::Mdf
+                | WorkMaterial::Plywood
+                | WorkMaterial::Acrylic
+                | WorkMaterial::Hdpe
+        )
+    }
+
+    /// The chip-load scale for a cutter of diameter `d` mm, relative to
+    /// the row's 10 mm feed per tooth: the router curve for a router
+    /// material, the metal bands for the others.
+    #[must_use]
+    pub fn chip_scale(self, d: f64) -> f64 {
+        if self.router() { crate::cutting_router::router_scale(d) } else { fz_scale(d) }
     }
 
     #[must_use]

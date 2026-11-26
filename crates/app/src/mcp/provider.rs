@@ -18,12 +18,37 @@ pub enum Provider {
     Gemini,
 }
 
-/// The `tools` request field. Read the registry on every request, without a cache.
-/// OpenAI stays non-strict: MCP has optional fields and typed additional properties.
+/// Which tools a request offers (#1944): the whole table, or the core
+/// CAM workflow subset whose schemas fit a small local model's context.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolSet {
+    Full,
+    Core,
+}
+
+/// The core set: open, read, set up, add and edit operations, pick
+/// features, generate, verify, post and undo. Every name is a live tool.
+pub const CORE_TOOLS: &[&str] = &[
+    "open_project", "save_project", "import_model", "get_job", "get_selection",
+    "list_operation_types", "list_tool_catalog", "add_tool", "set_stock", "add_setup",
+    "activate_setup", "set_wcs", "add_operation", "edit_operation", "delete_operation",
+    "set_tool", "detect_holes", "detect_pockets", "list_features", "set_operation_geometry",
+    "generate", "verify", "post", "undo", "redo",
+];
+
+/// The `tools` request field with every tool. Read the registry on every request, without a cache.
 #[must_use]
 pub fn tools(provider: Provider) -> Vec<Value> {
+    tools_in(provider, ToolSet::Full)
+}
+
+/// The `tools` request field for one tool set.
+/// OpenAI stays non-strict: MCP has optional fields and typed additional properties.
+#[must_use]
+pub fn tools_in(provider: Provider, set: ToolSet) -> Vec<Value> {
     let rows: Vec<Value> = registry::list()
         .into_iter()
+        .filter(|tool| set == ToolSet::Full || tool["name"].as_str().is_some_and(|n| CORE_TOOLS.contains(&n)))
         .map(|tool| {
             let name = &tool["name"];
             let description = &tool["description"];

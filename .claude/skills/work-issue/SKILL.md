@@ -34,6 +34,9 @@ order of the steps. Load the `gh-issues` skill for the `gh` mechanics.
 - A worktree agent never switches, pulls, merges, resets, checks out or
   stashes in the main checkout. Its only git there is
   `git fetch origin && git worktree add --no-track -b issue/N-<slug> .claude/worktrees/issue-N origin/main`.
+  A sub-PR of a side branch (the brief names it, e.g. a path kernel issue
+  of #4023) uses `origin/side/path-kernel` in place of `origin/main`
+  (AGENTS.md **Side branch**).
   Reason: the main checkout may be running a gate, which reads HEAD and the
   tree at start and end and voids the run if they moved (#1201); a worker's
   pull would void that run for everyone. Work only in the worktree, with the worktree's own default `target/` (not a `CARGO_TARGET_DIR` env var: sccache hashes it, so the shared compile cache would miss across worktrees; AGENTS.md "Testing"). Never build
@@ -114,6 +117,9 @@ something under the safety floor that your label didn't account for):
   session's Co-Authored-By line), push, open a **draft** PR with
   `--body-file`: what changed, how tested (pinning tests named), what was
   not exercised, `Changelog:` line, `Effort: <tier>`, `Fixes #N`.
+  A sub-PR of a side branch: `--base side/path-kernel`, the body starts
+  with `Side branch: side/path-kernel`, the commit and the body end with
+  `Refs #N`, and the quick gate diffs against `origin/side/path-kernel`.
 - Swap `claimed` for `in-review`; comment
   `fix on issue/N-<slug> · PR #M · pinned by <tests> · merges when reviewed`.
 - Remove the worktree and its target dir.

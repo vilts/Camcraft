@@ -178,3 +178,28 @@ fn between_sample_spline_sag_past_tolerance_is_refused() {
         .expect("spline test case must measure cleanly");
     assert!(dspl.largest() > TOL, "spline bump > 0.01 mm at u=0.125 must exceed {TOL}, got {dspl:?}");
 }
+
+/// Pin (#2903 item 1, #2904 review): a planned face with triangles but no
+/// surface to evaluate is refused by name, never measured as zero. Two ways
+/// in: the plan gives no surface, or names one past its surface list. The
+/// planner gives neither for a STEP solid that we can write by hand, so the
+/// plan of `box.step` is edited after planning.
+#[test]
+fn a_face_with_no_surface_to_measure_is_refused_by_name() {
+    use camcraft_kernel::machining_mesh::MeshRefusal;
+    use camcraft_kernel::mesh_deviation::Unmeasured;
+    let s = solid("box.step");
+    let (plan, _) = solidcore_tess::plan(&s.record, &MeshTolerance::chord(TOL), 1.8).expect("box.step plans");
+    mesh_deviation::measure(&plan, &s.record, &CancelToken::new()).expect("the plan as made is measured");
+    let face = plan.faces.iter().position(|f| !f.triangles.is_empty()).expect("a face with triangles");
+    let id = plan.faces[face].face;
+    for surface in [None, Some(u32::try_from(plan.surfaces.len()).expect("surface count"))] {
+        let mut bad = plan.clone();
+        bad.faces[face].surface = surface;
+        let err = mesh_deviation::measure(&bad, &s.record, &CancelToken::new())
+            .expect_err("a face with no surface must not measure");
+        assert_eq!(err, Unmeasured::NoSurface { face: id }, "surface {surface:?}");
+        let refusal = MeshRefusal::Unmeasured(err).to_string();
+        assert!(refusal.contains("deviation not measurable") && refusal.contains("NoSurface"), "{refusal}");
+    }
+}

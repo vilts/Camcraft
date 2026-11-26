@@ -7,14 +7,15 @@
 //! material consulted.
 
 use crate::approach::{CENTER_CUT_REFUSAL, NOT_CENTER_CUTTING};
-use crate::cl::{MoveKind, PathBuilder, lattice};
+use crate::cl::{Move, MoveKind, PathBuilder, lattice};
 use crate::entry::Entry3D;
 use crate::plunge_law;
-use crate::entry::{chord_hits_plan, disc_clears, dive_room};
+use crate::entry::{chord_hits_plan, disc_clears, dive_room, helix_about};
 use crate::geo2d::Point2;
 use crate::geometry::Point3;
+use crate::links::helix_turns;
 
-use super::descent::{Descent, Lvl, plan_arm, ramp_fallback};
+use super::descent::{Cuts, Descent, Lvl, helix_parts, make_helix, plan_arm, push, ramp_fallback};
 use super::levels::{Cert, Motion};
 
 /// The axial feed down onto `(xy, z)` from where the tool stands over
@@ -99,21 +100,132 @@ pub(super) fn axial_why(d: &Descent, l: &Lvl) -> Option<&'static str> {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn helix_clears_prior(
+    prior: &[Move],
+    l: &Lvl,
+    start: Point2,
+    center: Point2,
+    from: f64,
+    z: f64,
+    turns: f64,
+    m: &Motion,
+) -> bool {
+    if prior.is_empty() {
+        return true;
+    }
+    let a = &m.links.approach;
+    let mut probe = PathBuilder::new(Point3::new(start.x, start.y, from));
+    helix_about(&mut probe, start, center, from, z, turns, a.descent_feed(m.feed), !a.helix_cw);
+    if let Some(&e) = l.pass.first()
+        && (start.x != e.x || start.y != e.y)
+        && links_to(l, start, e)
+    {
+        probe.push(MoveKind::Feed, Point3::new(e.x, e.y, z), Some(a.lead_feed(m.feed)));
+    }
+    !super::arc_cross::moves_cross_prior(probe.moves(), prior)
+}
+
+pub(super) fn find_clear_helix_raw(
+    prior: &[Move],
+    l: &Lvl,
+    from: f64,
+    z: f64,
+    zig: bool,
+    m: &Motion,
+    must_link: bool,
+) -> Option<(Point2, Point2, f64, f64)> {
+    let e = *l.pass.first()?;
+    let a = &m.links.approach;
+    for r in a.helix_radii(m.helix_radius) {
+        let pitch = if zig { m.links.helix_pitch } else { a.entry_pitch(r) };
+        let Some(turns) = helix_turns(from - z, r, pitch) else { continue };
+        for q in std::iter::once(e).chain(along_pass(l, m)) {
+            if must_link && (q.x != e.x || q.y != e.y) && !links_to(l, q, e) {
+                continue;
+            }
+            for k in 0..8 {
+                let (sn, cs) = (f64::from(k) * std::f64::consts::FRAC_PI_4).sin_cos();
+                let c = Point2::new(lattice(q.x + r * cs), lattice(q.y + r * sn));
+                if disc_clears(l.cen.room(), c, r + 1e-3) && helix_clears_prior(prior, l, q, c, from, z, turns, m) {
+                    return Some((q, c, turns, r));
+                }
+            }
+        }
+        if !must_link && let Some(c) = dive_room(l.cen.room(), r + 1e-3) {
+            let q = Point2::new(lattice(c.x - r), lattice(c.y));
+            let center = Point2::new(lattice(q.x + r), lattice(q.y));
+            if helix_clears_prior(prior, l, q, center, from, z, turns, m) {
+                return Some((q, center, turns, r));
+            }
+        }
+    }
+    None
+}
+
+pub(super) fn helix_cross_fallback(b: &mut PathBuilder, l: &Lvl, e: Point2, z: f64, from: f64, tz: f64, m: &Motion) -> Cuts {
+    let safe_tz = if tz < m.hop_z - 1e-9 {
+        let cur = b.at();
+        b.push(MoveKind::Rapid, Point3::new(cur.x, cur.y, m.hop_z), None);
+        m.hop_z
+    } else {
+        tz
+    };
+    if let Some(r) = ramp_fallback(l, z, from, m) && moves_clear(b, &r, l, z, safe_tz, m) {
+        b.note_once("entry: the helix crosses an earlier cut - ramp along the pass instead");
+        return push(b, &r, l, z, safe_tz, m);
+    }
+    if !m.links.approach.center_cutting {
+        b.note_once(&format!("{CENTER_CUT_REFUSAL} - any helix or ramp crosses an earlier cut at Z {z:.3}"));
+        return Vec::new();
+    }
+    substituted_dive(b, l, e, z, m, "any helix crosses an earlier cut", safe_tz)
+        .map(|d| vec![vec![d, e]])
+        .unwrap_or_default()
+}
+
+pub(super) fn moves_clear(b: &PathBuilder, d: &Descent, l: &Lvl, z: f64, plane: f64, m: &Motion) -> bool {
+    let mut trial = b.clone();
+    super::descent::push(&mut trial, d, l, z, plane, m);
+    trial
+        .moves()
+        .get(b.moves_len()..)
+        .is_some_and(|moves| !super::arc_cross::moves_cross_prior(moves, b.moves()))
+}
+
+fn helix_is_clear(prior: &[Move], l: &Lvl, d: &Descent, z: f64, m: &Motion) -> bool {
+    let Some((s, c, from, turns, _)) = helix_parts(d) else { return true };
+    helix_clears_prior(prior, l, s, c, from, z, turns, m)
+}
+
+fn find_clear_helix_for(prior: &[Move], l: &Lvl, from: f64, z: f64, m: &Motion, must_link: bool) -> Option<Descent> {
+    let (start, center, turns, r) = find_clear_helix_raw(prior, l, from, z, false, m, must_link)?;
+    Some(make_helix(start, center, from, turns, r))
+}
+
 /// A pass start inside a level that a tool which is not centre-cutting
 /// would plunge into solid (M11.3, the between-pass law): entered like a
 /// level - the helix onto it, else the ramp along the pass - from `from`,
 /// or refused by name. Never a plunge.
-pub(super) fn restart(l: &Lvl, leg: Point2, z: f64, from: f64, m: &Motion) -> Descent {
+pub(super) fn restart(b: &PathBuilder, l: &Lvl, leg: Point2, z: f64, from: f64, plane: f64, m: &Motion) -> Descent {
     let e = l.pass.first().copied().unwrap_or(leg);
+    if let Some(d) = super::entry_warn::outside_arc_restart(b, l, leg, e, z, plane, m) {
+        return d;
+    }
     let site = format!("the pass start ({:.3}, {:.3})", e.x, e.y);
-    if let h @ Descent::Helix(..) = plan_arm(Entry3D::Helix, false, l, leg, z, from, m) {
+    if let h @ Descent::Helix(..) = plan_arm(Entry3D::Helix, false, l, leg, z, from, m)
+        && helix_is_clear(b.moves(), l, &h, z, m)
+        && moves_clear(b, &h, l, z, plane, m)
+    {
         return Descent::Named(Box::new(h), format!("{NOT_CENTER_CUTTING} at a pass start inside a level - helix entry instead"));
     }
-    if let Some(r) = ramp_fallback(l, z, from, m) {
+    if let Some(r) = ramp_fallback(l, z, from, m)
+        && moves_clear(b, &r, l, z, plane, m)
+    {
         return Descent::Named(Box::new(r), format!("{NOT_CENTER_CUTTING} at a pass start inside a level - ramp along the pass instead"));
     }
     Descent::Refused(format!(
-        "{CENTER_CUT_REFUSAL} - {site} would be a plunge into solid at Z {z:.3}, and no helix or ramp fits onto it"
+        "{CENTER_CUT_REFUSAL} - {site} would be a plunge into solid at Z {z:.3}, and no helix or ramp fits without crossing prior cuts"
     ))
 }
 
@@ -121,27 +233,61 @@ pub(super) fn restart(l: &Lvl, leg: Point2, z: f64, from: f64, m: &Motion) -> De
 /// into solid, where the user asked for a helix, ramp or arc entry
 /// (#2265: a second piece of the area, a ring its neighbours have not
 /// cleared): entered by the asked arm onto it - a helix only where it
-/// closes on the start or links to it at depth - else the ramp along the
-/// pass, else the plunge. Each stand-in is named with the site, the
-/// level and the reason; a plunge into material is never silent.
-pub(super) fn entry_restart(l: &Lvl, leg: Point2, z: f64, from: f64, m: &Motion) -> Descent {
+/// closes on the start or links to it at depth, and crossing no prior cut -
+/// else the ramp along the pass, else the plunge. Each stand-in is
+/// named with the site, the level and the reason; a plunge into material
+/// is never silent.
+pub(super) fn entry_restart(b: &PathBuilder, l: &Lvl, leg: Point2, z: f64, from: f64, plane: f64, m: &Motion) -> Descent {
     let e = l.pass.first().copied().unwrap_or(leg);
+    if let Some(d) = super::entry_warn::outside_arc_restart(b, l, leg, e, z, plane, m) {
+        return d;
+    }
     let d = plan_arm(m.entry, false, l, leg, z, from, m);
     let why = match &d {
-        Descent::Helix(h) if (h.start.x == e.x && h.start.y == e.y) || links_to(l, h.start, e) => return d,
-        Descent::Helix(_) => "the helix fits only away from the pass start",
+        Descent::Helix(h) => {
+            let linked = (h.start.x == e.x && h.start.y == e.y) || links_to(l, h.start, e);
+            if linked && helix_is_clear(b.moves(), l, &d, z, m) && moves_clear(b, &d, l, z, plane, m) {
+                return d;
+            }
+            if let Some(alt) = find_clear_helix_for(b.moves(), l, from, z, m, true)
+                && moves_clear(b, &alt, l, z, plane, m)
+            {
+                return alt;
+            }
+            if !linked {
+                "the helix fits only away from the pass start"
+            } else {
+                "the helix would cross prior cuts"
+            }
+        }
         Descent::Sub(why) => *why,
         _ => match axial_why(&d, l) {
-            None => return d,
+            None if moves_clear(b, &d, l, z, plane, m) => return d,
+            None => "the entry would cross prior cuts",
             Some(why) => why,
         },
     };
     let site = format!("the pass start ({:.3}, {:.3}) at Z {z:.3} is in material and {why}", e.x, e.y);
-    match ramp_fallback(l, z, from, m) {
+    let clear = |d: &Descent| moves_clear(b, d, l, z, plane, m);
+    // #3746: a start-side pass is entered from the air outside the stock
+    // box where a lead reaches its start clear of the plan and the cuts.
+    if let Some(a) = super::air_entry::restart(l, m).filter(|d| clear(d)) {
+        return Descent::Named(Box::new(a), format!("entry: {site} - entered from the air outside the stock box instead"));
+    }
+    match ramp_fallback(l, z, from, m).filter(|r| clear(r)) {
         Some(r) => Descent::Named(Box::new(r), format!("entry: {site} - ramp along the pass instead")),
+        // #3746: on a start-side pass, a helix that closes on the start
+        // (or links to it) and crosses no cut, before the plunge into
+        // material.
+        None if m.air.is_some()
+            && m.entry != Entry3D::Helix
+            && let Some(h) = find_clear_helix_for(b.moves(), l, from, z, m, true).filter(|h| clear(h)) =>
+        {
+            Descent::Named(Box::new(h), format!("entry: {site} - helix entry instead"))
+        }
         None => Descent::Named(
             Box::new(Descent::Plunge(e)),
-            format!("entry: {site}, and the pass is too short to ramp - plunged into material at the plunge feed"),
+            format!("entry: {site}, and no ramp fits clear of prior cuts - plunged into material at the plunge feed"),
         ),
     }
 }
@@ -240,6 +386,11 @@ pub(super) fn links_to(l: &Lvl, q: Point2, e: Point2) -> bool {
 /// that does and links back to the start at depth; else the floor's room
 /// (the M8.1 dive, its link proved or the second dive named).
 pub(super) fn dive_point(l: &Lvl, e: Point2, m: &Motion) -> Option<Point2> {
+    // The band boundary is a cutting circle. Landing on its start keeps
+    // the descent in the same column on each level of the ring.
+    if matches!(l.cen, Cert::RingDisk { .. }) && l.cen.chord_ok(e, e) {
+        return Some(e);
+    }
     let margin = wall_margin(m);
     if disc_clears(l.cen.room(), e, margin) {
         return Some(e);

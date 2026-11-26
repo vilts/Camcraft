@@ -19,11 +19,13 @@ minimumRevision = 1;
 extension = "nc";
 setCodePage = "utf-8";
 capabilities = 1; // reference contract: integer feature mask (bit 1 = milling)
+axisInversion = true; // verified on the engine's mirrored stream for a flipped WCS X/Y and an inverted machine X/Y (#2475): trace equivalence test + golden
 workOffsetIndex = true; // reads PARAM WorkOffset as the 1-based offset number (#931)
 workOffsetMax = 6;      // G54..G59; extended offsets not verified for this firmware (#931)
 coolantModes = true; // reads PARAM Coolant (#869): the op's ask is posted, or refused by name
 programUnits = "mm"; // #902: millimetres only - the engine refuses an inch document by name
 endUnits = "note";   // #2189: mm-only firmware halts on G20; notes once when asked for inch
+explains = "paren"; // #1389: trailing RS-274 comments; shared helper guards their text
 
 declaredOptions = {
   showSequenceNumbers: {
@@ -62,6 +64,7 @@ var coolant = "";          // the M-code this section started, if any
 var coolantAsk = "flood";  // the section's PARAM Coolant (#869), flood when unstated
 var coolantOp = "";        // the section's OperationName, for refusals
 var sectionOpen = false;   // preamble written (a legacy .cl carries no SECTION)
+var wcsFlip = "";          // #1649: the flipped WCS axes ("X", "Y", "XY") - the engine mirrored the section
 var orgX = 0, orgY = 0, orgZ = 0; // the WCS slot origin (OriginX/Y/Z PARAMs)
 var pendingDwell = null;   // a drilling dwell owed at its hole's bottom
 var smoothTol = 0;          // #616: the section's PARAM Smoothing, mm (0: none asked)
@@ -119,7 +122,9 @@ function block(words) {  // join the non-empty words onto one line
         seqNextForce = false;
       }
     }
-    writeln(prefix + body);
+    var line = prefix + body, c = explain(a);
+    if (c && line.length + 1 + c.length <= 80) line += " " + c;
+    writeln(line);
   }
 }
 function writeHeaderExtras() {
@@ -138,6 +143,7 @@ function writeHeaderExtras() {
   }
 }
 function wo(letter, v, o) { return has(v) ? letter + fu(v - o) : ""; }  // axis word, origin-relative
+function arcWord(k, v) { return wo(k, v, k === "X" ? orgX : (k === "Y" ? orgY : orgZ)); }  // #3442: a position word as written, for arcFate
 function xyz(p) { return [wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ)]; }
 function msg(s) {  // counted warning where the host offers message()
   if (typeof message === "function") message(s); else writeln("(" + s + ")");
@@ -246,6 +252,8 @@ function joinDash(parts) {
   return a.join(" - ");
 }
 function note(s) { block(["(" + s + ")"]); }
+// Program notes use this dialect without truncating the stated bound.
+function onComment(s) { note(commentText(s)); }
 function commentParam(name, value) {
   if (name === "SetupName") setupName = clean(value);
   else if (name === "OperationName") opName = clean(value);
@@ -276,8 +284,20 @@ function toolNote() {
 function onOpen() {
   var nm = (typeof machine !== "undefined" && machine.name) || "CAMCRAFT";
   note(clean(nm) || "CAMCRAFT");
+  invertedNotes();
   writeHeaderExtras();
   block(["G21", "G17", "G90", "G94"]);
+}
+// The machine's inverted linear axes (#375): the engine has mirrored the
+// stream into the controller's frame, and the header says so, one note
+// for each axis. A standard machine lists none.
+function invertedNotes() {
+  var a = (typeof machine !== "undefined" && machine && machine.invertedAxes) || [];
+  var where = { X: "LEFT", Y: "TOWARD THE FRONT", Z: "DOWN" };
+  for (var i = 0; i < a.length; i++) {
+    var l = String(a[i]);
+    note("MACHINE " + l + "+ MOVES " + (where[l] || "THE OTHER WAY") + " - INVERTED AXIS");
+  }
 }
 
 // No G41 / G42 in the firmware's table: refused by name, never a centre
@@ -308,6 +328,7 @@ function onParameter(name, value) {
   else if (name === "OriginX" && has(value)) orgX = Number(value);
   else if (name === "OriginY" && has(value)) orgY = Number(value);
   else if (name === "OriginZ" && has(value)) orgZ = Number(value);
+  else if (name === "WcsFlip") wcsFlip = String(value || "");
   else if (name === "ClearancePlane") clearZ = has(value) ? Number(value) : null;  // #1616
   else if (name === "RetractPlane") hopZ = has(value) ? Number(value) : null;  // #1616
 }
@@ -360,6 +381,8 @@ function startPreamble() {
   secStarted += 1;
   if (optStr("showSequenceNumbers", "off") === "op-start") seqNextForce = true;
   opNotes();
+  // #1649: the operator reads why every sign on a flipped axis is the other one.
+  if (wcsFlip) note("WCS " + wcsFlip.split("").join(" AND ") + " FLIPPED - PROGRAM MIRRORED");
   block(["G17", "G90", wcsWord]);
   planeG = 17;
   if (toolWait) {
@@ -397,7 +420,7 @@ function endPreamble() {
 }
 
 function onSection() { startPreamble(); }
-function onSectionEnd() { endPreamble(); clearZ = null; hopZ = null; }  // #1616: the next section states its own planes
+function onSectionEnd() { endPreamble(); wcsFlip = ""; clearZ = null; hopZ = null; }  // #1616: the next section states its own planes
 
 // ------------------------------------------------------------- motions
 // X and Y are unknown at the program's start and after a tool change, so
@@ -480,6 +503,9 @@ function onLinear() {
 }
 function onCircular() {
   startPreamble();
+  // #3442: an arc whose written ends coincide is no arc block (arcFate, PRELUDE).
+  var fate = arcFate(arcWord, arcIncOf(fu));  // #3474: I J K are increments from the start
+  if (fate !== "arc") { if (fate === "linear") onLinear(); return; }
   if (!tiltOk(properties)) return;
   if (spindleStopped("arc move " + (properties.CircularDirection === "CW" ? "G2" : "G3"))) return;
   var p = properties;

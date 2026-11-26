@@ -264,6 +264,48 @@ pub(super) fn plan_links(
     (sched, stay)
 }
 
+/// The wall arc's ring-to-ring hop under pass Clearance: feed up to the
+/// hop plane, then rapid to clearance.
+pub(super) fn wall_arc_hop(b: &mut PathBuilder, p: &ContourParams, hop_z: f64) {
+    let cur = b.at();
+    b.push(MoveKind::Feed, Point3::new(cur.x, cur.y, hop_z), Some(p.feed));
+    b.push(MoveKind::Rapid, Point3::new(cur.x, cur.y, p.clearance_z), None);
+}
+
+/// Tab window to tab window: up over the tab, across, down (pecked where
+/// the dive would go deep under the disc, #3678: `uncut` is
+/// `contour_peck::uncut_floor`).
+pub(super) fn tab_window_dive(b: &mut PathBuilder, p: &ContourParams, e2: Point2, hop_z: f64, lead_top: f64, uncut: Option<f64>) {
+    let cur = b.at();
+    b.push(MoveKind::Feed, Point3::new(cur.x, cur.y, hop_z), Some(p.feed));
+    b.push(MoveKind::Rapid, Point3::new(e2.x, e2.y, hop_z), None);
+    guard(b, p, e2, lead_top, p.entry_top(), "the dive past a tab");
+    let pf = p.plunge_feed;
+    super::contour_peck::dive(b, p, e2, lead_top, uncut, hop_z, pf, |b, d| b.push(MoveKind::Plunge, Point3::new(e2.x, e2.y, d), Some(pf)));
+}
+
+/// A bore-side ring that follows another one at its level, entered by the
+/// user's arm instead of the pass link's plunge into material.
+pub(super) struct RingEntry {
+    pub arm: Entry3D,
+    /// The plane of the traverse between the rings: the pass link's own
+    /// (clearance for `Link::Clearance`, the hop plane otherwise - also for
+    /// a keep-down link that failed its proof, as `ring_link` does).
+    pub plane: f64,
+}
+
+/// The entry of a ring after another one: the entry on the path's first
+/// level, the transition below it. `None` where the pass link keeps the
+/// ring (the plunge entry, a tabbed level, the wall side's arc - its own
+/// hop and wall arc enter that ring). On the wall side the ramp and the
+/// helix take the wall-side ramp (#3917, `contour_wall_ramp`).
+pub(super) fn ring_entry(p: &ContourParams, applies: bool, inside: bool, first_level: bool, arm: Entry3D, hop_z: f64) -> Option<RingEntry> {
+    let arm = if first_level { p.entry } else { arm };
+    let plane = if p.links.pass == Link::Clearance { p.clearance_z } else { hop_z };
+    let armed = if inside { arm != Entry3D::Plunge } else { matches!(arm, Entry3D::Ramp | Entry3D::Helix) };
+    (applies && armed).then_some(RingEntry { arm, plane })
+}
+
 /// The ring-to-ring move within one level (the pass link). `Ok(true)`:
 /// the link was posted and the tool stands on `e2` at `z`. Keep down
 /// feeds there when the straight link holds the lead room, crosses no
@@ -281,7 +323,8 @@ pub(super) fn ring_link(
     hop_z: f64,
     tabbed: bool,
     lifted: &mut crate::links::LinkTally,
-) {
+    enter: bool,
+) -> bool {
     let cur = b.at();
     let at = Point2::new(cur.x, cur.y);
     if p.links.pass == Link::KeepDown {
@@ -289,10 +332,16 @@ pub(super) fn ring_link(
         match proof {
             Ok(()) => {
                 b.push(MoveKind::Feed, Point3::new(e2.x, e2.y, z), Some(p.feed));
-                return;
+                return true;
             }
             Err(why) => lifted.lift(why, at, z),
         }
+    }
+    // The new ring is entered by the entry the user chose (a ramp or a
+    // helix), not by this link's straight plunge into material: nothing is
+    // posted, the caller engages the level.
+    if enter {
+        return false;
     }
     if cur.z < hop_z {
         b.push(MoveKind::Feed, Point3::new(cur.x, cur.y, hop_z), Some(p.feed));
@@ -304,6 +353,7 @@ pub(super) fn ring_link(
     b.push(MoveKind::Rapid, Point3::new(e2.x, e2.y, hop_z), None);
     guard(b, p, e2, z, p.entry_top(), "the ring-to-ring dive at the lead-in");
     b.push(MoveKind::Plunge, Point3::new(e2.x, e2.y, z), Some(p.plunge_feed));
+    true
 }
 
 /// The contour's keep-down law: the cutter center on the legal side of

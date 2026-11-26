@@ -13,7 +13,7 @@ use camcraft_motion::cl::MoveKind;
 use camcraft_motion::entry::Entry3D;
 use camcraft_motion::geo2d::{Loop, Point2, Region};
 use camcraft_motion::machining2d::{
-    chamfer, circular, ChamferParams, CircularParams, GenError,
+    chamfer, chamfer_open_runs, circular, ChamferParams, CircularParams, GenError,
 };
 
 fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Region {
@@ -31,6 +31,7 @@ fn chamfer_params() -> ChamferParams {
     ChamferParams {
         width: 2.0,
         angle_deg: 45.0,
+        minimum_cone_radius: 0.0,
         clearance_z: 25.0,
         retract_z: None,
         top_z: 20.0,
@@ -43,6 +44,7 @@ fn chamfer_params() -> ChamferParams {
 
 fn circular_params(vault: bool, stepover: f64, radius: f64) -> CircularParams {
     CircularParams {
+        pass_start: Default::default(),
         links: camcraft_motion::links::Links::PLANAR,
         center: Point2::new(0.0, 0.0),
         radius,
@@ -94,6 +96,11 @@ fn chamfer_rides_the_derived_corner() {
 
 fn chamfer_path(p: &ChamferParams) -> camcraft_motion::cl::Toolpath {
     chamfer(&rect(0.0, 0.0, 60.0, 60.0), p).expect("a well-made ride")
+}
+
+fn open_chamfer_path(runs: &[Vec<Point2>], p: &ChamferParams) -> camcraft_motion::cl::Toolpath {
+    chamfer_open_runs(runs, p, &|_| Ok(Some(rect(-20.0, -20.0, 20.0, 20.0))))
+        .expect("the selected edge of a block chamfers")
 }
 
 #[test]
@@ -151,6 +158,126 @@ fn chamfer_refuses_its_own_numbers_by_name() {
     assert!(
         err(chamfer(&rect(0.0, 0.0, 1.0, 1.0), &p)).contains("retract plane sits inside the material"),
         "between the corner and the top the wall still stands"
+    );
+}
+
+#[test]
+fn an_open_chamfer_rides_one_edge_from_end_to_end() {
+    let p = chamfer_params();
+    let run = vec![
+        Point2::new(-20.0, 20.0),
+        Point2::new(20.0, 20.0),
+    ];
+    let t = open_chamfer_path(std::slice::from_ref(&run), &p);
+    assert_eq!(t.breaks.len(), 1, "one selected chain, one break");
+    let b = &t.breaks[0];
+    assert_eq!(
+        b.edge,
+        run.iter()
+            .map(|q| camcraft_motion::geometry::Point3::new(q.x, q.y, p.top_z))
+            .collect::<Vec<_>>(),
+        "the selected points alone declare credit"
+    );
+    assert_ne!(b.edge.first(), b.edge.last(), "the open break is not a loop");
+
+    let cut: Vec<_> = t
+        .moves
+        .iter()
+        .filter(|m| m.kind == MoveKind::Feed && (m.to.z - p.corner_z()).abs() < 1e-9)
+        .collect();
+    assert_eq!(cut.len(), 3, "air lead in, selected edge, air lead out");
+    assert!(
+        cut.iter().any(|m| (m.to.x + 20.0).abs() < 1e-9 && (m.to.y - 20.0).abs() < 1e-9),
+        "the first selected end is cut: {cut:?}"
+    );
+    assert!(
+        cut.iter().any(|m| (m.to.x - 20.0).abs() < 1e-9 && (m.to.y - 20.0).abs() < 1e-9),
+        "the last selected end is cut: {cut:?}"
+    );
+    assert!(
+        (cut[0].from.y - 22.0).abs() < 1e-9
+            && (cut[cut.len() - 1].to.y - 22.0).abs() < 1e-9,
+        "entry and exit stand off the wall in air: {cut:?}"
+    );
+    assert_eq!(
+        t.moves.last().map(|m| m.kind),
+        Some(MoveKind::Rapid),
+        "the cutter leaves by lifting"
+    );
+    assert_eq!(
+        t.moves.last().map(|m| m.to.z),
+        Some(p.clearance_z),
+        "the final lift reaches clearance"
+    );
+}
+
+#[test]
+fn connected_open_chamfer_edges_are_one_run() {
+    let p = chamfer_params();
+    let chain = vec![
+        Point2::new(-20.0, 20.0),
+        Point2::new(20.0, 20.0),
+        Point2::new(20.0, -20.0),
+    ];
+    let t = open_chamfer_path(std::slice::from_ref(&chain), &p);
+    assert_eq!(t.breaks.len(), 1, "connected edges stay in one break");
+    assert_eq!(t.breaks[0].edge.len(), 3, "every selected vertex is kept");
+    assert_eq!(
+        t.moves
+            .iter()
+            .filter(|m| m.kind == MoveKind::Plunge)
+            .count(),
+        1,
+        "one pass enters once"
+    );
+    let cut: Vec<_> = t
+        .moves
+        .iter()
+        .filter(|m| m.kind == MoveKind::Feed && (m.to.z - p.corner_z()).abs() < 1e-9)
+        .collect();
+    assert!(
+        cut.iter().any(|m| (m.to.x - 20.0).abs() < 1e-9 && (m.to.y - 20.0).abs() < 1e-9),
+        "the connected chain crosses its corner: {cut:?}"
+    );
+}
+
+#[test]
+fn separate_open_chamfer_chains_are_separate_passes() {
+    let p = chamfer_params();
+    let runs = vec![
+        vec![
+            Point2::new(-20.0, 20.0),
+            Point2::new(20.0, 20.0),
+        ],
+        vec![
+            Point2::new(20.0, -20.0),
+            Point2::new(-20.0, -20.0),
+        ],
+    ];
+    let t = open_chamfer_path(&runs, &p);
+    assert_eq!(t.breaks.len(), 2, "one break for each selected run");
+    assert_eq!(
+        t.moves
+            .iter()
+            .filter(|m| m.kind == MoveKind::Plunge)
+            .count(),
+        2,
+        "each separated chain enters as its own pass"
+    );
+    assert!(
+        t.moves.windows(2).any(|m| {
+            m[0].to.z == p.clearance_z
+                && m[1].kind == MoveKind::Rapid
+                && m[1].from.z == p.clearance_z
+                && m[1].to.z == p.clearance_z
+        }),
+        "the pass link travels between chains only at clearance"
+    );
+    assert!(
+        t.breaks
+            .iter()
+            .all(|b| b.edge.iter().all(|q| q.z == p.top_z)),
+        "each run keeps its own top-plane edge"
     );
 }
 

@@ -33,6 +33,7 @@ and is not walked through here. `tormach.cps` posts it (issue #796). Four
 hand-written motion tests in the PathPilot simulator confirm the control
 behavior. The posted continuous program still needs a simulator run and a
 hardware check. See
+[Your first continuous 4-axis program](@/guide/getting-started/first-continuous-4axis-part.md),
 [Continuous 4-axis](@/guide/multi-axis/continuous-4-axis.md) and
 [What the post refuses](#what-the-post-refuses) below.
 
@@ -123,7 +124,7 @@ Make two tools:
 
 Choose **Add tool** for each one. The tools post as T1 and T2, in list
 order. If your machine's tool table uses other numbers, set
-**Tool number (0 = next free)** on each tool. See
+**Tool number** on each tool (0 takes the next unused number). See
 [Tools and tool libraries](@/guide/set-up/tools.md).
 
 ## The five operations

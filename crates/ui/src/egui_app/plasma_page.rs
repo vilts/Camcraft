@@ -36,7 +36,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
         feed,
         pierce_height,
         cut_height,
-        pierce_delay,
+        pierce_delay, picks: _,
     } = p;
     if tab == SEC_GEO {
         auto_opt(ui, "Kerf width", "Torch", kerf, "the torch's diameter", 1.5, |ui, v| num(ui, u, v));

@@ -118,6 +118,8 @@ fn rotary_world() -> World {
         lead_deg: 0.0,
         lag_deg: 0.0,
         max_tilt_deg: 60.0,
+        stated_axis: None,
+        picks: Default::default(),
     };
     history.execute(
         &world,
@@ -175,7 +177,7 @@ fn tilted_world() -> World {
         ImportModel::from_mesh("part", cube(Point3::new(0.0, 0.0, -20.0), Point3::new(10.0, 30.0, -10.0))),
     );
     stock_at(&world, &mut history, StockShape::Box { dx: 40.0, dy: 30.0, dz: 10.0 }, Point3::new(20.0, 15.0, -20.0));
-    let params = OpParams::Pocket { rest: None,
+    let params = OpParams::Pocket { pass_start: Default::default(), rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: Some(Tilt { basis_version: 1, a_deg: 0.0, b_deg: 90.0, origin: [-25.0, 0.0, -15.0] }),
@@ -194,6 +196,8 @@ fn tilted_world() -> World {
         helix_radius: 1.0,
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         blend_turns: false,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     };
     history.execute(
         &world,
@@ -230,7 +234,7 @@ fn a_posed_program_is_refused_by_name_never_cut_upright() {
 
 fn face_params() -> OpParams {
     OpParams::Face { holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -240,6 +244,7 @@ fn face_params() -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 

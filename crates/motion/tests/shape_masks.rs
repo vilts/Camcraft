@@ -439,7 +439,7 @@ fn slot_extension_mask_matches_extended_stadium_and_stock_bounds() {
         plunge_feed: 200.0,
         climb: true,
         entry: Entry3D::Plunge,
-        helix_radius: 1.0,
+        helix_radius: 1.0, blend_turns: false, blend_radius: None,
         links: Links::PLANAR,
     };
     let Ok(path) = slot(ea, eb, &p) else { panic!("slot path") };

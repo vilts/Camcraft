@@ -187,8 +187,12 @@ fn provoke_face_left_out_edge_not_sampled_and_lenient() {
             });
         }
         s.record.faces[0].loops.push(Loop::Edges { edges: hole });
+        // Up to solidcore 2016386 this loop took solidcore-tess's lenient
+        // CDT fill (MeshRefusal::Lenient). Since fa67b3f5 (#3767) the mesher
+        // leaves the crossing loop's edges open, and the mesh is refused as
+        // not watertight. Still a refusal; a new Lenient provocation is #3800.
         let res = machining_mesh(&s, 0.0001, &CancelToken::new());
-        assert!(matches!(res, Err(MeshRefusal::Lenient { face: 0, .. })), "got {res:?}");
+        assert!(matches!(res, Err(MeshRefusal::NotWatertight { open: 6, .. })), "got {res:?}");
     }
 }
 

@@ -259,9 +259,12 @@ fn framed_stock_chamfer_live_refusal_keeps_hint_without_local_move_number() {
     const MID: f64 = 10.0;
     let (world, mut h) = job_without_part(HALF);
     let mut params = chamfer(1.0);
-    if let OpParams::Chamfer2D { tilt, top_z, .. } = &mut params {
+    if let OpParams::Chamfer2D { tilt, top_z, clearance_z, .. } = &mut params {
         *tilt = Some(Tilt { basis_version: 1, a_deg: 0.0, b_deg: 10.0, origin: [0.0; 3] });
         *top_z = Height::fixed(MID);
+        // #2901: along the tilted axis the block's high corner stands at
+        // 25.77; the first traverse needs a clearance plane over it.
+        *clearance_z = Height::fixed(30.0);
     }
     let warns = generated(&world, &mut h, CHAMFER, params);
     assert!(warns.iter().all(|w| !w.blocks_post()), "previously clear chamfer: {warns:?}");

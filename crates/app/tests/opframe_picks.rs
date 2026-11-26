@@ -127,7 +127,7 @@ fn face_edge_chains(world: &World, entity: &str, want_n: [f64; 3], want_off: f64
 fn face_params(cut: Height, clearance: f64) -> OpParams {
     OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(clearance),
@@ -137,11 +137,12 @@ fn face_params(cut: Height, clearance: f64) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
 fn pocket_params(top: Height, bottom: Height, stepdown: f64) -> OpParams {
-    OpParams::Pocket { rest: None,
+    OpParams::Pocket { pass_start: Default::default(), rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
@@ -160,11 +161,14 @@ fn pocket_params(top: Height, bottom: Height, stepdown: f64) -> OpParams {
         helix_radius: 1.0,
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         blend_turns: false,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     }
 }
 
 fn adaptive_params(top: Height, bottom: Height, stepdown: f64) -> OpParams {
     OpParams::Adaptive2D {
+        rest: None,
         blend_radius: None,
         blend_turns: false,
         links: camcraft_app::links::Links::PLANAR,
@@ -184,6 +188,9 @@ fn adaptive_params(top: Height, bottom: Height, stepdown: f64) -> OpParams {
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         method: AdaptiveMethod::Spiral,
         troch: Default::default(),
+        corner_relief: Default::default(),
+        pass_start: Default::default(),
+        picks: Default::default(),
     }
 }
 
@@ -206,9 +213,11 @@ fn contour_params(top: Height, bottom: Height, side: Side) -> OpParams {
         tab_height: 1.0,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -378,14 +387,16 @@ fn tilt_times_picks_and_unverified_stay_refused_and_area_passes_in_phase_two() {
     let err = generate(&world, &op_of(&world, "TiltedPick"), "TiltedPick").expect_err("aligned tilt x picks refuses");
     assert!(err.to_string().contains("tilted plane is not supported yet in an aligned setup"), "{err}");
 
-    // #2276 / #2283 / #2284: 2D Offset, Circular, 2D Chamfer and Deburr have proof;
-    // Probe stays unverified (the op keeps its old name).
-    let circular = (KindInfo::ALL[OpType::Probe.ordinal()].seed)(&Carried::of(&face_params(Height::fixed(9.0), 25.0)));
-    let probe = catalog().into_iter().find(|(n, _)| *n == "PRB-0400").map(|(_, t)| t).expect("probe");
-    h.execute(&world, AddTool::new(&world, "PRB-0400", probe).expect("add probe"));
-    h.execute(&world, CreateOperation::new(&world, "CircularPick", "PRB-0400", sel, circular).expect("create the Probe"));
-    let err = generate(&world, &op_of(&world, "CircularPick"), "CircularPick").expect_err("unverified kind refuses");
-    assert!(err.to_string().contains("not supported yet in an aligned setup"), "{err}");
+    // #2276 / #2283 / #2284 / #2286: the 2D kinds, the 5-axis kinds and
+    // Probe have proof. Probe joined the verified mill kinds in #2285, so
+    // this door now names a kind a mill setup cannot spin: its params ride
+    // the operation the way a corrupt project file could carry them (the
+    // command doors reject those earlier). The read is `generation_problem`
+    // - the door every generation passes, before the tool checks.
+    let mut wire_op = op_of(&world, "TiltedPick");
+    wire_op.params = (KindInfo::ALL[OpType::WireContour.ordinal()].seed)(&Carried::of(&face_params(Height::fixed(9.0), 25.0)));
+    let problem = camcraft_app::setup_align::generation_problem(&world, &wire_op).expect("the aligned door refuses the unverified kind");
+    assert!(problem.contains("not supported yet in an aligned setup"), "{problem}");
 
     let mut area_op = op_of(&world, "TiltedPick");
     area_op.params = face_params(Height::fixed(5.0), 25.0);

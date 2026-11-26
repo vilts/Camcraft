@@ -92,9 +92,9 @@ fn job_turned(gap: f64, rot: [f64; 4]) -> (World, History) {
 fn mark(trace: bool, top: f64, bottom: f64) -> OpParams {
     let (clearance_z, top_z, bottom_z) = (Height::fixed(25.0), Height::fixed(top), Height::fixed(bottom));
     if trace {
-        OpParams::Trace { clearance_z, retract_z: None, top_z, bottom_z, stepdown: 10.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None }
+        OpParams::Trace { clearance_z, retract_z: None, top_z, bottom_z, stepdown: 10.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None, picks: Default::default() }
     } else {
-        OpParams::Engrave { clearance_z, retract_z: None, top_z, bottom_z, stepdown: 10.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None }
+        OpParams::Engrave { clearance_z, retract_z: None, top_z, bottom_z, stepdown: 10.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None, picks: Default::default() }
     }
 }
 

@@ -106,3 +106,16 @@ fn a_box_is_still_refused_by_name() {
     let e = fit_report(&f).expect_err("a box is not a surface of revolution");
     assert!(e.to_string().contains("share no rotation axis"), "{e}");
 }
+
+#[test]
+fn the_freeform_refusal_names_the_4_axis_case() {
+    // #2772: a 4-axis machine has no 5-axis kinds to turn to, so the
+    // refusal must say that a part clamped on A that is not turned is
+    // not supported yet, and name the issue that tracks it.
+    let mut f = Vec::new();
+    block(&mut f, (-5.0, 5.0), (-10.0, 10.0), (-30.0, 30.0));
+    let e = fit_report(&f).expect_err("a box is not a surface of revolution").to_string();
+    assert!(e.contains("not a shape of revolution"), "{e}");
+    assert!(e.contains("4-axis") && e.contains("#2772"), "{e}");
+    assert!(e.contains("5-Axis kinds"), "the 5-axis pointer stays: {e}");
+}

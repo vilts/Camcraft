@@ -1,0 +1,3 @@
+kinds = ["Probe", "Face"]
+machine = "3-axis mill"
+expect = "post"

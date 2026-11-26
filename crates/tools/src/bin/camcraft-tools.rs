@@ -4,7 +4,7 @@
 //! vf = fz*z*n are the public machining-handbook formulas the
 //! `cutting` module already states; the CLI shape is ours.
 
-use camcraft_tools::cutting::{feed_for, fz_scale, rpm_for};
+use camcraft_tools::cutting::{feed_for, rpm_for};
 use camcraft_tools::tools::{catalog, ToolMaterial, WorkMaterial};
 use std::process::ExitCode;
 
@@ -22,6 +22,7 @@ COMMANDS:
 
     work materials: aluminium_6061 mild_steel stainless_304
                     grey_cast_iron brass plastics_pom
+                    softwood hardwood mdf plywood acrylic hdpe
     tool materials: hss carbide
 
 OPTIONS:
@@ -89,7 +90,7 @@ fn speeds(work: &str, tool: &str, d: &str, z: &str) -> ExitCode {
         _ => return die(format!("flutes must be an integer in 1..=64, got {z:?}")),
     };
     let w = wm.window(tm);
-    let s = fz_scale(d);
+    let s = wm.chip_scale(d);
     let (fz0, fz1) = (w.fz10.0 * s, w.fz10.1 * s);
     let (n0, n1) = (rpm_for(w.vc.0, d), rpm_for(w.vc.1, d));
     println!("material: {} / {}", wm.word(), tm.label());

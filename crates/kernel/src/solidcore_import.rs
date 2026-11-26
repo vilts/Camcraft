@@ -1,7 +1,7 @@
 //! The solidcore side of import (M12.1 stage 3): healing behind the seam,
 //! and the port's native B-rep text format (SMLib's ASCII `.smb`) as the
-//! importer the corrupt-input corpus drives. STEP stays on truck-stepio;
-//! this is the port's own reader, the one format it reads without truck.
+//! importer the corrupt-input corpus drives. STEP has its own reader
+//! (`solidcore_step`, #917); this is the port's native-format reader.
 //! Provenance: calls solidcore 1.0.1's public API as documented in its
 //! rustdoc (`heal::heal_data::p1::api_heal_brep`, `topology::brep::p7::
 //! read_from_file`, `topology::brep_data_write`) and its `corpus` example's
@@ -129,11 +129,26 @@ pub struct VertexGaps {
 /// vertices sit off their edges is not a model a toolpath may trust; edges
 /// without a 3D curve cannot be measured and are COUNTED, not passed over.
 pub fn vertex_gaps(k: &SolidcoreKernel, s: &Brep) -> Result<VertexGaps, KernelError> {
+    vertex_gaps_with_edge(k, s).map(|(gaps, _)| gaps)
+}
+
+pub(crate) struct EdgeEndpoint {
+    pub edge: EdgeId,
+    pub vertex: Point3,
+}
+
+/// Also identify the kernel edge and vertex with the largest positive gap.
+/// A file importer can map the edge identity back to its own record order.
+pub(crate) fn vertex_gaps_with_edge(
+    k: &SolidcoreKernel,
+    s: &Brep,
+) -> Result<(VertexGaps, Option<EdgeEndpoint>), KernelError> {
     let op = "vertex_gaps";
     let dist = |a: Point3, b: Point3| {
         ((a.x - b.x).powi(2) + (a.y - b.y).powi(2) + (a.z - b.z).powi(2)).sqrt()
     };
     let mut gap = 0.0_f64;
+    let mut worst_edge = None;
     let mut tol = 0.0_f64;
     let mut unjudged_edges = 0usize;
     for (e, edge) in s.edges().iter() {
@@ -153,16 +168,26 @@ pub fn vertex_gaps(k: &SolidcoreKernel, s: &Brep) -> Result<VertexGaps, KernelEr
             solidcore::topology::edge::start_end_vertices(s, e).map_err(|e| failed(op, &e))?;
         for v in [a, b].into_iter().flatten() {
             let vx = s.vertex(v).map_err(|e| failed(op, &e))?;
-            gap = gap.max(dist(vx.point, p0).min(dist(vx.point, p1)));
+            let distance = dist(vx.point, p0).min(dist(vx.point, p1));
+            if distance > gap {
+                gap = distance;
+                worst_edge = Some(EdgeEndpoint {
+                    edge: e,
+                    vertex: vx.point,
+                });
+            }
             tol = tol.max(vx.tolerance);
         }
     }
     if gap.is_finite() && tol.is_finite() {
-        Ok(VertexGaps {
-            gap,
-            max_vertex_tolerance: tol,
-            unjudged_edges,
-        })
+        Ok((
+            VertexGaps {
+                gap,
+                max_vertex_tolerance: tol,
+                unjudged_edges,
+            },
+            worst_edge,
+        ))
     } else {
         Err(KernelError::InvalidResult {
             kernel: NAME,

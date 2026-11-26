@@ -73,23 +73,49 @@ fn draw_header(ui: &mut Ui, state: &mut State, pal: &theme::Tokens) {
         state.ai_chat.select_preset(idx);
     }
 
+    let model_hint = match state.ai_chat.selected_preset().endpoint_kind {
+        super::EndpointKind::Local => "Automatic: installed tool-capable model",
+        super::EndpointKind::Cloud => camcraft_app::ai::presets::default_model(
+            state.ai_chat.selected_preset().provider,
+        ),
+    };
     ui.horizontal(|ui| {
         let model_lbl = ui.label("Model");
         ui.add(
             egui::TextEdit::singleline(&mut state.ai_chat.model_input)
+                .hint_text(model_hint)
                 .desired_width(f32::INFINITY),
         )
         .labelled_by(model_lbl.id);
     });
+    if state.ai_chat.selected_preset().endpoint_kind == super::EndpointKind::Local {
+        ui.hyperlink_to("Get Ollama models", "https://ollama.com/library");
+    }
 
     ui.horizontal_wrapped(|ui| {
-        ui.checkbox(&mut state.ai_chat.offline_only, "Offline only");
+        // #1945: the switch is the person's policy - kept in prefs.json.
+        if ui.checkbox(&mut state.ai_chat.offline_only, "Offline only").changed() {
+            state.persist_prefs();
+        }
         ui.checkbox(&mut state.ai_chat.attach_selection, "Attach selection");
         ui.add_enabled(
             false,
             egui::Checkbox::new(&mut state.ai_chat.attach_screenshot, "Attach screenshot"),
         );
     });
+
+    let preset = state.ai_chat.selected_preset();
+    let preset_id = preset.id.clone();
+    // Test reads the Model field like Send: trimmed, and empty uses the default.
+    let model =
+        super::settings_text::resolve_model(&state.ai_chat.model_input, &preset.default_model);
+    super::settings_panel::draw(
+        ui,
+        &mut state.ai_chat.settings,
+        &preset_id,
+        &model,
+        state.ai_chat.offline_only,
+    );
 
     ui.label("Viewport screenshot capture is unavailable.");
 

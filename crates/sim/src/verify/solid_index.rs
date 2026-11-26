@@ -6,6 +6,7 @@
 //! design; no vendor source.
 
 use super::probe::{Atom, Frame};
+use super::corner_relief::{CornerReliefZone, mid_in_zone, tri_in_zone};
 use super::hole_wall::wall_excuse;
 use super::swept::{Body, pen};
 use super::thread_bore::{excused, ThreadBore};
@@ -135,8 +136,18 @@ impl<'a> SolidIndex<'a> {
     /// kinds' hole axes in `fr`'s XY, whose round walls' tessellation is
     /// excused ([`wall_excuse`], #1205) - empty for every other law;
     /// `bores` grants a thread mill its threads ([`super::thread_bore`], #1071).
-    #[allow(clippy::too_many_arguments)] // the sweep, its atoms and the two grants
-    pub(super) fn hits(&mut self, fr: &Frame, d: [f64; 3], atoms: &[Atom], allow: f64, grow: f64, walls: &[[f64; 2]], bores: &[ThreadBore]) -> bool {
+    #[allow(clippy::too_many_arguments)] // the sweep, its atoms and the grants
+    pub(super) fn hits(
+        &mut self,
+        fr: &Frame,
+        d: [f64; 3],
+        atoms: &[Atom],
+        allow: f64,
+        grow: f64,
+        walls: &[[f64; 2]],
+        bores: &[ThreadBore],
+        reliefs: &[CornerReliefZone],
+    ) -> bool {
         let len = atoms.iter().map(|a| a.z1).fold(0.0, f64::max);
         let (p0, p1) = (fr.up(0.0), fr.up(len));
         let e = fr.end(d);
@@ -168,9 +179,12 @@ impl<'a> SolidIndex<'a> {
                     let pen = pen(&body, a, allow, allow, grow, &mut pts);
                     if pen > allow {
                         let ex = wall_excuse(&t, d, a, allow, grow, walls);
-                        // #1071: a thread being cut into its own minor wall.
+                        // #1071: a thread being cut into its own minor wall;
+                        // #2400: a declared inside-corner relief corridor.
                         let threaded = upright && excused(bores, &self.facets[f as usize], p0, q0, a.rho_max() + grow, allow);
-                        if pen > ex + allow && !threaded {
+                        let relieved = upright && tri_in_zone(&self.facets[f as usize], p0, q0, a.rho_max() + grow,
+                            [p0.z.min(q0.z) + a.z0, p0.z.max(q0.z) + a.z1], allow, reliefs);
+                        if pen > ex + allow && !threaded && !relieved {
                             return true;
                         }
                     }
@@ -180,7 +194,9 @@ impl<'a> SolidIndex<'a> {
         // Crossing nothing, the swept assembly is wholly inside or wholly
         // outside; it can be inside only if its axis is inside the box.
         let within = (0..3).all(|k| axis_lo[k] >= self.lo[k] && axis_hi[k] <= self.hi[k]);
-        within && self.inside(fr.up(atoms.first().map_or(0.0, |a| 0.5 * (a.z0 + a.z1))))
+        let mid_p = fr.up(atoms.first().map_or(0.0, |a| 0.5 * (a.z0 + a.z1)));
+        let band = [p0.z.min(q0.z) + atoms.iter().map(|a| a.z0).fold(f64::INFINITY, f64::min), p0.z.max(q0.z) + len];
+        within && !(upright && mid_in_zone(mid_p, p0, q0, band, allow, reliefs)) && self.inside(mid_p)
     }
 
     /// Ray parity up +Z from `p`. A ray that grazes an edge or vertex

@@ -68,13 +68,11 @@ impl SdfField {
 
     /// Record one proven entry, keeping the LOWEST (the union law).
     pub(crate) fn up_record(&mut self, key: [i32; 3], u: f64) {
-        let slot = &mut self
-            .cut_ups
-            .entry(super::field::brick_of(key))
-            .or_insert_with(|| Box::new([f64::NAN; super::field::BRICK3]))
-            [super::field::in_brick(key)];
-        if slot.is_nan() || u < *slot {
-            *slot = u;
+        // Read first: only a change takes the writable brick, which
+        // copies it when a keyframe shares it (#2194).
+        let cur = self.up_at(key);
+        if cur.is_nan() || u < cur {
+            super::field::layer_brick_mut(&mut self.cut_ups, super::field::brick_of(key))[super::field::in_brick(key)] = u;
         }
     }
 }

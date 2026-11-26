@@ -41,7 +41,7 @@ fn pocket_view(w: &flecs_ecs::prelude::World, model_name: &str, i: usize, p: &Po
     json!({
         "index": i,
         "kind": kind,
-        "floor": feature_id(FeatureSel::Face(p.floor)),
+        "floor": feature_id(&FeatureSel::Face(p.floor)),
         "floor_name": crate::pick::geo_label(w, &floor_sel),
         "floor_z": fnum(p.floor_z),
         "top_z": fnum(p.top_z),

@@ -1,5 +1,11 @@
 # Build the Arch package after the Linux release job.
 # Provenance: Arch's makepkg and Rust packaging guidelines.
+# #3773: the package reuses the release binaries that the `linux` job of the
+# same run built (its `linux-packages` artifact). This job runs no cargo
+# build. aur/PKGBUILD stays the from-source recipe that AUR users build; only
+# this job packages it with `makepkg -R` around the prebuilt binaries, and a
+# SHA256 check proves that the packaged binaries are the ones in the Linux
+# release tarball (docs/decisions/3773-aur-reuse-linux.md).
 name: AUR package
 on:
   workflow_call:
@@ -12,11 +18,14 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
-      - name: Install Arch build dependencies
-        run: |
-          pacman -Syu --noconfirm --needed base-devel git rust pkgconf \
-            curl libxkbcommon libxkbcommon-x11 libx11 wayland vulkan-icd-loader libglvnd
+      - name: Install Arch packaging tools
+        # No Rust toolchain and no library headers: nothing is compiled.
+        run: pacman -Syu --noconfirm --needed base-devel curl
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-packages
+          path: /tmp/linux-packages
       - name: Use the release tag as the package source
         if: ${{ startsWith(github.ref, 'refs/tags/') }}
         run: |
@@ -40,14 +49,70 @@ jobs:
             LC_ALL=C sort /tmp/camcraft.srcinfo > /tmp/camcraft.actual.srcinfo
             diff -u /tmp/camcraft.expected.srcinfo /tmp/camcraft.actual.srcinfo
           fi
-      - name: Build and test Arch package
-        run: su builder -c "cd '$GITHUB_WORKSPACE/aur' && makepkg --noconfirm"
+      - name: Unpack the Linux release binaries
+        run: |
+          set -euo pipefail
+          set -- /tmp/linux-packages/camcraft-*-linux-x86_64.tar.gz
+          [ "$#" -eq 1 ] && [ -f "$1" ]
+          name=$(basename "$1" .tar.gz)
+          version=${name#camcraft-}
+          version=${version%-linux-x86_64}
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::the Linux tarball is version $version, not the tag $GITHUB_REF_NAME"; exit 1
+          fi
+          mkdir -p /tmp/linux-release
+          tar -xzf "$1" -C /tmp/linux-release
+          echo "LINUX_STAGE=/tmp/linux-release/$name" >> "$GITHUB_ENV"
+          for binary in camcraft-ui camcraft-cli post; do
+            test -x "/tmp/linux-release/$name/$binary"
+          done
+      - name: Package the prebuilt binaries with the AUR recipe
+        # The CI copy of the recipe only turns off strip and the debug split:
+        # makepkg must not rewrite the binaries, so that their SHA256 stays
+        # the one of the release tarball. `-o --noprepare` downloads, checks
+        # and extracts the source; `-R` runs only package(); `-d` skips the
+        # cargo makedepends that are not used here.
+        run: |
+          set -euo pipefail
+          cd aur
+          sed "s/^options=(\(.*\))$/options=(\1 '!strip' '!debug')/" PKGBUILD > PKGBUILD.prebuilt
+          grep -q "^options=(.*'!strip' '!debug')$" PKGBUILD.prebuilt
+          chown builder:builder PKGBUILD.prebuilt
+          su builder -c "cd '$GITHUB_WORKSPACE/aur' && makepkg -p PKGBUILD.prebuilt -o --noprepare -d --noconfirm"
+          pkgver=$(sed -n 's/^pkgver=//p' PKGBUILD)
+          tree="src/Camcraft-$pkgver"
+          test -d "$tree"
+          if [ "$GITHUB_REF_TYPE" != tag ]; then
+            # A dispatch run packages the assets of its own tree, the tree
+            # that the linux job built, not the source of an older tag.
+            rm -rf "$tree"
+            mkdir -p "$tree"
+            tar -C "$GITHUB_WORKSPACE" --exclude=./.git --exclude=./aur -cf - . | tar -xf - -C "$tree"
+          fi
+          mkdir -p "$tree/target/release"
+          for binary in camcraft-ui camcraft-cli post; do
+            install -m 755 "$LINUX_STAGE/$binary" "$tree/target/release/$binary"
+          done
+          chown -R builder:builder src
+          su builder -c "cd '$GITHUB_WORKSPACE/aur' && makepkg -p PKGBUILD.prebuilt -R -d --noconfirm"
       - name: Check package contents
         run: |
+          set -euo pipefail
           set -- aur/camcraft-[0-9]*.pkg.tar.zst
           [ "$#" -eq 1 ] && [ -f "$1" ]
           bsdtar -tf "$1" | grep -E '(^|/)usr/lib/camcraft/camcraft-ui$'
           bsdtar -tf "$1" | grep -E '(^|/)usr/share/applications/camcraft.desktop$'
+          # The packaged binaries are byte-identical to the Linux release.
+          mkdir -p /tmp/arch-check
+          bsdtar -xf "$1" -C /tmp/arch-check usr/lib/camcraft/camcraft-ui usr/lib/camcraft/camcraft-cli usr/lib/camcraft/post
+          for binary in camcraft-ui camcraft-cli post; do
+            want=$(sha256sum "$LINUX_STAGE/$binary" | cut -d' ' -f1)
+            got=$(sha256sum "/tmp/arch-check/usr/lib/camcraft/$binary" | cut -d' ' -f1)
+            echo "$binary linux=$want arch=$got"
+            if [ "$want" != "$got" ]; then
+              echo "::error::$binary in the Arch package is not the binary of the Linux release"; exit 1
+            fi
+          done
           mkdir -p dist
           cp "$1" dist/
       - uses: actions/upload-artifact@v4

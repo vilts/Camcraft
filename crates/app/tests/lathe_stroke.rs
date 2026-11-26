@@ -111,6 +111,7 @@ fn job_load(clearance: f64, load: impl FnOnce(&World) -> LoadMachine) -> World {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     generate(&world, &mut h, "Face1", facing);
     let rough = OpParams::ProfileRough {
@@ -122,6 +123,7 @@ fn job_load(clearance: f64, load: impl FnOnce(&World) -> LoadMachine) -> World {
         stock_to_leave: 0.25,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     generate(&world, &mut h, "Rough1", rough);
     world

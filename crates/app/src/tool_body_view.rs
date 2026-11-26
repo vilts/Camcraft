@@ -105,6 +105,7 @@ pub fn spun_preview(tool: &Tool, points: &[SpunPoint]) -> Result<SpunProfile, St
         frame: tool_body::BodyFrame::Spindle { axis: [0.0, 0.0, 1.0], offset: 0.0, profile: spun.holder_profile() },
         spun: None,
         machine_default: false,
+        library: None,
         pieces: Vec::new(),
     };
     tool_body::fits(tool, &probe)?;

@@ -1,0 +1,74 @@
+// Example catalog case: 2d/slots (#2392, #2861).
+// Builds slots.camproj and posts slots.nc headlessly through CamCraft's
+// undoable command verbs. Run with CWD = this case directory:
+//   camcraft-cli script build.camscript
+
+cam.import("model/slots.obj", "slots");
+// Keep the mesh in the project without a link to the script working directory.
+cam.call("set_model_link", { model: "slots", path: null });
+
+cam.call("set_stock", {
+  box: { dx: 100.0, dy: 60.0, dz: 12.0 }
+});
+
+cam.call("add_tool", { catalog: "EM-0600-4FL", holder: "none" });
+
+// The slot at y = 15: concentric passes at two levels.
+cam.call("add_operation", {
+  kind: "Slot",
+  name: "Slot1",
+  tool: "EM-0600-4FL",
+  source: "slots",
+  params: {
+    a: [-25.0, 15.0],
+    b: [25.0, 15.0],
+    width: 10.0,
+    stock_to_leave: 0.0,
+    clearance_z: { reference: "top_of_stock", offset: 15.0 },
+    retract_z: { reference: "top_of_stock", offset: 5.0 },
+    top_z: { reference: "top_of_stock", offset: 0.0 },
+    bottom_z: { reference: "top_of_stock", offset: -6.0 },
+    stepdown: 3.0,
+    stepover: 2.0,
+    feed: 600.0,
+    plunge_feed: 150.0,
+    climb: true
+  }
+});
+
+// The slot at y = -15: the same width, trochoid loops at the full depth.
+cam.call("add_operation", {
+  kind: "Trochoidal slot",
+  name: "Trochoidal slot1",
+  tool: "EM-0600-4FL",
+  source: "slots",
+  params: {
+    a: [-25.0, -15.0],
+    b: [25.0, -15.0],
+    width: 10.0,
+    step: 0.8,
+    max_engagement: 60.0,
+    "return": "microlift",
+    lift: 0.3,
+    smoothing: 0.5,
+    stock_to_leave: 0.0,
+    clearance_z: { reference: "top_of_stock", offset: 15.0 },
+    retract_z: { reference: "top_of_stock", offset: 5.0 },
+    top_z: { reference: "top_of_stock", offset: 0.0 },
+    bottom_z: { reference: "top_of_stock", offset: -6.0 },
+    stepdown: 6.0,
+    feed: 1200.0,
+    return_feed: 2400.0,
+    plunge_feed: 150.0,
+    climb: true
+  }
+});
+
+cam.generate();
+var verdict = cam.verify();
+if (!verdict.ok) {
+  throw new Error("catalog verify failed: " + JSON.stringify(verdict));
+}
+cam.save("slots.camproj");
+cam.post({ to: "slots.nc" });
+cam.report();

@@ -18,7 +18,7 @@
             ] } }
       ] }
     ] } },
-  "controller": { "synced_configuration": { "parts": {
+  "controller": { "post": "TinyG", "synced_configuration": { "parts": {
     "X": { "coordinate": 0, "max_normal_speed": 4000.0, "max_rapid_speed": 5000.0 },
     "Y": { "coordinate": 1, "max_normal_speed": 4000.0, "max_rapid_speed": 5000.0 },
     "Z": { "coordinate": 2, "max_normal_speed": 1500.0, "max_rapid_speed": 2000.0 }

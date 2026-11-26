@@ -8,6 +8,9 @@
 //! refused one goes on to the importer, which then refuses it before the
 //! parser runs. Inputs that do reach ruststep stop at the cap.
 //!
+//! #2789: every read now parses with solidcore's Part 21 parser, not
+//! ruststep; the scan stays in front of it as the nesting law.
+//!
 //! Gate map: covers app::geometry::import::step_depth, step and step_csys.
 
 use std::path::{Path, PathBuf};
@@ -140,6 +143,30 @@ fn the_tool_body_csys_read_is_guarded_too() {
         msg.contains("entity #999999") && msg.contains(&format!("line {line}")),
         "{msg}"
     );
+}
+
+/// #2789: solidcore's Part 21 parser caps parameter depth at 64 itself, but
+/// never reads an empty innermost `()` one level past it, so it takes this
+/// record (pinned in camcraft-geometry's `step_csys_read` suite). The scan
+/// is the law: it refuses the record by name on both read paths.
+#[test]
+fn an_empty_list_one_past_the_cap_is_refused_by_the_scan() {
+    let deep = format!(
+        "#999998 = DEEP_LIST({}{});\n",
+        "(".repeat(MAX_NESTING),
+        ")".repeat(MAX_NESTING)
+    );
+    let extra = Extra {
+        data: &deep,
+        ..Extra::default()
+    };
+    // The helper's own record sits at the cap and passes.
+    let (data, _) = box_with(extra, MAX_NESTING, false);
+    assert_eq!(max_depth(&data), MAX_NESTING + 1);
+    let msg = refused_end_to_end(&data);
+    assert!(msg.contains("entity #999998") && msg.contains("deeper than"), "{msg}");
+    let csys = read_tool_csys(&data).err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(csys.contains("entity #999998") && csys.contains("deeper than"), "{csys}");
 }
 
 /// The PR #1079 review's reproductions: a `<...>` resource holding a `/*`

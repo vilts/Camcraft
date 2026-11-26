@@ -39,10 +39,10 @@ text, assets or post processors were used.
 - **Import** STL, OBJ and STEP models; repair meshes (weld vertices, fill
   holes).
 - **Set up** stock, work offsets (G54–G59), fixtures and machines (mill,
-  5-axis, lathe, mill-turn, and the Tormach 770MX, 770MX (ML), 770M,
+  5-axis, lathe, mill-turn (a lathe with live tooling), and the Tormach 770MX, 770MX (ML), 770M,
   1100M, 1100MX, 1500MX, PCNC 440, PCNC 770 (earlier and Series 3) and
-  PCNC 1100 (Series I, II and 3) mills, and generic grblHAL and TinyG
-  3-axis routers).
+  PCNC 1100 (Series I, II and 3) mills, and generic grblHAL, TinyG and
+  LinuxCNC 3-axis machines).
 - **2D milling:** face, contour (with G41/G42 compensation), pocket,
   adaptive clearing, slot, trace, engrave, chamfer, circular, bore and
   thread milling.
@@ -60,7 +60,7 @@ text, assets or post processors were used.
 - **Verify and simulate:** a solid-law verifier (gouge, rest, rapid and
   fixture checks), stock simulation with playback, and a deviation view.
 - **Post:** Fanuc, Haas, Mazak, Sinumerik, Heidenhain, Tormach PathPilot,
-  grblHAL, Synthetos TinyG and Fanuc Lathe, written as scriptable `.cps`
+  grblHAL, Synthetos TinyG, LinuxCNC and Fanuc Lathe, written as scriptable `.cps`
   post processors.
 - **Setup sheets:** the Setups page lists each setup's tools in change
   order with cut and rapid lengths and estimated time, and **Export setup
@@ -80,8 +80,10 @@ with `camcraft`. To install the Flatpak bundle, run
 `flatpak install --user ./camcraft-*.flatpak` and launch it with
 `flatpak run io.github.NeoTech.Camcraft` (the Freedesktop runtime downloads
 separately). On macOS, open the DMG and drag `CamCraft.app` to Applications,
-or extract the ZIP. The macOS bundle is ad-hoc signed and not notarized, so
-the first launch may require Control-click → Open. The portable archives
+or extract the ZIP. If macOS 15 or later blocks an ad hoc release, first try
+to open the app. If you trust the download, go to **System Settings →
+Privacy & Security** and choose **Open Anyway**. See [Apple's first-launch
+instructions](https://support.apple.com/en-us/102445). The portable archives
 include the command-line tools and assets. `TESTING.md` in each archive lists
 hand-test checks.
 
@@ -111,21 +113,9 @@ The release workflow builds and checks the Arch package after its Linux job
 and attaches the package to tagged releases. Publishing the recipe to the
 AUR is a separate step after its Arch build is validated.
 
-### FreeBSD package
+FreeBSD is not a supported platform. Releases carry no FreeBSD package.
 
-On FreeBSD amd64, build the desktop app and command-line tools, then package
-them with their assets:
-
-```sh
-cargo build --locked --release -p camcraft-ui -p camcraft-app -p camcraft-post
-scripts/package-freebsd.sh
-```
-
-The release workflow runs this in a FreeBSD VM. Manual workflow runs upload
-the `freebsd-amd64.tar.gz` archive as an artifact; tagged runs attach it to
-the release.
-
-Windows, Linux, macOS, and FreeBSD desktop releases are built on GitHub.
+Windows, Linux, and macOS desktop releases are built on GitHub.
 The core crates also build and test on macOS.
 
 ## Workspace layout

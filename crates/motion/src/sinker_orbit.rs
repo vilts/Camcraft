@@ -106,7 +106,7 @@ impl Orbit {
 /// Chords per full turn of radius `r`: enough that the sagitta stays
 /// under [`ORBIT_CHORD_TOL`], a multiple of four (so the axis
 /// directions are vertices), clamped.
-fn chords_per_turn(r: f64) -> u32 {
+pub(crate) fn chords_per_turn(r: f64) -> u32 {
     let c = 1.0 - ORBIT_CHORD_TOL / r;
     let n = if c <= -1.0 { MIN_CHORDS as f64 } else { (std::f64::consts::PI / c.acos()).ceil() };
     let n = if n.is_finite() { n.clamp(MIN_CHORDS as f64, MAX_CHORDS as f64) as u32 } else { MAX_CHORDS };
@@ -114,7 +114,7 @@ fn chords_per_turn(r: f64) -> u32 {
 }
 
 /// The point at distance `rho` (<= `r`) and angle `a`, never past `r`.
-fn on_disc(rho: f64, a: f64, r: f64) -> (f64, f64) {
+pub(crate) fn on_disc(rho: f64, a: f64, r: f64) -> (f64, f64) {
     let (x, y) = (rho * a.cos(), rho * a.sin());
     let h = x.hypot(y);
     if h > r {

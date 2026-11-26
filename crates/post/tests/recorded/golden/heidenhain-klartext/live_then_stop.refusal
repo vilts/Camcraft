@@ -1,0 +1,5 @@
+; heidenhain-klartext.cps refused live_then_stop: the post stopped, nothing written
+post: post script: Error: Heidenhain Klartext: unsupported or missing controller profile; select iTNC 530 NC 340490-03 (user.cps:31:9)
+    at refuse (user.cps:31:9)
+    at onOpen (user.cps:75:11)
+    at <main> (unknown at :1:7)

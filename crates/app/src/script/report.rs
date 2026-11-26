@@ -75,6 +75,16 @@ pub(crate) fn posted_view(
     if let Some(w) = warning {
         out["warning"] = json!(w);
     }
+    if let [file] = files.as_slice()
+        && !file.posted.bundle_files.is_empty()
+    {
+        out["format"] = json!("Agie native wire EDM");
+        out["files"] = json!(file.posted.bundle_files);
+        out["working_steps_generated"] = json!(false);
+        out["controller_review"] = json!(file.posted.controller_review);
+        if let Some(fields) = out.as_object_mut() { fields.remove("lines"); }
+        return out;
+    }
     if files.len() <= 1 {
         if with_program && let Some(f) = files.first() {
             out["program"] = json!(f.posted.program);

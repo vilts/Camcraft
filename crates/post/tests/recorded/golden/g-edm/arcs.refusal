@@ -1,0 +1,7 @@
+; g-edm.cps refused arcs: 6 warning(s), the program is never released
+warning: the G-EDM wire post writes wire words only a wire EDM reads - machine no machine is not declared kind wire_edm
+warning: operation Arcs: states 8000 rpm - a wire EDM turns no spindle
+warning: operation Arcs: changes to tool 1 - a wire EDM mounts no tool
+warning: operation Arcs: is not wire EDM work (no EDM condition) - the G-EDM wire post posts Wire Contour operations only
+warning: operation Arcs: a move outside a wire section - refused
+warning: operation Arcs: an arc in the XZ plane - a 2-axis wire cut is flat

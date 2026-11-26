@@ -104,6 +104,7 @@ fn facing() -> OpParams {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     }
 }
 
@@ -115,6 +116,7 @@ fn finish() -> OpParams {
         bottom_z: Height::fixed(2.0),
         feed: 120.0,
         plunge_feed: 60.0,
+        picks: Default::default(),
     }
 }
 
@@ -212,6 +214,7 @@ fn an_axial_drill_on_a_bar_off_the_work_origin_is_refused_by_name() {
         plunge_feed: 80.0,
         holes: vec![hole],
         cross: vec![],
+        picks: Default::default(),
     };
     assert_refused(&world, &mut history, "AX1", "DR-0400", params, &["spindle", "5.000 mm"]);
 }
@@ -296,7 +299,7 @@ fn a_setup_on_g55_measures_the_spindle_from_g55() {
     let on_g55 = || match facing() {
         OpParams::Facing { tolerance, top_z, bottom_z, stepdown, feed, plunge_feed, .. } => {
             let clearance_z = Height { reference: HeightReference::WorkOffset, offset: 25.0 };
-            OpParams::Facing { tolerance, clearance_z, top_z, bottom_z, stepdown, feed, plunge_feed }
+            OpParams::Facing { tolerance, clearance_z, top_z, bottom_z, stepdown, feed, plunge_feed, picks: Default::default() }
         }
         other => other,
     };

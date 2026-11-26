@@ -185,7 +185,7 @@ fn judged(m: &Machine, to: [f64; 3], feed: f64, rpm: f64) -> machine::MachineChe
             params: OpParams::Face {
                 holes: Default::default(),
                 tilt: None,
-                blend_turns: false,
+                blend_turns: false, blend_radius: None,
                 stepover: 1.0,
                 clearance_z: Height::fixed(10.0),
                 cut_z: Height::fixed(0.0),
@@ -194,6 +194,7 @@ fn judged(m: &Machine, to: [f64; 3], feed: f64, rpm: f64) -> machine::MachineChe
                 feed,
                 plunge_feed: feed,
                 climb: true,
+                picks: Default::default(),
             },
         })
         .set(Toolpath::new(

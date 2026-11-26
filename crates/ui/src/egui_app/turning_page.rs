@@ -30,7 +30,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             bottom_z,
             stepdown,
             feed,
-            plunge_feed,
+            plunge_feed, picks: _,
         } => {
             if tab == SEC_HEIGHTS {
                 height_editor(
@@ -71,7 +71,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             stepdown,
             stock_to_leave,
             feed,
-            plunge_feed,
+            plunge_feed, picks: _,
         } => {
             if tab == SEC_HEIGHTS {
                 height_editor(
@@ -120,7 +120,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             top_z,
             bottom_z,
             feed,
-            plunge_feed,
+            plunge_feed, picks: _,
         } => {
             if tab == SEC_HEIGHTS {
                 height_editor(
@@ -172,7 +172,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             stepdown,
             stock_to_leave,
             feed: _,
-            plunge_feed,
+            plunge_feed, picks: _,
         } => {
             if tab == SEC_HEIGHTS {
                 height_editor(
@@ -222,7 +222,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             top_z,
             bottom_z,
             feed: _,
-            plunge_feed,
+            plunge_feed, picks: _,
         } => {
             if tab == SEC_HEIGHTS {
                 height_editor(
@@ -279,6 +279,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             bar_unload,
             bar_transfer,
             inspect_tol,
+            kerf, picks: _,
         } => {
             if tab == SEC_HEIGHTS {
                 height_editor(
@@ -297,6 +298,20 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             if tab == SEC_PASSES {
                 prop_row(ui, "Tolerance", |ui| num(ui, u, tolerance));
                 hint(ui, "the chord budget the kerf band settles at; through-axis cuts are the cut, not a gouge - the verdict reads the separation");
+                // #3469: the piece kept and the back stock, by name. The
+                // row lays right to left: Chuck first reads "Cut-off
+                // piece  Chuck piece" on screen.
+                prop_row(ui, "The part is", |ui| {
+                    radio_pair(
+                        ui,
+                        &mut kerf.kept,
+                        (camcraft_app::turning::PartKept::Chuck, "Chuck piece"),
+                        (camcraft_app::turning::PartKept::CutOff, "Cut-off piece"),
+                    );
+                });
+                hint(ui, "the parting plane is the part's end face, and the whole kerf goes on the other side: Cut-off piece keeps what the blade cuts off the free end; Chuck piece keeps what stays in the chuck and cuts a stub off the free end (a part held end for end)");
+                prop_row(ui, "Back stock", |ui| num(ui, u, &mut kerf.back_stock));
+                hint(ui, "how far the whole kerf stands off the parting plane, so the part keeps this much on its end face for a later facing pass; 0 puts the blade's flank on the plane");
             }
             if tab == SEC_FEEDS {
                 prop_row(ui, "Plunge feed", |ui| num_feed(ui, u, plunge_feed));

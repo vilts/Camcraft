@@ -3,8 +3,8 @@
 //! healing - recorded as Unsupported, never as agreement), the port's native
 //! B-rep text reader (`.smb`) round-tripping the bench fixtures, and a
 //! vertex-gap fixture the healer must close. Every port call runs under a
-//! time bound (smb_util). STEP stays on truck-stepio and is not benched
-//! here; the corrupt-file corpus is import_corpus.rs.
+//! time bound (smb_util). STEP is benched in step_agreement.rs and
+//! step_import.rs, not here; the corrupt-file corpus is import_corpus.rs.
 //! Provenance: our own bench design; closed forms are elementary solid
 //! geometry (box, cylinder, box minus a through-cylinder, the quarter-round
 //! section r^2 (1 - pi/4)).

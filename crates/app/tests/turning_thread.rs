@@ -172,6 +172,7 @@ fn thread_params() -> OpParams {
         plunge_feed: 40.0,
         infeed_plan: Default::default(),
         hand: camcraft_app::cl::ThreadHand::Right,
+        picks: Default::default(),
     }
 }
 
@@ -408,6 +409,7 @@ fn an_upward_window_refuses_at_the_create_door() {
         plunge_feed: 40.0,
         infeed_plan: Default::default(),
         hand: camcraft_app::cl::ThreadHand::Right,
+        picks: Default::default(),
     };
     let Err(err) =
         CreateOperation::new(&world, "TB1", "TD-1732-60", SrcRef::Entity("bar".into()), params)

@@ -3,8 +3,9 @@
 //! top) sent the op's traverse through uncut stock, and the program
 //! posted with no warning: the law read only rapids UNDER the plane.
 //! These pin the traverse convicted by name and the post held, for a
-//! Contour (the issue's repro) and a Slot; the same plane over stock an
-//! earlier Face cut down is still legal and still posts, a Face that
+//! Contour (the issue's repro) and a Slot; over stock an earlier Face cut
+//! down no traverse inside the path is convicted, but the first traverse
+//! still holds the post (#2901: it comes from an unknown X/Y), a Face that
 //! stops above the plane does not excuse it, and a plane inside raw stock
 //! is named when the operation is made (the MCP tools' `warning`).
 //!
@@ -55,8 +56,10 @@ fn contour(clearance: f64, retract: f64) -> OpParams {
         tab_height: 0.0,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -78,17 +81,18 @@ fn slot(clearance: f64) -> OpParams {
         plunge_feed: 200.0,
         climb: true,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
-        helix_radius: 1.0,
+        helix_radius: 1.0, blend_turns: false, blend_radius: None,
         tilt: None,
         extend_start: 0.0,
         extend_end: 0.0,
+        picks: Default::default(),
     }
 }
 
 fn face(cut: f64) -> OpParams {
     OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 4.0,
         clearance_z: Height::fixed(20.0),
@@ -98,6 +102,7 @@ fn face(cut: f64) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -139,14 +144,27 @@ fn traverses_convicted(tp: &camcraft_app::schema::Toolpath, plane: f64) -> Vec<u
         .collect()
 }
 
+/// #2901: the first-traverse verdict for the plane `LOW` under the
+/// stock top: the first rapid comes from an unknown X/Y at that plane.
+const FIRST_LOW: Warning = Warning::FirstTraverseLow { at: 0, height_mm: LOW, top_mm: STOCK_TOP, fixture: false, tilted: false };
+
+fn first_traverse_refused(tp: &camcraft_app::schema::Toolpath) -> bool {
+    tp.warnings.contains(&FIRST_LOW)
+}
+
 fn clearance_note(tp: &camcraft_app::schema::Toolpath) -> Option<&String> {
     tp.path.notes.iter().find(|n| n.starts_with(CLEARANCE_STOCK_WARNING))
 }
 
-/// The post writes nothing and says why.
-fn post_is_held(world: &World, tag: &str) {
+/// The words of a rapid convicted inside the path.
+const THROUGH: &str = "travels through stock";
+/// #2901: the words of the first traverse under the stock top.
+const FIRST: &str = "raise the clearance height above Z10.000";
+
+/// The post writes nothing and says `why`.
+fn post_is_held(world: &World, tag: &str, why: &str) {
     let err = posting::post_setup_unwritten(world).expect_err("the post must be held");
-    assert!(err.contains("travels through stock"), "{err}");
+    assert!(err.contains(why), "{err}");
     let out = std::env::temp_dir().join(format!("camcraft-clearance-stock-{tag}-{}.nc", std::process::id()));
     let _ = std::fs::remove_file(&out);
     assert!(posting::post_setup(world, &out).is_err());
@@ -169,13 +187,16 @@ fn a_contour_traverse_at_a_clearance_plane_inside_the_stock_is_convicted_and_hol
     let tp = cache(&world, "Op2Contour");
     let first = &tp.path.moves[0];
     assert!(first.kind == MoveKind::Rapid && first.from.z == LOW && first.to.z == LOW, "the repro's traverse: {first:?}");
-    let hit = traverses_convicted(&tp, LOW);
-    assert!(hit.contains(&0), "the traverse at the plane must be convicted: {:?}", tp.warnings);
-    let note = clearance_note(&tp).expect("the cause is named");
-    for text in ["rapid move 0 travels through stock at Z8.000", "clearance plane Z8.000", "Z10.000", "raise Clearance"] {
-        assert!(note.contains(text), "{note}");
+    // #2901: move 0 opens over its entry, so it no longer crosses the
+    // stock from the WCS origin (the old `RapidInStock { at: 0 }` and its
+    // "Clearance in stock" note). The plane is convicted at move 0 by
+    // the first-traverse law, whose words name both heights and the fix.
+    assert!(first_traverse_refused(&tp), "the traverse at the plane must be convicted: {:?}", tp.warnings);
+    let err = posting::post_setup_unwritten(&world).expect_err("the post must be held");
+    for text in ["Op2Contour", "clearance height Z8.000", "under the stock top at Z10.000", "raise the clearance height above Z10.000"] {
+        assert!(err.contains(text), "{err}");
     }
-    post_is_held(&world, "contour");
+    post_is_held(&world, "contour", FIRST);
 }
 
 #[test]
@@ -183,20 +204,32 @@ fn a_slot_traverse_at_a_clearance_plane_inside_the_stock_is_convicted_and_holds_
     let (world, mut history) = bench();
     add(&world, &mut history, "Op2Slot", SrcRef::Stock, slot(LOW));
     let tp = cache(&world, "Op2Slot");
-    assert!(!traverses_convicted(&tp, LOW).is_empty(), "{:?}", tp.warnings);
-    assert!(clearance_note(&tp).is_some(), "{:?}", tp.path.notes);
-    post_is_held(&world, "slot");
+    // #2906: the slot cuts its whole channel, round ends included, so its
+    // one lateral traverse (between the levels, inside the channel) rides
+    // over its own cut and is acquitted; before, the uncut crescents of
+    // the round ends stood in its way. The plane is still convicted: the
+    // first traverse (#2901) and the rapid from the plane down into the
+    // stock (move 1), and the post is held.
+    assert!(traverses_convicted(&tp, LOW).is_empty(), "{:?}", tp.warnings);
+    assert!(first_traverse_refused(&tp), "{:?}", tp.warnings);
+    assert!(tp.warnings.contains(&Warning::RapidInStock { at: 1 }), "{:?}", tp.warnings);
+    post_is_held(&world, "slot", THROUGH);
 }
 
 #[test]
-fn the_same_plane_over_stock_an_earlier_face_cut_down_is_air_and_posts() {
-    // Faced to the part's top: the plane Z 8 rides 3 mm over what is left.
+fn the_same_plane_over_stock_an_earlier_face_cut_down_holds_only_for_the_first_traverse() {
+    // Faced to the part's top: the plane Z 8 rides 3 mm over what is left,
+    // so no traverse inside the path is convicted (the program ahead
+    // acquits it, #2121). #2901 (the known cost, decision 2901): the
+    // first traverse comes from an unknown X/Y, so it is read against
+    // the start stock's top, not what the face left - the post is held.
     let (world, mut history) = after_face(PART_TOP);
     add(&world, &mut history, "Op2Contour", SrcRef::Entity("part".into()), contour(LOW, LOW));
     let tp = cache(&world, "Op2Contour");
-    assert!(tp.warnings.is_empty(), "{:?}", tp.warnings);
+    assert_eq!(tp.warnings, vec![FIRST_LOW], "only the first traverse is convicted");
+    assert!(traverses_convicted(&tp, LOW).is_empty(), "{:?}", tp.warnings);
     assert!(clearance_note(&tp).is_none(), "{:?}", tp.path.notes);
-    posting::post_setup_unwritten(&world).expect("a legal program posts");
+    post_is_held(&world, "faced", FIRST);
 }
 
 #[test]
@@ -205,8 +238,8 @@ fn a_face_that_stops_above_the_plane_does_not_excuse_it() {
     let (world, mut history) = after_face(9.0);
     add(&world, &mut history, "Op2Contour", SrcRef::Entity("part".into()), contour(LOW, LOW));
     let tp = cache(&world, "Op2Contour");
-    assert!(traverses_convicted(&tp, LOW).contains(&0), "{:?}", tp.warnings);
-    post_is_held(&world, "shallow-face");
+    assert!(first_traverse_refused(&tp), "{:?}", tp.warnings);
+    post_is_held(&world, "shallow-face", FIRST);
 }
 
 #[test]
@@ -233,18 +266,21 @@ fn a_clearance_plane_inside_raw_stock_is_named_when_the_operation_is_made() {
     let (world, mut history) = bench();
     for (src, params) in [(SrcRef::Entity("part".into()), contour(LOW, LOW)), (SrcRef::Stock, slot(LOW))] {
         let why = word(&world, src, &params).expect("named at creation");
-        for text in ["Clearance Z 8.000 mm is inside the stock", "its top is Z 10.000 mm", "the post is held", "face the stock first"] {
+        for text in ["Clearance Z 8.000 mm is inside the stock", "its top is Z 10.000 mm", "the post is held", "raise Clearance to the stock top or above"] {
             assert!(why.contains(text), "{why}");
         }
+        // #2901: a face ahead does not lift the first traverse over the
+        // start stock, so the word no longer offers it as the fix.
+        assert!(!why.contains("face"), "{why}");
     }
     // At the stock top the plane is not inside it; a Retract under the
     // stock top is the rapid law's to judge, not the door's.
     assert_eq!(word(&world, SrcRef::Entity("part".into()), &contour(STOCK_TOP, LOW)), None);
     // A word, not a refusal: the operation is made, and the law holds
-    // its post (move 0 is the traverse through the block).
+    // its post (move 0, the first traverse at the plane in the block).
     add(&world, &mut history, "Op1Contour", SrcRef::Entity("part".into()), contour(LOW, LOW));
-    assert!(traverses_convicted(&cache(&world, "Op1Contour"), LOW).contains(&0));
-    post_is_held(&world, "first-op");
+    assert!(first_traverse_refused(&cache(&world, "Op1Contour")));
+    post_is_held(&world, "first-op", FIRST);
     // The same operation, edited: the word reads the program ahead of
     // it, which is nothing.
     let op = model::operation_of(&world, &model::find_by_name(&world, "Op1Contour").expect("op")).expect("operation");
@@ -265,8 +301,8 @@ fn the_word_stands_down_where_only_the_law_can_know() {
     }
     assert_eq!(word(&world, SrcRef::Entity("part".into()), &tilted), None);
     // A stepped stock has no single top: Z 10 over x < 0, Z 5 beside it.
-    // No word; the law reads the traverse under the tool, convicts it
-    // where it meets the tall half and holds the post.
+    // No word; the first-traverse law reads the tall half's top (the
+    // full start stock, #2901) and holds the post.
     let mut raw = cube(Point3::new(-20.0, -20.0, 0.0), Point3::new(0.0, 20.0, STOCK_TOP)).facets.to_vec();
     raw.extend(cube(Point3::new(0.0, -20.0, 0.0), Point3::new(20.0, 20.0, PART_TOP)).facets.iter().copied());
     history.execute(&world, ImportModel::from_mesh("raw-stock", Mesh::from_facets(raw)));
@@ -276,8 +312,8 @@ fn the_word_stands_down_where_only_the_law_can_know() {
     assert_eq!(word(&world, SrcRef::Entity("part".into()), &contour(LOW, LOW)), None);
     add(&world, &mut history, "Op1Contour", SrcRef::Entity("part".into()), contour(LOW, LOW));
     let tp = cache(&world, "Op1Contour");
-    assert!(!traverses_convicted(&tp, LOW).is_empty(), "{:?}", tp.warnings);
-    post_is_held(&world, "stepped");
+    assert!(first_traverse_refused(&tp), "{:?}", tp.warnings);
+    post_is_held(&world, "stepped", FIRST);
 }
 
 #[test]

@@ -55,6 +55,8 @@ pub(crate) enum Leaf {
     /// A setup's Operations node: the menu row for Paste.
     SetupOps(String),
     Model(String),
+    /// A DXF profile placed on a setup's stock (#1863): its setup, its name.
+    Sketch(String, String),
     Tool(String),
     Op(String),
     /// A Pause / Home entry of the operation list (#155).
@@ -128,6 +130,11 @@ pub(crate) fn kind_name(k: ToolKind) -> &'static str {
         ToolKind::ThreadMill => "thread mill",
         ToolKind::ThreadMillSingle => "single-form thread mill",
         ToolKind::Wire => "EDM wire",
+        ToolKind::TSlot => "T-slot cutter",
+        ToolKind::Keyseat => "keyseat cutter",
+        ToolKind::Dovetail => "dovetail cutter",
+        ToolKind::Lollipop => "lollipop cutter",
+        ToolKind::FormMill => "form mill",
     }
 }
 
@@ -217,6 +224,13 @@ fn setup_children(
     let stock_hidden = state.hidden_stocks.contains(&setup::stock_entity_name(w, ctx));
     let stock_text = if model::stock_world_aabb_for(w, ctx).is_some() { String::new() } else { "not set".to_owned() };
     push_row(rows, leaves, "Stock".to_owned(), stock_text, painted::Kind::Stock, Some(Icon::Stock), is_active && matches!(t, UiTarget::Stock), stock_hidden, depth, Leaf::Stock(name.to_owned()));
+    // #1863: the DXF profiles placed on this stock's top.
+    for profile in camcraft_app::sketch::placed_in(w, ctx) {
+        let hidden = state.hidden_models.contains(&profile);
+        let selected = model::find_by_name(w, &profile).is_some_and(|e| model::is_selected(w, &e));
+        let suffix = if hidden { "DXF profile (hidden)" } else { "DXF profile" }.to_owned();
+        push_row(rows, leaves, profile.clone(), suffix, painted::Kind::Model, Some(Icon::Contour), selected, hidden, depth + 1, Leaf::Sketch(name.to_owned(), profile));
+    }
     let ops = setup_ops(state, ctx);
     let tools = count(distinct_tools(state, &ops), "tool");
     // Operations first - the core CAM workflow stays near the top.
@@ -255,7 +269,8 @@ fn setup_children(
     push_row(rows, leaves, "Post".to_owned(), post, painted::Kind::Section, Some(Icon::Post), page_open(SetupPage::Post), false, depth, Leaf::Page(name.to_owned(), SetupPage::Post));
 }
 
-fn count(n: usize, word: &str) -> String {
+/// "1 word" / "N words", empty for none (the browser suffixes, #2340's status count).
+pub(super) fn count(n: usize, word: &str) -> String {
     match n {
         0 => String::new(),
         1 => format!("1 {word}"),
@@ -313,7 +328,7 @@ fn op_row(
         operation::OpStatus::Ok => "ok",
         operation::OpStatus::Stale => "STALE",
     };
-    let warns = model::toolpath_of(w, entity).map_or(0, |tp| tp.warnings.len());
+    let warns = model::with_toolpath(w, entity, |tp| tp.warnings.len()).unwrap_or(0);
     let warn_text = match warns {
         0 => String::new(),
         1 => "  1 warning".to_owned(),

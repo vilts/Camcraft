@@ -70,18 +70,22 @@ fn punch_doc_with(machine_text: &str, condition: &str, skims: Vec<WireSkim>) -> 
     );
     h.execute(&world, ImportModel::from_mesh("slug", slug()));
     let op = WireContourOp {
+        lead_arc_radius: None,
         top_z: Height::fixed(12.0),
         bottom_z: Height::fixed(0.0),
         condition: condition.into(),
         side: WireSide::Punch,
-        start: Some([-30.0, 0.0]),
+        picks: camcraft_app::path_picks::PathPicks { start: vec![camcraft_app::path_picks::PathPick::xy(camcraft_app::geo2d::Point2::new(-30.0, 0.0))], exit: Vec::new() },
         tabs: None,
         capture: true,
+        both_pieces_restrained: false,
+        stock_centered_in_xy_travel: false,
         taper_deg: 0.0,
         four_axis: None,
         burnout: None,
         clearance: operation::DEFAULT_CLEARANCE,
         skims,
+        sharp_corners: false,
     };
     let c = CreateOperation::new(&world, "Punch1", "EDM-W025", SrcRef::Entity("slug".into()), OpParams::WireContour(op)).expect("op");
     h.execute(&world, c);
@@ -322,28 +326,4 @@ fn an_arc_posts_g03_with_incremental_i_j_and_never_as_the_first_cut() {
     assert!(!out.program.contains("G01") && !out.program.contains("G03") && !out.program.contains("G02"), "{}", out.program);
 }
 
-/// #538: this post writes its C word once, when the wire is threaded, so
-/// a skimmed contour would cut every skim on the rough pass's condition.
-/// A condition change after the section's first cut is refused by name,
-/// through the app's own post - no file, no C word for the skims.
-#[test]
-fn skims_are_refused_by_name_never_cut_on_the_rough_condition() {
-    let machine = FIXTURE.replace("\"id\": \"S21\"", "\"id\": \"C121\"").replace("\"id\": \"S31\"", "\"id\": \"C131\"");
-    assert_ne!(machine, FIXTURE);
-    let skims = vec![WireSkim { condition: "C121".into(), reverse: false }, WireSkim { condition: "C131".into(), reverse: false }];
-    let world = punch_doc_with(&machine, "C110", skims);
-    let out = std::env::temp_dir().join(format!("camcraft-sodick-wire-skims-{}.nc", std::process::id()));
-    let _ = std::fs::remove_file(&out);
-    let err = posting::post_script(&world, &out, cps()).expect_err("a skimmed contour never posts through the Sodick post");
-    let wrote = out.exists();
-    let _ = std::fs::remove_file(&out);
-    assert!(err.contains("Punch1") && err.contains("a condition change between passes (skims) is not supported by this post"), "{err}");
-    assert!(!wrote, "the refused post wrote {}", out.display());
-
-    // The stream itself: the skims' conditions are announced mid-section,
-    // and the post refuses there - neither skim's C word is written.
-    let recs = records(&world);
-    let run_out = run(&machine, &recs, &serde_json::Value::Null);
-    assert!(run_out.warnings.iter().any(|m| m.contains("skims") && m.contains("wire-iso")), "{:?}", run_out.warnings);
-    assert!(!run_out.program.contains("C121") && !run_out.program.contains("C131"), "{}", run_out.program);
-}
+// Skims (#538) post on their own C words since #2649: sodick_wire_passes.rs.

@@ -37,7 +37,7 @@ fn setup() -> State {
         &state.world,
         ImportModel::from_mesh("part", cube(Point3::new(-10.0, -10.0, 0.0), Point3::new(10.0, 10.0, 5.0))),
     );
-    let pocket = OpParams::Pocket { rest: None,
+    let pocket = OpParams::Pocket { pass_start: Default::default(), rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
@@ -56,6 +56,8 @@ fn setup() -> State {
         helix_radius: 1.0,
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         blend_turns: false,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     };
     let params = operation::retype_params(&pocket, OpType::Adaptive2D.ordinal());
     state.pending.push_back(CommandKind::CreateOperation {
@@ -204,7 +206,7 @@ fn shift_click_on_an_aligned_setup_closes_around_the_setup_horizontal_face() {
         &state.world,
         AlignPartToSetup::angles(&state.world, "Setup2", [90.0, 0.0, 0.0]).expect("align Setup2"),
     );
-    let pocket = OpParams::Pocket {
+    let pocket = OpParams::Pocket { pass_start: Default::default(),
         rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
@@ -224,6 +226,8 @@ fn shift_click_on_an_aligned_setup_closes_around_the_setup_horizontal_face() {
         helix_radius: 1.0,
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         blend_turns: false,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     };
     state.history.execute(
         &state.world,

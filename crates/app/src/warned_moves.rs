@@ -28,15 +28,31 @@ pub fn moves_named(w: &Warning) -> [Option<usize>; 2] {
         | Warning::ShankHit { at, .. }
         | Warning::SweepHit { at, .. }
         | Warning::RapidInStock { at }
+        | Warning::RapidInPart { at }
+        | Warning::UndercutLift { at }
+        | Warning::FirstTraverseLow { at, .. }
+        | Warning::FirstTraverseUnderTable { at, .. }
         | Warning::FixtureHit { at, .. }
+        | Warning::AvoidHit { at, .. }
         | Warning::HolderHit { at, .. }
         | Warning::NonFinite { at }
         | Warning::Envelope { at, .. }
         | Warning::Scallop { at, .. }
         | Warning::ProbeSearch { at, .. }
         | Warning::SinkerFinishOrder { at, .. }
-        | Warning::DrillUndersize { at, .. } => [Some(*at), None],
-        Warning::RestUnjudged { .. } => [None, None],
+        | Warning::DrillUndersize { at, .. }
+        // #3525: the first cutting move below the flute's reach.
+        | Warning::FluteShort { at, .. }
+        // #3679: the feed plunge deeper than one stepdown below the
+        // uncut floor.
+        | Warning::PlungeTooDeep { at, .. } => [Some(*at), None],
+        // #3748: the first cut of the selected entry.
+        | Warning::EntryNotRecommended { at, .. }
+        // #3884: the plunge is the user's entry; its first cut.
+        | Warning::PlungeIntoStock { at } => [Some(*at), None],
+        // #3035: the fallback names areas in the notes, not one move;
+        // #3884: so do the stand-in entries.
+        Warning::RestUnjudged { .. } | Warning::StrategyFallback { .. } | Warning::EntryStandIn { .. } => [None, None],
     }
 }
 

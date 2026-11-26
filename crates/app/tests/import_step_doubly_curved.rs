@@ -82,7 +82,9 @@ fn saddle_step() -> String {
     let lp = e(format!("EDGE_LOOP('', ({}))", oriented.join(", ")));
     let bound = e(format!("FACE_OUTER_BOUND('', {lp}, .T.)"));
     let face = e(format!("ADVANCED_FACE('', ({bound}), {surface}, .T.)"));
-    e(format!("OPEN_SHELL('', ({face}))"));
+    // #917: a shell stands in a surface model (ISO 10303-42), not bare.
+    let shell = e(format!("OPEN_SHELL('', ({face}))"));
+    e(format!("SHELL_BASED_SURFACE_MODEL('', ({shell}))"));
     format!(
         "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('CamCraft #1602 fixture: a saddle'), '2;1');\n\
          FILE_NAME('', '', (''), (''), '', '', '');\nFILE_SCHEMA(('AUTOMOTIVE_DESIGN'));\nENDSEC;\nDATA;\n\

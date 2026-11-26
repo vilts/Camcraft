@@ -357,11 +357,17 @@ fn minimum_rotation(ring: &[(i64, i64)]) -> usize {
 /// the added path's opening `from` to the previous move's `to` - a stale
 /// `(0, 0)` there would read as a teleport to the origin.
 pub(super) fn stitch(mut a: Toolpath, mut b: Toolpath) -> Toolpath {
+    let base = a.moves.len();
     if let (Some(to), Some(first)) = (a.moves.last().map(|m| m.to), b.moves.first_mut()) {
         first.from = to;
     }
     a.moves.append(&mut b.moves);
     a.cycles.append(&mut b.cycles);
+    for mut c in b.comps {
+        c.first += base;
+        c.last += base;
+        a.comps.push(c);
+    }
     a
 }
 

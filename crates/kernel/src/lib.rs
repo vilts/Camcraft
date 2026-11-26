@@ -3,8 +3,8 @@
 //! candidate engines can be asked for: primitive construction (box, Z
 //! cylinder), the three booleans (subtract, union, intersect), whole-solid
 //! offset, constant-radius edge blends (round, chamfer), healing, and a [`Measure`]
-//! (volume + bounding box) the bench compares. Nothing else in the workspace
-//! depends on this crate yet; truck stays the live engine.
+//! (volume + bounding box) the bench compares. camcraft-geometry depends on
+//! this crate for the STEP and Solidcraft import (#917, #1456).
 //!
 //! Why `measure` and not `tessellate`: solidcore 1.0.1 does not port SMLib's
 //! tessellation (its README lists it among the unported SM_API entry points),
@@ -13,7 +13,9 @@
 //! tessellation. The bench compares those numbers.
 //!
 //! Stage 4 (#916) adds a STEP importer on the solidcore side
-//! ([`solidcore_step`]), bench only: the app still imports through truck.
+//! ([`solidcore_step`]); since #917 the app imports every STEP model there,
+//! with the pcurves the reader has no closed form for made on the kernel
+//! ([`solidcore_trims`]).
 //! #940 adds the machining mesh of such a solid ([`machining_mesh`]):
 //! solidcore-tess at a chord in mm, every shortfall a named refusal, the
 //! deviation from the exact surfaces measured ([`mesh_deviation`]).
@@ -29,16 +31,30 @@
 
 mod error;
 pub mod machining_mesh;
+pub mod machining_mesh_open;
 mod measure;
 pub mod mesh_bound;
 mod mesh_bound_blossom;
 mod mesh_bound_spline;
 pub mod mesh_deviation;
+mod mesh_distance;
+mod mesh_pole;
+pub mod mesh_redivide;
+mod mesh_redivide_fill;
+pub mod mesh_weld;
 mod solidcore_blend;
 pub mod solidcore_impl;
 pub mod solidcore_import;
 pub mod solidcore_step;
+mod solidcore_step_import;
+pub mod solidcore_trims;
 pub mod solidcraft;
+mod step_assumed_unit;
+mod step_curve_guard;
+pub mod step_edge_gap;
+mod step_length_units;
+mod step_face_winding;
+mod step_units_guard;
 #[cfg(feature = "truck")]
 pub mod truck_impl;
 
@@ -47,6 +63,10 @@ pub use measure::{Measure, mesh_signed_volume};
 /// The time bound the readers and the mesher poll (#1456: the app passes
 /// one in without its own solidcore dependency).
 pub use solidcore::kernel::CancelToken;
+/// solidcore's ISO 10303-21 parser (#2789: camcraft-geometry's tool
+/// coordinate-system, unit and record readers use it without their own
+/// solidcore dependency, so the pin stays in this one manifest).
+pub use ::solidcore_step::p21;
 
 /// A point or extent in model units, `[x, y, z]`.
 pub type P3 = [f64; 3];

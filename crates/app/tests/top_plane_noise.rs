@@ -42,9 +42,11 @@ fn contour(top_z: Height) -> OpParams {
         tab_height: 1.0,
         entry: Entry3D::Arc,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         links: Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 

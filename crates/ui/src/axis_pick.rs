@@ -230,7 +230,7 @@ pub fn take(state: &mut State, pick: GeoSel) {
     let by = d.by(axis);
     let setup = d.setup.clone();
     let refuse = |what: &str| format!("{setup}: {words} is {what} - {} takes {}", axis.label(), by.noun());
-    let status = match (by, pick.feature) {
+    let status = match (by, &pick.feature) {
         (AxisBy::Edge, FeatureSel::Chain(_)) => {
             d.slot(axis).picks = vec![pick];
             format!("{setup}: {words} picked for {}", axis.label())
@@ -254,6 +254,7 @@ pub fn take(state: &mut State, pick: GeoSel) {
         }
         (_, FeatureSel::Face(_) | FeatureSel::Patch(_)) => refuse("a face (a face sets no direction)"),
         (AxisBy::Edge, FeatureSel::Vertex(_)) => refuse("a point"),
+        (_, FeatureSel::SketchChain(_) | FeatureSel::SketchLayer(_)) => refuse("a DXF sketch pick"),
     };
     state.status = status;
 }

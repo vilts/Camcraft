@@ -8,10 +8,17 @@ use std::collections::HashMap;
 use crate::geometry::Point3;
 use crate::stock_sim::field::{center_of, signed, SdfField};
 
-/// March budget: 64 cap- or bound-sized steps cross any sane field at
-/// preview resolution (the ROADMAP's number; the GPU pass will spend
-/// the same law).
-const MAX_STEPS: u32 = 64;
+/// March budget, the same number as `trace.wgsl`'s `MAX_STEPS`. Over a
+/// flat face each step is `RELAX` times the height, so a grazing ray
+/// converges geometrically: 64 steps ran out below about 10 degrees
+/// and holed a faced floor (#3612). 256 resolves a faced floor down to
+/// 1 degree (measured: `a_grazing_faced_floor_resolves_and_stays_see_through`).
+/// Only the rays that need the steps pay for them.
+const MAX_STEPS: u32 = 256;
+
+/// Bisections of the exhaustion bracket `[t, t + cell]`: 6 halvings
+/// land within a 64th of a cell, the hit threshold `STEP_EPS`.
+const BISECT: u32 = 6;
 
 /// The hit threshold, in cells: below a 64th of a cell the probe is
 /// at the surface's own resolution (a 64th of a cell). The
@@ -182,7 +189,39 @@ pub(super) fn trace(e: &mut Eye, o: Point3, d: Point3) -> Seen {
         }
         t = nt;
     }
-    Seen::Unreadable
+    exhausted(e, o, d, t)
+}
+
+/// The budget ran out at `t` (#3612). A verdict stands only where
+/// material is PROVED on the ray: the last sample inside, or the
+/// sample one cell further on inside - the hit law's own probe. Then
+/// the surface lies in `[t, t + cell]` and a bisection of that bracket
+/// lands within `cell / 2^BISECT` of it, on the material side. Any
+/// other ray keeps no verdict: a near miss is never painted.
+fn exhausted(e: &mut Eye, o: Point3, d: Point3, t: f64) -> Seen {
+    let p = add(o, scale(d, t));
+    let phi = e.dist(p);
+    if phi.is_nan() {
+        return Seen::Unreadable;
+    }
+    if phi < 0.0 {
+        return Seen::Hit { t, p };
+    }
+    let mut hi = t + e.cell;
+    let ahead = e.dist(add(o, scale(d, hi)));
+    if ahead.is_nan() || ahead >= 0.0 {
+        return Seen::Unreadable;
+    }
+    let mut lo = t;
+    for _ in 0..BISECT {
+        let mid = 0.5 * (lo + hi);
+        if e.dist(add(o, scale(d, mid))) < 0.0 {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    Seen::Hit { t: hi, p: add(o, scale(d, hi)) }
 }
 
 /// Lambert times a one-march ambient: the gradient is the normal (a

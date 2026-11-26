@@ -20,6 +20,10 @@ use crate::geo2d::{Point2, Region};
 use crate::geometry::Triangle;
 use crate::geometry::slice::{material_above_of, shadow_above};
 
+#[path = "contour_exterior.rs"]
+mod exterior;
+pub(super) use exterior::ladder_picked;
+
 /// Radial slack of the ring-legality test, mm: the offset ring's round
 /// joins sit a chord sag inside the exact offset (`geo2d`'s 5 um arc
 /// tolerance); anything nearer the part than `r + leave - LEGAL_SLACK`
@@ -237,12 +241,35 @@ pub(super) fn ladder(
     leave: f64,
     notes: &mut Vec<String>,
 ) -> Ladder {
+    ladder_in(rings, facets, bodies, zs, top, r, leave, notes, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn ladder_in(
+    rings: &[Vec<Point2>],
+    facets: &[Triangle],
+    bodies: &[Range<usize>],
+    zs: &[f64],
+    top: f64,
+    r: f64,
+    leave: f64,
+    notes: &mut Vec<String>,
+    hull: Option<Region>,
+) -> Ladder {
     let need = r + leave - LEGAL_SLACK;
     let heights = vertex_heights(facets);
     let mut sec = Sections { facets, bodies, cache: HashMap::new() };
     let mut per_ring: Vec<Vec<f64>> = Vec::with_capacity(rings.len());
     let mut unread: Vec<Option<String>> = Vec::with_capacity(rings.len());
     for ring in rings {
+        // The full XY hull contains every section and overhead shadow.
+        // A cutter clear of it stays clear at every height, even when an
+        // unrelated interior hole cannot be sectioned at a vertex plane.
+        if hull.as_ref().is_some_and(|h| exterior::clear(h, ring, need)) {
+            per_ring.push(zs.to_vec());
+            unread.push(None);
+            continue;
+        }
         let pts = samples(ring);
         let mut mine: Vec<f64> = Vec::new();
         let mut above = f64::INFINITY;
@@ -366,24 +393,27 @@ pub(super) fn picked_law(
         let Some(top) = local_top(ring, facets, reach) else { continue };
         let asks_below = zs.iter().any(|&z| z < top - SAME_LEVEL);
         let trims = lad.ring(li).iter().any(|&z| z < top - SAME_LEVEL);
-        if !asks_below || trims {
+        if !asks_below {
             continue;
         }
         let at = ring.first().copied().unwrap_or(Point2::new(0.0, 0.0));
         if let Some(Some(why)) = lad.unread.get(li) {
-            // The part could not be sectioned under the ring (a self-
-            // touching or broken mesh): no level is proven clear, and the
-            // side may well be right - name the mesh, not the side.
+            // A required plane could not be sectioned under the ring.
+            // Deeper levels remain unproven even if earlier ones were
+            // clear: name the mesh error, not a floor or the chosen side.
             let skipped: Vec<String> =
-                zs.iter().filter(|&&z| z < top - SAME_LEVEL).map(|z| format!("{z:.3}")).collect();
+                zs.iter().filter(|&&z| z < top - SAME_LEVEL && !lad.walks(li, z)).map(|z| format!("{z:.3}")).collect();
             return Err(super::face::GenError::Invalid(format!(
-                "the picked ring at ({:.3}, {:.3}) meets its wall at no level below the part top Z {top:.3}: \
+                "the picked ring at ({:.3}, {:.3}) cannot reach every requested level below the part top Z {top:.3}: \
                  the part cannot be sectioned under it, so no deeper level is proven clear - levels below \
                  skipped ({}): {why}",
                 at.x,
                 at.y,
                 skipped.join(", ")
             )));
+        }
+        if trims {
+            continue;
         }
         let what = match side {
             // The side here is the RESOLVED one (the app turns Auto into

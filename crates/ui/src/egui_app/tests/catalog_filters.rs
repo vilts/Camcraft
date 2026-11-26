@@ -1,6 +1,6 @@
 //! PR #2029: catalog filters are temporary view state and compose together.
 //! Provenance: our own tests of the requested catalog controls.
-//! Gate map: covers ui::egui_app::tool_library, ui::state.
+//! Gate map: covers ui::egui_app::tool_library_dialog, ui::state.
 
 use egui::accesskit::Role;
 use super::*;

@@ -14,7 +14,7 @@
 use egui::Ui;
 
 use camcraft_app::links::{Approach, Compensation};
-use camcraft_app::machining2d::Lead;
+use camcraft_app::machining2d::{Lead, PassStart};
 use camcraft_app::machining3d::Entry3D;
 use camcraft_app::units::Unit;
 
@@ -84,6 +84,25 @@ pub(super) fn plunge_group(ui: &mut Ui, u: Unit, a: &mut Approach) {
     }
 }
 
+/// The row's label (#3745).
+pub(crate) const APPROACH_DISTANCE_LABEL: &str = "Approach distance";
+
+/// The row's hover text (#3745).
+pub(crate) const APPROACH_DISTANCE_HINT: &str =
+    "how far outside the stock edge the tool goes down to the cut depth, in air, before it moves in to the first cut";
+
+/// Where the entry of an Inside or Outside pass starts (#3745): a
+/// distance outside the stock edge. Auto keeps the kind's own entry, so
+/// the group shows only for Inside and Outside.
+pub(super) fn approach_distance_group(ui: &mut Ui, u: Unit, start: PassStart, a: &mut Approach) {
+    if start == PassStart::Auto {
+        return;
+    }
+    group(ui, "Approach", None, |ui| {
+        prop_row_hint(ui, APPROACH_DISTANCE_LABEL, APPROACH_DISTANCE_HINT, |ui| num(ui, u, &mut a.approach_distance));
+    });
+}
+
 /// The entry moves' own feeds.
 pub(super) fn feeds_group(ui: &mut Ui, u: Unit, a: &mut Approach) {
     group(ui, "Entry feeds", None, |ui| {
@@ -137,7 +156,12 @@ fn lead_idx(l: Option<Lead>) -> usize {
 }
 
 /// The contour's lead geometry beyond the lead-in's shape.
-pub(super) fn contour_leads_editor(ui: &mut Ui, u: Unit, a: &mut Approach) {
+pub(super) fn contour_leads_editor(
+    ui: &mut Ui,
+    u: Unit,
+    a: &mut Approach,
+    picks: &mut camcraft_app::path_picks::PathPicks,
+) {
     group(ui, "Lead out", None, |ui| {
         let mut i = lead_idx(a.lead_out);
         let before = i;
@@ -179,7 +203,7 @@ pub(super) fn contour_leads_editor(ui: &mut Ui, u: Unit, a: &mut Approach) {
         );
     });
     // #1448: the user's start and exit points, typed in model X/Y.
-    super::start_exit_rows::start_exit_groups(ui, u, a);
+    super::start_exit_rows::start_exit_groups(ui, u, picks);
     // M13.11: where the cutter radius comes off - the computer walks
     // the centre (the simulation and every file before the option), the
     // control offsets the part contour by its register.
@@ -207,7 +231,7 @@ pub(super) fn contour_leads_editor(ui: &mut Ui, u: Unit, a: &mut Approach) {
             consequence(ui, "set the D register to the wear delta only - a full radius there cuts the part a radius undersize");
         }
         if a.compensation.in_control() {
-            consequence(ui, "needs straight Linear or Perpendicular leads at least a tool radius long; tabs, corner blends, overlap, keep-down links and non-Fanuc posts are refused by name");
+            consequence(ui, "needs a Perpendicular lead at least a tool radius long; a Linear lead, tabs, corner blends, overlap, keep-down links and non-Fanuc posts are refused by name");
         }
     });
 }
@@ -215,15 +239,21 @@ pub(super) fn contour_leads_editor(ui: &mut Ui, u: Unit, a: &mut Approach) {
 /// The entry fallbacks of a generated path, as lines for the op page's
 /// status banner (M11.3, the user's "say it on the op page"): every entry
 /// substitution, second dive, centre-cutting fallback and lifted link the
-/// generator named, each with the fix a user can make.
+/// generator named, each with the fix a user can make. A stand-in entry
+/// (an entry that is not the selected one, #3884) is a warning line.
 #[must_use]
 pub(crate) fn entry_status_lines(notes: &[String]) -> Vec<String> {
     let mut out = Vec::new();
     for n in notes {
-        if n.starts_with(camcraft_app::operation::TOP_STOCK_WARNING) {
+        if n.starts_with(camcraft_app::operation::TOP_STOCK_WARNING) || n.starts_with(camcraft_app::machining2d::PASS_START_NOTE) {
             out.push(format!("warning: {n}"));
             continue;
         }
+        if n.starts_with(camcraft_app::finishing3d::WATERLINES_OFF_NOTE) {
+            out.push(format!("warning: {n}"));
+            continue;
+        }
+        let stand_in = camcraft_app::machining2d::is_entry_stand_in(n);
         let fix = if n.contains("not centre-cutting") {
             "fix: a centre-cutting tool, or a Helix / Ramp entry that fits"
         } else if n.contains("second dive") {
@@ -234,11 +264,15 @@ pub(crate) fn entry_status_lines(notes: &[String]) -> Vec<String> {
             "fix: a smaller arc radius or sweep, or a smaller stepover"
         } else if n.starts_with("link: the tool lifted") {
             "fix: Retract plane links, or a smaller stepover so the cuts it crosses are already cleared"
+        } else if stand_in {
+            "fix: set the stock so that an Arc entry can start in the air outside it, or a smaller stepover"
         } else {
             continue;
         };
         let body = n.strip_prefix("entry: ").unwrap_or(n);
-        out.push(format!("Entry: {body} - {fix}"));
+        // #3884: an entry that is not the selected one is a warning line.
+        let warn = if stand_in { "warning: " } else { "" };
+        out.push(format!("{warn}Entry: {body} - {fix}"));
     }
     out
 }
@@ -249,5 +283,31 @@ mod top_stock_tests {
     fn the_top_stock_note_is_a_visible_warning_not_an_entry_fallback() {
         let note = format!("{} top Z5.000, stock Z10.000 - raise Top or face first", camcraft_app::operation::TOP_STOCK_WARNING);
         assert_eq!(super::entry_status_lines(std::slice::from_ref(&note)), vec![format!("warning: {note}")]);
+    }
+
+    #[test]
+    fn the_waterlines_off_note_is_a_visible_warning() {
+        let note = format!("{} 6 steep flank facet(s) (>45 deg) left uncut", camcraft_app::finishing3d::WATERLINES_OFF_NOTE);
+        assert_eq!(super::entry_status_lines(std::slice::from_ref(&note)), vec![format!("warning: {note}")]);
+    }
+
+    /// #3884 pin 3: each stand-in entry that the ladder names is a warning
+    /// line; the marker notes add no second line (the op's warning says it).
+    #[test]
+    fn each_stand_in_entry_is_a_warning_line() {
+        use camcraft_app::machining2d::{ENTRY_STAND_IN_NOTE, PLUNGE_INTO_STOCK_NOTE};
+        let site = "the pass start (10.246, 16.000) at Z -3.000 is in material and the arc's lead room is blocked";
+        let notes = vec![
+            format!("entry: {site} - ramp along the pass instead"),
+            format!("entry: {site}, and no ramp fits clear of prior cuts - plunged into material at the plunge feed"),
+            "entry: Outside pass - no air entry outside the stock box fits (why) - helix entry instead".to_owned(),
+            "entry: Outside pass - no air entry outside the stock box fits (why) - ramp along the first cut instead".to_owned(),
+            ENTRY_STAND_IN_NOTE.to_owned(),
+            PLUNGE_INTO_STOCK_NOTE.to_owned(),
+        ];
+        let lines = super::entry_status_lines(&notes);
+        assert_eq!(lines.len(), 4, "{lines:?}");
+        assert!(lines.iter().all(|l| l.starts_with("warning: Entry: ")), "{lines:?}");
+        assert!(lines[0].contains("ramp along the pass instead"), "{lines:?}");
     }
 }

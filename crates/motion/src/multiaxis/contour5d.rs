@@ -34,6 +34,21 @@ pub fn contour5d(
     c: &AxisControl,
     shank: Option<&Shank>,
 ) -> Result<Toolpath, GenError> {
-    let base = finishing3d::waterline(facets, p)?;
+    contour5d_seamed(facets, p, c, shank, &finishing3d::RingSeam::default())
+}
+
+/// [`contour5d`] with the user's start and exit points (#3330): the
+/// waterline's rings seated at the start pick and run on to the exit
+/// pick (`finishing3d::waterline_seamed`), then posed by the same
+/// stamp - the tilt limit and the shank dodge are judged at the pick
+/// as at every other ring point. An empty `seam` is [`contour5d`].
+pub fn contour5d_seamed(
+    facets: &[Triangle],
+    p: &Finish3DParams,
+    c: &AxisControl,
+    shank: Option<&Shank>,
+    seam: &finishing3d::RingSeam,
+) -> Result<Toolpath, GenError> {
+    let base = finishing3d::waterline_seamed(facets, p, seam)?;
     stamp_axes(&base, facets, p.tool_diameter * 0.5, c, shank)
 }

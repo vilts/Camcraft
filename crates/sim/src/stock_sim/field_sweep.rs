@@ -56,7 +56,7 @@ impl Sweep {
                 RevKind::Flat { r, flank } => r.hypot(*flank),
                 RevKind::Taper { r, cot } => r.hypot(r * cot),
                 RevKind::Drill { r, cot, flank } => r.hypot(flank.max(r * cot)),
-                RevKind::Bull { r, flank, .. } => r.hypot(*flank),
+                RevKind::Bull { r, flank, .. } | RevKind::Dove { r, flank, .. } => r.hypot(*flank),
             },
             Sweep::Arc(_) => 0.0, // its stadium is its own (`ArcPiece::stadium`)
         }
@@ -79,7 +79,7 @@ impl Sweep {
                 RevKind::Flat { r, flank } => (*r, *flank),
                 RevKind::Taper { r, cot } => (*r, r * cot),
                 RevKind::Drill { r, cot, flank } => (*r, flank.max(r * cot)),
-                RevKind::Bull { r, flank, .. } => (*r, *flank),
+                RevKind::Bull { r, flank, .. } | RevKind::Dove { r, flank, .. } => (*r, *flank),
             },
             Sweep::Arc(p) => p.reach(),
         }
@@ -121,7 +121,8 @@ impl Sweep {
                 RevKind::Flat { flank, .. } | RevKind::Drill { flank, .. } | RevKind::Bull { flank, .. } => {
                     a.z.min(b.z) + flank >= z
                 }
-                RevKind::Taper { .. } => false,
+                // A dovetail head narrows upward (#1444): bounded.
+                RevKind::Taper { .. } | RevKind::Dove { .. } => false,
             },
             Sweep::Arc(p) => p.spans_above(z),
         }

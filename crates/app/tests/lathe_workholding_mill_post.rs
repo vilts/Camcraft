@@ -108,6 +108,7 @@ fn built(kind: &str, remount: Option<&str>, section: Section, rpm: f64) -> Resul
                 stepdown: 0.5,
                 feed: 150.0,
                 plunge_feed: 80.0,
+                picks: Default::default(),
             },
         ),
         Section::Tool => {

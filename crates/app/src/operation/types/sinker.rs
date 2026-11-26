@@ -8,6 +8,7 @@
 //! from the machine's condition (#531). No vendor material.
 
 use super::height::Height;
+use crate::path_picks::PathPicks;
 pub use crate::sinker::SinkerDatum;
 pub use crate::sinker_orbit::{Orbit as SinkerOrbit, OrbitKind as SinkerOrbitKind};
 pub use crate::sinker_undersize::SinkerPass;
@@ -41,6 +42,9 @@ pub struct SinkerBurnOp {
     /// or finish without it is refused by name.
     pub cavity_x: f64,
     pub cavity_y: f64,
+    /// Finished cavity outline relative to the burn point (#1810).
+    /// An empty outline keeps the existing extent law.
+    pub cavity_outline: Vec<[f64; 2]>,
     /// #546: the depth of one burn layer, mm; `None` burns the whole
     /// depth as one layer.
     pub layer: Option<f64>,
@@ -55,6 +59,8 @@ pub struct SinkerBurnOp {
     /// machine lists and the radius within its stated maximum - both
     /// read at generation, refused by name.
     pub orbit: Option<SinkerOrbit>,
+    /// The operation's start and exit picks (#3339).
+    pub picks: PathPicks,
 }
 
 impl SinkerBurnOp {
@@ -74,6 +80,7 @@ impl SinkerBurnOp {
             && self.cavity_sane()
             && self.orbit.as_ref().is_none_or(|o| o.check().is_ok())
             && self.compensation_refusal().is_none()
+            && self.picks.refusal().is_none()
     }
 
     /// The layer step's and the measured wear's refusal, by name (#546) -
@@ -112,6 +119,16 @@ impl SinkerBurnOp {
         }
     }
 
+    /// The angles at which the orbit starts and ends under the start and
+    /// exit picks (#3333), read round the burn position.
+    ///
+    /// # Errors
+    /// `sinker_picks::orbit_ends`'s refusals, by name: a pick with no
+    /// orbit, a pick on the burn position, a pick a vector orbit cannot hold.
+    pub fn orbit_ends(&self) -> Result<crate::sinker_picks::OrbitEnds, String> {
+        crate::sinker_picks::orbit_ends((self.x, self.y), self.orbit.as_ref(), &self.picks)
+    }
+
     /// The finished cavity's numbers: unread (any finite, non-negative
     /// value) for a single burn; a rough or finish must pass
     /// [`Self::pass_refusal`].
@@ -127,6 +144,11 @@ impl SinkerBurnOp {
     /// or a sound pass.
     #[must_use]
     pub fn pass_refusal(&self) -> Option<String> {
+        if !self.cavity_outline.is_empty()
+            && let Some(why) = crate::sinker_undersize::cavity_outline_refusal(&self.cavity_outline)
+        {
+            return Some(why);
+        }
         if self.pass == SinkerPass::Single {
             return None;
         }
@@ -136,6 +158,9 @@ impl SinkerBurnOp {
             return Some(format!(
                 "a sinker {pass} is judged against the finished cavity - state its X and Y size (both above 0)"
             ));
+        }
+        if !self.cavity_outline.is_empty() {
+            return crate::sinker_undersize::cavity_outline_size_refusal(&self.cavity_outline, (self.cavity_x, self.cavity_y));
         }
         None
     }
@@ -165,6 +190,15 @@ impl SinkerSideBurnOp {
     #[must_use]
     pub fn side(&self) -> SinkerSide {
         SinkerSide { direction: self.direction, amount: self.amount, undersize: self.undersize }
+    }
+
+    /// The ends at which the side move starts and ends under the start
+    /// and exit picks (#3333): the burn position or the wall end.
+    ///
+    /// # Errors
+    /// `sinker_picks::side_ends`'s refusals, by name.
+    pub fn side_ends(&self) -> Result<crate::sinker_picks::SideEnds, String> {
+        crate::sinker_picks::side_ends((self.burn.x, self.burn.y), &self.side(), &self.burn.picks)
     }
 
     /// The structural refusal by name (no world): an orbit, a measured

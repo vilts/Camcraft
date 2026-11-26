@@ -2,7 +2,8 @@
 //! (#545): the op's burn resolved as the Sinker Burn's is (#541's
 //! `sinker_op` doors - heights, electrode, condition gap), then
 //! `sinker_side::side_burn_worn` run over it with the side's own numbers
-//! and its measured wear and layer step (#1340).
+//! and its measured wear and layer step (#1340), from the end that the
+//! start pick chooses to the end that the exit pick chooses (#3333).
 //!
 //! Provenance: our own glue over the motion crate's side-burn
 //! generator, whose module head cites its public sources (lateral EDM
@@ -14,7 +15,8 @@ use flecs_ecs::prelude::World;
 use crate::cl::Toolpath;
 use crate::geometry::Triangle;
 use crate::machining2d::GenError;
-use crate::sinker_side::{allowance, side_burn_worn};
+use crate::sinker_picks::side_burn_between;
+use crate::sinker_side::allowance;
 use crate::tools::Tool;
 use crate::verify::Warning;
 
@@ -92,5 +94,7 @@ pub(super) fn generate_sinker_side(
     let p = super::sinker_op::sinker_params(&op.burn, tool, hs, gap, facets)?;
     // #1340: a measured wear and a layer step compensate the plunge in Z.
     let w = super::sinker_wear_op::side_wear(&op.burn);
-    Ok((side_burn_worn(&p, &op.side(), &w)?, Vec::new()))
+    // #3333: the start and exit picks, as the ends of the side move.
+    let ends = op.side_ends().map_err(GenError::Invalid)?;
+    Ok((side_burn_between(&p, &op.side(), &w, &ends)?, Vec::new()))
 }

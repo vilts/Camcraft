@@ -43,7 +43,7 @@ fn an_open_chain_splits_the_stock_and_either_side_is_faced_from_the_air_up_to_it
     let (lo, hi) = stock_box(&world);
     // The rim edge along y = +20: the block's side is Inside.
     let north = rim_edge(&world, |q| (q[1] - 20.0).abs() < 1e-9);
-    let t = face_open(&world, north, ChainSide::Inside);
+    let t = face_open(&world, north.clone(), ChainSide::Inside);
     let f = feeds(&t);
     assert!(starts_in_air(&t, lo, hi), "the path starts outside the stock");
     assert!(f.iter().all(|p| p.y + R <= 20.0 + EPS), "never across the chain");
@@ -90,7 +90,7 @@ fn a_containment_that_puts_the_tool_in_the_part_is_refused_by_name() {
         })
         .expect("the bore rim");
     let p = contour(20.0, 10.0, Side::Inside);
-    let (inside, clean) = operation::generate(&world, &op(sel(&name, rim), p.clone(), AreaControls::default()), "")
+    let (inside, clean) = operation::generate(&world, &op(sel(&name, rim.clone()), p.clone(), AreaControls::default()), "")
         .map(|(t, w)| (t, w.len()))
         .expect("default");
     assert_eq!(clean, 0, "the bore wall contour is clean from inside");
@@ -99,7 +99,7 @@ fn a_containment_that_puts_the_tool_in_the_part_is_refused_by_name() {
     // mouth, where it cuts air. Before #1927 that top-plane pass posted
     // with no word; the picked-ring law now refuses it by name, before a
     // move, and points at the containment.
-    let err = run(&world, &op(sel(&name, rim), p, out)).expect_err("refused");
+    let err = run(&world, &op(sel(&name, rim.clone()), p, out)).expect_err("refused");
     assert!(err.contains("meets its wall at no level below the part top Z 20.000"), "{err}");
     assert!(err.contains("tool containment"), "{err}");
     // Auto reads the material at the rim's own level (#1933): air inside
@@ -142,7 +142,7 @@ fn a_face_band_across_part_material_is_refused_by_name_and_caught_by_the_verify(
     let plate = top_face(&world, "part", 5.0);
     // The default law faces the plate's whole band - through the boss;
     // the depth-aware verify says so (the post gate's backstop).
-    let (_, warns) = run(&world, &op(sel("part", plate), face(5.0), AreaControls::default())).expect("default");
+    let (_, warns) = run(&world, &op(sel("part", plate.clone()), face(5.0), AreaControls::default())).expect("default");
     assert!(warns > 0, "facing through the boss must be flagged");
     // Under Boundary settings the same band is refused before a move.
     let a = AreaControls { extension: 3.0, ..Default::default() };
@@ -201,6 +201,7 @@ fn the_controls_round_trip_and_are_absent_from_the_file_at_their_default() {
             ExtraBoundary { mode: BoundaryMode::Include, shape: BoundaryShape::Silhouette },
         ],
         open: Some(OpenBoundary { picks: pick("part", north), side: ChainSide::Outside }),
+        ..Default::default()
     };
     let e = model::find_by_name(&world, "P").expect("op");
     let params = model::operation_of(&world, &e).expect("op").params;
@@ -267,12 +268,12 @@ fn the_open_pass_runs_climb_with_the_material_on_its_right() {
     let top = top_face(&world, "part", 10.0);
     let north = rim_edge(&world, |q| (q[1] - 20.0).abs() < 1e-9);
     for climb in [true, false] {
-        let a = AreaControls { extension: 3.0, open: Some(OpenBoundary { picks: pick("part", north), side: ChainSide::Outside }), ..Default::default() };
+        let a = AreaControls { extension: 3.0, open: Some(OpenBoundary { picks: pick("part", north.clone()), side: ChainSide::Outside }), ..Default::default() };
         let mut p = contour(10.0, 5.0, Side::Auto);
         if let OpParams::Contour { climb: c, .. } = &mut p {
             *c = climb;
         }
-        let (t, warns) = run(&world, &op(sel("part", top), p, a)).expect("open contour");
+        let (t, warns) = run(&world, &op(sel("part", top.clone()), p, a)).expect("open contour");
         assert_eq!(warns, 0, "{:?}", t.notes);
         let level = t.moves.iter().filter(|m| m.kind == MoveKind::Feed && m.to.z < 10.0 - EPS && m.from.z == m.to.z);
         let dx: f64 = level.map(|m| m.to.x - m.from.x).sum();
@@ -290,8 +291,8 @@ fn the_footprint_of_an_open_contour_is_the_band_its_pass_sweeps() {
     let top = top_face(&world, "part", 10.0);
     let north = rim_edge(&world, |q| (q[1] - 20.0).abs() < 1e-9);
     for side in [ChainSide::Outside, ChainSide::Inside] {
-        let a = AreaControls { extension: 3.0, open: Some(OpenBoundary { picks: pick("part", north), side }), ..Default::default() };
-        let o = op(sel("part", top), contour(10.0, 5.0, Side::Auto), a);
+        let a = AreaControls { extension: 3.0, open: Some(OpenBoundary { picks: pick("part", north.clone()), side }), ..Default::default() };
+        let o = op(sel("part", top.clone()), contour(10.0, 5.0, Side::Auto), a);
         let band = operation::machined_footprint(&world, &o).expect("the open pass shades its band");
         assert!(!band.is_empty() && band.area().abs() > 0.0);
         assert!(operation::region_of(&world, &o).is_some(), "the side-picking area still outlines");
@@ -375,8 +376,8 @@ fn a_contour_open_boundary_that_is_no_open_chain_is_refused_by_name() {
     let world = block_world();
     let top = top_face(&world, "part", 10.0);
     // The top face's own rim is a closed ring, not an open chain.
-    let a = AreaControls { open: Some(OpenBoundary { picks: pick("part", top), side: ChainSide::Outside }), ..Default::default() };
-    let err = run(&world, &op(sel("part", top), contour(10.0, 5.0, Side::Auto), a)).expect_err("refused");
+    let a = AreaControls { open: Some(OpenBoundary { picks: pick("part", top.clone()), side: ChainSide::Outside }), ..Default::default() };
+    let err = run(&world, &op(sel("part", top.clone()), contour(10.0, 5.0, Side::Auto), a)).expect_err("refused");
     assert!(err.contains("must be an open chain"), "{err}");
     // Include / exclude boundaries cannot shape an open pass: said.
     let north = rim_edge(&world, |q| (q[1] - 20.0).abs() < 1e-9);

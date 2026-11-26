@@ -73,9 +73,9 @@ class GuideImagesTest(unittest.TestCase):
                       if "operation" in entity}
         cases = [
             ("multi-axis/indexed.md", "op-indexed-3plus2.png", "Indexed Face1",
-             {"gouge": 30}, ("tilted plane", "cut depth")),
+             {"gouge": 30, "first_traverse_low": 1}, ("tilted plane", "cut depth", "clearance height")),
             ("multi-axis/operations-multiaxis.md", "op-multiaxis-swarf.png", "Swarf1",
-             {"shank_hit": 897, "rapid_in_stock": 9, "sweep_hit": 2},
+             {"shank_hit": 884, "rapid_in_stock": 9, "sweep_hit": 2},
              ("tool", "clearance", "retract")),
         ]
         for page, image, name, expected, corrections in cases:

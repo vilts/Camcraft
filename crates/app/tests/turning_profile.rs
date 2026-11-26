@@ -141,6 +141,7 @@ fn finish_params(bottom: f64, top: f64) -> OpParams {
         bottom_z: Height::fixed(bottom),
         feed: 120.0,
         plunge_feed: 60.0,
+        picks: Default::default(),
     }
 }
 
@@ -154,6 +155,7 @@ fn rough_params(bottom: f64, top: f64, stepdown: f64, leave: f64) -> OpParams {
         stock_to_leave: leave,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     }
 }
 

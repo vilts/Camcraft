@@ -41,7 +41,7 @@ fn editor_with_kind(machine_default: bool, kind: ToolKind) -> State {
     body.machine_default = machine_default;
     let entity = model::find_by_name(&state.world, TOOL).unwrap();
     tool_body::set_body(&state.world, &entity, Some(&body));
-    crate::actions::open_tool_editor(&mut state, TOOL);
+    crate::actions::open_tool_shape_editor(&mut state, TOOL);
     state
 }
 

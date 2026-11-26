@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="300" viewBox="0 0 720 300" role="img" aria-labelledby="t d">
+<!-- Made by site/tools/first_continuous_4axis_pictures.py from the committed example - do not edit by hand. Original drawing; no vendor artwork. -->
+<style>text{font:14px sans-serif;fill:#172b3a}.small{font-size:12px;fill:#4a5b68}.stock{fill:#e1e5e9;stroke:#7c8791;stroke-width:2}.steel{fill:#b9c1c8;stroke:#7c8791;stroke-width:2}.part{fill:none;stroke:#263b4a;stroke-width:2;stroke-dasharray:6 4}.cut{fill:none;stroke:#006ba6;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}.link{fill:none;stroke:#af5900;stroke-width:1.5;stroke-dasharray:5 4}.axis{fill:none;stroke:#263b4a;stroke-width:2}.grid{fill:none;stroke:#c9d0d6;stroke-width:1}.limit{fill:none;stroke:#7c8791;stroke-width:1.5;stroke-dasharray:3 5}.center{fill:none;stroke:#7c8791;stroke-dasharray:10 4 2 4}</style>
+<title id="t">The bar in the microARC 4 chuck and the work offset</title><desc id="d">Side and end views of the bar: G54 X0 is at the free end face, and Y0 and Z0 are on the A centreline. The dashed outline is the model.</desc>
+<rect width="720" height="300" fill="white"/>
+<text x="20" y="26">Side view</text>
+<rect class="steel" x="40.5" y="44.6" width="59.5" height="210.8"/>
+<text class="small" x="43.9" y="273.4">chuck jaws</text>
+<rect class="stock" x="100" y="86.2" width="340" height="127.5"/>
+<rect class="part" x="227.5" y="92.2" width="212.5" height="115.6"/>
+<path class="center" d="M23.5 150 H491"/>
+<circle cx="440" cy="150" r="5" fill="#263b4a"/>
+<path class="axis" d="M440 150 H511.4 m-8 -5 l8 5 l-8 5 M440 150 V27.6 m-5 8 l5 -8 l5 8"/>
+<text x="516.5" y="155">X</text><text x="448.5" y="24.2">Z</text>
+<text class="small" x="436.6" y="273.4" text-anchor="end">G54 X0 at the free end face</text>
+<path class="grid" d="M100 235 V255.4 M440 235 V255.4 M100 245.2 H440"/>
+<text class="small" x="270" y="239.2" text-anchor="middle">2 in out of the jaws</text>
+<text class="small" x="333.8" y="146" text-anchor="middle">model: 0.680 in across, 1.25 in long</text>
+<text class="small" x="108.5" y="76.1">bar: 0.75 in</text>
+<text x="540" y="26">End view</text>
+<circle class="stock" cx="620" cy="150" r="63.7"/>
+<circle class="part" cx="620" cy="150" r="57.8"/>
+<path class="center" d="M525 150 H715 M620 55 V245"/>
+<circle cx="620" cy="150" r="5" fill="#263b4a"/>
+<text class="small" x="620" y="273.4" text-anchor="middle">G54 Y0 Z0 on the A centreline</text>
+</svg>

@@ -47,9 +47,11 @@ fn contour_op(lead: Lead, links: Links) -> OpParams {
         tab_height: 1.0,
         entry: Entry3D::Arc,
         helix_radius: 1.0,
-        blend_turns: true,
+        blend_turns: true, blend_radius: None,
         tilt: None,
         links,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -57,7 +59,7 @@ fn contour_op(lead: Lead, links: Links) -> OpParams {
 /// level descent pitch 1.0, keep down between levels, retract plane
 /// between passes, top = model top.
 fn pocket_op(links: Links) -> OpParams {
-    OpParams::Pocket { rest: None,
+    OpParams::Pocket { pass_start: Default::default(), rest: None,
         blend_radius: None,
         stepover: 2.4,
         stock_to_leave: 0.0,
@@ -76,6 +78,8 @@ fn pocket_op(links: Links) -> OpParams {
         blend_turns: false,
         tilt: None,
         links,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     }
 }
 
@@ -249,6 +253,30 @@ fn the_horizontal_arc_entry_on_the_users_pocket_verifies_silent() {
 }
 
 #[test]
+fn the_users_pocket_names_its_seven_sharp_corners_and_the_corner_check_runs() {
+    // #2849: on the fine solidcore mesh the leftover of the bore kept a
+    // micron-wide cusp that crossed itself, and the corner check stopped
+    // with "did not run". It runs again and names the same seven corners
+    // as on the coarse mesh: the four stock corners and three wall boxes.
+    let mut op = pocket_op(with(Approach { arc_xy: true, ..Approach::DEFAULT }));
+    if let OpParams::Pocket { entry, .. } = &mut op {
+        *entry = Entry3D::Helix;
+    }
+    let (_w, t, _) = user_job("EM-0600-4FL", false, op);
+    assert!(!t.notes.iter().any(|n| n.contains("did not run")), "{:?}", t.notes);
+    let note = t.notes.iter().find(|n| n.contains("uncut corner material")).expect("the corner note");
+    assert_eq!(note.matches(", Y ").count(), 7, "{note}");
+    for corner in [
+        "X -35.000 mm to -32.000 mm, Y 32.000 mm to 35.000 mm",
+        "X 32.000 mm to 35.000 mm, Y 32.000 mm to 35.000 mm",
+        "X -35.000 mm to -32.000 mm, Y -35.000 mm to -32.000 mm",
+        "X 32.000 mm to 35.000 mm, Y -35.000 mm to -32.000 mm",
+    ] {
+        assert!(note.contains(corner), "{corner}: {note}");
+    }
+}
+
+#[test]
 fn the_approach_round_trips_and_the_defaults_write_no_key() {
     let lead = Lead::Tangential { radius: 5.0 };
     let _ = roundtrip(contour_op(lead, Links::PLANAR), None);
@@ -302,6 +330,8 @@ fn the_stamp_tells_the_approach_apart_and_a_default_op_keeps_its_digest() {
         Approach { lead_out: Some(Lead::None), ..Approach::DEFAULT },
         Approach { axis_start: true, ..Approach::DEFAULT },
         Approach { arc_xy: true, ..Approach::DEFAULT },
+        // #3745: the approach distance outside the stock.
+        Approach { approach_distance: 5.0, ..Approach::DEFAULT },
     ] {
         assert_ne!(stamp(with(a)), base, "{a:?}");
         assert_ne!(stamp(Links { approach: a, ..kd }), stamp(kd), "{a:?}");

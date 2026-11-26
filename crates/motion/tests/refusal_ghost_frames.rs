@@ -32,6 +32,7 @@ fn p3(x: f64, y: f64, z: f64) -> Point3 {
 /// raster is built, and a `None` lets the same raster succeed.
 fn finish(top_z: f64, bottom_z: f64, d: f64, steep: Option<f64>) -> Finish3DParams {
     Finish3DParams {
+        gap_link: camcraft_motion::finishing3d::GapLink::Jump,
         pattern: FinishPattern::SteepShallow,
         stepover: Some(d / 3.0),
         tool_diameter: d,
@@ -49,6 +50,7 @@ fn finish(top_z: f64, bottom_z: f64, d: f64, steep: Option<f64>) -> Finish3DPara
         entry_ramp: false,
         steep_stepover: steep,
         pencil_reference: None,
+        waterlines: true,
     }
 }
 

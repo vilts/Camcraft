@@ -1,10 +1,9 @@
 //! Project donation link in the ribbon's top row (#2385).
 //! Provenance: our own UI; the link comes from .github/FUNDING.yml.
 
-#[cfg(not(target_arch = "wasm32"))]
-use egui::Context;
 use egui::{Button, Image, Rect, RichText, Ui, Vec2};
 
+use super::browser_open;
 use super::icons::{Icon, IconSet};
 use super::theme::Tokens;
 use crate::state::State;
@@ -17,70 +16,21 @@ fn result_id() -> egui::Id {
 }
 
 /// The native worker reports back without holding or changing the document.
-#[cfg(not(target_arch = "wasm32"))]
-pub(super) fn record_result(ctx: &Context, result: Result<(), String>) {
-    ctx.data_mut(|data| data.insert_temp(result_id(), Some(result)));
-    ctx.request_repaint();
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn open_system_browser() -> Result<(), String> {
-    use std::process::Command;
-
-    #[cfg(target_os = "windows")]
-    let mut command = {
-        let mut command = Command::new("cmd");
-        command.args(["/C", "start", "", DONATION_URL]);
-        command
-    };
-    #[cfg(target_os = "macos")]
-    let mut command = {
-        let mut command = Command::new("open");
-        command.arg(DONATION_URL);
-        command
-    };
-    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
-    let mut command = {
-        let mut command = Command::new("xdg-open");
-        command.arg(DONATION_URL);
-        command
-    };
-    run_launcher(&mut command)
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn run_launcher(command: &mut std::process::Command) -> Result<(), String> {
-    let status = command.status().map_err(|error| error.to_string())?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("the browser launcher returned {status}"))
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn open_native(ctx: &Context) {
-    let worker_ctx = ctx.clone();
-    if let Err(error) = std::thread::Builder::new()
-        .name("donate-browser".into())
-        .spawn(move || record_result(&worker_ctx, open_system_browser()))
-    {
-        record_result(ctx, Err(error.to_string()));
-    }
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(super) fn record_result(ctx: &egui::Context, result: Result<(), String>) {
+    browser_open::record_result(ctx, result_id(), result);
 }
 
 /// The button stays available for an empty document and in the browser.
+/// Returns its left edge: the Home button (#2384) sits left of it.
 pub(super) fn draw(
     ui: &mut Ui,
     state: &mut State,
     pal: &Tokens,
     icons: Option<&IconSet>,
     band: Rect,
-) {
-    if let Some(result) = ui.ctx().data_mut(|data| {
-        data.remove_temp::<Option<Result<(), String>>>(result_id())
-            .flatten()
-    }) {
+) -> f32 {
+    if let Some(result) = browser_open::take_result(ui.ctx(), result_id()) {
         match result {
             Ok(()) => state.status = "Donate: Opened the donation link in the browser".into(),
             Err(error) => {
@@ -120,18 +70,20 @@ pub(super) fn draw(
         .on_hover_text("Support CamCraft")
         .clicked()
     {
-        if state.browser_build || cfg!(target_arch = "wasm32") {
-            ui.ctx().open_url(egui::OpenUrl::new_tab(DONATION_URL));
-        } else {
-            #[cfg(not(target_arch = "wasm32"))]
-            open_native(ui.ctx());
-        }
+        browser_open::open(
+            ui,
+            state.browser_build,
+            "donate-browser",
+            result_id(),
+            DONATION_URL,
+        );
     }
+    rect.left()
 }
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::run_launcher;
+    use super::super::browser_open::run_launcher;
     use std::process::{Command, Stdio};
 
     fn test_launcher() -> Command {

@@ -75,7 +75,7 @@ pub(super) fn part_clear(
     };
     let (at, what) = match w {
         Warning::Gouge { at } => (at, "cuts into"),
-        Warning::RapidInStock { at } => (at, "rapids into"),
+        Warning::RapidInPart { at } => (at, "rapids into"),
         Warning::ShankHit { at, .. } => (at, "rubs its shank or holder on"),
         _ => (0, "enters"),
     };
@@ -140,7 +140,7 @@ pub(super) fn neighbours_clear(
     };
     let (at, what) = match w {
         Warning::Gouge { at } => (at, "cuts into"),
-        Warning::RapidInStock { at } => (at, "rapids into"),
+        Warning::RapidInPart { at } => (at, "rapids into"),
         Warning::ShankHit { at, .. } => (at, "rubs its shank or holder on"),
         _ => (0, "enters"),
     };

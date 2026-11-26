@@ -101,7 +101,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
     } else {
         camcraft_app::operation::sinker_wear_op::wear_status(world, op_ctx.as_deref(), p)
     };
-    let SinkerBurnOp { clearance_z, top_z, floor_z, datum, depth, x, y, feed, condition, pass, cavity_x, cavity_y, orbit, layer, wear_lost, wear_over } = p;
+    let SinkerBurnOp { clearance_z, top_z, floor_z, datum, depth, x, y, feed, condition, pass, cavity_x, cavity_y, orbit, layer, wear_lost, wear_over, cavity_outline: _, picks: _ } = p;
     if tab == SEC_GEO {
         prop_row(ui, "Burn at X", |ui| num(ui, u, x));
         prop_row(ui, "Burn at Y", |ui| num(ui, u, y));

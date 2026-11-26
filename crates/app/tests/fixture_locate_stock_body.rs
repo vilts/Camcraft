@@ -49,7 +49,7 @@ fn document(sides: [f64; 6]) -> (World, History) {
     h.execute(&world, ImportModel::from_mesh("part", cube(p(0.0, 0.0, 0.0), p(20.0, 10.0, 8.0))));
     let at = Location { pos: p(150.0, 80.0, 30.0), ..Location::default() };
     h.execute(&world, MoveModel::new(&world, "part", at).expect("placed"));
-    h.execute(&world, ImportModel::from_mesh("vise", Mesh { facets: vise().into() }));
+    h.execute(&world, ImportModel::from_mesh("vise", Mesh::from_facets(vise())));
     h.execute(&world, TagFixture::new(&world, "vise", None).expect("mark the vise"));
     h.execute(&world, CreateSetup::new(&world, None, None).expect("Setup1"));
     let (lo, hi) = bounds(&world, "part");

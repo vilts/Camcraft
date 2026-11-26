@@ -95,7 +95,7 @@ pub(crate) use morph::SAG as PLAN_SAG;
 
 use super::GenError;
 use raster::Raster;
-pub use rest::{REST_STOCK_FILM, RestStock, StockFloor, rest_adaptive};
+pub use rest::{REST_STOCK_FILM, RestStock, StockFloor, rest_adaptive, rest_levels};
 
 /// The worst contact angle a trial walk read, and where.
 type Worst = (f64, Point2);

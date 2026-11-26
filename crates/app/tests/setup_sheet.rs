@@ -43,7 +43,7 @@ fn at(x: f64, y: f64, z: f64) -> Location {
 /// Face parameters for the 60x60x20 box stock with a 4 mm cutter - the
 /// same fixture the operations tests face on.
 fn face_params() -> OpParams {
-    OpParams::Face { holes: Default::default(), tilt: None, blend_turns: false,
+    OpParams::Face { holes: Default::default(), tilt: None, blend_turns: false, blend_radius: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
         cut_z: Height::fixed(19.5),
@@ -52,6 +52,7 @@ fn face_params() -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 

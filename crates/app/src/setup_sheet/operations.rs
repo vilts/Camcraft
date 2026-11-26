@@ -205,6 +205,7 @@ fn kind_label(k: CycleKind) -> String {
         CycleKind::Bore => "bore",
         CycleKind::BackBore => "back-bore",
         CycleKind::Ream => "ream",
+        CycleKind::FineBore => "fine bore",
     };
     s.to_string()
 }
@@ -220,5 +221,6 @@ fn choice_label(c: CycleChoice) -> &'static str {
         CycleChoice::Bore => "Bore",
         CycleChoice::BackBore => "BackBore",
         CycleChoice::Ream => "Ream",
+        CycleChoice::FineBore { .. } => "Fine bore",
     }
 }

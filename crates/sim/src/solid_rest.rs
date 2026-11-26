@@ -26,12 +26,17 @@
 //!   the claims settle into material counts by plane: each interior
 //!   claim is its own sheet, and bare boundary claims of one plane
 //!   merge to ONE crossing (they are pieces of a single sheet meeting
-//!   at an edge). Per-triangle half-open ownership cannot do this - a
-//!   shared diagonal would then belong to one owning triangle, but
-//!   two coincident sheets stacked flush would collapse to one,
-//!   lying about parity. Claims see it through: an ordinary column
-//!   is even on any closed shell however triangulated, and a
-//!   knife-edge double surface (the column ON two flush sheets at
+//!   at an edge). When several non-coplanar bare boundary groups meet
+//!   at the same z (a revolved meridian seam, cone apex or V-root
+//!   crease, #2880), their XY angular sectors around the column decide
+//!   parity: 1 crossing when any open angular sector has odd group
+//!   multiplicity (one sheet crossed on its edge), 0 when every sector
+//!   has even multiplicity (a grazing fold). Per-triangle half-open
+//!   ownership cannot do this - a shared diagonal would then belong to
+//!   one owning triangle, but two coincident sheets stacked flush would
+//!   collapse to one, lying about parity. Claims see it through: an
+//!   ordinary column is even on any closed shell however triangulated,
+//!   and a knife-edge double surface (the column ON two flush sheets at
 //!   their own shared edge) lands odd - reported, never guessed.
 //! - (b) TOTAL: no input - NaN facets, zero-area facets, open shells -
 //!   panics or hangs. An odd crossing count is reported as
@@ -39,9 +44,14 @@
 //!   may not call it material.
 //! - (c) ORIENTATION-FREE: parity needs a CLOSED shell, not a wound
 //!   one. Flipped facets change nothing here - normals group by
-//!   LINE, not direction, and inside/outside never reads winding.
+//!   LINE, not direction, boundary sectors are CCW independent of
+//!   winding, and inside/outside never reads winding.
 
 use crate::geometry::{Point3, Triangle};
+
+#[cfg(test)]
+#[path = "solid_rest_tests.rs"]
+mod tests;
 
 /// Where a vertical ray at `(x, y)` found the shell, z-ascending.
 #[derive(Clone, Debug, PartialEq)]
@@ -67,12 +77,19 @@ impl Crossings {
 }
 
 /// One facet's claim on a column: crossing z, facet plane normal, and
-/// whether the claim is INTERIOR (deep in the triangle) or BOUNDARY
-/// (on an edge/vertex within tolerance).
+/// for a BOUNDARY claim the CCW XY angular sector `[start, span]`
+/// covered around the column (`[NaN, NaN]` for an INTERIOR claim,
+/// keeping `Claim` at 40 bytes).
 pub(crate) struct Claim {
     pub(crate) z: f64,
     pub(crate) n: Point3,
-    pub(crate) interior: bool,
+    pub(crate) sector: [f32; 2],
+}
+
+impl Claim {
+    fn is_interior(&self) -> bool {
+        self.sector[0].is_nan()
+    }
 }
 
 /// All crossing z of the vertical line through `(x, y)` with `facets`.
@@ -89,10 +106,11 @@ pub fn column_crossings(facets: &[Triangle], x: f64, y: f64) -> Crossings {
 
 /// The parity engine, law (a) in one pass: claims sorted, clustered
 /// into physical levels within `EPS_Z`, settled to crossings per
-/// plane group (every interior claim is a sheet; a group of bare
-/// boundary claims is ONE crossing - adjacent pieces of one sheet),
-/// then odd/even into `Crossings`. Split out so the envelope kernel
-/// can feed it pre-binned claims without touching facets again.
+/// plane group (every interior claim is a sheet; bare boundary groups
+/// settle by their XY angular coverage around the column - 1 for a
+/// coplanar merge or manifold ridge/apex, 0 for a grazing fold), then
+/// odd/even into `Crossings`. Split out so the envelope kernel can
+/// feed it pre-binned claims without touching facets again.
 pub(crate) fn crossings_from_claims(claims: &[Claim]) -> Crossings {
     const EPS_Z: f64 = 1e-9;
     const EPS_PAR: f64 = 1e-9; // sin of the angle where normals are "same line"
@@ -108,31 +126,45 @@ pub(crate) fn crossings_from_claims(claims: &[Claim]) -> Crossings {
         let z0 = sorted[i].z;
         let mut sum = 0.0;
         let mut count = 0usize;
-        // Plane groups at this level: representative normal, interior claims,
-        // any boundary claim.
-        let mut groups: Vec<(Point3, usize, bool)> = Vec::new();
+        // Plane groups at this level: representative normal, interior
+        // count, and bare boundary sectors (unallocated for interior hits).
+        let mut groups: Vec<(Point3, usize, Vec<[f32; 2]>)> = Vec::new();
         while i < sorted.len() && (sorted[i].z - z0).abs() <= EPS_Z {
             let c = sorted[i];
+            let is_int = c.is_interior();
             match groups
                 .iter()
                 .position(|(r, _, _)| parallel_line(*r, c.n, EPS_PAR))
             {
                 Some(p) => {
-                    groups[p].1 += usize::from(c.interior);
-                    groups[p].2 |= !c.interior;
+                    if is_int {
+                        groups[p].1 += 1;
+                    } else {
+                        groups[p].2.push(c.sector);
+                    }
                 }
-                None => groups.push((c.n, usize::from(c.interior), !c.interior)),
+                None => {
+                    let secs = if is_int { Vec::new() } else { vec![c.sector] };
+                    groups.push((c.n, usize::from(is_int), secs));
+                }
             }
             sum += c.z;
             count += 1;
             i += 1;
         }
         let zm = sum / count as f64;
-        for (_, inter, boundary) in groups {
-            let crossings = if inter > 0 { inter } else if boundary { 1 } else { 0 };
-            for _ in 0..crossings {
-                z.push(zm);
+        let mut bare: Vec<Vec<[f32; 2]>> = Vec::new();
+        for (_, inter, secs) in groups {
+            if inter > 0 {
+                for _ in 0..inter {
+                    z.push(zm);
+                }
+            } else if !secs.is_empty() {
+                bare.push(secs);
             }
+        }
+        for _ in 0..boundary_crossings(&bare) {
+            z.push(zm);
         }
     }
     if z.len() % 2 == 1 {
@@ -147,6 +179,101 @@ pub(crate) fn crossings_from_claims(claims: &[Claim]) -> Crossings {
 fn parallel_line(a: Point3, b: Point3, eps: f64) -> bool {
     let c = a.cross(b);
     c.dot(c) <= eps * eps
+}
+
+/// Whether `angle` (in `[0, TAU)`) lies strictly inside the CCW sector
+/// `[start, start + span]`.
+fn sector_contains(sec: [f32; 2], angle: f64) -> bool {
+    let start = f64::from(sec[0]);
+    let span = f64::from(sec[1]);
+    let delta = (angle - start).rem_euclid(std::f64::consts::TAU);
+    delta > 0.0 && delta < span
+}
+
+/// Crossings contributed by non-coplanar bare-boundary plane groups at
+/// one Z level (#2880): 1 if any open angular sector around the column
+/// has odd group multiplicity (a single manifold sheet crossed on a
+/// meridian edge, apex, or rim), 0 if every sector has even
+/// multiplicity (a grazing V-root or overhang fold). One coplanar group
+/// always counts as 1 (preserving law (a)'s knife-edge `Open` verdict
+/// on flush stacked shells).
+fn boundary_crossings(bare: &[Vec<[f32; 2]>]) -> usize {
+    if bare.is_empty() {
+        return 0;
+    }
+    if bare.len() == 1 {
+        return 1;
+    }
+    const TAU: f64 = std::f64::consts::TAU;
+    const MIN_WEDGE: f64 = 1e-4;
+    let mut cuts: Vec<f64> = Vec::with_capacity(bare.len() * 2);
+    for grp in bare {
+        for &[s, sp] in grp {
+            if !(s.is_finite() && sp.is_finite()) {
+                return 1; // non-finite sector: never silence
+            }
+            let a = f64::from(s).rem_euclid(TAU);
+            let b = (a + f64::from(sp)).rem_euclid(TAU);
+            cuts.push(a);
+            cuts.push(b);
+        }
+    }
+    cuts.sort_unstable_by(f64::total_cmp);
+    let n = cuts.len();
+    for idx in 0..n {
+        let a = cuts[idx];
+        let b = if idx + 1 < n { cuts[idx + 1] } else { cuts[0] + TAU };
+        let w = b - a;
+        if w < MIN_WEDGE {
+            continue;
+        }
+        let mid = (a + 0.5 * w).rem_euclid(TAU);
+        let mult = bare
+            .iter()
+            .filter(|grp| grp.iter().any(|&sec| sector_contains(sec, mid)))
+            .count();
+        if mult % 2 == 1 {
+            return 1;
+        }
+    }
+    0
+}
+
+fn norm_angle(a: f64) -> f64 {
+    a.rem_euclid(std::f64::consts::TAU)
+}
+
+fn sector_between(v0: (f64, f64), v1: (f64, f64), ccw: bool) -> [f32; 2] {
+    let (p, q) = if ccw { (v0, v1) } else { (v1, v0) };
+    let a0 = norm_angle(p.1.atan2(p.0));
+    let a1 = norm_angle(q.1.atan2(q.0));
+    let span = (a1 - a0).rem_euclid(std::f64::consts::TAU).min(std::f64::consts::PI);
+    [a0 as f32, span as f32]
+}
+
+fn half_plane(e: (f64, f64), ccw: bool) -> [f32; 2] {
+    let (ex, ey) = if ccw { e } else { (-e.0, -e.1) };
+    [norm_angle(ey.atan2(ex)) as f32, std::f32::consts::PI]
+}
+
+/// The CCW XY angular sector `[start, span]` covered by triangle `abc`
+/// around a boundary column with barycentric coordinates `(1-u-v, u, v)`
+/// and signed twice-area `d`. Independent of winding (law c).
+fn boundary_sector(a: &Point3, b: &Point3, c: &Point3, d: f64, u: f64, v: f64, eps: f64) -> [f32; 2] {
+    let w = 1.0 - u - v;
+    let ccw = d > 0.0;
+    let ab = (b.x - a.x, b.y - a.y);
+    let bc = (c.x - b.x, c.y - b.y);
+    let ca = (a.x - c.x, a.y - c.y);
+    match (w <= eps, u <= eps, v <= eps) {
+        (false, true, true) => sector_between(ab, (-ca.0, -ca.1), ccw),
+        (true, false, true) => sector_between(bc, (-ab.0, -ab.1), ccw),
+        (true, true, false) => sector_between(ca, (-bc.0, -bc.1), ccw),
+        (false, false, true) => half_plane(ab, ccw),
+        (true, false, false) => half_plane(bc, ccw),
+        (false, true, false) => half_plane(ca, ccw),
+        _ => [0.0, std::f32::consts::PI],
+    }
 }
 
 /// The claim of `abc` on the column at `(x, y)`, or None if the
@@ -198,173 +325,14 @@ pub(crate) fn plane_claim(
         return None;
     }
     let inv = 1.0 / l2.sqrt();
+    let sector = if interior {
+        [f32::NAN, f32::NAN]
+    } else {
+        boundary_sector(a, b, c, d, u, v, EPS_B)
+    };
     Some(Claim {
         z,
         n: Point3::new(n.x * inv, n.y * inv, n.z * inv),
-        interior,
+        sector,
     })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn p(x: f64, y: f64, z: f64) -> Point3 {
-        Point3::new(x, y, z)
-    }
-
-    /// One horizontal square (side 2, centered), split on a diagonal;
-    /// `up` picks the winding (law c: parity must not care).
-    fn sheet(z: f64, up: bool) -> Vec<Triangle> {
-        let (a, b, c, d) = (p(-1., -1., z), p(1., -1., z), p(1., 1., z), p(-1., 1., z));
-        if up {
-            vec![Triangle::new(a, b, c), Triangle::new(a, c, d)]
-        } else {
-            vec![Triangle::new(a, d, c), Triangle::new(a, c, b)]
-        }
-    }
-
-    /// Closed axis-aligned box [-1,1]^2 x [z0, z1]: 12 triangles.
-    fn closed_box(z0: f64, z1: f64) -> Vec<Triangle> {
-        let mut f = sheet(z0, false);
-        f.extend(sheet(z1, true));
-        let wall = |q: [Point3; 4]| {
-            vec![
-                Triangle::new(q[0], q[1], q[2]),
-                Triangle::new(q[0], q[2], q[3]),
-            ]
-        };
-        f.extend(wall([p(-1., -1., z0), p(1., -1., z0), p(1., -1., z1), p(-1., -1., z1)]));
-        f.extend(wall([p(1., -1., z0), p(1., 1., z0), p(1., 1., z1), p(1., -1., z1)]));
-        f.extend(wall([p(1., 1., z0), p(-1., 1., z0), p(-1., 1., z1), p(1., 1., z1)]));
-        f.extend(wall([p(-1., 1., z0), p(-1., -1., z0), p(-1., -1., z1), p(-1., 1., z1)]));
-        f
-    }
-
-    fn flip(f: &[Triangle]) -> Vec<Triangle> {
-        f.iter().map(|t| Triangle::new(t.a, t.c, t.b)).collect()
-    }
-
-    #[test]
-    fn closed_box_columns_pair_to_one_interval() {
-        let f = closed_box(0.0, 10.0);
-        let c = column_crossings(&f, 0.0, 0.0);
-        // (0,0) sits ON both sheets' shared diagonal - law (a)'s
-        // boundary merge, the exact case a half-open rule loses.
-        assert_eq!(c, Crossings::Paired(vec![0.0, 10.0]));
-        assert_eq!(c.intervals(), Some(vec![(0.0, 10.0)]));
-    }
-
-    #[test]
-    fn an_open_sheet_is_unknown_not_a_lie() {
-        // Law (b): one sheet is not material - it is an unknown.
-        let c = column_crossings(&sheet(5.0, true), 0.4, 0.1);
-        assert_eq!(c, Crossings::Open { z: vec![5.0] });
-        assert_eq!(c.intervals(), None);
-    }
-
-    #[test]
-    fn ceiling_over_floor_finds_the_sheltered_material() {
-        // The hidden-rest shape: a ceiling plate 9..10 over a floor
-        // slab 0..2. The height field of either alone would see only
-        // its own top; the column pairs [0,2],[9,10] and the slab's
-        // material reads as material BELOW the plate, where a Z-
-        // following ball never sees it.
-        let mut f = closed_box(9.0, 10.0);
-        f.extend(closed_box(0.0, 2.0));
-        let c = column_crossings(&f, 0.4, 0.1); // off all diagonals
-        assert_eq!(c.intervals(), Some(vec![(0.0, 2.0), (9.0, 10.0)]));
-    }
-
-    #[test]
-    fn winding_is_irrelevant() {
-        // Law c: flip EVERY facet of a closed box; crossings identical.
-        let f = closed_box(0.0, 10.0);
-        for (x, y) in [(0.3, 0.2), (0.0, 0.0), (1.0, -0.5), (-1.0, 1.0), (2.0, 0.0)] {
-            let a = column_crossings(&f, x, y);
-            let b = column_crossings(&flip(&f), x, y);
-            assert_eq!(a, b, "winding changed the column at ({x},{y})");
-        }
-    }
-
-    #[test]
-    fn columns_on_edges_and_vertices_stay_even() {
-        // Law (a) witnesses: through shared edges and corners of a
-        // closed box, parity must stay even and the box must still
-        // read as ONE interval - boundary merge, not double count.
-        let f = closed_box(0.0, 10.0);
-        for (x, y) in [
-            (0.0, 0.0),   // the shared diagonal of both sheets
-            (1.0, 0.0),   // mid of the boundary edge x=1
-            (1.0, 1.0),   // up a vertical corner
-            (-1.0, -1.0), // another corner
-            (0.5, -1.0),  // on a bottom-edge line of the top sheet
-        ] {
-            match column_crossings(&f, x, y) {
-                Crossings::Paired(z) => {
-                    assert_eq!(z, vec![0.0, 10.0], "column at ({x},{y})")
-                }
-                Crossings::Open { z } => panic!("odd parity at ({x},{y}): {z:?}"),
-            }
-        }
-    }
-
-    #[test]
-    fn flush_stacked_shells_are_reported_not_guessed() {
-        // The knife edge law (a) promises to REPORT: two boxes sharing
-        // the plane z=5 as flush sheets. Ordinary columns pair to one
-        // material interval; on the flush pair's own shared diagonal
-        // the level is ambiguous and must come out Open, never a lie.
-        let mut f = closed_box(0.0, 5.0);
-        f.extend(closed_box(5.0, 10.0));
-        let inside = column_crossings(&f, 0.4, 0.1);
-        assert_eq!(inside, Crossings::Paired(vec![0.0, 5.0, 5.0, 10.0]));
-        assert_eq!(inside.intervals(), Some(vec![(0.0, 5.0), (5.0, 10.0)]));
-        // A column riding both sheets' boundary edges makes only
-        // BOUNDARY claims at z=5 - and the merge cannot tell "two
-        // faces of one sheet" from "one face of each of two flush
-        // sheets". It merges (that is the honest half of the law:
-        // when in doubt report unknown, never assert material), so
-        // the corner reads Open, not a false solid interval.
-        match column_crossings(&f, 1.0, 0.0) {
-            Crossings::Open { z } => assert_eq!(z, vec![0.0, 5.0, 10.0]),
-            Crossings::Paired(z) => panic!("a knife edge was guessed: {z:?}"),
-        }
-    }
-
-    #[test]
-    fn degenerate_input_is_total() {
-        // Law (b) fuzz floor: NaNs, zero-area facets, empty mesh.
-        let junk = vec![
-            Triangle::new(p(f64::NAN, 0., 0.), p(1., 0., 0.), p(0., 1., 0.)),
-            Triangle::new(p(0., 0., 0.), p(0., 0., 0.), p(0., 0., 0.)),
-            Triangle::new(p(0., 0., 1.), p(0., 0., 1.), p(0., 0., 1.)),
-        ];
-        let _ = column_crossings(&junk, 0.0, 0.0);
-        let _ = column_crossings(&[], 0.0, 0.0);
-        let _ = column_crossings(&junk, f64::NAN, 0.0);
-    }
-    #[test]
-    fn a_level_facet_crosses_at_exactly_its_height() {
-        // #780: the barycentric sum rounds by an ulp on some rays
-        // ((5.25, -6.25) over a 2.0 plane did); a level facet answers
-        // its own z, bit for bit, whether the plane is on a lattice
-        // (2.0) or off it (5.1), from every ray inside it.
-        for (z0, z1) in [(-638.0, 2.0), (-6.3, 5.1), (0.0, 1e-3)] {
-            let facets = closed_box(z0, z1);
-            for i in 0..21 {
-                for j in 0..21 {
-                    let (x, y) = (-0.95 + 0.095 * f64::from(i), -0.95 + 0.095 * f64::from(j));
-                    match column_crossings(&facets, x, y) {
-                        Crossings::Paired(c) => {
-                            assert_eq!(c.len(), 2, "({x}, {y})");
-                            assert_eq!(c[0].to_bits(), z0.to_bits(), "({x}, {y}): floor {} vs {z0}", c[0]);
-                            assert_eq!(c[1].to_bits(), z1.to_bits(), "({x}, {y}): top {} vs {z1}", c[1]);
-                        }
-                        Crossings::Open { z } => panic!("({x}, {y}): open {z:?}"),
-                    }
-                }
-            }
-        }
-    }
 }

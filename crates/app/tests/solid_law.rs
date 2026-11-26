@@ -180,6 +180,7 @@ fn drill_op(at: Point2, floor: f64, bottom: Option<f64>) -> OpParams {
         plunge_feed: 100.0,
         holes: vec![Hole { xy: at, radius: 2.0, entry_z: 20.0, floor_z: floor, through: false, stepped: false }],
         cross: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -213,7 +214,7 @@ fn a_drill_through_an_undercut_lip_is_a_gouge_and_never_posts() {
 #[test]
 fn facing_under_an_overhanging_slab_is_a_gouge_and_never_posts() {
     let face = OpParams::Face { holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 4.0,
         clearance_z: Height::fixed(30.0),
@@ -223,6 +224,7 @@ fn facing_under_an_overhanging_slab_is_a_gouge_and_never_posts() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     let (world, mut h) = world_with(post_under_slab(false), "EM-0800-4FL");
     let (_, w) = run(&world, &mut h, "EM-0800-4FL", face.clone());
@@ -263,8 +265,9 @@ fn the_solid_law_on_the_users_part_is_silent_and_cheap() {
         tab_height: 1.0,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
+        picks: Default::default(),
     };
     let t = contour_on_part(&region, &m.facets, &p).expect("contour");
     let g = ToolGeom { radius: 5.0, nose_radius: 0.0, flute_len: 22.0, shank_radius: 5.0, shank_len: 40.0, holder_radius: 22.0, holder_len: 35.0 };

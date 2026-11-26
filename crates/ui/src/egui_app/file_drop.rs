@@ -59,6 +59,13 @@ pub(super) fn take_drop(ui: &Ui, state: &mut State) {
     if files.is_empty() {
         return;
     }
+    // #1863: one `.dxf` is a profile for the active setup's stock.
+    if let [file] = files.as_slice()
+        && super::dxf_drop::is_dxf(file.path())
+    {
+        super::dxf_drop::take(state, file);
+        return;
+    }
     #[cfg(not(target_arch = "wasm32"))]
     if files.len() != 1 || files[0].path().is_file() {
         let paths: Vec<PathBuf> = files.iter().map(|f| f.path().to_path_buf()).collect();
@@ -172,6 +179,20 @@ mod tests {
         let sample = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/solidcraft_for_beginners.sc");
         assert_eq!(classify(std::slice::from_ref(&sample)), Ok(sample.clone()));
         assert!(classify(&[d("gone.SC")]).expect_err("gone").contains("gone.SC is not a readable file"));
-        assert!(classify(&[d("notes.txt")]).expect_err("ext").contains(".sc)"));
+        assert!(classify(&[d("notes.txt")]).expect_err("ext").contains(".sc, .solidcraft)"));
     }
+
+    #[test]
+    fn a_solidcraft_extension_drop_uses_the_model_filter_case_insensitively() {
+        let dir = std::env::temp_dir().join(format!("camcraft-drop-solidcraft-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp directory");
+        for name in ["part.solidcraft", "part.SoLiDcRaFt"] {
+            let path = dir.join(name);
+            std::fs::write(&path, b"placeholder").expect("temp file");
+            assert_eq!(classify(std::slice::from_ref(&path)), Ok(path.clone()));
+        }
+        assert!(classify(&[d("gone.SOLIDCRAFT")]).expect_err("gone").contains("gone.SOLIDCRAFT is not a readable file"));
+        std::fs::remove_dir_all(dir).expect("remove temp directory");
+    }
+
 }

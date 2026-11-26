@@ -74,15 +74,16 @@ pub fn selection_account(
     items: &[GeoSel],
     params: &OpParams,
 ) -> (Vec<String>, Option<String>) {
-    // A probe's pick seeds a touch, it bounds no region (#171).
-    if let Some(account) = super::probe_account(world, items, params) {
+    // A probe's pick seeds a touch, it bounds no region (#171; the
+    // seed reads the setup frame: #2285).
+    if let Some(account) = super::probe_account(world, setup, items, params) {
         return account;
     }
     // One walk per input, not per frame (#2248): the memo keys on the
     // picks, the parameters and every world read of the walk. Other
     // refusals stay `region_of`'s and generation's to make, with detail;
     // notes stay as far as the walk got.
-    let a = super::selection_memo::answer(world, setup, items, params);
+    let a = super::selection_memo::answer(world, setup, &SrcRef::Selection(items.to_vec()), params);
     (a.notes, a.refusal)
 }
 

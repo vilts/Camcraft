@@ -38,12 +38,23 @@ impl PartialEq for Tris {
     }
 }
 
+/// A sketch drawing allocation, compared by address.
+struct SketchRef(Weak<crate::geometry::sketch_data::SketchData>);
+
+impl PartialEq for SketchRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.ptr_eq(&other.0)
+    }
+}
+
 /// One entity the walk reads, as the world holds it now.
 #[derive(PartialEq)]
 struct Body {
     name: String,
     entity: Option<Entity>,
     tris: Option<Tris>,
+    sketch: Option<SketchRef>,
+    sketch_setup: Option<String>,
     pose: Option<Location>,
     part: bool,
 }
@@ -53,6 +64,7 @@ struct Body {
 struct Reads {
     effective: Option<String>,
     def: Option<SetupDef>,
+    stock_def: Option<crate::stock::StockShape>,
     kind: Kind,
     wcs: Option<Location>,
     wcs_word: String,
@@ -61,27 +73,38 @@ struct Reads {
 }
 
 impl Reads {
-    fn of(world: &World, setup: Option<&str>, items: &[GeoSel]) -> Self {
+    fn of(world: &World, setup: Option<&str>, src: &SrcRef) -> Self {
         let effective = crate::setup::effective(world, setup);
         let def = effective.as_deref().and_then(|s| crate::setup::def_of(world, s));
         let mut names: Vec<&str> = Vec::new();
-        for g in items {
-            if !names.contains(&g.entity.as_str()) {
-                names.push(&g.entity);
+        match src {
+            SrcRef::Stock => {}
+            SrcRef::Entity(name) => names.push(name),
+            SrcRef::Selection(items) => {
+                for g in items {
+                    if !names.contains(&g.entity.as_str()) {
+                        names.push(&g.entity);
+                    }
+                }
             }
         }
         let stock = crate::setup::stock_entity_name(world, setup);
         if !names.contains(&stock.as_str()) {
             names.push(&stock);
         }
+        let stock_def = crate::setup::stock_entity(world, setup)
+            .and_then(|e| model::stock_def_of(world, &e));
         let bodies = names
             .into_iter()
             .map(|name| {
                 let entity = model::find_by_name(world, name);
+                let sk = entity.and_then(|e| crate::sketch::sketch_of(world, &e));
                 Body {
                     name: name.to_owned(),
                     entity,
                     tris: entity.and_then(|e| model::facets_of(world, &e)).map(|t| Tris(Arc::downgrade(&t))),
+                    sketch: sk.as_ref().map(|s| SketchRef(Arc::downgrade(&s.data))),
+                    sketch_setup: sk.and_then(|s| s.setup),
                     pose: entity.and_then(|e| model::transform_of(world, &e)),
                     part: entity.is_some_and(|e| crate::setup_align::is_part(world, &e)),
                 }
@@ -90,6 +113,7 @@ impl Reads {
         Self {
             effective,
             def,
+            stock_def,
             kind: crate::setup_mount::kind_of_setup(world, setup),
             wcs: crate::setup::wcs_entity(world, setup).and_then(|e| model::transform_of(world, &e)),
             wcs_word: crate::setup::wcs_name(world, setup),
@@ -114,7 +138,26 @@ pub(super) struct Answer {
 impl Answer {
     /// One real walk - what every miss runs, and what the pins compare a
     /// hit against.
-    pub(super) fn fresh(world: &World, setup: Option<&str>, items: &[GeoSel], params: &OpParams) -> Self {
+    pub(super) fn fresh(world: &World, setup: Option<&str>, src: &SrcRef, params: &OpParams) -> Self {
+        if super::wire_sketch::selected(src, params) {
+            return match super::wire_sketch::pick(world, src) {
+                Ok((name, chain)) => Self { notes: vec![format!("Selected DXF chain {} on layer '{}' of '{name}'", chain.id, chain.layer)], refusal: None, inside: None },
+                Err(why) => Self { notes: Vec::new(), refusal: Some(why), inside: None },
+            };
+        }
+        if super::contour_sketch::is_sketch_contour(world, src, params) {
+            if let Some(why) = crate::sketch_model::source_problem(world, setup, src, params) {
+                return Self { notes: Vec::new(), refusal: Some(why), inside: None };
+            }
+            let (notes, refusal, inside) = super::contour_sketch::account(world, src, params);
+            return Self { notes, refusal, inside };
+        }
+        let items = match src {
+            SrcRef::Stock | SrcRef::Entity(_) => {
+                return Self { notes: Vec::new(), refusal: None, inside: Some(false) };
+            }
+            SrcRef::Selection(items) => items.as_slice(),
+        };
         let mut notes = Vec::new();
         match selection_geometry_impl(world, setup, items, params, Some(&mut notes)) {
             Ok((loops, _runs, auto)) => {
@@ -134,7 +177,7 @@ impl Answer {
 
 struct Entry {
     setup: Option<String>,
-    items: Vec<GeoSel>,
+    src: SrcRef,
     params: OpParams,
     reads: Reads,
     answer: Answer,
@@ -148,12 +191,12 @@ thread_local! {
 }
 
 /// [`Answer::fresh`], memoized by its full input.
-pub(super) fn answer(world: &World, setup: Option<&str>, items: &[GeoSel], params: &OpParams) -> Answer {
-    let reads = Reads::of(world, setup, items);
+pub(super) fn answer(world: &World, setup: Option<&str>, src: &SrcRef, params: &OpParams) -> Answer {
+    let reads = Reads::of(world, setup, src);
     let hit = MEMO.with(|m| {
         let mut m = m.borrow_mut();
         let i = m.iter().position(|e| {
-            e.setup.as_deref() == setup && e.items == items && e.params == *params && e.reads == reads
+            e.setup.as_deref() == setup && e.src == *src && e.params == *params && e.reads == reads
         })?;
         let entry = m.remove(i);
         let answer = entry.answer.clone();
@@ -164,7 +207,7 @@ pub(super) fn answer(world: &World, setup: Option<&str>, items: &[GeoSel], param
         return answer;
     }
     WALKS.with(|n| n.set(n.get().saturating_add(1)));
-    let answer = Answer::fresh(world, setup, items, params);
+    let answer = Answer::fresh(world, setup, src, params);
     MEMO.with(|m| {
         let mut m = m.borrow_mut();
         if m.len() >= CAP {
@@ -172,7 +215,7 @@ pub(super) fn answer(world: &World, setup: Option<&str>, items: &[GeoSel], param
         }
         m.push(Entry {
             setup: setup.map(str::to_owned),
-            items: items.to_vec(),
+            src: src.clone(),
             params: params.clone(),
             reads,
             answer: answer.clone(),
@@ -193,18 +236,77 @@ pub fn selection_walks() -> u64 {
 /// reads the side from its own walk in `job`).
 #[must_use]
 pub fn contour_auto_side_fresh(world: &World, setup: Option<&str>, src: &SrcRef, params: &OpParams) -> Option<bool> {
+    if super::contour_sketch::is_sketch_contour(world, src, params) {
+        return Answer::fresh(world, setup, src, params).inside;
+    }
     match src {
         SrcRef::Stock | SrcRef::Entity(_) => Some(false),
-        SrcRef::Selection(items) => Answer::fresh(world, setup, items, params).inside,
+        SrcRef::Selection(_) => Answer::fresh(world, setup, src, params).inside,
     }
 }
 
 /// [`selection_account`] without the memo: one real walk, for the pins.
 #[must_use]
 pub fn selection_account_fresh(world: &World, setup: Option<&str>, items: &[GeoSel], params: &OpParams) -> (Vec<String>, Option<String>) {
-    if let Some(account) = super::probe_account(world, items, params) {
+    if let Some(account) = super::probe_account(world, setup, items, params) {
         return account;
     }
-    let a = Answer::fresh(world, setup, items, params);
+    let a = Answer::fresh(world, setup, &SrcRef::Selection(items.to_vec()), params);
     (a.notes, a.refusal)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::commands::{Command, DxfOptions, ImportDxf, SetStock};
+    use crate::operation::{ChainOverride, ChainSide, OpType};
+    use crate::schema::Location;
+    use crate::stock::StockShape;
+    use crate::world::new_world;
+
+    #[test]
+    fn contour_auto_side_routes_whole_sketch_through_selection_memo() {
+        let world = new_world();
+        SetStock::new(&world, StockShape::Box { dx: 200.0, dy: 200.0, dz: 10.0 }, Location::default())
+            .expect("stock")
+            .apply(&world);
+        let dxf = b"0\nSECTION\n2\nHEADER\n9\n$INSUNITS\n70\n4\n0\nENDSEC\n0\nSECTION\n2\nENTITIES\n\
+                    0\nCIRCLE\n8\ncut\n10\n20\n20\n20\n40\n10\n\
+                    0\nENDSEC\n0\nEOF\n";
+        ImportDxf::from_bytes(&world, None, "ring.dxf", dxf, &DxfOptions::default())
+            .expect("dxf")
+            .apply(&world);
+        let src = SrcRef::Entity("ring".into());
+        let mut params = crate::operation::seed_params(OpType::Contour.ordinal());
+        let b0 = selection_walks();
+        let a = contour_auto_side(&world, None, &src, &params);
+        let b = contour_auto_side(&world, None, &src, &params);
+        assert_eq!(a, contour_auto_side_fresh(&world, None, &src, &params));
+        assert_eq!(a, Some(false));
+        assert_eq!(a, b);
+        assert_eq!(selection_walks() - b0, 1, "still ask hits memo");
+
+        // Changing a per-chain override misses once and matches fresh.
+        let (_, sk) = crate::sketch::find(&world, "ring").expect("ring");
+        let cid = sk.data.chains().all().next().expect("chain").id();
+        if let OpParams::Contour { chain_overrides, .. } = &mut params {
+            chain_overrides.push(ChainOverride {
+                entity: "ring".into(),
+                chain: cid,
+                side: Some(ChainSide::Inside),
+                reverse: false,
+            });
+        }
+        let b1 = selection_walks();
+        let c = contour_auto_side(&world, None, &src, &params);
+        assert_eq!(c, contour_auto_side_fresh(&world, None, &src, &params));
+        assert_eq!(c, Some(true));
+        assert_eq!(selection_walks() - b1, 1);
+
+        // Non-sketch stock entity still answers without walking.
+        let b2 = selection_walks();
+        assert_eq!(contour_auto_side(&world, None, &SrcRef::Stock, &params), Some(false));
+        assert_eq!(contour_auto_side_fresh(&world, None, &SrcRef::Stock, &params), Some(false));
+        assert_eq!(selection_walks(), b2);
+    }
 }

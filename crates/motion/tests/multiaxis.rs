@@ -11,6 +11,7 @@
 //!
 //! Gate map (M4.4): covers camcraft_motion::cl, camcraft_motion::finishing3d,
 //! camcraft_motion::geometry, camcraft_motion::machining2d, camcraft_motion::multiaxis.
+//! #3330: the start / exit picks of the ring ladder (finishing3d::ring_seam).
 //! Lane shape (M4.4): all tests here run in seconds; envelope
 //! verdicts over these paths ride the app's ignored lane.
 
@@ -41,6 +42,7 @@ fn angle(a: Point3, b: Point3) -> f64 {
 
 fn finish(top_z: f64, bottom_z: f64) -> Finish3DParams {
     Finish3DParams {
+        gap_link: camcraft_motion::finishing3d::GapLink::Jump,
         pattern: FinishPattern::Waterline,
         stepover: None,
         tool_diameter: 2.0 * R,
@@ -59,6 +61,7 @@ fn finish(top_z: f64, bottom_z: f64) -> Finish3DParams {
         entry_ramp: false,
         steep_stepover: None,
         pencil_reference: None,
+        waterlines: true,
     }
 }
 
@@ -143,6 +146,12 @@ fn balls_are_the_plan(plan: &camcraft_motion::cl::Toolpath, got: &camcraft_motio
         if let Some(a) = m.axis {
             held = a;
         }
+        // #3414: a zero-travel rapid is the rotary index - the machine
+        // swings at a standstill in air and cuts nothing, so its ball
+        // stands off the ladder by construction.
+        if m.from == m.to {
+            continue;
+        }
         let c = centre_of(m.to, held);
         let d = off_ladder(plan, c);
         assert!(d < 2e-3, "a posted ball stands {d} mm off the plan at {c:?} ({m:?})");
@@ -168,14 +177,23 @@ fn contour5d_balls_are_the_waterlines_balls() {
 
 #[test]
 fn rapids_hold_the_pose_they_inherit() {
-    // The post keeps the tilt modal: a rapid travels under the pose
-    // it inherits (none before the first lean), never a new one - the
-    // ball lifts off its last contact along the axis it cut with.
+    // The post keeps the tilt modal: a rapid that TRAVELS goes under
+    // the pose it inherits, never a new one - the ball lifts off its
+    // last contact along the axis it cut with. #3300: a path that
+    // leans inherits the upright home and states it before the first
+    // lean (the post commands it as zero angles); one that never
+    // leans states nothing. The exception is the zero-travel rotary
+    // index (#3414): the machine swings at a standstill, in air, to
+    // the pose the next descend cuts under (the from != to guard
+    // below skips it).
     let facets = dome(15.0, 0.9, 8, 16);
     let got = contour5d(&facets, &finish(12.0, 9.8), &control(30.0, 0.0, None), None).unwrap();
-    let mut held: Option<[f64; 3]> = None;
+    let leans = got.moves.iter().any(|m| m.axis.is_some_and(|a| !camcraft_motion::cl::is_vertical(&a)));
+    assert!(leans, "the dome ladder must lean for this law to bite");
+    assert_eq!(got.moves[0].axis, Some([0.0, 0.0, 1.0]), "the opening states the upright pose");
+    let mut held: Option<[f64; 3]> = Some([0.0, 0.0, 1.0]);
     for m in &got.moves {
-        if m.kind == MoveKind::Rapid {
+        if m.kind == MoveKind::Rapid && m.from != m.to {
             assert_eq!(m.axis, held, "a rapid changed the pose it inherited: {m:?}");
         }
         held = m.axis.or(held);
@@ -265,3 +283,7 @@ fn an_empty_model_refuses_like_the_waterline() {
     let e = contour5d(&[], &finish(1.0, 0.0), &control(0.0, 0.0, None), None).err();
     assert!(matches!(e, Some(GenError::Empty(_))), "got {e:?}");
 }
+
+// #3330: the user's start and exit points on the 5-axis contour's rings.
+#[path = "multiaxis/seam.rs"]
+mod seam;

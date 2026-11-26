@@ -117,7 +117,7 @@ pub(super) fn in_rest<'a>(
     };
     for &(p0, p1, a) in &pieces {
         let fr = Frame::new(p0, Some(a).filter(|a| !is_upright(a)));
-        if index.hits(&fr, fr.local(p1), &atoms, allow, 0.0, &[], &[]) {
+        if index.hits(&fr, fr.local(p1), &atoms, allow, 0.0, &[], &[], &[]) {
             return true;
         }
     }

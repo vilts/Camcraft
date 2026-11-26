@@ -70,6 +70,20 @@ pub(crate) fn groups(raw: &Value, m: &Machine, k: Option<Kind>, posts: &[&str]) 
     let mut g = PropGroup::new("General");
     g.row("Model", val(raw.pointer("/general/model"), ""));
     g.row("Vendor", val(raw.pointer("/general/vendor"), ""));
+    if let Some(control) = &m.controller_identity {
+        g.row("Control", &control.model);
+        g.row("NC software", &control.nc_software);
+        if let Some(options) = &control.installed_options {
+            g.row("Installed control options", if options.is_empty() { "None".into() } else { options.join(", ") });
+        }
+    }
+    if let Some(mode) = m.tool_change {
+        g.row("Tool change", match mode {
+            super::ToolChangeMode::Manual => "Manual",
+            super::ToolChangeMode::ManualRetractTop => "Manual at the physical upper change position",
+            super::ToolChangeMode::Changer => "Automatic tool changer",
+        });
+    }
     let declared = raw.pointer("/general/kind").and_then(Value::as_str).filter(|w| !w.is_empty());
     g.row(
         "Kind",

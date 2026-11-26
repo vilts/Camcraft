@@ -25,6 +25,7 @@ fn region() -> Region {
 /// through an 11 mm cut.
 fn params(entry: Entry3D, climb: bool) -> CircularParams {
     CircularParams {
+        pass_start: Default::default(),
         links: camcraft_motion::links::Links::PLANAR,
         center: C,
         radius: 3.0,

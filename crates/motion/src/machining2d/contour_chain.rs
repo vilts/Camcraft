@@ -12,6 +12,7 @@ use crate::entry::Entry3D;
 use crate::geo2d::Point2;
 use crate::geometry::Point3;
 use crate::links::Link;
+use crate::path_picks::PickRole;
 use crate::plunge_law;
 
 use super::arcs::{fit_arcs_sided, lead_in, lead_out, push_segs, walk_tangent};
@@ -43,7 +44,7 @@ pub fn contour_along_chain(
             "a centerline run needs at least two points".into(),
         ));
     }
-    if let Some(q) = p.links.approach.start_point {
+    if let Some(q) = p.picks.first(PickRole::Start).map(|k| k.xy) {
         // #1448: an open run starts at one of its ends; a picked start
         // there is a later slice - refused by name, never ignored.
         return Err(GenError::Invalid(format!(
@@ -52,7 +53,7 @@ pub fn contour_along_chain(
             q.x, q.y
         )));
     }
-    if let Some(q) = p.links.approach.exit_point {
+    if let Some(q) = p.picks.first(PickRole::Exit).map(|k| k.xy) {
         // #1473: likewise an open run leaves at its other end.
         return Err(GenError::Invalid(format!(
             "exit point ({:.3}, {:.3}): an open chain leaves at its end - a picked exit is \

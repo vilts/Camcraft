@@ -4,6 +4,24 @@ use super::types::{DxfError, Primitive, State, error};
 use crate::geo2d::{COORD_LIMIT, Point2};
 use std::f64::consts::TAU;
 
+/// Record names of the DXF Reference ENTITIES chapter. A record of one of these kinds is
+/// drawable, so a section that the reader treats as inert must never hold one.
+#[rustfmt::skip]
+const ENTITY_KINDS: [&str; 46] = [
+    "3DFACE", "3DSOLID", "ACAD_PROXY_ENTITY", "ARC", "ATTDEF", "ATTRIB", "BODY", "CIRCLE",
+    "DGNUNDERLAY", "DIMENSION", "DWFUNDERLAY", "ELLIPSE", "HATCH", "HELIX", "IMAGE", "INSERT",
+    "LEADER", "LIGHT", "LINE", "LWPOLYLINE", "MESH", "MLEADER", "MLINE", "MTEXT", "OLE2FRAME",
+    "OLEFRAME", "PDFUNDERLAY", "POINT", "POLYLINE", "RAY", "REGION", "SECTION", "SEQEND",
+    "SHAPE", "SOLID", "SPLINE", "SURFACE", "TABLE", "TEXT", "TOLERANCE", "TRACE", "VERTEX",
+    "VIEWPORT", "WIPEOUT", "XLINE", "MULTILEADER",
+];
+
+pub(super) fn is_entity_kind(kind: &str) -> bool {
+    ENTITY_KINDS
+        .iter()
+        .any(|entity| entity.eq_ignore_ascii_case(kind))
+}
+
 pub(super) fn coordinate(value: f64, kind: &str) -> Result<f64, DxfError> {
     if !value.is_finite() || value.abs() >= COORD_LIMIT {
         return Err(error(kind, "coordinate outside geo2d range"));

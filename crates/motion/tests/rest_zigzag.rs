@@ -47,6 +47,7 @@ fn zigzag_rest_covers_corner_residue_without_gouges_or_unsafe_rapids() {
 fn check_rest(climb: bool, stepover: f64) {
     let region = rounded();
     let previous = RestParams {
+        source: Default::default(),
         previous_tool_diameter: 12.0,
         previous_corner_radius: 0.0,
         previous_stock_to_leave: 0.0,
@@ -149,6 +150,7 @@ fn tiny_rest_pocket_keeps_interior_rows_when_previous_tool_fits_nowhere() {
         Point2::new(0.0, 0.015),
     ]).unwrap()]).unwrap();
     let previous = RestParams {
+        source: Default::default(),
         previous_tool_diameter: 0.03,
         previous_corner_radius: 0.0,
         previous_stock_to_leave: 0.0,

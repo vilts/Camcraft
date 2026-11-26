@@ -5,6 +5,9 @@ use camcraft_geometry::dxf::{Limits, Primitive, Unit, Units, parse, parse_with_l
 use camcraft_geometry::geo2d::Point2;
 use std::f64::consts::{FRAC_PI_2, PI};
 
+#[path = "dxf/curves.rs"]
+mod curves;
+
 fn drawing(header: &str, tables: &str, entities: &str) -> String {
     format!(
         "0\nSECTION\n2\nHEADER\n{header}0\nENDSEC\n0\nSECTION\n2\nTABLES\n{tables}0\nENDSEC\n0\nSECTION\n2\nENTITIES\n{entities}0\nENDSEC\n0\nEOF\n"
@@ -405,5 +408,17 @@ fn dxf_zero_length_entities_do_not_create_primitives() {
         if let Ok(doc) = parse(drawing("", "", entity).as_bytes()) {
             assert!(doc.primitives.is_empty());
         }
+    }
+}
+
+#[test]
+fn all_drawing_units_keep_both_persistence_code_apis() {
+    for code in 1..=24 {
+        let Units::Known(unit) = Units::from_code(code) else {
+            panic!("known DXF unit {code}");
+        };
+        assert_eq!(unit.code(), code, "profile persistence");
+        assert_eq!(unit.insunits_code(), code, "main's DXF writer");
+        assert_eq!(Units::Known(unit).code(), code, "drawing provenance");
     }
 }

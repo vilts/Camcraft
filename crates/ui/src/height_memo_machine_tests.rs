@@ -71,6 +71,7 @@ fn advice(state: &State) -> Option<String> {
             plunge_feed: 100.0,
             holes: Vec::new(),
             cross: Vec::new(),
+            picks: Default::default(),
         },
         None,
     )

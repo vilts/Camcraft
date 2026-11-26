@@ -28,13 +28,35 @@ use flecs_ecs::prelude::*;
 /// The clause's own words on the not-judged line, said once.
 pub const PLASMA_VERDICT: &str = "the 3D stock sim does not run for plasma";
 
-/// The plasma clause's two outputs: the blocking problems (a refusal
-/// per law, an op the laws cannot read), and the visible, non-blocking
-/// line naming the ops judged and their warnings.
+/// The plasma clause's outputs: the blocking problems (a refusal per
+/// law, an op the laws cannot read), the visible, non-blocking line
+/// naming the ops judged and their warnings, and (#3456) each of those
+/// warnings as data, so `verify` lists it as a finding and on its op.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct PlasmaClause {
     pub problems: Vec<String>,
     pub line: Option<String>,
+    pub warnings: Vec<GateWarning>,
+}
+
+/// #3456: one non-blocking finding of a program law, for one operation:
+/// `op` is the operation's key, `kind` the finding's stable name (the
+/// MCP finding kind), `message` the text without the op prefix.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GateWarning {
+    pub op: String,
+    pub kind: &'static str,
+    pub message: String,
+}
+
+/// The stable name of a plasma law's warning; `None` for a refusal
+/// (a refusal is a gate problem, never a warning).
+fn warning_kind(f: &PlasmaFinding) -> Option<&'static str> {
+    match f {
+        PlasmaFinding::KerfCrossing { .. } => Some("plasma_kerf_crossing"),
+        PlasmaFinding::TipUp { .. } => Some("plasma_tip_up"),
+        PlasmaFinding::CutOrder { .. } | PlasmaFinding::CutCrossing { .. } | PlasmaFinding::Malformed(_) => None,
+    }
 }
 
 /// Judge every Plasma Profile of the program (document order, suppressed
@@ -62,11 +84,14 @@ pub fn plasma_clause(world: &World) -> PlasmaClause {
             }
         };
         for f in judge(&program) {
-            let line = format!("{name}: plasma {}", describe(world, &f));
-            if f.refuses() {
-                out.problems.push(line);
-            } else {
-                warnings.push(line);
+            let message = format!("plasma {}", describe(world, &f));
+            let line = format!("{name}: {message}");
+            match warning_kind(&f) {
+                Some(kind) if !f.refuses() => {
+                    warnings.push(line);
+                    out.warnings.push(GateWarning { op: name.clone(), kind, message });
+                }
+                _ => out.problems.push(line),
             }
         }
     }

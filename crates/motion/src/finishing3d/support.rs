@@ -4,6 +4,7 @@ use crate::geo2d::Point2;
 use crate::geometry::{Point3, Triangle};
 
 use super::edge::{flag_folds, fold_best};
+use super::grid::SupSet;
 use super::params::{SPLIT_MZ, TOUCH_EPS};
 /// A facet prepared for the raster's support scan. `m` is the unit
 /// normal pointed into the sky (the ball rests on the plane from
@@ -24,7 +25,7 @@ pub(super) struct Sup {
     pub(super) ymax: f64,
 }
 
-pub(super) fn build_sups(facets: &[Triangle], r: f64) -> Vec<Sup> {
+pub(super) fn build_sups(facets: &[Triangle], r: f64) -> SupSet {
     let mut sups: Vec<Sup> = facets
         .iter()
         .map(|f| {
@@ -46,7 +47,8 @@ pub(super) fn build_sups(facets: &[Triangle], r: f64) -> Vec<Sup> {
         })
         .collect();
     flag_folds(&mut sups);
-    sups
+    // The grid is built from the finished entries (folds flagged), #2619.
+    SupSet::new(sups)
 }
 
 /// Point-to-triangle squared distance by the classic Voronoi-region
@@ -129,8 +131,8 @@ pub(crate) fn closest_pt_tri(p: Point3, t: &[Point3; 3]) -> Point3 {
 /// reading that runs no cut - while the march's ground stays the
 /// strict tangency, whose crease silences the minimum-step law is
 /// specced against.
-pub(super) fn ball_clear(c: Point3, sups: &[Sup], r: f64) -> bool {
-    for s in sups {
+pub(super) fn ball_clear(c: Point3, sups: &SupSet, r: f64) -> bool {
+    for s in sups.near(c.x, c.y) {
         if c.x < s.xmin || c.x > s.xmax || c.y < s.ymin || c.y > s.ymax {
             continue; // outside the padded footprint: the ball cannot reach it
         }
@@ -159,11 +161,11 @@ pub(super) fn ball_clear(c: Point3, sups: &[Sup], r: f64) -> bool {
 /// read off a tessellated ring boundary sits a chord-sag inside the
 /// true locus and belongs to `r - tol`, the same debt `leg_clears`
 /// states.
-pub(super) fn column_clear(x: f64, y: f64, cz: f64, top_cz: f64, limit: f64, sups: &[Sup]) -> bool {
+pub(super) fn column_clear(x: f64, y: f64, cz: f64, top_cz: f64, limit: f64, sups: &SupSet) -> bool {
     use crate::stock_sim::dist_seg_tri;
     let (hi, lo) = (top_cz.max(cz), top_cz.min(cz));
     let (a, b) = (Point3::new(x, y, hi), Point3::new(x, y, lo));
-    for s in sups {
+    for s in sups.near(x, y) {
         if x < s.xmin || x > s.xmax || y < s.ymin || y > s.ymax {
             continue; // outside the padded footprint: the swept ball cannot reach it
         }
@@ -182,10 +184,10 @@ pub(super) fn column_clear(x: f64, y: f64, cz: f64, top_cz: f64, limit: f64, sup
 /// `shallow_footprint`'s `mz` spends globally, asked at one point.
 /// A chord across the support could miss where a tessellated ring
 /// crest answers None; the facet plane does not miss.
-pub(super) fn support_grad(q: Point2, u: Point2, r: f64, floor_tip: f64, sups: &[Sup]) -> Option<(f64, f64)> {
+pub(super) fn support_grad(q: Point2, u: Point2, r: f64, floor_tip: f64, sups: &SupSet) -> Option<(f64, f64)> {
     let (x, y) = (q.x, q.y);
     let mut best: Option<(f64, f64)> = None;
-    for s in sups {
+    for s in sups.near(x, y) {
         if !s.shallow || x < s.xmin || x > s.xmax || y < s.ymin || y > s.ymax {
             continue;
         }
@@ -215,7 +217,7 @@ pub(super) fn plunge_support_grad(
     r: f64,
     floor_tip: f64,
     top_cz: f64,
-    sups: &[Sup],
+    sups: &SupSet,
 ) -> Option<(f64, f64)> {
     let (cc, cut) = plunge_support(q.x, q.y, r, floor_tip, top_cz, sups);
     if cut || cc.is_none() {
@@ -236,7 +238,7 @@ pub(super) fn plunge_support(
     r: f64,
     floor_tip: f64,
     top_cz: f64,
-    sups: &[Sup],
+    sups: &SupSet,
 ) -> (Option<f64>, bool) {
     match support_at(x, y, r, floor_tip, sups) {
         None => (None, false),
@@ -365,9 +367,9 @@ fn tangent_z_at(s: &Sup, x: f64, y: f64, r: f64, fold: bool) -> Option<f64> {
 /// `tangent_z_folded`, the gradient table's question, which runs no
 /// cut. Slack in the clearance itself would forgive a real bite;
 /// slack in a candidate would only admit a question.
-pub(super) fn support_at(x: f64, y: f64, r: f64, floor_tip: f64, sups: &[Sup]) -> Option<f64> {
+pub(super) fn support_at(x: f64, y: f64, r: f64, floor_tip: f64, sups: &SupSet) -> Option<f64> {
     let mut best: Option<f64> = None;
-    for s in sups {
+    for s in sups.near(x, y) {
         if !s.shallow || x < s.xmin || x > s.xmax || y < s.ymin || y > s.ymax {
             continue;
         }

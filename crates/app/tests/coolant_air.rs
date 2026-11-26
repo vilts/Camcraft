@@ -33,7 +33,7 @@ const CARVERA: &str = "Makera Carvera";
 fn face_params(cut_z: f64) -> OpParams {
     OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -43,6 +43,7 @@ fn face_params(cut_z: f64) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -152,11 +153,21 @@ fn an_ask_the_machine_lacks_is_refused_by_name() {
         "{:?}",
         out.warnings
     );
-    // The Tormach mill post reads no ask: an Air op is the engine's
-    // refusal, and its flood never falls back to the air code.
+    // #3446: the Tormach mill post reads the ask. Air on a flood/mist
+    // machine is refused by name; Air on a machine that states one posts
+    // its code; its flood never falls back to the air code.
+    let world = one_face(bench(vec![coolant("Flood", "M8"), coolant("Mist", "M7")]), Some(CoolantMode::Air));
+    let out = post_with(&world, "Tormach PathPilot");
+    assert!(
+        out.warnings.iter().any(|w| w.contains("operation Face1") && w.contains("no air coolant code")),
+        "{:?}",
+        out.warnings
+    );
     let world = one_face(bench(vec![coolant("Flood", "M8"), coolant("Air", "M7")]), Some(CoolantMode::Air));
     let out = post_with(&world, "Tormach PathPilot");
-    assert!(out.warnings.iter().any(|w| w.contains("operation Face1") && w.contains("coolantModes")), "{:?}", out.warnings);
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    assert_eq!(lines_with(&out.program, "M7"), 1, "{}", out.program);
+    assert_eq!(lines_with(&out.program, "M8"), 0, "{}", out.program);
     let world = one_face(bench(vec![coolant("Air", "M7")]), Some(CoolantMode::Flood));
     let out = post_with(&world, "Tormach PathPilot");
     assert!(out.warnings.iter().any(|w| w.contains("no flood coolant code") && w.contains("Face1")), "{:?}", out.warnings);

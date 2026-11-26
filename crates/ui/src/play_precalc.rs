@@ -44,6 +44,26 @@ pub fn playback_stop(state: &State) -> Option<String> {
     state.field_play.as_ref()?.index().stop().map(stop_readout)
 }
 
+/// True while the calculation before playback runs (#2611). The stock
+/// on screen stays uncut until the calculation ends, so the transport
+/// holds its playhead (and its scrub) as the line says: a tool that
+/// moved on would show cuts that the picture does not have.
+#[must_use]
+pub fn holds_playhead(state: &State) -> bool {
+    state.field_play.as_ref().is_some_and(|p| matches!(p.precalc(), Precalc::Running { .. }))
+}
+
+/// One frame of the transport clock: `Sim::advance`, held while the
+/// calculation runs (`holds_playhead`).
+pub(crate) fn advance_playhead(state: &mut State, dt: f64, total: f64) {
+    if holds_playhead(state) {
+        return;
+    }
+    if let Some(sim) = state.sim.as_mut() {
+        sim.advance(dt, total);
+    }
+}
+
 /// Draw the line under the transport bar, when there is one.
 pub(crate) fn transport_row(ui: &mut egui::Ui, state: &State) {
     let Some(play) = state.field_play.as_ref() else {

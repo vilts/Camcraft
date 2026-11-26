@@ -1,0 +1,3 @@
+kinds = ["2D Chamfer", "Deburr", "Engrave", "Trace"]
+machine = "3-axis mill"
+expect = "post"

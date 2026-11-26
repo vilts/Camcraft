@@ -103,6 +103,34 @@ pub(super) fn retract_hop(
     }
 }
 
+/// The rotary kinds' radial hop (#2827 review of #4005): a cylinder, not
+/// a plane. Off, every link opens to the clearance radius; on, links hop
+/// at a Retract radius about the rotation axis, seeded 1 mm INSIDE the
+/// clearance radius - a hop must sit at or below clearance, never above
+/// it (the plane control's top-plus-one seed would read as a larger
+/// radius, an above-clearance cylinder).
+pub(super) fn retract_radius_hop(
+    ui: &mut Ui,
+    world: &flecs_ecs::prelude::World,
+    setup: Option<&str>,
+    retract_z: &mut Option<Height>,
+    clearance_z: &Height,
+    tag: &str,
+) {
+    let mut hop = retract_z.is_some();
+    if check_row(ui, "Hop below clearance", &mut hop).changed() {
+        *retract_z = if hop {
+            Some(Height::of(clearance_z.reference, clearance_z.offset - 1.0))
+        } else {
+            None
+        };
+    }
+    hint(ui, "the retract cylinder: on, the links hop at the Retract radius about the rotation axis; off, every link opens to the clearance radius");
+    if let Some(r) = retract_z {
+        height_editor(ui, "Retract radius", world, setup, r, tag);
+    }
+}
+
 /// Whether a height editor's tag names a floor - the last level, the cut
 /// plane, the facing or parting plane - so "Selection" there measures from
 /// the selection's LOWEST Z; every other height from its highest.

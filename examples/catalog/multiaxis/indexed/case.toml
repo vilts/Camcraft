@@ -1,0 +1,3 @@
+kinds = ["2D Pocket"]
+machine = "Tilt-head 5-axis"
+expect = "post"

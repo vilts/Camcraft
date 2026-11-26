@@ -191,11 +191,11 @@ fn ring_edges(map: &HashMap<(u32, u32), u32>, verts: &[u32]) -> Option<Vec<u32>>
 
 /// The feature edges a pick covers: a chain's edges, a face's closed
 /// rings; a patch is not broken up (`None`).
-fn pick_edges(f: &feature::Features, sel: FeatureSel) -> Option<Vec<Vec<u32>>> {
+fn pick_edges(f: &feature::Features, sel: &FeatureSel) -> Option<Vec<Vec<u32>>> {
     match sel {
-        FeatureSel::Chain(id) => feature::resolve_chain(f, id).map(|c| vec![c.edges]),
+        FeatureSel::Chain(id) => feature::resolve_chain(f, *id).map(|c| vec![c.edges]),
         FeatureSel::Face(id) => {
-            let face = f.faces.iter().find(|x| x.id == id)?;
+            let face = f.faces.iter().find(|x| x.id == *id)?;
             let map = edge_map(f);
             face.loops
                 .iter()
@@ -203,7 +203,10 @@ fn pick_edges(f: &feature::Features, sel: FeatureSel) -> Option<Vec<Vec<u32>>> {
                 .map(|l| ring_edges(&map, &l.verts))
                 .collect()
         }
-        FeatureSel::Patch(_) | FeatureSel::Vertex(_) => None,
+        FeatureSel::Patch(_)
+        | FeatureSel::Vertex(_)
+        | FeatureSel::SketchChain(_)
+        | FeatureSel::SketchLayer(_) => None,
     }
 }
 
@@ -250,17 +253,17 @@ pub fn toggle_run(world: &World, picks: &[GeoSel], hit: &GeoSel) -> (Vec<GeoSel>
         return (out, true);
     }
     let found = model::find_by_name(world, &hit.entity).and_then(|e| model::features_of(world, &e));
-    let (Some(f), FeatureSel::Chain(hid)) = (found, hit.feature) else {
+    let (Some(f), FeatureSel::Chain(hid)) = (found, &hit.feature) else {
         return (with(picks, hit), false);
     };
-    let Some(hit_edges) = crate::model::resolve_chain(&f, hid).map(|c| c.edges) else {
+    let Some(hit_edges) = crate::model::resolve_chain(&f, *hid).map(|c| c.edges) else {
         return (with(picks, hit), false);
     };
     let runs = feature::edge_runs(&f);
     let mut out = Vec::with_capacity(picks.len() + 8);
     let mut removed = false;
     for g in picks {
-        let rings = (g.entity == hit.entity && !removed).then(|| pick_edges(&f, g.feature)).flatten();
+        let rings = (g.entity == hit.entity && !removed).then(|| pick_edges(&f, &g.feature)).flatten();
         match rings {
             Some(rings) if rings.iter().flatten().any(|e| hit_edges.contains(e)) => {
                 for ring in &rings {

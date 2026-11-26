@@ -107,8 +107,11 @@ pub fn parse_prompt(text: &str) -> Result<PendingCall, String> {
 
 #[must_use]
 pub fn prompt_context(project: &Value) -> Value {
-    json!({"instructions":"Return exactly one JSON object: {\"tool\":\"name\",\"arguments\":{}}. Use only the listed tools. Mutating edits require user confirmation before execution.",
-        "project":project,"tools":tools::list()})
+    let instructions = format!(
+        "{}\n\nReturn exactly one JSON object: {{\"tool\":\"name\",\"arguments\":{{}}}}. Use only the listed tools. Mutating edits require user confirmation before execution.",
+        super::catalog::RULES
+    );
+    json!({"instructions":instructions,"project":project,"tools":tools::list()})
 }
 
 /// Context for an ordinary text answer, with no executable tools attached.

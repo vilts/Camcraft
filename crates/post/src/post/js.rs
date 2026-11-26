@@ -19,7 +19,7 @@ use std::collections::BTreeMap;
 
 pub use super::js_host::{is_false, is_true, ProgramId, HOOKS, PRELUDE};
 
-/// Maximum emitted lines in one post run, across all hooks.
+/// Minimum line budget; program runs also allow expansion of their input records.
 pub const MAX_OUTPUT_LINES: usize = 100_000;
 
 /// One loaded post script.
@@ -39,6 +39,11 @@ pub struct Script {
     after_modes: bool,
     /// Explicit floating-holder tapping, rather than legacy rigid TAP (#51).
     floating_tapping: bool,
+    /// The `fineBoring = true` manifest flag (#1445): the script writes
+    /// the fine-boring cycle with an oriented spindle stop and the shift
+    /// words. Without it a fine bore is refused by name - the chain as
+    /// plain moves would shift a turning tool into the finished wall.
+    fine_boring: bool,
     /// The `axisInversion = true` manifest flag (#374): the script's
     /// output is verified (goldens + the equivalence test) on the
     /// engine's mirrored stream for an inverted X / Y axis. Without it a
@@ -71,7 +76,7 @@ pub struct Script {
     /// path with no condition, threading or wire words.
     wire_edm: bool,
     /// Latches once any output-limit check trips so caught exceptions cannot pass truncated output.
-    output_limit_exceeded: bool,
+    output_budget: super::js_host::OutputBudget,
     /// The `wcsRotation = true` manifest flag (#760): the script writes
     /// controller coordinate rotation (`G68 X0. Y0. R` / `G69` or
     /// `ROT RPL=` / `ROT`) when requested in `Control` mode.
@@ -82,6 +87,11 @@ impl Script {
     /// Load the prelude plus one `.cps` text. A syntax error is a clean
     /// refusal, never a half-defined script.
     pub fn load(cps: &str) -> Result<Self, PostError> {
+        Self::load_for_program(cps, 0, "program initialization")
+    }
+
+    pub(crate) fn load_for_program(cps: &str, records: usize, operation: &str) -> Result<Self, PostError> {
+        let output_budget = super::js_host::OutputBudget::new(records, operation);
         let mut ctx = Context::default();
         // Apply the same Boa limits on desktop and wasm, including top-level code.
         let limits = ctx.runtime_limits_mut();
@@ -89,8 +99,11 @@ impl Script {
         limits.set_recursion_limit(64);
         limits.set_stack_size_limit(4096);
         let host = format!(
-            "var _maxOutputLines = {MAX_OUTPUT_LINES};\n{PRELUDE}\n{}\n{}",
+            "var _maxOutputLines = {}; var _outputOperation = {};\n{PRELUDE}\n{}\n{}\n{}",
+            output_budget.max,
+            serde_json::to_string(operation)?,
             super::rotary_cap::ROTARY_CAP,
+            super::arc_guard::ARC_GUARD_JS,
             super::explain::EXPLAIN_JS
         );
         ctx.eval(Source::from_bytes(host.as_bytes()).with_path(std::path::Path::new("host.js")))
@@ -105,13 +118,14 @@ impl Script {
             live_tooling: false,
             after_modes: false,
             floating_tapping: false,
+            fine_boring: false,
             axis_inversion: false,
             probe_axis_inversion: false,
             thread_hands: false,
             continuous_threading: false,
             mill_spindle_reverse: false,
             wire_edm: false,
-            output_limit_exceeded: false,
+            output_budget,
             wcs_rotation: false,
         };
         let mut present = Vec::new();
@@ -139,6 +153,10 @@ impl Script {
             .eval("typeof floatingTapping !== \"undefined\" && floatingTapping === true")
             .map(|v| is_true(&v))
             .unwrap_or(false);
+        s.fine_boring = s
+            .eval("typeof fineBoring !== \"undefined\" && fineBoring === true")
+            .map(|v| is_true(&v))
+            .unwrap_or(false);
         s.mill_spindle_reverse = s
             .eval("typeof millSpindleReverse !== \"undefined\" && millSpindleReverse === true")
             .map(|v| is_true(&v))
@@ -163,7 +181,7 @@ impl Script {
             .eval("typeof wireEdm !== \"undefined\" && wireEdm === true")
             .map(|v| is_true(&v))
             .unwrap_or(false);
-        super::js_host::check_output_limit(&mut s.ctx, &mut s.output_limit_exceeded)?;
+        s.output_budget.check(&mut s.ctx)?;
         s.wcs_rotation = s
             .eval("typeof wcsRotation !== \"undefined\" && wcsRotation === true")
             .map(|v| is_true(&v))
@@ -256,6 +274,9 @@ impl Script {
     /// Publish this record's property object (params + record +
     /// position keys), keeping the `W` alias honest.
     pub fn set_properties(&mut self, props: &BTreeMap<String, Value>) -> Result<(), PostError> {
+        if let Some(operation) = props.get("OperationName").and_then(Value::as_str) {
+            self.output_budget.operation = operation.to_owned();
+        }
         let obj: serde_json::Map<String, Value> =
             props.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         self.eval(&format!(
@@ -279,12 +300,12 @@ impl Script {
     /// missing-hook case is a no-op returning undefined. A JS throw is
     /// a `Script` error - the Prime Directive's refusal shape.
     pub fn call(&mut self, name: &str, args: &str) -> Result<JsValue, PostError> {
-        super::js_host::check_output_limit(&mut self.ctx, &mut self.output_limit_exceeded)?;
+        self.output_budget.check(&mut self.ctx)?;
         if !self.has(name) {
             return Ok(JsValue::undefined());
         }
         let res = self.eval(&format!("{name}({args})"));
-        super::js_host::check_output_limit(&mut self.ctx, &mut self.output_limit_exceeded)?;
+        self.output_budget.check(&mut self.ctx)?;
         res
     }
 
@@ -332,6 +353,11 @@ impl Script {
         self.floating_tapping
     }
 
+    /// True when the script declares `fineBoring = true` (#1445).
+    pub fn voices_fine_boring(&self) -> bool {
+        self.fine_boring
+    }
+
     /// True when the script declares `axisInversion = true` - verified
     /// on the engine's mirrored stream for an inverted axis (#374).
     pub fn translates_inverted_axes(&self) -> bool {
@@ -361,41 +387,15 @@ impl Script {
     /// Open partial lines count as flushed: a hook that ends a record
     /// mid-line still wrote a line of the program.
     pub fn out_len(&mut self) -> Result<usize, PostError> {
-        super::js_host::check_output_limit(&mut self.ctx, &mut self.output_limit_exceeded)?;
-        let v = self.eval("(_flushLine(), OUT.length)")?;
-        let len = v.as_number().map(|n| n.max(0.0) as usize).unwrap_or(0);
-        if len > MAX_OUTPUT_LINES {
-            self.output_limit_exceeded = true;
-            return Err(PostError::Script(super::js_host::OUTPUT_LIMIT_ERROR.into()));
-        }
-        Ok(len)
+        self.output_budget.out_len(&mut self.ctx)
     }
 
     /// Pull the finished line buffer and the `message()` log.
     pub fn drain(&mut self) -> Result<(Vec<String>, Vec<String>), PostError> {
         self.out_len()?;
-        let out = self.pull("OUT")?;
-        let msgs = self.pull("MESSAGES")?;
+        let out = super::js_host::pull(&mut self.ctx, "OUT")?;
+        let msgs = super::js_host::pull(&mut self.ctx, "MESSAGES")?;
         Ok((out, msgs))
-    }
-
-    fn pull(&mut self, global: &str) -> Result<Vec<String>, PostError> {
-        self.eval("_flushLine();")?; // any open line is program text, not lost
-        let v = self.eval(global)?;
-        let j = v
-            .to_json(&mut self.ctx)
-            .map_err(|e| PostError::Script(format!("{e}")))?
-            .unwrap_or(Value::Array(vec![]));
-        Ok(match j {
-            Value::Array(items) => items
-                .iter()
-                .map(|v| match v {
-                    Value::String(s) => s.clone(),
-                    other => other.to_string(),
-                })
-                .collect(),
-            _ => Vec::new(),
-        })
     }
 }
 

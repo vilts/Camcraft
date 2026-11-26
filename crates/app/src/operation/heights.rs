@@ -100,9 +100,11 @@ pub fn missing_source(
                 .then_some("no stock yet - set it up in Setup > Stock")
         }
         HeightReference::TopOfModel | HeightReference::BottomOfModel => {
-            crate::setup_align::part_aabb_in(world, setup)
-                .is_none()
-                .then_some("no model loaded")
+            // #1862: a virtual model reference is a model with no solid,
+            // so it has no top or bottom - said by name, not "no model".
+            crate::setup_align::part_aabb_in(world, setup).is_none().then(|| {
+                if crate::sketch_model::of(world, setup).is_some() { crate::sketch_model::NO_SOLID_HEIGHT } else { "no model loaded" }
+            })
         }
         HeightReference::WorkOffset => crate::setup::wcs_entity(world, setup)
             .is_none()
@@ -131,10 +133,11 @@ pub fn region_z(
         | OpParams::Pocket { top_z, .. }
         // The roughing twins name the pocket's high station (M2.4 A),
         // and so do the circular ladder and the engrave ride; the
-        // chamfer's top plane is where its cone's apex stands - the
-        // ride's only height (M2.4 B).
+        // chamfer's top plane is the authored edge plane - the ride's
+        // only height; the virtual tip follows from its cone band.
         | OpParams::Adaptive2D { top_z, .. }
         | OpParams::Offset2D { top_z, .. }
+        | OpParams::VCarve { top_z, .. }
         | OpParams::Engrave { top_z, .. }
         | OpParams::Chamfer2D { top_z, .. }
         | OpParams::Circular { top_z, .. }
@@ -174,15 +177,22 @@ pub fn region_z(
         | OpParams::Thread { top_z, .. }
         // The deburr window's ceiling names the same high station:
         // the ride's tips stand at or below it (M2.5 E B).
-        | OpParams::Deburr { top_z, .. } => resolve(*top_z),
+        | OpParams::Deburr { top_z, .. } | OpParams::MultiAxisDeburr { top_z, .. } => resolve(*top_z),
+        // The flow band has no section plane (#2826): the picks bound
+        // its extent, so the shadow draws at no one level.
+        OpParams::RotaryFlow { .. } => None,
         // The probe's station is its expected contact (#108).
         OpParams::Probe { target, .. } => Some(target[2]),
         // The plasma cut rides the plate's top (#670).
         OpParams::PlasmaProfile(p) => resolve(p.top_z),
+        // The waterjet cut rides the sheet's top (#1883).
+        OpParams::WaterjetProfile(p) => resolve(p.top_z),
         // The wire's profile is read on the workpiece's top (#532).
         OpParams::WireContour(p) => resolve(p.top_z),
         // The electrode enters at the work top (#541).
         OpParams::SinkerBurn(p) | OpParams::SinkerSideBurn(crate::operation::SinkerSideBurnOp { burn: p, .. }) => resolve(p.top_z),
+        // #1444: the material top over the slot.
+        OpParams::SlotUndercut(p) => resolve(p.top_z),
     }
 }
 
@@ -264,6 +274,7 @@ pub fn resolve_params_with(
         // and the circular ladder do too (M2.4 B).
         | OpParams::Adaptive2D { clearance_z, retract_z, top_z, bottom_z, .. }
         | OpParams::Offset2D { clearance_z, retract_z, top_z, bottom_z, .. }
+        | OpParams::VCarve { clearance_z, retract_z, top_z, bottom_z, .. }
         | OpParams::Engrave { clearance_z, retract_z, top_z, bottom_z, .. }
         | OpParams::Circular { clearance_z, retract_z, top_z, bottom_z, .. }
         | OpParams::Slot { clearance_z, retract_z, top_z, bottom_z, .. }
@@ -298,9 +309,8 @@ pub fn resolve_params_with(
             opt("Retract Z", *retract_z)?,
         ),
         // The 2-D chamfer resolves TWO heights: the clearance and the
-        // plane the cone's apex stands at. Its floor is derived - the
-        // wall's own width · tan(angle) below the apex - so `bottom`
-        // stays None, Face's skipped-field the other way (M2.4 B).
+        // authored edge plane. Its break depth and virtual tip are
+        // derived, so `bottom` stays None (M2.4 B).
         OpParams::Chamfer2D { clearance_z, retract_z, top_z, .. } => (
             req("Clearance Z", *clearance_z)?,
             Some(req("Top of Part Z", *top_z)?),
@@ -364,7 +374,7 @@ pub fn resolve_params_with(
         // and floor, since the kernel stands the tip `drop` below
         // each edge it breaks (M2.5 E B). The rapids plane hops every
         // run itself; no hop height exists to resolve.
-        OpParams::Deburr { clearance_z, top_z, bottom_z, .. } => (
+        OpParams::Deburr { clearance_z, top_z, bottom_z, .. } | OpParams::MultiAxisDeburr { clearance_z, top_z, bottom_z, .. } => (
             req("Clearance Z", *clearance_z)?,
             Some(req("Window Top Z", *top_z)?),
             Some(req("Window Bottom Z", *bottom_z)?),
@@ -412,6 +422,15 @@ pub fn resolve_params_with(
             None,
             None,
         ),
+        // The waterjet cut (#1883): the jet-off plane, the sheet's top
+        // (the cut plane) and bottom - no hop plane.
+        OpParams::WaterjetProfile(p) => (
+            req("Clearance Z", p.clearance_z)?,
+            Some(req("Top of Plate Z", p.top_z)?),
+            Some(req("Bottom of Plate Z", p.bottom_z)?),
+            None,
+            None,
+        ),
         // The wire cut (#532): the workpiece's top and bottom - the two
         // programmed planes. A wire never lifts out of the work, so no
         // rapids plane is stated; the slot reads the top.
@@ -427,6 +446,26 @@ pub fn resolve_params_with(
             Some(req("Cavity Floor Z", p.floor_z)?),
             None,
             None,
+        ),
+        // #1444: the undercut's floor is its only cut plane.
+        OpParams::SlotUndercut(p) => (
+            req("Clearance Z", p.clearance_z)?,
+            Some(req("Top of Part Z", p.top_z)?),
+            Some(req("Bottom of Part Z", p.bottom_z)?),
+            None,
+            opt("Retract Z", p.retract_z)?,
+        ),
+        // The flow band's two heights (#2826): clearance and retract
+        // alone, read as BALL-CENTER RADII about the stated axis -
+        // the picks bound the band, so no top or bottom exists to
+        // resolve. The resolved numbers are the radii the kernel
+        // guards against the work's true radius (#2774).
+        OpParams::RotaryFlow { clearance_z, retract_z, .. } => (
+            req("Clearance Z", *clearance_z)?,
+            None,
+            None,
+            None,
+            opt("Retract Z", *retract_z)?,
         ),
     };
     Ok(ResolvedHeights { clearance, top, bottom, face_top, retract })

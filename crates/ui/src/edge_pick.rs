@@ -23,7 +23,11 @@ pub fn queue_edge_pick(state: &mut State, pick: GeoSel, mods: Mods) {
         return;
     }
     if mods.shift && !mods.command {
-        take_loop(state, pick);
+        if matches!(pick.feature, FeatureSel::SketchChain(_)) {
+            queue_feature_pick(state, pick, true);
+        } else {
+            take_loop(state, pick);
+        }
     } else if mods.command {
         toggle(state, pick);
     } else {

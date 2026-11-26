@@ -8,6 +8,10 @@ use crate::machining2d::{GenError, TrochoidParams};
 
 use super::types::OpParams;
 
+/// Shown on the Passes tab and returned when an MCP patch sets `pass_start`.
+pub const TROCHOIDAL_SLOT_NO_PASS_ORDER: &str =
+    "Trochoidal Slot has no pass order. The cut starts at the entry bore and advances along the slot. Each loop uses clearance from the previous cut.";
+
 /// The generator's numbers for a trochoidal slot op.
 pub(super) fn trochoid_params(
     params: &OpParams,

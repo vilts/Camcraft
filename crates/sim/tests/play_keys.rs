@@ -2,14 +2,19 @@
 //! calculation before playback, on plain values. Every insertion counts
 //! against the budget (the calculation's and the live playback's), the
 //! thinning doubles the stride, and every end of the calculation is
-//! said by name. Provenance: our own fixtures; nothing from vendor
-//! binaries.
+//! said by name. #2194: a keyframe pays only for what the keyframe
+//! before it does not share, and a shared cut brick is copied before a
+//! write. Provenance: our own fixtures; nothing from vendor binaries.
 //!
-//! Gate map (M4.4): covers camcraft_sim::play_keys, camcraft_sim::play_precalc.
+//! Gate map (M4.4): covers camcraft_sim::play_keys, camcraft_sim::play_precalc, camcraft_sim::stock_sim::field.
 
 use std::cell::{Cell, RefCell};
+use std::sync::Arc;
 
+use camcraft_sim::cl::{Move, MoveKind};
+use camcraft_sim::geometry::Point3;
 use camcraft_sim::play_keys::{KeyCost, Keyframes, Precalc};
+use camcraft_sim::stock_sim::{SdfField, SdfTool, Stock, FIELD_BAND};
 use camcraft_sim::play_precalc::{drive, PrecalcCut, PrecalcEnd, PrecalcOwner};
 
 /// A keyframe that costs its own number of bytes.
@@ -57,6 +62,84 @@ fn a_zero_budget_keeps_only_key_zero() {
         assert!(!k.offer(at, &Key(1)));
     }
     assert_eq!((k.len(), k.bytes()), (1, 0));
+}
+
+/// A keyframe of shared parts, 10 bytes each: a part costs only where
+/// the keyframe before does not hold the same allocation.
+#[derive(Clone, Debug)]
+struct Parts(Vec<Arc<u8>>);
+
+impl KeyCost for Parts {
+    fn key_bytes(&self) -> usize {
+        self.0.len() * 10
+    }
+    fn key_bytes_after(&self, prev: &Self) -> usize {
+        self.0.iter().filter(|p| !prev.0.iter().any(|q| Arc::ptr_eq(p, q))).count() * 10
+    }
+}
+
+#[test]
+fn a_keyframe_costs_what_the_one_before_does_not_share() {
+    let mut k = Keyframes::new(Parts(Vec::new()), 1, 32);
+    k.restart(1, 1024, 45);
+    let mut live = Parts(Vec::new());
+    for at in 1..=4 {
+        live.0.push(Arc::new(0));
+        assert!(k.offer(at, &live), "key {at} fits: one new part");
+    }
+    // Whole copies cost 10 + 20 + 30 + 40 and would thin at key 3.
+    assert_eq!((k.len(), k.stride(), k.bytes(), k.held_bytes()), (5, 1, 40, 40));
+    // The budget still thins, and the count follows the keys that stay:
+    // key 2 pays for the parts of keys 1 and 2, key 4 for those of 3 and 4.
+    live.0.push(Arc::new(0));
+    assert!(!k.offer(5, &live), "key 5 is off the doubled stride");
+    assert_eq!((k.len(), k.stride(), k.bytes(), k.held_bytes()), (3, 2, 40, 40));
+}
+
+fn slot(f: &mut SdfField, y: f64) {
+    let mv = Move::new(MoveKind::Feed, Point3::new(-1.0, y, 3.3), Point3::new(13.0, y, 3.3), Some(500.0));
+    f.subtract(&mv, &SdfTool::Flat { r: 0.7, flank: 10.0 }, 0.01).expect("cut");
+}
+
+/// Every cell centre's distance, as bits.
+fn read(f: &SdfField) -> Vec<u64> {
+    let c = |i: i32| f64::from(i) * 0.25 + 0.125;
+    let mut out = Vec::new();
+    for i in -4..52 {
+        for j in -4..52 {
+            for k in 0..20 {
+                out.push(f.distance(Point3::new(c(i), c(j), c(k))).to_bits());
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn a_clone_shares_its_cut_bricks_and_a_write_copies_first() {
+    let (lo, hi) = (Point3::new(0.0, 0.0, 0.0), Point3::new(12.0, 12.0, 4.0));
+    let mut f = SdfField::from_box(lo, hi, 0.25, FIELD_BAND).expect("field");
+    slot(&mut f, 2.1);
+    let key = f.clone();
+    let (whole, shared) = (f.cut_layer_bytes(), f.cut_bytes_after(&key));
+    assert!(whole > 0 && shared * 16 < whole, "a clone holds its map entries only: {shared} of {whole} bytes");
+    let before = read(&key);
+    // A second slot far from the first: new bricks, and none of the old.
+    slot(&mut f, 9.9);
+    assert_eq!(read(&key), before, "the keyframe is not written through");
+    let own = f.cut_bytes_after(&key);
+    assert!(own > shared && own * 3 < f.cut_layer_bytes() * 2, "only the new slot's bricks are the field's own: {own} of {}", f.cut_layer_bytes());
+    // A write INTO a shared brick copies it: the keyframe keeps its value.
+    slot(&mut f, 2.4);
+    assert_eq!(read(&key), before, "a shared brick is copied before the write");
+    let mut fresh = SdfField::from_box(lo, hi, 0.25, FIELD_BAND).expect("field");
+    for y in [2.1, 9.9, 2.4] {
+        slot(&mut fresh, y);
+    }
+    assert_eq!(read(&f), read(&fresh), "the cut over shared bricks is the plain cut, bit for bit");
+    let (a, b) = (Stock::Field(f), Stock::Field(key));
+    assert_eq!(a.key_bytes_after(&b), a.field().map_or(0, |f| f.cut_bytes_after(b.field().expect("field"))));
+    assert!(a.key_bytes_after(&b) < a.key_bytes() + a.key_bytes() / 16 && b.key_bytes() > 0);
 }
 
 /// A program of `total` moves cut `stride` at a time; `fail_at` refuses.

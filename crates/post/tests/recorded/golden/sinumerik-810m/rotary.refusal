@@ -1,0 +1,2 @@
+; sinumerik-810m.cps refused rotary: 1 warning(s), the program is never released
+warning: Sinumerik 810M is a 3-axis milling post - rotary/tilted moves (A/B/C) are refused by name

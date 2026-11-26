@@ -54,6 +54,7 @@ fn plate_with_pocket() -> Mesh {
 
 fn pocket(bottom_z: f64, stepover: f64, rest_rough: bool) -> OpParams {
     OpParams::Pocket3D {
+        pass_start: Default::default(),
         links: camcraft_app::links::Links::ROUGH3D,
         stepover,
         stock_to_leave: 0.0,
@@ -72,6 +73,8 @@ fn pocket(bottom_z: f64, stepover: f64, rest_rough: bool) -> OpParams {
         optimal_load: camcraft_app::load::load_of_degrees(60.0),
         feed_opt: false,
         shell: false,
+        method: camcraft_app::machining2d::AdaptiveMethod::Spiral,
+        picks: Default::default(),
     }
 }
 
@@ -216,7 +219,7 @@ fn a_carry_the_lattice_refuses_refuses_the_rest_reading_by_name() {
         let p = OpParams::Face {
             holes: Default::default(),
             tilt: None,
-            blend_turns: false,
+            blend_turns: false, blend_radius: None,
             stepover: 3.0,
             clearance_z: Height::fixed(30.0),
             cut_z: Height::fixed(16.0),
@@ -225,6 +228,7 @@ fn a_carry_the_lattice_refuses_refuses_the_rest_reading_by_name() {
             feed: 1200.0,
             plunge_feed: 300.0,
             climb: true,
+            picks: Default::default(),
         };
         CreateOperation::new(&world, name, "EM-0400-2FL", SrcRef::Entity("plate".into()), p).expect("create")
     };
@@ -262,7 +266,7 @@ fn faced_then_turned(deg: f64) -> (World, History) {
         let p = OpParams::Face {
             holes: Default::default(),
             tilt: None,
-            blend_turns: false,
+            blend_turns: false, blend_radius: None,
             stepover: 3.0,
             clearance_z: Height::fixed(30.0),
             cut_z: Height::fixed(16.0),
@@ -271,6 +275,7 @@ fn faced_then_turned(deg: f64) -> (World, History) {
             feed: 1200.0,
             plunge_feed: 300.0,
             climb: true,
+            picks: Default::default(),
         };
         CreateOperation::new(&world, name, "EM-0400-2FL", SrcRef::Entity("plate".into()), p).expect("create")
     };

@@ -113,11 +113,12 @@ fn drill(tip: f64, radius: f64) -> OpParams {
         plunge_feed: 80.0,
         holes: vec![hole],
         cross: vec![],
+        picks: Default::default(),
     }
 }
 
 fn pocket(predrilled: bool) -> OpParams {
-    OpParams::Pocket { rest: None,
+    OpParams::Pocket { pass_start: Default::default(), rest: None,
         blend_radius: None,
         stepover: 1.6,
         stock_to_leave: 0.0,
@@ -136,6 +137,7 @@ fn pocket(predrilled: bool) -> OpParams {
         blend_turns: false,
         tilt: None,
         links: Links { approach: Approach { predrilled, ..Approach::DEFAULT }, ..Links::PLANAR },
+        corner_relief: Default::default(), picks: Default::default(),
     }
 }
 
@@ -211,7 +213,7 @@ fn a_drilled_hole_ahead_is_plunged_to_full_depth_and_posted() {
     // The straight feed down the hole to the floor at X0 Y0, straight
     // from the rapid over it - no helix arc between.
     let lines: Vec<&str> = text.lines().map(str::trim).collect();
-    let at = lines.iter().position(|l| *l == "G01 X0. Y0. Z12. F200").unwrap_or_else(|| panic!("no plunge to Z12 at X0 Y0\n{text}"));
+    let at = lines.iter().position(|l| *l == "G01 X0. Y0. Z12. F200.").unwrap_or_else(|| panic!("no plunge to Z12 at X0 Y0\n{text}"));
     assert!(at > 0 && lines[at - 1].starts_with("G00 X0. Y0. Z"), "the rapid over the hole, then the plunge: {:?}", &lines[at.saturating_sub(2)..=at]);
 }
 

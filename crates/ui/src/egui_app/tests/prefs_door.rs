@@ -78,3 +78,19 @@ fn a_headless_state_keeps_its_picks_in_memory() {
     assert_eq!(theme_of(&state.world), light());
     assert!(state.prefs_path().is_none(), "no store: the user's file is never written by a test");
 }
+
+/// #1873: no control sets the cadmpeg path yet, so a pick that writes the
+/// preferences keeps the path that the file states.
+#[test]
+fn a_pick_keeps_the_stated_cadmpeg_path() {
+    let store = temp_dir("cadmpeg").join(FILE_NAME);
+    let stated = prefs::ViewPrefs { cadmpeg_path: Some("/opt/cad/cadmpeg".into()), ..prefs::ViewPrefs::default() };
+    prefs::save(&store, &stated).expect("a file with the path");
+    let mut state = State::new();
+    state.load_prefs_from(store.clone());
+    run(&mut state, CommandKind::SelectTheme(light()));
+    let (saved, note) = prefs::load(&store);
+    assert_eq!(note, None);
+    assert_eq!(saved.theme, light(), "the pick is written");
+    assert_eq!(saved.cadmpeg_path.as_deref(), Some("/opt/cad/cadmpeg"), "the path is still there");
+}

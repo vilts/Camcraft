@@ -7,7 +7,8 @@
 //! the page always had (`setup_stock_pick`, `setup_align_pick`, ...); every
 //! change is the same undoable command (`ActivateSetup`,
 //! `SetSetupStockSource`, `AlignPart`, `DeleteSetup`, ...) and no command or
-//! project field is new.
+//! project field is new. The "Sheet job" checklist (#3070, a milling setup)
+//! is the one group with its own command, `SetSheetJob`.
 //!
 //! Provenance: our own layout over the `layout` form helpers; no vendor
 //! material.
@@ -88,6 +89,10 @@ fn groups(ui: &mut Ui, state: &mut State, ctx: Option<&str>) {
     // picks live on the WCS page; this page keeps the part orientation.
     if super::setup_workholding_row::shown(state, name) {
         group(ui, HOLDING_GROUP, None, |ui| super::setup_workholding_row::row(ui, state, name));
+    }
+    // #3070: the guided sheet job, on a milling setup.
+    if super::setup_sheet_job_row::shown(state, name) {
+        group(ui, super::setup_sheet_job_row::GROUP, None, |ui| super::setup_sheet_job_row::row(ui, state, name));
     }
     group(ui, GROUPS[3], None, |ui| actions(ui, state, name));
     readout(ui, state, name);

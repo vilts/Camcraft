@@ -265,4 +265,28 @@
 <rect width="600" height="240" fill="white"/>
 <text x="20" y="28">Sinker Side Burn - section</text><path class="stock" d="M95 100 H180 V180 H310 V100 H410 V205 H95 Z"/><path class="axis" d="M195 60 H295 V135 H195 Z"/><path class="cut" d="M245 85 V160 H285 H245"/><path class="link" d="M330 160 V65"/>
 <text x="20" y="225">Plunge, lateral burn, return and retract</text></g>
+<view id="SlotUndercut" viewBox="0 10560 600 240"/>
+<g id="SlotUndercut-diagram" transform="translate(0 10560)" role="img" aria-labelledby="SlotUndercut-title SlotUndercut-desc">
+<title id="SlotUndercut-title">Slot Undercut - section</title><desc id="SlotUndercut-desc">The cutter goes down outside the wall, feeds sideways under the roof, cuts at depth and feeds back out before it lifts.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Slot Undercut - section</text><rect class="stock" x="200" y="70" width="90" height="50"/><rect class="stock" x="320" y="70" width="90" height="50"/><rect class="stock" x="350" y="120" width="60" height="40"/><rect class="stock" x="200" y="160" width="210" height="40"/><path class="link" d="M120 55 V140"/><path class="cut" d="M120 140 H330 M330 140 H120"/>
+<text x="20" y="225">Down outside, sideways under the roof, out, up</text></g>
+<view id="VCarve" viewBox="0 10800 600 240"/>
+<g id="VCarve-diagram" transform="translate(0 10800)" role="img" aria-labelledby="VCarve-title VCarve-desc">
+<title id="VCarve-title">V-Carve - top view</title><desc id="VCarve-desc">The tip of the V-bit follows the centre line of the picked outline and goes deeper where the outline is wider.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">V-Carve - top view</text><rect class="stock" x="80" y="65" width="330" height="115" rx="8"/><path class="center" d="M130 80 H360 L300 165 H190 Z"/><path class="cut" d="M130 80 L210 115 H280 L360 80 M190 165 L210 115 M300 165 L280 115"/>
+<text x="20" y="225">Tip on the centre line, deeper where wider</text></g>
+<view id="WaterjetProfile" viewBox="0 11040 600 240"/>
+<g id="WaterjetProfile-diagram" transform="translate(0 11040)" role="img" aria-labelledby="WaterjetProfile-title WaterjetProfile-desc">
+<title id="WaterjetProfile-title">Waterjet Profile - top view</title><desc id="WaterjetProfile-desc">The jet pierces in the scrap, comes in on an arc lead and cuts through the sheet around the part outline with the kerf on the waste side.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Waterjet Profile - top view</text><rect class="stock" x="80" y="65" width="330" height="115" rx="8"/><path class="cut" d="M60 100 A25 25 0 0 1 75 125 M75 125 V60 H415 V185 H75 V125"/><ellipse class="cut" cx="60" cy="100" rx="4" ry="4"/>
+<text x="20" y="225">Pierce, arc lead-in, then through-cut outside the kerf</text></g>
+<view id="MultiAxisDeburr" viewBox="0 11280 600 240"/>
+<g id="MultiAxisDeburr-diagram" transform="translate(0 11280)" role="img" aria-labelledby="MultiAxisDeburr-title MultiAxisDeburr-desc">
+<title id="MultiAxisDeburr-title">Multi-Axis Deburr - section</title><desc id="MultiAxisDeburr-desc">The cone tool tilts onto the edge so that one flank lies on the chamfer plane while it follows the exposed edge.</desc>
+<rect width="600" height="240" fill="white"/>
+<text x="20" y="28">Multi-Axis Deburr - section</text><path class="stock" d="M120 190 V95 H300 L330 125 V190 Z"/><path class="axis" d="M380 45 L330 95"/><path class="cut" d="M285 85 L345 145"/><path class="center" d="M300 95 L330 125"/>
+<text x="20" y="225">Tool axis tilted onto the edge break</text></g>
 </svg>

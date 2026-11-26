@@ -23,7 +23,7 @@ fn catalog_tool(name: &str) -> Tool {
 }
 
 fn face_params() -> OpParams {
-    OpParams::Face { holes: Default::default(), blend_turns: false,
+    OpParams::Face { holes: Default::default(), blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -33,6 +33,7 @@ fn face_params() -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -182,7 +183,7 @@ fn create_generate_undo_redo_replays_the_same_path() {
     assert_eq!(status(&state, "Face1"), OpStatus::Ok);
 
     // A parameter edit marks it stale but keeps the old path on screen.
-    let moved = OpParams::Face { holes: Default::default(), blend_turns: false,
+    let moved = OpParams::Face { holes: Default::default(), blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 4.0,
         clearance_z: Height::fixed(25.0),
@@ -192,6 +193,7 @@ fn create_generate_undo_redo_replays_the_same_path() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     state.pending.push_back(CommandKind::EditOperationParams {
         name: "Face1".into(),
@@ -290,7 +292,7 @@ fn a_work_offset_reference_survives_apply_undo_and_the_draft() {
     stock_and_tool(&mut state);
     create_face(&mut state);
 
-    let referenced = OpParams::Face { holes: Default::default(), blend_turns: false,
+    let referenced = OpParams::Face { holes: Default::default(), blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -300,6 +302,7 @@ fn a_work_offset_reference_survives_apply_undo_and_the_draft() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     state.pending.push_back(CommandKind::EditOperationParams {
         name: "Face1".into(),
@@ -373,7 +376,7 @@ fn retargeting_a_tool_and_bad_params() {
 
     // Degenerate parameters are refused at construction: status explains,
     // and the operation keeps its exact previous values and stamp.
-    let junk = OpParams::Face { holes: Default::default(), blend_turns: false,
+    let junk = OpParams::Face { holes: Default::default(), blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 0.0,
         clearance_z: Height::fixed(25.0),
@@ -383,6 +386,7 @@ fn retargeting_a_tool_and_bad_params() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     state.pending.push_back(CommandKind::EditOperationParams {
         name: "Face1".into(),
@@ -719,7 +723,7 @@ fn apply_reports_queued_then_updated_on_drain() {
     create_face(&mut state);
     part_and_target(&mut state);
     // Spinbox typing is what this mirrors: the draft differs from live.
-    state.op_ui.params = OpParams::Face { holes: Default::default(), blend_turns: false,
+    state.op_ui.params = OpParams::Face { holes: Default::default(), blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -729,6 +733,7 @@ fn apply_reports_queued_then_updated_on_drain() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     state.apply_operation_params("Face1");
     assert_eq!(state.pending.len(), 1, "the changed draft queued the edit");
@@ -938,8 +943,10 @@ fn contour_draft() -> OpParams {
         tab_height: 1.0,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -985,7 +992,7 @@ fn generate_flushes_a_dirty_draft_before_generating() {
     // Spinbox typing the frame has not Applied: the panel shows a new cut
     // height while the operation still holds the old one. Generating under
     // that draft used to cut the old numbers silently.
-    state.op_ui.params = OpParams::Face { holes: Default::default(), blend_turns: false,
+    state.op_ui.params = OpParams::Face { holes: Default::default(), blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -995,6 +1002,7 @@ fn generate_flushes_a_dirty_draft_before_generating() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     state.generate_operation("Face1");
     assert_eq!(state.pending.len(), 2, "the edit rides the click, then the generate");

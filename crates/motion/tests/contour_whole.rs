@@ -118,8 +118,9 @@ fn params(top: f64, bottom: f64, stepdown: f64) -> ContourParams {
         tab_height: 1.0,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_motion::links::Links::PLANAR,
+        picks: Default::default(),
     }
 }
 
@@ -233,6 +234,24 @@ fn assert_counterbore_at(path: &camcraft_motion::cl::Toolpath, z: f64, extent: f
     assert!((length - 8.0 * extent).abs() < 0.1, "Z {z}: expected one complete bore lap, got {length}");
 }
 
+/// One complete lap of each bore envelope in `extents` at `z`, and nothing else.
+fn assert_bore_laps_at(path: &camcraft_motion::cl::Toolpath, z: f64, extents: &[f64]) {
+    let mut length = vec![0.0; extents.len()];
+    for m in &path.moves {
+        let ext = |p: Point3| p.x.abs().max(p.y.abs());
+        let flat = (m.from.z - z).abs() <= 1e-6 && (m.to.z - z).abs() <= 1e-6;
+        if m.kind != MoveKind::Feed || !flat || ext(m.from) >= 20.0 || ext(m.to) >= 20.0 {
+            continue;
+        }
+        let k = extents.iter().position(|e| (ext(m.to) - e).abs() < 0.05);
+        let k = k.unwrap_or_else(|| panic!("bore envelope at Z {z}: {m:?}"));
+        length[k] += (m.to.x - m.from.x).hypot(m.to.y - m.from.y);
+    }
+    for (e, l) in extents.iter().zip(&length) {
+        assert!((l - 8.0 * e).abs() < 0.1, "Z {z}: expected one lap at extent {e}, got {l}");
+    }
+}
+
 #[test]
 fn counterbore_changing_before_first_cut_level_keeps_lower_bore() {
     let f = counterbore_part();
@@ -338,8 +357,14 @@ fn earlier_blind_hole_stop_does_not_hide_later_counterbore_change() {
     let top_reg = slice::slice(&f, 20.0 - 1e-3).expect("top slice");
     let path = contour_whole_bodies(&top_reg, &f, &bodies, &params(20.0, 0.0, 4.0)).expect("whole contour");
     assert!(path.all_finite() && path.is_chained());
-    for (z, extent) in [(16.0, 12.0), (12.0, 12.0), (8.0, 7.0), (4.0, 7.0), (0.0, 7.0)] {
-        assert_counterbore_at(&path, z, extent);
+    // #2597: the upper bore lap sweeps only its ring, so the stock core inside
+    // it stands to Top Z; the narrower lower bore ring steps down from Top Z
+    // too (one lap of each at Z 16 and Z 12), never a first pass 12 mm deep.
+    for z in [16.0, 12.0] {
+        assert_bore_laps_at(&path, z, &[12.0, 7.0]);
+    }
+    for z in [8.0, 4.0, 0.0] {
+        assert_counterbore_at(&path, z, 7.0);
     }
     assert_eq!(depth_verify(&path, &top_reg, &f, 20.0), Vec::new(), "{:?}", path.notes);
 }

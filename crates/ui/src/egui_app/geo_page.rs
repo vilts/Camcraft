@@ -120,6 +120,66 @@ fn body(ui: &mut Ui, state: &mut State, target: &str, live_setup: Option<&str>, 
     } else if state.op_ui.src_kind != 2 {
         ui.label("Whole stock contour (default) - picks bound the operation.");
     }
+    let sketches = camcraft_app::sketch::placed_in(&state.world, live_setup);
+    if !sketches.is_empty() {
+        crate::frame_cost::time("ui/properties.op.picks.sketch_layers", || {
+            sketch_layer_picks(ui, state, target, &sketches);
+        });
+    }
+}
+
+fn sketch_layer_picks(ui: &mut Ui, state: &mut State, target: &str, sketches: &[String]) {
+    let groups = crate::sketch_memo::sketch_layers(&state.world, sketches);
+    if groups.is_empty() {
+        return;
+    }
+    ui.add_space(4.0);
+    for group in groups.iter() {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(format!("Sketch '{}' layers:", group.entity));
+            for entry in &group.layers {
+                let sel = GeoSel {
+                    entity: group.entity.clone(),
+                    feature: FeatureSel::SketchLayer(entry.layer.clone()),
+                };
+                let picked = state.op_ui.src_kind == 2 && state.op_ui.geo.contains(&sel);
+                let resp = ui
+                    .selectable_label(picked, &entry.label)
+                    .on_hover_text("Toggle all cuttable chains on this DXF sketch layer");
+                if resp.hovered() {
+                    state.geo_hover = Some(sel.clone());
+                }
+                if resp.clicked() {
+                    let mut items = if state.op_ui.src_kind == 2 {
+                        state.op_ui.geo.clone()
+                    } else {
+                        Vec::new()
+                    };
+                    if let Some(idx) = items.iter().position(|g| *g == sel) {
+                        items.remove(idx);
+                    } else {
+                        items.push(sel);
+                    }
+                    if items.is_empty() {
+                        state.op_ui.geo.clear();
+                        state.op_ui.src_kind = 0;
+                        state.pending.push_back(CommandKind::EditOperationLinks {
+                            name: target.to_owned(),
+                            tool: None,
+                            src: Some(SrcRef::Stock),
+                        });
+                    } else {
+                        state.op_ui.geo = items.clone();
+                        state.op_ui.src_kind = 2;
+                        state.pending.push_back(CommandKind::SetOperationGeometry {
+                            name: target.to_owned(),
+                            items,
+                        });
+                    }
+                }
+            }
+        });
+    }
 }
 
 /// The picked features, one chip each: hovering lights the feature in
@@ -129,17 +189,17 @@ fn chips(ui: &mut Ui, state: &mut State, target: &str, pal: &Tokens) {
     let chips: Vec<(String, bool, GeoSel)> =
         state.geo_chips().into_iter().map(|c| (c.label, c.missing, c.sel)).collect();
     for (i, (label, missing, sel)) in chips.into_iter().enumerate() {
-        let vertex = match sel.feature {
-            FeatureSel::Vertex(id) if !missing => Some((sel.entity.clone(), id)),
+        let vertex = match &sel.feature {
+            FeatureSel::Vertex(id) if !missing => Some((sel.entity.clone(), *id)),
             _ => None,
         };
         // A picked face (or welded curved wall) offers its centroid; a
         // flat one also offers Z only. The targets are the app's to say.
-        let face = match sel.feature {
+        let face = match &sel.feature {
             FeatureSel::Face(_) | FeatureSel::Patch(_) if !missing => {
-                camcraft_app::pick::face_origin(&state.world, &sel.entity, sel.feature)
+                camcraft_app::pick::face_origin(&state.world, &sel.entity, sel.feature.clone())
                     .ok()
-                    .map(|t| (sel.entity.clone(), sel.feature, t))
+                    .map(|t| (sel.entity.clone(), sel.feature.clone(), t))
             }
             _ => None,
         };
@@ -162,7 +222,7 @@ fn chips(ui: &mut Ui, state: &mut State, target: &str, pal: &Tokens) {
                         "set the work origin at this curved face's centroid (a full bore: its axis at mid-height)"
                     };
                     if ui.small_button("Set origin").on_hover_text(tip).clicked() {
-                        crate::vertex_pick::queue_origin_at_face(state, entity, *feat, false);
+                        crate::vertex_pick::queue_origin_at_face(state, entity, feat.clone(), false);
                     }
                     if t.plane_z.is_some()
                         && ui
@@ -170,7 +230,7 @@ fn chips(ui: &mut Ui, state: &mut State, target: &str, pal: &Tokens) {
                             .on_hover_text("keep the origin's X and Y; move Z to this flat face")
                             .clicked()
                     {
-                        crate::vertex_pick::queue_origin_at_face(state, entity, *feat, true);
+                        crate::vertex_pick::queue_origin_at_face(state, entity, feat.clone(), true);
                     }
                 }
                 // The label takes the width left and is shortened to fit
@@ -190,7 +250,7 @@ fn chips(ui: &mut Ui, state: &mut State, target: &str, pal: &Tokens) {
             });
         // #1519: the viewport pointer over this pick's face, chain or vertex
         // marks its row (an outline in the hover ink); gone with the pointer.
-        if state.hover.as_ref().is_some_and(|h| h.entity == sel.entity && h.feature == Some(sel.feature)) {
+        if state.hover.as_ref().is_some_and(|h| h.entity == sel.entity && h.feature.as_ref() == Some(&sel.feature)) {
             let ink = pal.selection_stroke;
             let r = pal.radius_widget.min(clamp::RADIUS);
             let w = clamp::range(pal.highlight_stroke_px, clamp::STROKE);

@@ -1,0 +1,3 @@
+kinds = ["Facing", "Profile Rough", "Profile Finish", "Groove Finish", "Threading", "Parting"]
+machine = "Lathe"
+expect = "post"

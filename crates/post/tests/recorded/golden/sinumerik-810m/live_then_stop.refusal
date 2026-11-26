@@ -1,0 +1,3 @@
+; sinumerik-810m.cps refused live_then_stop: 2 warning(s), the program is never released
+warning: operation Cross drill: is C-axis live-tool work (the spindle turns as C under a radial live tool), but this post script does not declare liveTooling - use a lathe post that voices the C axis
+warning: machine TESTBENCH MILL-TURN LIVE does not state its safe Z retract - Sinumerik 810M lifts Z with G0 G53 Z<safe_retract> D0 before tool changes and at end

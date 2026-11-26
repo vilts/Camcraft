@@ -100,6 +100,7 @@ fn floor_pick_on(world: &World, on: &str) -> SrcRef {
 /// top to `bottom`.
 fn circular(bottom: f64) -> OpParams {
     OpParams::Circular {
+        pass_start: Default::default(),
         links: camcraft_app::links::Links::PLANAR,
         center: Point2::new(0.0, 0.0),
         radius: R,
@@ -117,6 +118,7 @@ fn circular(bottom: f64) -> OpParams {
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
         tilt: None,
+        picks: Default::default(),
     }
 }
 

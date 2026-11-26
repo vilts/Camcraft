@@ -415,7 +415,7 @@ pub(super) fn tip_of(c: Cmd, state: &State) -> String {
                     let f = camcraft_app::operation::KindInfo::ALL[i].family();
                     let (fword, mword) = (f.work(), f.machine());
                     // #670: plasma work has no mill-turn to fall back on.
-                    let or_mt = if matches!(f, camcraft_app::operation::Family::Plasma | camcraft_app::operation::Family::WireEdm | camcraft_app::operation::Family::Sinker) { "" } else { " or a mill-turn" };
+                    let or_mt = if matches!(f, camcraft_app::operation::Family::Plasma | camcraft_app::operation::Family::WireEdm | camcraft_app::operation::Family::Sinker | camcraft_app::operation::Family::Waterjet) { "" } else { " or a mill-turn" };
                     format!(
                         "The document's machine is a {} - {fword} operations do not drive it; mount a {mword}{or_mt} (Setup > Machine)",
                         machine.word()
@@ -531,7 +531,7 @@ fn gate_note(c: Cmd, state: &State) -> Option<String> {
         Some(k) => {
             let f = k.family();
             let (fword, mword) = (f.work(), f.machine());
-            let or_mt = if matches!(f, camcraft_app::operation::Family::Plasma | camcraft_app::operation::Family::WireEdm | camcraft_app::operation::Family::Sinker) { "" } else { " or a mill-turn" };
+            let or_mt = if matches!(f, camcraft_app::operation::Family::Plasma | camcraft_app::operation::Family::WireEdm | camcraft_app::operation::Family::Sinker | camcraft_app::operation::Family::Waterjet) { "" } else { " or a mill-turn" };
             Some(format!(
                 "cannot add a {} operation: {fword} operations do not drive the document's {} - mount a {mword}{or_mt} (Setup > Machine)",
                 k.label,
@@ -707,6 +707,8 @@ pub(super) fn icon_of(c: Cmd, state: &State) -> Option<Icon> {
             // #541: the sinker burns straight down - the drill's glyph
             // (no new asset).
             operation::Section::Sinker => Icon::Drill,
+            // #1883: the waterjet section wears its op's own glyph.
+            operation::Section::Waterjet => Icon::WaterjetProfile,
         }),
         // The machine door wears its workspace's glyph (#207), from the
         // existing set: the face mill for Milling, the turned bar for
@@ -788,6 +790,7 @@ fn run_cmd(c: Cmd, state: &mut State) {
             state.ribbon_mode_open = false;
             state.ribbon_view_open = false;
             state.ribbon_theme_open = false;
+            state.ribbon_settings_open = false;
         }
         Cmd::Machine => {
             state.ribbon_mode_open = !state.ribbon_mode_open;
@@ -796,6 +799,7 @@ fn run_cmd(c: Cmd, state: &mut State) {
                 state.ribbon_more = None;
                 state.ribbon_view_open = false;
                 state.ribbon_theme_open = false;
+                state.ribbon_settings_open = false;
             }
         }
         // Same door law; the dock itself is the shell's (layout.rs).
@@ -806,6 +810,7 @@ fn run_cmd(c: Cmd, state: &mut State) {
                 state.ribbon_more = None;
                 state.ribbon_mode_open = false;
                 state.ribbon_theme_open = false;
+                state.ribbon_settings_open = false;
             }
         }
         Cmd::Theme => {
@@ -815,6 +820,7 @@ fn run_cmd(c: Cmd, state: &mut State) {
                 state.ribbon_more = None;
                 state.ribbon_mode_open = false;
                 state.ribbon_view_open = false;
+                state.ribbon_settings_open = false;
             }
         }
     }
@@ -1064,7 +1070,7 @@ pub(super) fn ribbon_cells(strip: Rect, pal: &Tokens, plan: &[Group]) -> RibbonG
 /// never a second switch. A document whose machine has no mode row
 /// (an imported wire-EDM machine) leaves every tab inactive; the mode
 /// switch still works, and the status line names the mounted kind.
-fn ribbon_tabs(ui: &mut Ui, state: &mut State, pal: &Tokens, strip: Rect, band: Rect) {
+fn ribbon_tabs(ui: &mut Ui, state: &mut State, pal: &Tokens, strip: Rect, band: Rect) -> f32 {
     ui.painter().rect_filled(band, 0.0, pal.ink);
     ui.painter().line_segment(
         [
@@ -1128,6 +1134,7 @@ fn ribbon_tabs(ui: &mut Ui, state: &mut State, pal: &Tokens, strip: Rect, band: 
         }
         x += w + pal.ribbon_tab_gap;
     }
+    x
 }
 
 /// The ribbon strip: painted cells over a fixed-height top panel. Group
@@ -1151,8 +1158,19 @@ pub fn ribbon(
         rect.min,
         egui::Pos2::new(rect.right(), rect.top() + pal.ribbon_tab_h),
     );
-    ribbon_tabs(ui, state, pal, rect, band);
-    super::donate::draw(ui, state, pal, icons, band);
+    let tabs_right = ribbon_tabs(ui, state, pal, rect, band);
+    let donate_left = super::donate::draw(ui, state, pal, icons, band);
+    let home_left = super::home::button(ui, state, pal, icons, band, donate_left - pal.item_spacing_x);
+    let (settings_left, settings_rect) =
+        super::settings_drop::button(ui, state, pal, band, home_left - pal.item_spacing_x);
+    super::update_notice::draw(
+        ui,
+        state,
+        pal,
+        band,
+        tabs_right + pal.item_spacing_x,
+        settings_left - pal.item_spacing_x,
+    );
     let body = Rect::from_min_max(egui::Pos2::new(rect.left(), band.bottom()), rect.max);
     // The plan is read fresh every frame from the two facts it is a
     // function of - the document's machine and its pins (M6.2). No
@@ -1502,6 +1520,10 @@ pub fn ribbon(
     }
     // The recent-files lists under Open and Model (#662): recent_drop.rs.
     super::recent_drop::draw(ui, state, pal, base.with("recent-drop"), &cells, body);
+    // #2428: top-band Settings dropdown for per-user prefs.json toggles.
+    if state.ribbon_settings_open {
+        super::settings_drop::show(ui, state, pal, base.with("settings-drop"), settings_rect, rect);
+    }
     // The source/build label is the rightmost toolbar item. At small window
     // widths it contracts to version plus source, then version alone; the
     // full text remains available on hover.
@@ -1612,6 +1634,12 @@ pub fn status(ui: &mut Ui, state: &mut State, pal: &Tokens, icons: Option<&IconS
                 // #2262: a dock tab like the other panels; the shell lands it.
                 state.layout_request = Some(crate::state::LayoutRequest::ToggleDebugInfo);
             }
+            // #1696: the Report door, next to it - opens the window that
+            // fills GitHub's new-issue form in (the forms' promised
+            // in-app "Report an Issue").
+            if super::report::button(ui, icons).clicked() {
+                state.report_open = !state.report_open;
+            }
             // #183: the live MCP server says it is listening.
             if let Some(note) = crate::mcp_host::badge(state) {
                 ui.label(RichText::new(note).color(pal.text_faint).small());
@@ -1625,7 +1653,7 @@ pub fn status(ui: &mut Ui, state: &mut State, pal: &Tokens, icons: Option<&IconS
             // #2262: placed before the status line, which fills what is
             // left; behind it the label ran past the line onto the door.
             if ops_n > 0 {
-                ui.label(RichText::new(format!("{ops_n} Operations")).color(pal.text_faint).small());
+                ui.label(RichText::new(super::browser_tree::count(ops_n, "Operation")).color(pal.text_faint).small());
             }
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                 ui.add(Label::new(line).selectable(true).truncate())

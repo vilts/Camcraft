@@ -15,7 +15,9 @@
 //! Gate map (#1840): covers camcraft_motion::finishing3d (scan, rings, raster).
 
 use camcraft_motion::cl::{MoveKind, Toolpath};
-use camcraft_motion::finishing3d::{parallel, waterline, Finish3DParams, FinishPattern};
+use camcraft_motion::finishing3d::{
+    parallel, waterline, Finish3DParams, FinishPattern, GapLink,
+};
 use camcraft_motion::geometry::{Point3, Triangle};
 use camcraft_sim::stock_sim::{dist_seg_tri, Backend, SimOp, Stock, DEV_TOL};
 
@@ -33,6 +35,7 @@ fn params(pattern: FinishPattern, clearance_z: f64, top_z: f64, bottom_z: f64) -
         tolerance: 0.05,
         clearance_z,
         retract_z: None,
+        gap_link: GapLink::Jump,
         top_z,
         bottom_z,
         feed: 500.0,
@@ -44,6 +47,7 @@ fn params(pattern: FinishPattern, clearance_z: f64, top_z: f64, bottom_z: f64) -
         entry_ramp: false,
         steep_stepover: None,
         pencil_reference: None,
+        waterlines: true,
     }
 }
 

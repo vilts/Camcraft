@@ -48,7 +48,9 @@ pub struct TurnDrag {
     pub center: [f64; 3],
     /// The in-plane angle under the cursor at the last motion, radians.
     pub last: f64,
-    /// The signed turn so far, radians (unwrapped: may pass 180 degrees).
+    /// Unsnapped cumulative turn so far, radians (keeps Shift toggle smooth).
+    pub raw_angle: f64,
+    /// The signed turn so far (possibly snapped), radians (unwrapped: may pass 180 degrees).
     pub angle: f64,
 }
 
@@ -181,33 +183,87 @@ pub(crate) fn hold_radius(state: &State, center: [f64; 3]) -> Option<f64> {
     r.is_finite().then_some(r)
 }
 
+/// A ring seen within three degrees of its plane cannot give a stable turn.
+pub(crate) fn ring_enabled(state: &State, center: [f64; 3], axis: usize) -> bool {
+    let Some(normal) = AXES.get(axis) else { return false };
+    let Some(aspect) = aspect(state) else { return false };
+    let Some(uv) = project_uv(&state.cam.mvp(aspect), center) else { return false };
+    let Some((_, direction)) = ray_at(state, to_px(state, uv)) else { return false };
+    let (dn, dd) = (dot(direction, *normal), dot(direction, direction));
+    dd > 1e-24 && dn * dn >= move_drag::END_ON_SIN2 * dd
+}
+
+pub(crate) fn edge_on_hint(axis: usize) -> String {
+    format!("Orbit the view to turn about {}", ["X", "Y", "Z"].get(axis).copied().unwrap_or("the axis"))
+}
+
+/// Snap `raw_rad` to the nearest multiple of `step_deg` degrees.
+#[must_use]
+pub(crate) fn snap_angle_rad(raw_rad: f64, step_deg: f64) -> f64 {
+    if !raw_rad.is_finite() || !step_deg.is_finite() || step_deg <= 0.0 {
+        return raw_rad;
+    }
+    let out = crate::egui_app::viewport_bar::controls::snap_step(raw_rad.to_degrees(), step_deg).to_radians();
+    if out.is_finite() { out } else { raw_rad }
+}
+
 /// A left press at `p`: a ring under it starts a turn and the press is
 /// taken (true) - the ring wins over orbit and pick. Elsewhere: false.
 pub(crate) fn press(state: &mut State, p: [f32; 2]) -> bool {
     let Some((axis, ring_phi)) = ring_hit(&rings_px(state), p) else { return false };
     let Some(r) = rings(state) else { return false };
-    // The plane hit when the ring faces the eye; the ring point under the
-    // cursor when it stands edge-on (always defined).
+    if !ring_enabled(state, r.center, axis) {
+        state.status = edge_on_hint(axis);
+        return true;
+    }
+    // A usable plane supplies the angle; the nearest ring point handles
+    // a press within the hit tolerance of the pivot.
     let min_r = hold_radius(state, r.center).unwrap_or(f64::INFINITY);
     let last = plane_angle(state, p, r.center, axis, min_r).unwrap_or(ring_phi);
-    state.body_turn = Some(TurnDrag { name: r.name, axis, center: r.center, last, angle: 0.0 });
+    state.body_turn = Some(TurnDrag { name: r.name, axis, center: r.center, last, raw_angle: 0.0, angle: 0.0 });
+    crate::egui_app::viewport_bar::controls::sync_turn_drag(state, axis, 0.0);
     true
 }
 
-/// The pointer moved to `p` during a turn: the preview follows, unwrapped
-/// so a drag round past half a turn keeps counting.
+/// The pointer moved to `p` during a turn (without Shift snapping).
+#[cfg(test)]
 pub(crate) fn motion(state: &mut State, p: [f32; 2]) {
+    motion_snapped(state, p, false);
+}
+
+/// The pointer moved to `p` during a turn: the preview follows, unwrapped
+/// so a drag round past half a turn keeps counting, snapped to
+/// `state.handle_bar.rotate_snap_deg` when `snap` is true.
+pub(crate) fn motion_snapped(state: &mut State, p: [f32; 2], snap: bool) {
     let Some(d) = state.body_turn.clone() else { return };
     let Some(min_r) = hold_radius(state, d.center) else { return };
-    if let Some(a) = plane_angle(state, p, d.center, d.axis, min_r)
+    if let Some(a) = plane_angle(state, p, d.center, d.axis, min_r) {
+        let step = (a - d.last + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
+        let raw = d.raw_angle + step;
+        if step.is_finite() && raw.is_finite() {
+            let angle = if snap { snap_angle_rad(raw, state.handle_bar.rotate_snap_deg) } else { raw };
+            if angle.is_finite()
+                && let Some(live) = state.body_turn.as_mut()
+            {
+                live.raw_angle = raw;
+                live.last = a;
+                live.angle = angle;
+            }
+            crate::egui_app::viewport_bar::controls::sync_turn_drag(state, d.axis, angle);
+        }
+    }
+}
+
+/// Re-evaluate snapping on a held turn when Shift changes without motion.
+pub(crate) fn resnap(state: &mut State, snap: bool) {
+    let Some(d) = state.body_turn.clone() else { return };
+    let next = if snap { snap_angle_rad(d.raw_angle, state.handle_bar.rotate_snap_deg) } else { d.raw_angle };
+    if next != d.angle
+        && next.is_finite()
         && let Some(live) = state.body_turn.as_mut()
     {
-        let step = (a - d.last + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU) - std::f64::consts::PI;
-        let next = d.angle + step;
-        if step.is_finite() && next.is_finite() {
-            live.angle = next;
-            live.last = a;
-        }
+        live.angle = next;
+        crate::egui_app::viewport_bar::controls::sync_turn_drag(state, d.axis, next);
     }
 }
 
@@ -215,13 +271,20 @@ pub(crate) fn motion(state: &mut State, p: [f32; 2]) {
 pub(crate) fn release(state: &mut State) {
     let Some(d) = state.body_turn.take() else { return };
     if d.angle.is_finite() && d.angle.abs() > MIN_TURN_RAD {
+        crate::egui_app::viewport_bar::controls::sync_turn_drag(state, d.axis, d.angle);
         state.pending.push_back(CommandKind::TurnModelBy { name: d.name, axis: d.axis, angle_rad: d.angle });
+    } else {
+        crate::egui_app::viewport_bar::controls::clear_live_draft(state, false);
     }
 }
 
 /// Escape: drop the turn, queue nothing. True when there was one.
 pub(crate) fn cancel(state: &mut State) -> bool {
-    state.body_turn.take().is_some()
+    let had = state.body_turn.take().is_some();
+    if had {
+        crate::egui_app::viewport_bar::controls::clear_live_draft(state, false);
+    }
+    had
 }
 
 /// The shown-frame rigid turn by `angle` about `axis` through `center`.

@@ -125,3 +125,15 @@ fn the_slot_keeps_its_verdict_under_sub_micron_perturbations() {
         assert_lifted_within_the_load(&format!("the slot {nm} nm wider"), &reach, &pl);
     }
 }
+
+/// The light twin of the sweep above (#2569): one row of each kind, both
+/// rows that dropped the lifted plan before the #982 fix. It runs at
+/// review and merge time (`cargo xtask gate light`). The full sweep keeps
+/// the 20 rows; when this twin is red, run the full sweep in release.
+#[test]
+#[ignore = "light lane: release --ignored (the slot planned 2 times, ~5 s each in release); the full test is the_slot_keeps_its_verdict_under_sub_micron_perturbations"]
+fn the_slot_keeps_its_verdict_under_sub_micron_perturbations_light() {
+    let (reach, pl) = perturbed_slot(180.0 * 1e-6, 0.0);
+    assert_lifted_within_the_load("the opening 180 nm deeper", &reach, &pl);
+    let (reach, pl) = perturbed_slot(0.0, -125.0 * 1e-6);
+    assert_lifted_within_the_load("the slot -125 nm wider", &reach, &pl);}

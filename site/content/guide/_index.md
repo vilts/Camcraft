@@ -20,6 +20,9 @@ re-posting) see [Common workflows](@/guide/getting-started/workflows.md).
 [Tools and tool libraries](@/guide/set-up/tools.md) covers tool creation, holders,
 modular bodies, controller numbers, and library import and export.
 
+[Use AI with CamCraft](@/guide/automate/ai.md) explains provider setup,
+external agents, worked CAM tasks, turn undo and posting confirmation.
+
 The [glossary](@/guide/reference/glossary.md) defines the terms CamCraft uses, such as
 setup, work offset, stale, gouge and refusal, and links each to its page.
 

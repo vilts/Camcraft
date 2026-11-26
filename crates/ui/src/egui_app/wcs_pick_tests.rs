@@ -116,14 +116,14 @@ fn the_row_arms_a_draft_and_keeps_the_toolbars_pick_mode() {
     assert!(h.state().pending.is_empty(), "drawing the row queues nothing");
     h.state_mut().geo_pick = GeoPick::Vertex;
     h.run();
-    h.get_by_label("Pick for WCS").click();
+    h.get_by_label("Pick Z axis").click();
     h.run();
     let d = h.state().wcs_pick.clone().expect("the draft is armed");
     assert!(d.picking && d.setup == "Setup1", "{d:?}");
     assert_eq!(d.role, Role::Z, "the first pick defaults to Z");
     assert!(d.picks.is_empty());
     assert_eq!(h.state().geo_pick, GeoPick::Vertex, "arming keeps the toolbar's mode");
-    h.get_by_label("Stop picking").click();
+    h.get_by_label("Clear").click();
     h.run();
     assert!(h.state().wcs_pick.is_none(), "stop drops the draft");
 }
@@ -132,7 +132,7 @@ fn the_row_arms_a_draft_and_keeps_the_toolbars_pick_mode() {
 fn role_picks_land_in_the_draft_and_apply_queues_one_undoable_setwcs() {
     let mut h = Harness::builder().with_size(Vec2::new(900.0, 300.0)).build_ui_state(frame, with_part());
     h.run();
-    h.get_by_label("Pick for WCS").click();
+    h.get_by_label("Pick Z axis").click();
     h.run();
     let top = top_face(h.state());
     crate::wcs_pick::take(h.state_mut(), top.clone());
@@ -171,7 +171,7 @@ fn an_incomplete_frame_greys_apply_and_shows_the_apps_why() {
     // ones the command itself would give.
     let mut h = Harness::builder().with_size(Vec2::new(900.0, 300.0)).build_ui_state(frame, with_part());
     h.run();
-    h.get_by_label("Pick for WCS").click();
+    h.get_by_label("Pick Z axis").click();
     h.run();
     assert!(apply_disabled(&h), "nothing picked yet");
     let top = top_face(h.state());
@@ -198,7 +198,7 @@ fn the_row_on_an_inactive_setup_cannot_move_another_setups_work_zero() {
     run(&mut state, CommandKind::ActivateSetup(Some("Setup1".into())));
     let mut h = Harness::builder().with_size(Vec2::new(900.0, 300.0)).build_ui_state(frame_setup2, state);
     h.run();
-    h.get_by_label("Pick for WCS").click();
+    h.get_by_label("Pick Z axis").click();
     h.run();
     let d = h.state().wcs_pick.clone().expect("Setup2's row arms a Setup2 draft");
     assert_eq!(d.setup, "Setup2", "{d:?}");
@@ -217,7 +217,7 @@ fn the_row_on_an_inactive_setup_cannot_move_another_setups_work_zero() {
     h.hover_at(apply.rect().center());
     h.run();
     assert!(
-        h.query_by_label_contains("Make Setup2 the active setup").is_some(),
+        h.query_all_by_label_contains("Make Setup2 the active setup").next().is_some(),
         "the greyed Apply says to make the row's own setup active"
     );
     // Make the row's setup active and the same frame places ITS own WCS,
@@ -312,25 +312,19 @@ fn picked_items_never_show_hex_ids_and_keep_one_name_across_pages() {
     let mut wcs_names = Vec::new();
     for pick in [top.clone(), wall.clone(), rim.clone(), pt.clone(), stock_top] {
         // 1. WCS page pick + status line.
-        h.get_by_label("Pick for WCS").click();
-        h.run();
-        crate::wcs_pick::take(h.state_mut(), pick.clone());
-        h.run();
+        for (role, label) in [(Role::Origin, "Pick origin"), (Role::X, "Pick X axis"),
+                              (Role::Y, "Pick Y axis"), (Role::Z, "Pick Z axis")] {
+            h.get_by_label(label).click();
+            h.run();
+            crate::wcs_pick::take(h.state_mut(), pick.clone());
+            h.run();
+            let draft = h.state().wcs_pick.as_ref().expect("armed");
+            assert!(draft.picks.contains(&(pick.clone(), role)), "{label} takes this feature kind");
+        }
         assert!(!h.state().status.contains("0x"), "status leaked hex id: {}", h.state().status);
         assert!(h.query_all_by_label_contains("0x").next().is_none(), "WCS row leaked hex id");
-        let picked_line = h
-            .query_by_label_contains("Picked: ")
-            .and_then(|n| n.accesskit_node().value().or_else(|| n.accesskit_node().label()))
-            .expect("Picked line");
-        assert!(!picked_line.contains("0x"), "Picked line leaked hex id: {picked_line}");
-        let wcs_item = picked_line
-            .strip_prefix("      Picked: ")
-            .unwrap_or(&picked_line)
-            .split(" sets ")
-            .next()
-            .expect("item before sets")
-            .to_owned();
-        assert!(!wcs_item.contains("nothing"), "{picked_line}");
+        let wcs_item = camcraft_app::pick::geo_label(&h.state().world, &pick);
+        assert_eq!(h.query_all_by_label(&wcs_item).count(), 4, "each row shows the feature name");
         wcs_names.push(wcs_item.clone());
 
         // 2. Geometry tab chip reads the exact same item name.
@@ -348,7 +342,7 @@ fn picked_items_never_show_hex_ids_and_keep_one_name_across_pages() {
         h.run();
         let chips_again = h.state().geo_chips();
         assert_eq!(chips_again[0].label, chips[0].label);
-        h.get_by_label("Stop picking").click();
+        h.get_by_label("Clear").click();
         h.run();
     }
     let top_wcs_name = wcs_names[0].clone();

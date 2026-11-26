@@ -26,7 +26,7 @@
 //! circle. No vendor material consulted.
 
 use super::*;
-use super::boundary_turn::{sides_of_chain, snap_turn};
+use super::boundary_turn::{grow_apart, sides_of_chain, snap_turn};
 
 /// Below this (mm^2) an area is nothing - the island law's noise floor.
 const AREA_EPS: f64 = 1e-4;
@@ -138,7 +138,7 @@ fn check(r: Region, step: &str) -> Result<Region, GenError> {
     Ok(r)
 }
 
-fn grow(r: &Region, d: f64, corner: CornerStyle) -> Result<Region, GenError> {
+pub(super) fn grow(r: &Region, d: f64, corner: CornerStyle) -> Result<Region, GenError> {
     if d == 0.0 {
         return Ok(r.clone());
     }
@@ -210,6 +210,7 @@ pub(super) fn resolve(base: Region, ctx: &AreaCtx) -> Result<AreaApplied, GenErr
     let mut turn = 0.0;
     // 1. Open (or closed) user boundary.
     let mut far_side: Option<Region> = None;
+    let mut outer: Option<Region> = None;
     let mut area = match &ctx.open {
         None => base,
         Some((geom, side)) => {
@@ -248,6 +249,7 @@ pub(super) fn resolve(base: Region, ctx: &AreaCtx) -> Result<AreaApplied, GenErr
                 }
                 OpenGeom::Ring(ring) => (reach.intersect(ring)?, reach.difference(ring)?, None, None),
             };
+            outer = Some(reach);
             // Separate chains name their Inside themselves (between them).
             let left_inside = laid.is_some() || pick_side_left(&base, &left, &right)?;
             let keep_left = (*side == ChainSide::Inside) == left_inside;
@@ -264,8 +266,12 @@ pub(super) fn resolve(base: Region, ctx: &AreaCtx) -> Result<AreaApplied, GenErr
             check(keep, "open boundary (the chosen side holds no stock)")?
         }
     };
-    // 2. Offset.
-    area = check(grow(&area, c.offset, c.corner)?, "boundary offset")?;
+    // 2. Offset: the picked line by `offset`, an open boundary's outer
+    //    line by `outer_offset` (#3338); one value is the old law.
+    area = match &outer {
+        Some(reach) if c.outer_offset != c.offset => check(grow_apart(&area, reach, c.offset, c.outer_offset, c.corner)?, "outer boundary offset")?,
+        _ => check(grow(&area, c.offset, c.corner)?, "boundary offset")?,
+    };
     if let Some(f) = &mut far_side {
         *f = grow(f, -c.offset, c.corner)?;
     }
@@ -352,7 +358,7 @@ pub(super) fn resolve(base: Region, ctx: &AreaCtx) -> Result<AreaApplied, GenErr
     if !rides(ctx.family) {
         area = check(excludes(area)?, "exclude boundaries")?;
     }
-    if matches!(ctx.family, Family::Face | Family::Finish) {
+    if matches!(ctx.family, Family::Face | Family::Finish | Family::Clearing) {
         if let Some(f) = far_side {
             forbidden.push(("the far side of the open boundary", f));
         }
@@ -361,7 +367,9 @@ pub(super) fn resolve(base: Region, ctx: &AreaCtx) -> Result<AreaApplied, GenErr
                 forbidden.push(("an exclude boundary", b.clone()));
             }
         }
-        if let Some(b) = &ctx.blocked {
+        if matches!(ctx.family, Family::Face | Family::Finish)
+            && let Some(b) = &ctx.blocked
+        {
             forbidden.push(("part material standing above Cut Z", b.clone()));
         }
     }

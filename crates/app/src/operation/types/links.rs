@@ -45,6 +45,15 @@ impl OpParams {
         }
     }
 
+    /// The stepdown this op's depth ladder walks between `top` and
+    /// `bottom` (#2012): the generator's own reading of the ladder mode,
+    /// so a region built at the ladder's planes meets the planes cut. A
+    /// kind without links keeps `stepdown`.
+    #[must_use]
+    pub fn ladder_stepdown(&self, top: f64, bottom: f64, stepdown: f64) -> f64 {
+        self.links().map_or(stepdown, |l| crate::machining2d::ladder_stepdown(&l.approach, top, bottom, stepdown))
+    }
+
     /// The links a kind posted before M11.2 - what a file without the
     /// key means and what the stamp and the file leave unwritten: the
     /// 3-D ladder's pass links have always stayed down where proved, the

@@ -106,6 +106,21 @@ pub fn resolve_pitch(t: &Tool, stated: Option<f64>) -> Result<f64, String> {
     }
 }
 
+/// #3662: a stored single-form record whose file states no finest pitch
+/// (the key left out) reads as a range of its one stated pitch.
+/// A converter that reads only the tooth knows the pitch the tooth is
+/// ground for, not the finest pitch its tip can cut. So the operation
+/// cuts that one pitch and refuses every other pitch by name: the reader
+/// states the narrowest range, never a wider one. Every other record,
+/// and a single-form that states a range, is left as it is. The file
+/// readers call it only when the key is absent; a stated 0, and an
+/// in-memory edit with no range, stay refused by the sanity law.
+pub fn read_unstated_range(t: &mut Tool) {
+    if t.kind == ToolKind::ThreadMillSingle && t.pitch_min == 0.0 {
+        t.pitch_min = t.pitch;
+    }
+}
+
 /// The form door: the operation cuts the 60-degree profile, so a mill
 /// ground to another angle (55-degree Whitworth, 30-degree trapezoidal)
 /// is refused by name instead of cutting a wrong flank.
@@ -161,6 +176,9 @@ pub fn thread_mill(d: f64, pitch: f64, pitch_min: f64, cutting_len: f64) -> Tool
         catalog: crate::catalog_fields::ToolCatalog::default(),
         cutting: Vec::new(),
         outline: Vec::new(),
+        tip_form: Default::default(),
+        tip_diameter: 0.0,
+        form: None,
     }
 }
 
@@ -208,6 +226,25 @@ mod tests {
         // Another kind never reads as a thread mill.
         let tap = Tool { kind: ToolKind::Tap, ..multi };
         assert!(resolve_pitch(&tap, None).unwrap_err().contains("not a thread mill"));
+    }
+
+    #[test]
+    fn an_unstated_range_reads_as_the_one_stated_pitch() {
+        let mut t = Tool { pitch_min: 0.0, ..thread_mill(6.0, 1.5, 0.5, 2.0) };
+        assert!(!t.is_sane(), "in memory, no range is still refused");
+        read_unstated_range(&mut t);
+        assert_eq!(t.pitch_min, 1.5);
+        assert!(t.is_sane());
+        assert_eq!(resolve_pitch(&t, Some(1.5)), Ok(1.5));
+        assert!(resolve_pitch(&t, Some(1.0)).unwrap_err().contains("outside"), "a finer pitch is refused");
+        assert!(resolve_pitch(&t, Some(2.0)).unwrap_err().contains("outside"), "a coarser pitch is refused");
+        // A stated range and every other kind stay as they are.
+        let mut ranged = thread_mill(6.0, 1.5, 0.5, 2.0);
+        read_unstated_range(&mut ranged);
+        assert_eq!(ranged.pitch_min, 0.5);
+        let mut multi = thread_mill(8.0, 1.5, 0.0, 12.0);
+        read_unstated_range(&mut multi);
+        assert_eq!(multi.pitch_min, 0.0);
     }
 
     #[test]

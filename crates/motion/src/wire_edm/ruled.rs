@@ -36,9 +36,10 @@
 //! D7 and #536's pose and kerf readings. Our own code; no vendor post,
 //! control manual or CAM product behaviour was consulted.
 
+use super::laws::UncutRest;
 use super::pairing::{pair, Anchor, Ring};
 use super::ruled_laws::{clearance, crossing, folds, lean_law, Ruling, MAX_RULINGS};
-use super::{laws, notes, ring, ruled_widen, start_side, WireParams, MIN_LEAD};
+use super::{laws, notes, preimage, ring, ruled_widen, start_side, WireParams, MIN_LEAD};
 use crate::cl::{MoveKind, PathBuilder, Toolpath};
 use crate::geo2d::{Loop, Point2, Region};
 use crate::geometry::Point3;
@@ -117,6 +118,10 @@ pub struct WireRuled {
     /// The most (mm) the wire may stand off the profiles past the kerf
     /// offset to keep clear of a twisted surface.
     pub tolerance: f64,
+    /// The most (mm) uncut corner or slot rest past the kerf offset
+    /// accepted when healing tight 2D inside features; `0.0` enforces
+    /// the strict cover law (`COVER_TOL`).
+    pub heal_tolerance: f64,
     /// Where the widening stands: per ruling, or uniform.
     pub widening: WireWidening,
     /// The machine's stated maximum taper, degrees; `None` = not stated.
@@ -201,6 +206,9 @@ pub fn wire_contour_ruled(upper: WireProfile<'_>, lower: WireProfile<'_>, p: &Wi
     if !(r.tolerance.is_finite() && r.tolerance >= 0.0) {
         return Err(invalid(format!("the 4-axis tolerance {} is not zero or more", r.tolerance)));
     }
+    if !(r.heal_tolerance.is_finite() && r.heal_tolerance >= 0.0) {
+        return Err(invalid(format!("the 4-axis heal tolerance {} is not zero or more", r.heal_tolerance)));
+    }
     let Some(max) = r.max_deg else {
         return Err(invalid(format!(
             "a 4-axis cut leans the wire, and machine {} states no edm.max_taper_deg - a taper is cut only on a machine that states how far it leans",
@@ -242,13 +250,14 @@ pub fn wire_contour_ruled(upper: WireProfile<'_>, lower: WireProfile<'_>, p: &Wi
         let (pu, pl) = (scaled(r.top_z), scaled(z0));
         let ring_u = ring::wire_ring(&region_u, p.side, k * s)?;
         let ring_l = ring::wire_ring(&region_l, p.side, k * s)?;
-        laws::cover(&given_u, &ring_u, &pu)?;
-        laws::cover(&given_l, &ring_l, &pl)?;
+        let rest_u = laws::cover_healed(&given_u, &ring_u, &pu, r.heal_tolerance)?;
+        let rest_l = laws::cover_healed(&given_l, &ring_l, &pl, r.heal_tolerance)?;
+        let uncut = UncutRest::worse(rest_l, rest_u);
         let (Some(wu), Some(wl)) = (Ring::new(&ring_u), Ring::new(&ring_l)) else {
             return Err(invalid("the wire path has collapsed - the profile is too small for the wire".into()));
         };
-        let (seam, lead) = wl.nearest(start, false);
-        let wire = pair(&wu, &wl, &arcs(&pts, &wu, &wl, true), Some(seam))?;
+        let lead = wl.nearest(start, false).1;
+        let wire = preimage::sew(&wu, &wl, [&given_l, &given_u], &pts, start)?.wire;
         if wire.len() > MAX_RULINGS {
             return Err(invalid(format!("the pairing lays {} rulings, more than {MAX_RULINGS} - simplify the profiles", wire.len())));
         }
@@ -286,7 +295,7 @@ pub fn wire_contour_ruled(upper: WireProfile<'_>, lower: WireProfile<'_>, p: &Wi
             k * (s - 1.0),
             r.tolerance
         );
-        return emit(&wire, p, r, start, lead, steepest, held);
+        return emit(&wire, p, r, CutReport { start, lead, steepest, held, given_l: &given_l, given_u: &given_u, uncut });
     }
     Err(invalid(format!("the wire's offset from the paired surface ({rule}) did not settle - refused")))
 }
@@ -320,20 +329,26 @@ pub(super) fn lead_in((short, at): (f64, Point3)) -> GenError {
     )
 }
 
+pub(super) struct CutReport<'a> {
+    pub(super) start: Point2,
+    pub(super) lead: f64,
+    pub(super) steepest: f64,
+    pub(super) held: String,
+    pub(super) given_l: &'a [Point2],
+    pub(super) given_u: &'a [Point2],
+    pub(super) uncut: Option<UncutRest>,
+}
+
 /// The moves: upright at the start hole, each ruling's lower point with
 /// its pose, the first ruling again, and upright back at the hole.
-/// `held` is the note of where the wire stands off the profiles.
 pub(super) fn emit(
     wire: &[Ruling],
     p: &WireParams,
     r: &WireRuled,
-    start: Point2,
-    lead: f64,
-    steepest: f64,
-    held: String,
+    rep: CutReport<'_>,
 ) -> Result<Toolpath, GenError> {
     let (z, h) = (p.plane_z, r.top_z - p.plane_z);
-    let mut b = PathBuilder::new(Point3::new(start.x, start.y, z));
+    let mut b = PathBuilder::new(Point3::new(rep.start.x, rep.start.y, z));
     for (l, u) in wire.iter().chain(wire.first()) {
         let (ux, uy) = (u.x - l.x, u.y - l.y);
         let len = (ux * ux + uy * uy + h * h).sqrt();
@@ -341,20 +356,30 @@ pub(super) fn emit(
         b.push(MoveKind::Feed, Point3::new(l.x, l.y, z), None);
     }
     b.set_axis(Some([0.0, 0.0, 1.0]));
-    b.push(MoveKind::Feed, Point3::new(start.x, start.y, z), None);
+    b.push(MoveKind::Feed, Point3::new(rep.start.x, rep.start.y, z), None);
     let mut path = b.finish();
     if path.moves.len() < 4 {
         return Err(invalid("the wire path lays down no cut".into()));
     }
-    let mut said = notes(p, start, lead);
+    let k = p.kerf_offset();
+    laws::kerf(&path, rep.given_l, true, k, z)?;
+    laws::kerf_ring_with_start(wire.iter().map(|w| w.1), rep.start, rep.given_u, k, r.top_z)?;
+    let mut said = notes(p, rep.start, rep.lead);
     said.pop();
     said.push(format!(
-        "wire EDM: 4-axis - the upper profile on Z{:.3}, the lower on Z{z:.3}, paired {}; {} rulings, the wire leaning at most {steepest:.3} degrees, the moves' poses the wire toward the upper profile; vertical at the start hole; no feed (the control's generator sets the rate)",
+        "wire EDM: 4-axis - the upper profile on Z{:.3}, the lower on Z{z:.3}, paired {}; {} rulings, the wire leaning at most {:.3} degrees, the moves' poses the wire toward the upper profile; vertical at the start hole; no feed (the control's generator sets the rate)",
         r.top_z,
         r.pairing.word(),
-        wire.len()
+        wire.len(),
+        rep.steepest,
     ));
-    said.push(held);
+    said.push(rep.held);
+    if let Some(rest) = rep.uncut {
+        said.push(format!(
+            "wire EDM: 4-axis - tight inside corner or slot healed within heal tolerance {:.4} mm: worst uncut rest {:.4} mm near X{:.3} Y{:.3} Z{:.3}",
+            r.heal_tolerance, rest.depth, rest.at.x, rest.at.y, rest.at.z,
+        ));
+    }
     path.notes.extend(said);
     Ok(path)
 }

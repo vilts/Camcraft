@@ -108,3 +108,35 @@ fn mcp_import_model_opens_a_solidcraft_design() {
     assert_ne!(ok["isError"], json!(true), "{ok}");
     assert_eq!(models(&mut server), 1, "the design landed as one model");
 }
+
+#[test]
+fn solidcraft_extension_routes_to_the_sc_importer_case_insensitively() {
+    for name in ["part.solidcraft", "part.SoLiDcRaFt"] {
+        assert_eq!(import::format_from_path(Path::new(name)).expect("Solidcraft extension alias"), import::Format::Solidcraft);
+    }
+}
+
+#[test]
+fn mcp_solidcraft_extension_refuses_a_damaged_design_by_name() {
+    let mut server = server();
+    let bad = tmp("bad.solidcraft", b"PK\x03\x04 not really");
+    let refused = call(&mut server, 1, "import_model", json!({ "path": bad.display().to_string() }));
+    assert_eq!(refused["isError"], json!(true), "{refused}");
+    let text = refused["content"][0]["text"].as_str().unwrap_or_default();
+    assert!(text.contains("Solidcraft design refused"), "{text}");
+    assert_eq!(models(&mut server), 0, "a refused design lands no model");
+    std::fs::remove_dir_all(bad.parent().expect("temp directory")).expect("remove temp directory");
+}
+
+#[test]
+#[ignore = "heavy lane (#2445 Solidcraft alias): meshes the sample at the 0.005 mm chord, ~100 s in debug"]
+fn mcp_solidcraft_extension_opens_the_cached_final_body() {
+    // The sample includes cache/thumbnail.json and cache/thumbnail.png; neither is model data.
+    let bytes = std::fs::read(sample()).expect("read sample");
+    let path = tmp("alias.solidcraft", &bytes);
+    let mut server = server();
+    let ok = call(&mut server, 1, "import_model", json!({ "path": path.display().to_string() }));
+    assert_ne!(ok["isError"], json!(true), "{ok}");
+    assert_eq!(models(&mut server), 1, "the design landed as one model");
+    std::fs::remove_dir_all(path.parent().expect("temp directory")).expect("remove temp directory");
+}

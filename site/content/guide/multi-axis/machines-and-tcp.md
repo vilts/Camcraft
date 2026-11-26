@@ -31,7 +31,7 @@ rotary part carries an `axis` direction (the line it turns about), a
 - **Head-head or tilt-head.** The rotaries carry the spindle, so the part
   stays still. `tilthead.mch` is this: A about X, then B about Y, then the
   head, each limited to -120..120 degrees.
-- **Mill-turn.** `millturn.mch` has a C axis about Z. It is a spindle
+- **Mill-turn (live tooling).** `millturn.mch` has a C axis about Z. It is a spindle
   rotary for live-tool and rotary work, not a tilt.
 
 Why it matters:

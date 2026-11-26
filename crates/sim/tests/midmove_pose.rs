@@ -31,6 +31,7 @@ fn cutter() -> Cutter {
         holder_len: 10.0,
         body: None,
         neck: None,
+        undercut: None,
     }
 }
 

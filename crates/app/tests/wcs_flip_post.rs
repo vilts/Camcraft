@@ -1,7 +1,7 @@
 //! #1649: what generation and the post do with a flipped WCS axis. The
 //! cut does not change; the post mirrors the program on a flipped X or Y
 //! (signs, G2/G3, the compensation side), and what it does not carry (a
-//! flipped Z, a flipped and rotated WCS, a post not verified for a mirror)
+//! flipped Z, a flipped WCS tilted away from Z, a post not verified for a mirror)
 //! is refused by name. Probing in a flipped setup is refused by name (the
 //! maintainer's decision of 2026-11-18). Clearing the flip posts the same
 //! program as before.
@@ -105,6 +105,7 @@ fn a_flipped_z_refuses_the_post_by_name() {
     assert!(
         gate.iter().any(|p| p.contains("the WCS (G54) has its Z axis flipped")
             && p.contains("a flipped Z is not carried into the program yet")
+            && p.contains("a preset length needs G44, a length touched off on that control needs G43")
             && p.contains("(operations: Face1)")),
         "named refusal, got: {gate:?}"
     );
@@ -121,33 +122,35 @@ fn a_flipped_z_refuses_the_post_by_name() {
 }
 
 #[test]
-fn a_flipped_and_rotated_wcs_and_an_unverified_post_refuse_by_name() {
+fn a_flipped_and_tilted_wcs_and_an_unverified_post_refuse_by_name() {
     use camcraft_app::commands::{SelectPost, SetWcsOrigin};
     use camcraft_app::schema::{Location, PostRef};
     let (world, mut h) = faced_block();
     flip(&world, &mut h, None, [true, false, false]);
-    h.execute(&world, SelectPost::new(&world, PostRef::Named("Mazak".into())).expect("Mazak"));
+    // #2475: each built-in mill post is verified; a lathe post is not.
+    h.execute(&world, SelectPost::new(&world, PostRef::Named("Fanuc Lathe".into())).expect("Fanuc Lathe"));
     let gate = posting::verification_gate(&world);
     assert!(
-        gate.iter().any(|p| p
-            .contains("has its X axis flipped, and its post (Mazak (built-in)) is not verified for a mirrored program")),
+        gate.iter().any(|p| p.contains(
+            "has its X axis flipped, and its post (Fanuc Lathe (built-in)) is not verified for a mirrored program"
+        )),
         "{gate:?}"
     );
     assert!(posting::post_setup_unwritten(&world).is_err(), "an unverified post must not post a flipped WCS");
     assert!(h.undo(&world));
     assert!(posting::verification_gate(&world).is_empty(), "the builtin post carries the flip");
 
-    let yaw = camcraft_app::geometry::quat_from_euler(0.0, 0.0, 30f64.to_radians());
-    let at = Location { pos: camcraft_app::geometry::Point3::new(0.0, 0.0, 0.0), rot: yaw };
+    let tilt = camcraft_app::geometry::quat_from_euler(30f64.to_radians(), 0.0, 0.0);
+    let at = Location { pos: camcraft_app::geometry::Point3::new(0.0, 0.0, 0.0), rot: tilt };
     h.execute(&world, SetWcsOrigin::new(&world, at).expect("rotate G54"));
     assert_eq!(setup_wcs_flip::of_setup(&world, None), [true, false, false], "the flip rides the move");
     let gate = posting::verification_gate(&world);
     assert!(
-        gate.iter().any(|p| p.contains("has its X axis flipped and is also rotated")
-            && p.contains("a flipped and rotated WCS is not supported yet")),
+        gate.iter().any(|p| p.contains("has its X axis flipped")
+            && p.contains("only a finite Z rotation is supported with flipped axes")),
         "{gate:?}"
     );
-    assert!(posting::post_setup_unwritten(&world).is_err(), "a flipped and rotated WCS must not post");
+    assert!(posting::post_setup_unwritten(&world).is_err(), "a flipped and tilted WCS must not post");
 }
 
 #[test]

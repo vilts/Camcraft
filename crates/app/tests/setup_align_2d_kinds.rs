@@ -23,7 +23,7 @@ use camcraft_app::geo2d::Point2;
 use camcraft_app::geometry::{Mesh, Point3, Triangle, transform_point};
 use camcraft_app::machining2d::{Lead, Side};
 use camcraft_app::machining3d::Entry3D;
-use camcraft_app::operation::{FeatureSel, GeoSel, Height, HeightReference, OpParams, OpType, SrcRef, retype_params};
+use camcraft_app::operation::{Carried, FeatureSel, GeoSel, Height, HeightReference, KindInfo, OpParams, OpType, SrcRef, retype_params};
 use camcraft_app::schema::Location;
 use camcraft_app::stock::StockShape;
 use camcraft_app::tools::catalog;
@@ -124,9 +124,11 @@ fn contour_params() -> OpParams {
         tab_height: 1.0,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -293,14 +295,18 @@ fn turned_picked_slot_fills_the_turned_face() {
 }
 
 /// The kinds with no proof keep the refusal by name (#2276 safety rule).
+/// Probe has its proof since #2285, so this door now names a kind the
+/// mill cannot spin: its params are built by hand, the way a corrupt
+/// file could carry them - the command doors reject them earlier.
 #[test]
 fn kinds_without_proof_stay_refused_in_a_turned_setup() {
     let (world, _) = document(Case::Turned);
-    let kind = OpType::Probe;
+    let kind = OpType::WireContour;
+    let params = (KindInfo::ALL[kind.ordinal()].seed)(&Carried::of(&contour_params()));
     let op = camcraft_app::schema::Operation {
         tool: TOOL.into(),
         src: SrcRef::Entity("part".into()),
-        params: retype_params(&contour_params(), kind as usize),
+        params,
         stamp: None,
         setup: Some("Setup1".into()),
         area: Default::default(),

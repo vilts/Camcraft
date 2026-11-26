@@ -44,7 +44,10 @@ pub(super) fn read(params: &OpParams, part: &[Triangle], stock: Option<&[Triangl
         // - so its far end (#229) is a station the kernel's windows share.
         let sp = profile_of(s, &f).ok()?;
         let r = sp.r_max;
-        (r.is_finite() && r > 0.0).then_some(StockEnv { r_out: r, clearance: STOCK_CLEARANCE, s_top: sp.z_top })
+        // #3452: and its near end, so a part-off kerf past the part's
+        // end can tell bar from air.
+        let s_bot = s.iter().flat_map(|t| [t.a, t.b, t.c]).map(|q| f.sr(q).0).fold(f64::INFINITY, f64::min);
+        (r.is_finite() && r > 0.0).then_some(StockEnv { r_out: r, clearance: STOCK_CLEARANCE, s_top: sp.z_top, s_bot })
     });
     match env {
         Some(e) => (Some(e), None),

@@ -30,9 +30,9 @@ other shipped machine is 3-axis (or a lathe).
 | Machine file | Rotary axes | Notes |
 |---|---|---|
 | `doosan-dnm.mch` (Doosan DNM 5700 + rotary table) | A about X, travel stated as 360000 degrees, no `nose_to_axis` | A table. Pairs with `doosan-dnm.cps`. The catalog gives no nose-to-axis figure, so every op refuses until the setup states its own (`SetSetupNoseToAxis`). The plain 3-axis machine is `doosan-dnm-3axis.mch` (Doosan DNM 5700). |
-| `tormach-770mx-microarc4.mch` (Tormach 770MX + microARC 4) | A about X, -360 to 360 degrees, `nose_to_axis` 10.6 | A table. Pairs with `tormach.cps`, which indexes A only. |
+| `tormach-770mx-microarc4.mch` (Tormach 770MX + microARC 4) | A about X, no stated A travel limit, `nose_to_axis` 10.6 | A table. Pairs with `tormach.cps`, which indexes A and posts an A that turns inside an operation (`G93`). The file states an A rate of 360 degrees per minute. |
 | `tilthead.mch` (Tilt-head 5-axis) | A about X and B about Y, each -120 to 120 degrees, carrying the head | Head-head tilt. The 5-axis machine in the set. |
-| `millturn.mch` (Multitasking 5-axis) | C about Z, -360 to 360 degrees | Mill-turn; a C axis tilts nothing. |
+| `millturn.mch` (Multitasking 5-axis) | C about Z, -360 to 360 degrees | Mill-turn (live tooling); a C axis tilts nothing. |
 
 To add a rotary to your own machine file, follow
 [`docs/MACHINE-ONBOARDING.md`](https://github.com/NeoTech/Camcraft/blob/main/docs/MACHINE-ONBOARDING.md):
@@ -44,6 +44,9 @@ state the rotary part with its `axis` direction, its `travel` in degrees, and
 - A complete indexed job on the Tormach 770MX and the microARC 4, from
   the model to the posted program, is in
   [Your first 4-axis part](@/guide/getting-started/first-4axis-part.md).
+- A continuous job on the same machine, from the model to the posted
+  program and an air cut, is in
+  [Your first continuous 4-axis program](@/guide/getting-started/first-continuous-4axis-part.md).
 - The per-operation reference for the multi-axis operations is in
   [Multi-axis operations](@/guide/multi-axis/operations-multiaxis.md).
 - What each machine type means for setups and operations is in

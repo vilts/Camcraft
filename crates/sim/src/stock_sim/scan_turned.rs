@@ -19,20 +19,21 @@
 //!   orbit, so the least distance read can only be at or ABOVE the
 //!   orbit's true least - an over-read rest (a refusal), never a
 //!   hidden one, even on a path that left its plane.
-//! - **A recess the nose never stood level with is not its rest.** A
-//!   hidden top standing farther along the spindle than every nose
-//!   centre of the path, by more than the nose and the scan's floor
-//!   (and the arcs' bulge), is out of the reach of every ball of this
-//!   pass. That alone does not make it another operation's: a pass
-//!   that went into a groove and stopped short of its floor is out of
-//!   reach of that floor too (PR #1429's review). So the excuse also
-//!   reads the recess: the open span along the spindle from the top up
-//!   to the part's next surface over it (the groove's width at that
-//!   radius). Only a top whose recess no segment of the path stands
-//!   level with (within the same reach) is excused - a groove's floor
-//!   below a facing, a groove above a profile window. A pass that
-//!   stood in the recess owns its floor, and a top it left is judged
-//!   by the same distance law as ever. The recess is read along the
+//! - **A recess the nose never entered is not its rest.** Along an
+//!   axial spindle, a hidden top `p` has solid below it, open air up
+//!   to `roof` (the part's next surface over it), and solid above
+//!   `roof`. Any ball touching `p` from the air side without gouging
+//!   `roof` must put its centre strictly inside that open recess: at
+//!   or below `p` it stands on the solid side of an upward-facing
+//!   surface (`c_z = p_z + r * n_z > p_z`), and at or above `roof` we
+//!   have `dist(c, p) > dist(c, roof)`. So a pass whose segments never
+//!   enter the open recess `(p, roof)` does not own its floor - a
+//!   groove below a facing, a neck past a profile window that ends at
+//!   the step (`Z20..Z60` on a `Z60..Z63` neck, #2880), or a neck
+//!   below a window starting at its top (`Z63..Z78`). Any pass that
+//!   enters the open recess - bridging across it or stopping short
+//!   inside it (PR #1429's review) - owns its floor and is judged by
+//!   the same distance law as ever. The recess is read along the
 //!   scan's Z, so the excuse holds only for a spindle along Z; any
 //!   other spindle is judged without it (a refusal, never a pass).
 //! - **A crease narrower than the nose is not its rest.** A hidden top
@@ -69,9 +70,6 @@ pub(super) struct TurnedBand<'a> {
     r: f64,
     leave: f64,
     slack: f64,
-    /// The least and greatest station of any centre-path end.
-    s0: f64,
-    s1: f64,
     /// Each segment's station span, least first - where the nose
     /// stood along the spindle (the recess clause).
     spans: Vec<(f64, f64)>,
@@ -93,7 +91,7 @@ impl<'a> TurnedBand<'a> {
         facets: &'a [Triangle],
         (r, leave, tol): (f64, f64, f64),
     ) -> Option<Self> {
-        let (mut s0, mut s1) = (f64::INFINITY, f64::NEG_INFINITY);
+        let mut any_finite = false;
         let mut radial = None;
         // A non-finite end stands nowhere known: its span is the whole
         // spindle, so no recess is ever excused by it.
@@ -109,19 +107,20 @@ impl<'a> TurnedBand<'a> {
                 continue;
             }
             let (w, s) = axis.split(q);
-            s0 = s0.min(s);
-            s1 = s1.max(s);
+            if s.is_finite() {
+                any_finite = true;
+            }
             let n = (w[0] * w[0] + w[1] * w[1] + w[2] * w[2]).sqrt();
             if radial.is_none() && n.is_finite() && n > 1e-9 {
                 radial = Some([w[0] / n, w[1] / n, w[2] / n]);
             }
         }
-        if !(s0.is_finite() && s1.is_finite()) {
+        if !any_finite {
             return None;
         }
         let leave = if leave.is_finite() { leave.max(0.0) } else { 0.0 };
         let axial = (axis.dir()[2].abs() - 1.0).abs() <= 1e-9;
-        Some(TurnedBand { axis, access: Access::new(facets, r + leave), r: r + leave, leave, slack: tol, s0, s1, spans, axial, radial })
+        Some(TurnedBand { axis, access: Access::new(facets, r + leave), r: r + leave, leave, slack: tol, spans, axial, radial })
     }
 
     /// Whether the nose can touch the hidden top `p` at all: the ball
@@ -141,30 +140,27 @@ impl<'a> TurnedBand<'a> {
         self.leave
     }
 
-    /// Whether a ball of radius `reach` on some centre of the path
-    /// could stand level with `p` along the spindle.
-    fn reaches(&self, p: Point3, reach: f64) -> bool {
-        let (_, s) = self.axis.split(p);
-        // A non-finite station is no proof of being out of reach.
-        !s.is_finite() || (s >= self.s0 - reach && s <= self.s1 + reach)
-    }
-
-    /// The module law's band excuse: whether the hidden top `p`, whose
-    /// open recess runs up the scan's Z to `roof` (the part's next
-    /// surface over it), is no top of this pass - out of every ball's
-    /// reach AND in a recess no segment of the path stood level with
-    /// (within `reach`). Any doubt - a spindle off Z, a recess with no
-    /// roof, a non-finite station - is no excuse: the top is judged.
-    pub(super) fn excuses(&self, p: Point3, roof: f64, reach: f64) -> bool {
-        if !self.axial || !roof.is_finite() || self.reaches(p, reach) {
+    /// The module law's recess excuse (#1408, #2880): whether the
+    /// hidden top `p`, whose open recess runs up the scan's Z to
+    /// `roof` (the part's next surface over it), is another
+    /// operation's floor - no segment of the path enters the open
+    /// recess `(p, roof)`. Any doubt - a spindle off Z, a recess with
+    /// no roof, a zero-width or non-finite span - is no excuse: the
+    /// top is judged.
+    pub(super) fn excuses(&self, p: Point3, roof: f64) -> bool {
+        const EPS: f64 = 1e-9;
+        if !self.axial || !roof.is_finite() {
             return false;
         }
         let (a, b) = (self.axis.split(p).1, self.axis.split(Point3::new(p.x, p.y, roof)).1);
-        if !(a.is_finite() && b.is_finite() && reach.is_finite()) {
+        if !(a.is_finite() && b.is_finite()) {
             return false;
         }
-        let (lo, hi) = (a.min(b) - reach, a.max(b) + reach);
-        !self.spans.iter().any(|&(s0, s1)| s1 >= lo && s0 <= hi)
+        let (lo, hi) = (a.min(b), a.max(b));
+        if hi <= lo + 2.0 * EPS {
+            return false;
+        }
+        !self.spans.iter().any(|&(s0, s1)| s1 > lo + EPS && s0 < hi - EPS)
     }
 
     /// `p`'s orbit samples in the path's meridian plane, both sides
@@ -196,13 +192,10 @@ mod tests {
     fn the_band_spans_the_centres_and_the_orbit_lands_in_their_plane() {
         let segs = [(Point3::new(10.0, 0.0, 48.8), Point3::new(0.0, 0.0, 48.8)), (Point3::new(10.0, 0.0, 50.3), Point3::new(0.0, 0.0, 50.3))];
         let b = TurnedBand::of(LatheAxis::Z, &segs, &[], (0.8, 0.0, 0.05)).expect("a band");
-        assert!(b.reaches(Point3::new(-7.0, 0.0, 48.0), 0.81), "level with the band, either side of the axis");
-        assert!(!b.reaches(Point3::new(-7.0, 0.0, 34.0), 0.81), "a groove floor 14 mm under the band is out of reach");
-        assert!(!b.reaches(Point3::new(0.0, 7.0, 52.0), 0.81), "and so is a top above it");
-        assert!(b.excuses(Point3::new(-7.0, 0.0, 34.0), 37.0, 0.81), "a groove floor whose recess the facing never stood in");
-        assert!(!b.excuses(Point3::new(-7.0, 0.0, 34.0), 48.5, 0.81), "a recess open up to the band is the pass's");
-        assert!(!b.excuses(Point3::new(-7.0, 0.0, 34.0), f64::INFINITY, 0.81), "no roof, no excuse");
-        assert!(!b.excuses(Point3::new(-7.0, 0.0, 48.0), 49.0, 0.81), "in reach is never excused");
+        assert!(b.excuses(Point3::new(-7.0, 0.0, 34.0), 37.0), "a groove floor whose recess the facing never entered");
+        assert!(!b.excuses(Point3::new(-7.0, 0.0, 34.0), 49.0), "a recess open across the band is the pass's");
+        assert!(!b.excuses(Point3::new(-7.0, 0.0, 34.0), f64::INFINITY), "no roof, no excuse");
+        assert!(!b.excuses(Point3::new(-7.0, 0.0, 48.0), 49.0), "a pass standing inside the recess is never excused");
         let t = b.turned(Point3::new(0.0, -7.0, 34.0));
         assert_eq!(t.len(), 2);
         assert!((t[0].x - 7.0).abs() < 1e-12 && t[0].y.abs() < 1e-12 && (t[0].z - 34.0).abs() < 1e-12, "{t:?}");
@@ -212,16 +205,31 @@ mod tests {
     #[test]
     fn a_pass_standing_in_the_recess_owns_its_floor_and_off_z_excuses_nothing() {
         // The review's shortfall: down the OD, into the 34..37 groove
-        // at centre station 35.5 - the floor at 34 is out of reach and
-        // still the pass's.
+        // at centre station 35.5 - the floor at 34 is still the pass's.
         let segs = [(Point3::new(10.8, 0.0, 48.8), Point3::new(10.8, 0.0, 35.5)), (Point3::new(10.8, 0.0, 35.5), Point3::new(6.3, 0.0, 35.5))];
         let b = TurnedBand::of(LatheAxis::Z, &segs, &[], (0.8, 0.0, 0.05)).expect("a band");
-        assert!(!b.reaches(Point3::new(7.0, 0.0, 34.0), 0.81));
-        assert!(!b.excuses(Point3::new(7.0, 0.0, 34.0), 37.0, 0.81), "it stood in the recess");
+        assert!(!b.excuses(Point3::new(7.0, 0.0, 34.0), 37.0), "it stood in the recess");
         let x = LatheAxis::new(Point3::ZERO, [1.0, 0.0, 0.0]).expect("axis");
         let far = [(Point3::new(40.0, 0.0, 5.0), Point3::new(40.0, 0.0, 0.0))];
         let bx = TurnedBand::of(x, &far, &[], (0.8, 0.0, 0.05)).expect("a band");
-        assert!(!bx.excuses(Point3::new(0.0, 0.0, 3.0), 6.0, 0.81), "off Z the recess is not read: judged");
+        assert!(!bx.excuses(Point3::new(0.0, 0.0, 3.0), 6.0), "off Z the recess is not read: judged");
+    }
+
+    #[test]
+    fn a_pass_stopping_at_a_neck_step_does_not_own_the_neck_recess() {
+        // #2880: a cone pass Z20..Z60 ending right at the step into a
+        // Z60..Z63 neck never enters (60, 63), nor does a thread pass
+        // Z63..Z78 starting at the neck's top. A pass entering the neck
+        // even by 0.1 mm still owns the floor.
+        let cone = [(Point3::new(10.8, 0.0, 20.0), Point3::new(5.8, 0.0, 60.0))];
+        let bc = TurnedBand::of(LatheAxis::Z, &cone, &[], (0.8, 0.0, 0.05)).expect("a band");
+        assert!(bc.excuses(Point3::new(4.8, 0.0, 60.0), 63.0), "ends at step: never entered (60, 63)");
+        let thread = [(Point3::new(5.8, 0.0, 63.0), Point3::new(5.8, 0.0, 78.0))];
+        let bt = TurnedBand::of(LatheAxis::Z, &thread, &[], (0.8, 0.0, 0.05)).expect("a band");
+        assert!(bt.excuses(Point3::new(4.8, 0.0, 60.0), 63.0), "starts at neck top: never entered (60, 63)");
+        let into = [(Point3::new(10.8, 0.0, 20.0), Point3::new(5.8, 0.0, 60.1))];
+        let bi = TurnedBand::of(LatheAxis::Z, &into, &[], (0.8, 0.0, 0.05)).expect("a band");
+        assert!(!bi.excuses(Point3::new(4.8, 0.0, 60.0), 63.0), "entered (60, 63): owns the floor");
     }
 
     #[test]

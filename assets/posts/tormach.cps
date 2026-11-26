@@ -21,10 +21,12 @@ minimumRevision = 1;
 extension = "nc";
 setCodePage = "utf-8";
 capabilities = 1; // reference contract: integer feature mask (bit 1 = milling)
+axisInversion = true; // verified on the engine's mirrored stream for a flipped WCS X/Y and an inverted machine X/Y (#2475): trace equivalence test + golden
 workOffsetIndex = true; // reads PARAM WorkOffset as the 1-based offset number (#931)
 workOffsetMax = 9;      // LinuxCNC G-code reference: G54-G59.3 select coordinate systems 1-9 (#931)
 programUnits = "mm inch"; // #902: writes the document's unit (postOptions.Units), G21 / G20
 endUnits = "G20 G21";     // #596 / #2189: switches end units before M30 when asked
+coolantModes = true;      // #3446: reads PARAM Coolant (#112/#150)
 
 declaredOptions = {
   showSequenceNumbers: {
@@ -50,6 +52,8 @@ declaredOptions = {
   useRadiusArcs: { type: "boolean", title: "Use radius (R) arcs", group: "Cycles & arcs", description: "Write R word instead of I/J/K arc centers", default: false },
 };
 afterModes = true; // #1532: reads PARAM AfterOperation (stop / optional stop) and PARAM SetupChange; a trip home is refused by name
+rotariesBeforeTraverse = true; // #3100: each section turns A at the safe Z (G53 G0 Z, then G0 A) before its first X/Y traverse (indexFor, xyFirst); pinned by posting_rotaries_first.rs
+uprightReturn = true; // #3477: the same G53 G0 Z, then G0 A turn writes A0 at a section after a tilted section; pinned by upright_after_tilt.rs
 explains = "paren"; // #1387: LinuxCNC parenthesized comments; shared helper keeps them inert
 // Original wording; inherited mill meanings cite RS-274 / LinuxCNC in explain.rs.
 explainWords = {
@@ -79,7 +83,9 @@ var clearZ = null;         // #1614: the section's ClearancePlane, null when uns
 var afterAsk = "";         // the section's PARAM AfterOperation (#1532), none when unstated
 var setupNext = "";        // the section's PARAM SetupChange (#1532): the setup the program changes to after it
 var coolant = "";          // the M-code this program started, if any
+var coolantAsk = "flood";  // #3446: the section's PARAM Coolant, flood when unstated
 var sectionOpen = false;   // preamble written (a legacy .cl carries no SECTION)
+var wcsFlip = "";          // #1649: the flipped WCS axes ("X", "Y", "XY") - the engine mirrored the section
 var smoothTol = 0;          // #616: the section's PARAM Smoothing, mm (0: none asked)
 var smoothMode = "";        // #616: "finish" or "rough"
 var smoothActive = false;   // #616: this section wrote its smoothing words
@@ -107,6 +113,23 @@ function ff(v) {  // a feed: whole mm/min, or in/min at two decimals
 function ni(v) { return has(v) ? String(Math.round(v)) : "0"; } // integer word
 function w(letter, v) { return has(v) ? letter + fu(v) : ""; }
 function fw(v) { return has(v) ? "F" + ff(v) : ""; }
+// #3699: a tap feed is pitch x rpm, kept at 0.001 mm/min by the stream, and
+// the control cuts the pitch F / S. G84 writes the feed at three mm or four
+// inch decimals; a tap whose written F and S do not hold the pitch to 0.01
+// percent is refused by name.
+function tapFeed(v) { return fu(v); }
+function tapPitchHolds(feed) {
+  var speed = Math.round(sRpm);
+  var written = Number(fu(feed)) * (inch ? 25.4 : 1);
+  var want = sRpm > 0 ? feed / sRpm : 0;
+  var got = speed > 0 ? written / speed : 0;
+  if (!(want > 0 && Math.abs(got - want) / want <= 1e-4)) {
+    msg("canned cycle G84 (tap)" + inOp() + " feed " + feed + " mm/min at " + sRpm +
+      " rpm posts as F" + tapFeed(feed) + " S" + speed + " - refused: the written pitch differs by more than 0.01 percent");
+    return false;
+  }
+  return true;
+}
 var seqNum = 0;
 var seqNextForce = false;
 var secStarted = 0;
@@ -171,6 +194,7 @@ function xyz(p) {
   return [wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ)];
 }
 function wo(letter, v, o) { return has(v) ? letter + fu(v - o) : ""; }  // axis word, origin-relative
+function arcWord(k, v) { return wo(k, v, k === "X" ? orgX : (k === "Y" ? orgY : orgZ)); }  // #3442: a position word as written, for arcFate
 function msg(s) {  // counted warning where the host offers message()
   if (typeof message === "function") message(s); else writeln("(" + s + ")");
 }
@@ -199,27 +223,47 @@ function spindleStopped(what) {  // true: refused, nothing is posted
 }
 var feedRefused = false;  // #1357: the cycle-feed refusal, once per program
 
-// The .mch tool-station coolant list carries names + M-codes. This post
-// reads no PARAM Coolant (the engine refuses a non-Flood op by name), so
-// every section asks flood: the machine's Flood entry; failing one, the
-// first coded entry of no other known family (a shop's own "Brine" is
-// its flood); a stated codeless Flood is the operator's own valve,
-// silent. A list that states only other kinds (Mist, Air - #869) has no
-// flood code: refused by name, never posted as mist or air. An unstated
-// list stays silent. M9 (stop) is the RS-274 fixed pair.
+// The .mch tool-station coolant list carries names + M-codes. A flood ask
+// takes the machine's Flood entry; failing one, the first coded entry of
+// no other known family (a shop's own "Brine" is its flood); a stated
+// codeless Flood is the operator's own valve, silent. A list that states
+// only other kinds (Mist, Air - #869) has no flood code: refused by name,
+// never posted as mist or air. An unstated list stays silent. M9 (stop)
+// is the RS-274 fixed pair.
 var COOLANT_KINDS = ["flood", "mist", "air", "air-blast", "through-spindle", "through-tool"];
+function coolantName(c) {
+  return String((typeof c === "string") ? c : (c.name || "")).trim().toLowerCase().replace(/[\s_]+/g, "-");
+}
 function coolantCode() {
   var cs = (typeof machine !== "undefined" && machine.coolants) || [];
   var other = "", floodNamed = false;
   for (var i = 0; i < cs.length; i++) {
     var c = cs[i];
     var code = (typeof c === "string") ? "" : (c.mCode || "");
-    var name = String((typeof c === "string") ? c : (c.name || "")).trim().toLowerCase().replace(/[\s_]+/g, "-");
+    var name = coolantName(c);
     if (name === "flood") { if (code) return code; floodNamed = true; continue; }
     if (code && !other && COOLANT_KINDS.indexOf(name) < 0) other = code;
   }
   if (other || floodNamed || cs.length === 0) return other;
-  msg("the machine states no flood coolant code" + inOp() + " - add a Flood entry to the machine, or post through a post that reads the operation's coolant");
+  msg("the machine states no flood coolant code" + inOp() + " - pick another coolant for the operation (Off cuts dry) or add a Flood entry to the machine");
+  return "";
+}
+// #3446: the op's coolant ask (#112) - off writes no coolant word; mist,
+// air or through-tool take the machine's own entry of that family,
+// refused by name (naming the operation) when the machine states none.
+function coolantFor(ask) {
+  if (ask === "off") return "";
+  if (!ask || ask === "flood") return coolantCode();
+  var want = ask === "mist" ? ["mist"] : ask === "air" ? ["air", "air-blast"]
+    : ask === "through-tool" ? ["through-spindle", "through-tool"] : [];
+  if (want.length === 0) { msg("unknown coolant ask " + ask + inOp()); return ""; }
+  var cs = (typeof machine !== "undefined" && machine.coolants) || [];
+  for (var i = 0; i < cs.length; i++) {
+    var c = cs[i];
+    var code = (typeof c === "string") ? "" : (c.mCode || "");
+    if (code && want.indexOf(coolantName(c)) >= 0) return code;
+  }
+  msg("the machine states no " + ask + " coolant code" + inOp() + " - pick another coolant for the operation or add it to the machine");
   return "";
 }
 
@@ -298,6 +342,8 @@ function joinDash(parts) {  // the non-empty parts, " - " between
 // would open with one is led by "- ", so user text stays inert.
 var ACTIVE = /^\s*(MSG|DEBUG|PRINT|LOG|LOGOPEN|LOGAPPEND|LOGCLOSE|PROBEOPEN|PROBECLOSE|ABORT|AXIS|PY|PYRUN)\b/i;
 function note(s) { block(["(" + (ACTIVE.test(s) ? "- " + s : s) + ")"]); }
+// Program notes use this dialect without truncating the stated bound.
+function onComment(s) { note(commentText(s)); }
 function commentParam(name, value) {
   if (name === "SetupName") setupName = clean(value);
   else if (name === "OperationName") opName = clean(value);
@@ -336,11 +382,23 @@ function onOpen() {
   // #594: the machine name is user text - cleaned like every other
   // comment text, so `Tormach 770MX (ML)` never nests.
   note(headTitle(nm));
+  invertedNotes();
   writeHeaderExtras();
   block([inch ? "G20" : "G21", "G17", "G90", "G91.1", "G94", "G40", "G49", "G80"]);
   block(["G64", blendP()]);
   var z = safeZ();
   if (z !== null && z !== 0) block(["(SAFE RETRACT G53 Z" + fu(z) + " - STATED BY THE MACHINE)"]);
+}
+// The machine's inverted linear axes (#375): the engine has mirrored the
+// stream into the controller's frame, and the header says so, one note
+// for each axis. A standard machine lists none.
+function invertedNotes() {
+  var a = (typeof machine !== "undefined" && machine && machine.invertedAxes) || [];
+  var where = { X: "LEFT", Y: "TOWARD THE FRONT", Z: "DOWN" };
+  for (var i = 0; i < a.length; i++) {
+    var l = String(a[i]);
+    note("MACHINE " + l + "+ MOVES " + (where[l] || "THE OTHER WAY") + " - INVERTED AXIS");
+  }
 }
 
 // #495: where "straight up" is, in machine coordinates. G53 G0 Z0 is the
@@ -425,6 +483,7 @@ function onParameter(name, value) {
   if (name === "ClearancePlane") clearZ = has(value) ? Number(value) : null;  // #1614
   if (name === "Smoothing") { smoothTol = Number(value) || 0; return; }
   if (name === "SmoothingMode") { smoothMode = String(value || ""); return; }
+  if (name === "Coolant") { coolantAsk = String(value || "flood"); return; }  // #3446
   commentParam(name, value);
   if (name === "AfterOperation") { afterAsk = String(value || ""); return; }
   if (name === "SetupChange") { setupNext = clean(value); return; }
@@ -432,6 +491,7 @@ function onParameter(name, value) {
   else if (name === "OriginX" && has(value)) orgX = Number(value);
   else if (name === "OriginY" && has(value)) orgY = Number(value);
   else if (name === "OriginZ" && has(value)) orgZ = Number(value);
+  else if (name === "WcsFlip") wcsFlip = String(value || "");
 }
 
 function onSpindleSpeed() {
@@ -519,6 +579,8 @@ function startPreamble() {
   // stopped before its first move, whatever the tool change did.
   var probeStop = spindleWait && !(sRpm > 0);
   opNotes();
+  // #1649: the operator reads why every sign on a flipped axis is the other one.
+  if (wcsFlip) note("WCS " + wcsFlip.split("").join(" AND ") + " FLIPPED - PROGRAM MIRRORED");
   block(["G17", "G90", wcsWord, "G40", "G49", "G80"]);
   planeG = 17;              // the preamble states the plane
   if (toolWait) {
@@ -554,7 +616,7 @@ function startPreamble() {
   if (probeStop) { block(["M5"]); spindleOn = false; }
   probeSection = touchProbe && kindProbe;
   spindleWait = false;
-  coolant = touchProbe ? "" : coolantCode();
+  coolant = touchProbe ? "" : coolantFor(coolantAsk);
   if (coolant) block([coolant]);
   smoothOn();
 }
@@ -572,6 +634,7 @@ function endPreamble() {
   if (inCycle) block(["G80"]);
   inCycle = false;
   if (coolant) block(["M9"]);
+  coolantAsk = "flood";      // #3446: the next section states its own ask
   block(["M5"]);
   spindleOn = false;
   probeSection = false;
@@ -607,7 +670,7 @@ function afterOp() {
 }
 
 function onSection() { seatKnown = false; startPreamble(); }
-function onSectionEnd() { endPreamble(); hopZ = null; clearZ = null; }  // #1028: the next section states its own hop
+function onSectionEnd() { endPreamble(); wcsFlip = ""; hopZ = null; clearZ = null; }  // #1028: the next section states its own hop
 
 // ------------------------------------------------------- the 4th axis
 // #785. A rotary table about X (Tormach's microARC 4 or the older 4th-axis
@@ -1059,6 +1122,9 @@ function onLinear() {
 }
 function onCircular() {
   startPreamble();
+  // #3442: an arc whose written ends coincide is no arc block (arcFate, PRELUDE).
+  var fate = arcFate(arcWord, arcIncOf(fu));  // #3474: I J K are increments from the start
+  if (fate !== "arc") { if (fate === "linear") onLinear(); return; }
   if (chainCut() || !motionFor(properties, "arc move")) return;
   var p = properties;
   if (indexed()) {  // #785: a tilted path is chords; an arc here is unstated
@@ -1269,12 +1335,19 @@ function onCycle() {
     }
     return;
   }
+  // #2609: PathPilot's and LinuxCNC's G73 and G85 formats have no P word.
+  if ((g === "G73" || g === "G85") && dwell > 0) {
+    var cycleName = g === "G73" ? "peck" : "ream";
+    msg("canned cycle " + g + " (" + cycleName + ") dwell is not supported by this post - a " + dwell + " s dwell is refused, not dropped; set the dwell to 0");
+    return;
+  }
   // #2348: PathPilot's and LinuxCNC's G83 formats have no P word.
   if (g === "G83" && dwell > 0) {
     msg("canned cycle G83 (deep peck) dwell is not supported by this post - a " + dwell + " s dwell is refused, not dropped; set the dwell to 0");
     return;
   }
   if (spindleStopped("canned cycle " + g)) return;
+  if (g === "G84" && !tapPitchHolds(Number(p.FeedRate))) return;
   if (!xyFirst(p.X, p.Y)) return;  // a cycle as the first move: its first hole (#1614: refused - not written)
   cycleSeat(p);
   var sig = g + "|" + p.Z + "|" + p.R + "|" + p.Q;
@@ -1294,7 +1367,7 @@ function onCycle() {
     // #2362: LinuxCNC / PathPilot requires a non-negative P on the first
     // G86 block of a cycle, even when the dwell is 0 (P0).
     if (g === "G86" || (dwell > 0 && (g === "G82" || g === "G89"))) words.push("P" + secs(dwell));
-    words.push(fw(p.FeedRate));
+    words.push(g === "G84" ? "F" + tapFeed(p.FeedRate) : fw(p.FeedRate));
     block(words);
     cycleSig = sig;
   }
@@ -1394,6 +1467,23 @@ function onProbeResult() {
     block(["(DEBUG, PROBE " + a.Axis + " ERROR #" + (dev + i) + (inch ? " IN" : " MM") + ")"]);
   }
   if (has(p.SetWorkOffset) && p.SetWorkOffset >= 0) {
+    // #2683: the write is exact (target = active offset + deviation) only
+    // in unrotated systems. With an XY rotation (R of G10 L2, parameter
+    // 5210 + 20 x the system number) the deviation lies along rotated
+    // axes, and a target with another rotation gets an origin that is
+    // right at this position only. The control holds R, so the program
+    // tests it and ends by name. A Z-only result needs no test.
+    var xy = false;
+    for (var q = 0; q < axes.length; q++) if (axes[q].Axis !== "Z") xy = true;
+    if (xy) {
+      var tgt = Number(p.SetWorkOffset) + 1;
+      var rotA = "[#" + (5210 + 20 * wcsIndex) + " NE 0]";
+      var g = nextO();
+      block([g, "if", tgt === wcsIndex ? rotA : "[" + rotA + " OR [#" + (5210 + 20 * tgt) + " NE 0]]"]);
+      block(["(MSG, PROBE: " + wcsWord + (tgt === wcsIndex ? "" : " OR " + workOffsetName(tgt)) + " XY ROTATION NOT ZERO - NO OFFSET WRITTEN)"]);
+      block(["M2"]);
+      block([g, "endif"]);
+    }
     var words = ["G10", "L20", "P" + (Number(p.SetWorkOffset) + 1)];
     for (var j = 0; j < axes.length; j++) {
       words.push(axes[j].Axis + "[#" + (5420 + probeAxis(axes[j].Axis)) + "-#" + (dev + j) + "]");

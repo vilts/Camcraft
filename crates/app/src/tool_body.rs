@@ -16,17 +16,26 @@
 //! - **Refusals by name**, at the command and again at use: a body that
 //!   is empty, non-finite, degenerate, flat, off the axis, below the
 //!   tip, too large, or reaching into the flutes.
+//! - **A library holder is a reference (#2016).** A body may name the
+//!   library entry it is ([`ToolBody::library`]); its outline is then
+//!   drawn by [`build_library`] alone, here, at the command and at
+//!   every file read, so each law reads the same shape.
 //! - **One body, one frame (#369).** A milling body is placed along the
 //!   spindle axis ([`BodyFrame::Spindle`]); a lathe steel's in the
 //!   turning tool frame ([`BodyFrame::Lathe`], `crate::tool_body_lathe`).
 //!   The milling laws read only the first; a lathe body leaves the tool
 //!   record as it is for them and is judged by the revolved-stock law.
+//! - **Who uses a holder (#3897).** [`holder_users`] and
+//!   [`tools_using_holder`] read the document's tools by their library
+//!   reference (`HolderRef::entry`), the holder key until #3645. A read
+//!   only: the tool library window's holder list counts with them.
 
 use std::sync::Arc;
 
 use flecs_ecs::core::EntityViewGet; // try_get is not re-exported in prelude (0.2.2)
 use flecs_ecs::prelude::{Entity, World};
 
+use camcraft_tools::holder_library::HolderRef;
 use camcraft_tools::holder_profile::{HolderProfile, HolderStack, MAX_BODY_HEIGHT};
 use camcraft_tools::spun::SpunProfile;
 use camcraft_tools::lathe_holder::{LatheClearance, LathePlacement};
@@ -58,6 +67,33 @@ pub const LATHE_HELD: [ToolKind; 4] = [ToolKind::Turning, ToolKind::Groove, Tool
 #[must_use]
 pub fn body_of(world: &World, entity: &Entity) -> Option<ToolBody> {
     entity.entity_view(world).try_get::<&ToolBody>(|b| b.clone())
+}
+
+/// #3897: each document tool that sits in a library holder, by tool name
+/// (sorted), with its reference. A tool with no body, a drawn body or a
+/// mesh body has no library holder and is not listed.
+#[must_use]
+pub fn holder_users(world: &World) -> Vec<(String, HolderRef)> {
+    crate::model::named_entities(world)
+        .into_iter()
+        .filter(|(_, e)| crate::model::is_tool(world, e))
+        .filter_map(|(name, e)| body_of(world, &e).and_then(|b| b.library).map(|r| (name, r)))
+        .collect()
+}
+
+/// #3897: the names of the document tools (sorted) whose library holder is
+/// `entry`. The entry compares as `holder_library::find` reads a name:
+/// case and spacing are ignored.
+#[must_use]
+pub fn tools_using_holder(world: &World, entry: &str) -> Vec<String> {
+    let want = holder_key(entry);
+    holder_users(world).into_iter().filter(|(_, r)| holder_key(&r.entry) == want).map(|(n, _)| n).collect()
+}
+
+/// A holder name as a key: words joined by one space, lower case.
+#[must_use]
+pub fn holder_key(name: &str) -> String {
+    name.split_whitespace().collect::<Vec<_>>().join(" ").to_ascii_lowercase()
 }
 
 /// Land (`Some`) or clear (`None`) a tool's body - the one writer,
@@ -114,7 +150,7 @@ pub fn build(source: &str, axis: [f64; 3], offset: f64, placed: Vec<Triangle>) -
         facets: Arc::clone(&facets),
         csys: Vec::new(),
     }];
-    Ok(ToolBody { source: source.to_owned(), facets, frame: BodyFrame::Spindle { axis, offset, profile }, spun: None, machine_default: false, pieces })
+    Ok(ToolBody { source: source.to_owned(), facets, frame: BodyFrame::Spindle { axis, offset, profile }, spun: None, machine_default: false, library: None, pieces })
 }
 
 /// What a drawn (spun) holder body is called where a file name would be.
@@ -134,8 +170,26 @@ pub fn build_spun(spun: SpunProfile) -> ToolBody {
         frame: BodyFrame::Spindle { axis: [0.0, 0.0, 1.0], offset: 0.0, profile: spun.holder_profile() },
         spun: Some(spun),
         machine_default: false,
+        library: None,
         pieces: Vec::new(),
     }
+}
+
+/// #2016: the body of a library holder reference - the one place a
+/// reference becomes a shape. The command that sets a library holder,
+/// the project loader and the tool library reader all come through
+/// here, so the collision laws, the simulation and the preview read
+/// the same outline: the entry's own, drawn at the reference's lengths
+/// exactly as a drawn copy of it was (`build_spun`). Refused by name:
+/// an entry the library does not hold (never another holder in its
+/// place, #808), and lengths the entry cannot be drawn at.
+pub fn build_library(reference: &HolderRef) -> Result<ToolBody, String> {
+    let entry = reference.resolve().map_err(|e| format!("holder: {e}"))?;
+    let points = reference.points().map_err(|e| format!("holder: {e}"))?;
+    let spun = SpunProfile::new(points).map_err(|e| format!("holder profile: {e}"))?;
+    let mut body = build_spun(spun);
+    body.library = Some(HolderRef::to(&entry, reference.gauge_len, reference.projection));
+    Ok(body)
 }
 
 /// Can `tool` carry `body`? A lathe-held insert takes a lathe-frame
@@ -178,13 +232,31 @@ pub fn judged(world: &World, entity: &Entity, tool: Tool) -> Result<(Tool, Optio
     match body.frame {
         BodyFrame::Lathe { .. } => Ok((tool, None)),
         BodyFrame::Spindle { profile, .. } => {
-            // #828: an assumed (machine-default) holder never judges
-            // looser than the stand-in cylinder the bare tool gets.
-            let profile = if body.machine_default { profile.floored(&tool.geom()) } else { profile };
+            let profile = checked_profile(&tool, profile, body.machine_default);
             let enclosed = profile.enclose(&tool).ok_or("the tool body reaches into the flutes")?;
             Ok((enclosed, Some(profile)))
         }
     }
+}
+
+/// The body profile as the judging laws read it (#828): an assumed
+/// (machine-default) holder never judges looser than the stand-in cylinder
+/// the bare tool gets, so it is floored at the tool's holder cylinder; an
+/// explicit one is read as drawn. `judged` and the tool page's preview
+/// (#2017) both call this: one source for the shape.
+#[must_use]
+pub fn checked_profile(tool: &Tool, profile: HolderProfile, machine_default: bool) -> HolderProfile {
+    if machine_default { profile.floored(&tool.geom()) } else { profile }
+}
+
+/// The bands `(above, len, r)` the collision check sweeps above the
+/// shank of `tool` for `body`: the checked profile through [`stack`], the
+/// shank carried up to the foot included. The tool page's side preview
+/// (#2017) draws exactly these. `None` for a lathe body.
+#[must_use]
+pub fn checked_bands(tool: &Tool, body: &ToolBody) -> Option<Vec<(f64, f64, f64)>> {
+    let profile = checked_profile(tool, body.profile()?.clone(), body.machine_default);
+    Some(stack(&tool.geom(), Some(&profile)).bands.iter().map(|q| (q.above, q.len, q.r)).collect())
 }
 
 /// What the fixture laws sweep above the shank of `geom`: the body's

@@ -101,6 +101,20 @@ pub struct FeatureNamesMemo {
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct ReducedFidelity {
     pub chord_mm: f64,
+    /// File tolerance alone caused this chord; false keeps the strict law.
+    pub file_tolerance: bool,
+}
+
+/// A person vouched for this model's mesh while it was of unknown fidelity
+/// (#1339): `by` is who, `rev` the geometry revision the word was given
+/// for. It speaks only while the model still has that revision and no
+/// `ReducedFidelity` (`model_vouch::by_of`). Written by
+/// `VouchModelFidelity`, its undo and the project loader, through
+/// `model_vouch::set`.
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+pub struct FidelityVouched {
+    pub by: String,
+    pub rev: u64,
 }
 
 /// The STEP facet budget a model's mesh was imported under, when it is not
@@ -117,6 +131,16 @@ pub struct StepBudget {
 #[derive(Component, Debug, Clone, PartialEq, Eq)]
 pub struct StepSource(pub String);
 
+/// The file a model was imported from and the SHA-256 of the bytes that
+/// were read (#2463): a linked model. While the project is open, a new
+/// hash of that file imports it again under the same name, as one undo
+/// step; operations only go Stale. Absent: not linked.
+#[derive(Component, Debug, Clone, PartialEq, Eq)]
+pub struct ModelSource {
+    pub path: String,
+    pub sha256: String,
+}
+
 /// The hole of a model imported from a STEP closed shell that meshes open
 /// (#1610), said in words: the model rides fidelity unknown
 /// (`ReducedFidelity` at `model_fidelity::UNKNOWN_MM`) and every refusal
@@ -126,6 +150,19 @@ pub struct StepSource(pub String);
 #[derive(Component, Debug, Clone, PartialEq)]
 pub struct MeshOpen {
     pub hole: String,
+}
+
+/// The closed solids of a model's facets (#917): index ranges, one per
+/// solid, as the STEP reader gave them. Valid only at the `Revision` and
+/// the facets it was landed with (`rev`, `len`); any other landing makes
+/// it stale and every reader then reads the plain soup. Written by the
+/// import, update and delete commands and the project loader, through
+/// `mesh_solids::set`.
+#[derive(Component, Debug, Clone, PartialEq)]
+pub struct SolidRanges {
+    pub rev: u64,
+    pub len: usize,
+    pub ranges: std::sync::Arc<[std::ops::Range<usize>]>,
 }
 
 /// Selection marker (tag). Only `SelectEntity` writes it (AGENTS.md: changes
@@ -186,6 +223,24 @@ pub struct GeomPrintMemo {
     pub hash: [u64; 2],
 }
 
+/// A DXF profile placed on the stock of a setup (#1862, `crate::sketch`):
+/// 2D reference geometry for cutting, not a model. It never has `Facets`,
+/// so no 3D solid tool reads it as a mesh, and `model::is_model` is false
+/// for it. `setup` follows the declared-vs-effective law of
+/// `Operation::setup`. The entity's `Location` is not a world placement:
+/// it is relative to the top face of the setup's stock, at the stock
+/// origin (`sketch::face_frame`), with Z 0 and a turn about the face
+/// normal only. `data` holds the primitives in mm, the layer names, the
+/// source units, the join tolerance, the chains and the import summary;
+/// it is shared (`Arc`) and freed when the last holder goes. Written only
+/// by `ImportDxf`, `InsertText` (#2679: typed text as engraving strokes),
+/// `MoveSketch`, `DeleteEntity` and the project loader.
+#[derive(Component, Debug, Clone, PartialEq)]
+pub struct Sketch {
+    pub setup: Option<String>,
+    pub data: std::sync::Arc<crate::sketch_data::SketchData>,
+}
+
 /// Unit tag marking an entity as a work coordinate system origin: a
 /// setup's one WCS (#342), named by `SetupDef::wcs` (`G54` for a document
 /// without setups), its `Location` the transform; there is no payload to
@@ -244,6 +299,12 @@ pub struct ToolBody {
     /// (`HolderProfile::floored`, in `tool_body::judged`). `false` for
     /// every body the user lands, and for every older file's.
     pub machine_default: bool,
+    /// #2016: the library entry this holder IS, with the two lengths
+    /// that place it. The outline, facets and bands above are then
+    /// that entry's, drawn by `tool_body::build_library` and by nothing
+    /// else, and the file stores this reference in their place. `None`
+    /// for a custom holder: a drawn profile, a mesh, a lathe body.
+    pub library: Option<camcraft_tools::holder_library::HolderRef>,
     /// #361 / #1040: individual modular pieces (head, adapter, clamping
     /// unit) with their tool-frame facets and coordinate systems. For
     /// single-body imports holds piece 0; empty only for drawn spun profiles.
@@ -329,6 +390,15 @@ impl ToolBody {
 /// or collet the setup holds the work in; `None`, the default and every
 /// earlier file, states none. Read through [`crate::setup_workholding`];
 /// written only by `SetSetupWorkholdingRpm` and the project loader.
+/// `sheet_job` (#3070) is the guided sheet job's answers (size, Z zero,
+/// through-cut allowance, XY zero, clamp clearance); `None`, the default
+/// and every earlier file, states none. Read through [`crate::sheet_job`];
+/// written only by `SetSheetJob` and the project loader.
+/// `order` (#3447) is the setup's place in the program: `CreateSetup`
+/// writes the next number, so a setup added later posts later whatever
+/// its name. `None`, every earlier file, sorts first and by name
+/// ([`crate::setup::setups`]). Written only by `CreateSetup` and the
+/// project loader.
 #[derive(Component, Debug, Clone, PartialEq)]
 pub struct SetupDef {
     pub stock: String,
@@ -344,6 +414,8 @@ pub struct SetupDef {
     pub post_properties: Option<PostScriptOptions>,
     pub nose_to_axis: Option<f64>,
     pub workholding_max_rpm: Option<f64>,
+    pub sheet_job: Option<crate::sheet_job::SheetJob>,
+    pub order: Option<u32>,
 }
 
 /// The M3.2 stage B marker turning a model entity into a FIXTURE: the
@@ -563,9 +635,22 @@ impl PostScriptOptions {
         }
     }
 
-    /// Remove empty per-post maps.
+    /// Remove empty per-post maps, and move a hidden alias key to the key
+    /// of the registry name it selects (#3537); an entry already under
+    /// the registry name wins.
     pub fn normalize(&mut self) {
         self.by_post.retain(|_, v| !v.is_empty());
+        let aliased: Vec<String> = self
+            .by_post
+            .keys()
+            .filter(|k| crate::posting::agie::current_key(k) != **k)
+            .cloned()
+            .collect();
+        for old in aliased {
+            if let Some(v) = self.by_post.remove(&old) {
+                self.by_post.entry(crate::posting::agie::current_key(&old)).or_insert(v);
+            }
+        }
     }
 }
 
@@ -836,15 +921,19 @@ pub fn register_schema(world: &World) {
     world.component::<GeoSig>();
     world.component::<FeatureNamesMemo>();
     world.component::<ReducedFidelity>();
+    world.component::<FidelityVouched>();
     world.component::<StepBudget>();
     world.component::<StepSource>();
+    world.component::<ModelSource>();
     world.component::<MeshOpen>();
+    world.component::<SolidRanges>();
     world.component::<Selected>();
     world.component::<StockDef>();
     world.component::<StockSourceOnly>();
     world.component::<StockMaterial>();
     world.component::<GeomPrintMemo>();
     world.component::<Wcs>();
+    world.component::<Sketch>();
     world.component::<WcsFlip>();
     world.component::<ToolDef>();
     world.component::<ToolBody>();

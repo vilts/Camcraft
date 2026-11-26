@@ -33,7 +33,7 @@ impl OpParams {
                 bottom_z,
                 stepdown,
                 feed,
-                plunge_feed,
+                plunge_feed, picks: _
             } => {
                 w(h, *tolerance);
                 wh(h, *clearance_z);
@@ -55,7 +55,7 @@ impl OpParams {
                 stepdown,
                 stock_to_leave,
                 feed,
-                plunge_feed,
+                plunge_feed, picks: _
             } => {
                 w(h, *tolerance);
                 wh(h, *clearance_z);
@@ -71,7 +71,7 @@ impl OpParams {
                 top_z,
                 bottom_z,
                 feed,
-                plunge_feed,
+                plunge_feed, picks: _
             } => {
                 w(h, *tolerance);
                 wh(h, *clearance_z);
@@ -95,7 +95,7 @@ impl OpParams {
                 stepdown,
                 stock_to_leave,
                 feed,
-                plunge_feed,
+                plunge_feed, picks: _
             } => {
                 w(h, *tolerance);
                 wh(h, *clearance_z);
@@ -111,7 +111,7 @@ impl OpParams {
                 top_z,
                 bottom_z,
                 feed,
-                plunge_feed,
+                plunge_feed, picks: _
             } => {
                 w(h, *tolerance);
                 wh(h, *clearance_z);
@@ -134,6 +134,7 @@ impl OpParams {
                 bar_unload,
                 bar_transfer,
                 inspect_tol,
+                kerf, picks: _
             } => {
                 w(h, *tolerance);
                 wh(h, *clearance_z);
@@ -155,6 +156,13 @@ impl OpParams {
                 // The measurement ask rides the same fold (M5.3 D):
                 // it changes the posted stream, no geometry reads it.
                 w(h, *inspect_tol);
+                // #3469: the kept piece and back stock move the kerf.
+                // Folded only when not the default, so the stamp of
+                // every op saved before the setting stays the same.
+                if *kerf != crate::turning::PartKerf::default() {
+                    w(h, if kerf.kept == crate::turning::PartKept::Chuck { 1.0 } else { 0.0 });
+                    w(h, kerf.back_stock);
+                }
             }
             // The threading ladder (M5.2 stage D, tag 24): the wave's
             // own three numbers ride beside the twins' - pitch, depth
@@ -173,7 +181,7 @@ impl OpParams {
                 feed,
                 plunge_feed,
                 infeed_plan,
-                hand,
+                hand, picks: _
             } => {
                 w(h, *tolerance);
                 wh(h, *clearance_z);
@@ -231,7 +239,7 @@ impl OpParams {
                 bottom_z,
                 angle_deg,
                 feed,
-                plunge_feed,
+                plunge_feed, picks: _
             } => {
                 w(h, *tolerance);
                 wh(h, *clearance_z);
@@ -249,7 +257,7 @@ impl OpParams {
                 bottom_dia,
                 top_dia,
                 feed,
-                plunge_feed,
+                plunge_feed, picks: _
             } => {
                 w(h, *tolerance);
                 wh(h, *clearance_z);
@@ -268,7 +276,7 @@ impl OpParams {
                 stock_to_leave,
                 passes,
                 feed,
-                plunge_feed,
+                plunge_feed, picks: _
             } => {
                 w(h, *tolerance);
                 wh(h, *clearance_z);
@@ -293,7 +301,7 @@ impl OpParams {
                 top_z,
                 bottom_z,
                 feed,
-                plunge_feed,
+                plunge_feed, picks: _
             } => {
                 w(h, *tolerance);
                 wh(h, *clearance_z);
@@ -315,7 +323,7 @@ impl OpParams {
                 top_z,
                 bottom_z,
                 feed,
-                plunge_feed,
+                plunge_feed, picks: _
             } => {
                 w(h, *tolerance);
                 wh(h, *clearance_z);

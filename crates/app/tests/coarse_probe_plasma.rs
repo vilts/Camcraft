@@ -79,6 +79,8 @@ fn judge(t: &Toolpath, tool: &Tool, facets: &[Triangle], excess: f64) -> (Vec<Wa
 #[test]
 fn the_stylus_slack_gives_the_excess_back_and_reads_plain_past_the_bound() {
     assert_eq!(stylus_slack(0.0), STYLUS_SLACK, "full fidelity is untouched");
+    // #2996: the stylus slack never takes the widening - the whole
+    // excess comes off.
     assert!((stylus_slack(EXCESS) - (STYLUS_SLACK - EXCESS)).abs() < 1e-12);
     // Past the bound the law reads plain; the program gate refuses the
     // operation instead (`coarse_laws`' registry test, and below).
@@ -190,6 +192,7 @@ fn torch(model_excess: f64) -> PlasmaParams {
         cut_height: None,
         pierce_delay: None,
         model_excess,
+        file_tolerance: false,
     }
 }
 
@@ -210,6 +213,7 @@ fn cut(grow: f64, excess: f64) -> Result<Toolpath, String> {
 #[test]
 fn the_kerf_tolerance_gives_the_excess_back_and_reads_plain_past_the_bound() {
     assert_eq!(torch(0.0).kerf_tol(), KERF_TOL);
+    // An absent file-tolerance cause keeps the original strict law.
     assert!((torch(EXCESS).kerf_tol() - (KERF_TOL - EXCESS)).abs() < 1e-12);
     assert_eq!(torch(0.03).kerf_tol(), KERF_TOL, "past the bound the law reads plain");
 }
@@ -265,4 +269,14 @@ fn probe_and_plasma_are_judged_while_a_tolerance_is_left_and_refused_by_name_pas
     assert_eq!(gate(probe(), p(), Some(TIGHT)), None, "judged while the slack is left");
     let why = gate(probe(), p(), Some(0.03)).expect("refused past the bound");
     assert!(why.starts_with("OP: model 'bar' was imported too coarsely to verify"), "{why}");
+}
+
+#[test]
+fn a_file_tolerance_plasma_check_keeps_the_stated_true_surface_bound() {
+    let mut eligible = torch(EXCESS);
+    eligible.file_tolerance = true;
+    let mesh = eligible.kerf_tol();
+    assert!((mesh - 0.005).abs() < 1e-12, "the larger kerf tolerance cannot widen this allowance: {mesh}");
+    assert!((TIGHT + mesh - 0.017).abs() < 1e-12, "the header's true-surface bound");
+    assert!((torch(EXCESS).kerf_tol() - 0.018).abs() < 1e-12, "budget models keep their old law");
 }

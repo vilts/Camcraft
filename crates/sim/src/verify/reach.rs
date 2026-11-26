@@ -2,11 +2,32 @@
 
 use super::laws::{boundary_samples, dist2_seg, law_points};
 use super::rest::Rest;
+use super::sample_grid::SampleGrid;
 use super::types::{Mode, VerifyContext, Warning};
 
 use super::upright::is_upright;
 use crate::cl::{MoveKind, Toolpath};
 use crate::geo2d::{Point2, Region};
+
+/// What one law (c) run cost (#3588): the island slices it asked
+/// for the sample set, and the (band, point, sample) pairs it tested.
+/// Counted always - two integer adds - and read only by the tests.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ReachStats {
+    pub(super) slices: usize,
+    pub(super) sample_tests: usize,
+}
+
+/// See [`band_reach_counted`].
+pub(super) fn band_reach(
+    path: &Toolpath,
+    cx: &VerifyContext,
+    rest: &Rest,
+    chord_tol: f64,
+    warns: &mut Vec<Warning>,
+) {
+    band_reach_counted(path, cx, rest, chord_tol, warns);
+}
 
 /// (c) Shank/holder reach against rest material, then (c3) its
 /// mid-turn sweep twin. Mode::Radial stands it down (M5.2 F2) for
@@ -16,13 +37,21 @@ use crate::geo2d::{Point2, Region};
 /// walls, steel the door law already measured as the hole. (c3)'s
 /// sweeps ride the same column and stand with it; the kernel's
 /// chain self-check and door margins are the band law here.
-pub(super) fn band_reach(
+///
+/// #3588: the samples of all planes stay ONE set - the law reads no
+/// sample's plane, so a wall sliced far below a move can still convict
+/// it - but each band disc reads only the samples a [`SampleGrid`]
+/// places near it. The verdict over a disc is a max over its samples
+/// (part outranks stock outranks clean) and every reading is pure in
+/// the sample, so neither the order nor a repeated sample can move it.
+pub(super) fn band_reach_counted(
     path: &Toolpath,
     cx: &VerifyContext,
     rest: &Rest,
     chord_tol: f64,
     warns: &mut Vec<Warning>,
-) {
+) -> ReachStats {
+    let mut stats = ReachStats::default();
     let r = cx.tool.radius;
     // The kerf slack and the band growth on a coarse model (#904).
     let (kerf_tol, grow) = (cx.tightened(cx.gouge_tol), cx.band_growth());
@@ -50,7 +79,11 @@ pub(super) fn band_reach(
     let groups: [&[(f64, f64, f64)]; 2] = [&shank, &holder];
     let bands: Vec<(f64, f64, f64)> = groups.concat();
 
-    if !matches!(cx.mode, Mode::Engrave | Mode::Radial | Mode::Rotary) {
+    // #1444: an undercut path's bands answer to the undercut law.
+    if cx.mode == Mode::Undercut {
+        return stats;
+    }
+    if !matches!(cx.mode, Mode::Engrave | Mode::Carve | Mode::Radial | Mode::Rotary) {
         // Both boundaries matter: the region's loops carry the part
         // islands (holes in the region), the stock's carry its outer
         // walls wherever they stand beyond the region. A model-driven
@@ -69,12 +102,28 @@ pub(super) fn band_reach(
             let mut zs: Vec<u64> = rest.cut().iter().map(|c| c.2.to_bits()).collect();
             zs.sort_unstable();
             zs.dedup();
+            // #3831: geometric slab sections may share their point set,
+            // but their vertices and vertex means depend on the plane.
+            // Neither spaced wall samples nor a band-width threshold
+            // proves coverage of their nudged boundary samples. Keep
+            // every plane's original samples, including narrow annuli
+            // and near-tangent contacts with uncut stock.
             for k in zs {
-                if let Some(s) = rest.islands_at(f, f64::from_bits(k)) {
-                    samples.extend(boundary_samples(&s));
+                stats.slices += 1;
+                if let Some(s) = rest.reach_slice(f, f64::from_bits(k)) {
+                    samples.extend(boundary_samples(s.region()));
                 }
             }
         }
+        // Cells half as wide as the narrowest band's disc (an eighth of
+        // the widest at least): a disc's box reads few samples outside
+        // the disc itself. The width moves the cost only, never a verdict.
+        let radii = bands.iter().filter(|b| b.1 > 0.0 && b.2 > 0.0).map(|b| b.1);
+        let (narrow, wide) = radii.fold((f64::INFINITY, 0.0f64), |(n, w), b| (n.min(b), w.max(b)));
+        let cell = (narrow / 2.0).max(wide / 8.0) + grow + 1e-9;
+        let grid = SampleGrid::new(&samples, cell);
+        drop(samples);
+        let mut near: Vec<&Point2> = Vec::new();
         let deepest_island: Option<Option<Region>> =
             cx.model.map(|f| rest.islands_at(f, z_deepest));
         let part_at = |q: Point2| -> bool {
@@ -162,7 +211,8 @@ pub(super) fn band_reach(
                     // reaches the excess further and the flutes' kerf
                     // excuses that much less - a convex wall may stand
                     // that far outside the facets these samples sit on.
-                    let r2 = (r_band + grow + 1e-9) * (r_band + grow + 1e-9);
+                    let rad = r_band + grow + 1e-9;
+                    let r2 = rad * rad;
                     let kerf2 = (r + kerf_tol) * (r + kerf_tol);
                     let mut hit = None;
                     'worst: {
@@ -173,7 +223,10 @@ pub(super) fn band_reach(
                             // under the band is steel's, not the cut's.
                             let pc = Point2::new(p.x + offx, p.y + offy);
                             let tip = Point2::new(p.x, p.y);
-                            for q in &samples {
+                            // `r2` squares away a sign: the box reads |rad|.
+                            grid.near(pc, rad.abs(), &mut near);
+                            for &q in &near {
+                                stats.sample_tests += 1;
                                 if dist2_seg(*q, pc, pc) > r2 || dist2_seg(*q, tip, tip) <= kerf2 {
                                     continue; // outside this band's annulus
                                 }
@@ -233,7 +286,7 @@ pub(super) fn band_reach(
         // on far-field samples. Engrave never poses. Paths no posed
         // generator ever touched hold every pose at home and convict
         // nothing, exactly as before this law existed.
-        if cx.mode != Mode::Engrave {
+        if !matches!(cx.mode, Mode::Engrave | Mode::Carve) {
             let columns = super::hidden_span::Columns::new(None);
             let sweeps = super::sweep::mid_turn_sweeps(
                 path,
@@ -242,7 +295,7 @@ pub(super) fn band_reach(
                 (kerf_tol, grow),
                 chord_tol,
                 &shanked_part,
-                &samples,
+                grid.samples(),
                 &in_stock,
                 &|q: Point2| rest.surface_steps(q),
                 &part_at,
@@ -255,6 +308,7 @@ pub(super) fn band_reach(
             );
         }
     }
+    stats
 }
 
 /// (e) Cycle reach: a hole deeper than the tool assembly reaches is

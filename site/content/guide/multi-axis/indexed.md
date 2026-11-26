@@ -71,7 +71,16 @@ How an index posts depends on the post:
 
 **Unsafe example — do not post or machine.** In
 `examples/guide-multiaxis.camproj`, `Indexed Face1` has **30 gouge warnings**:
-the cutter intrudes into the protected finish surface. This image illustrates
+the cutter intrudes into the protected finish surface. It also has
+**1 first-traverse-low warning**: after a tool change the machine does not
+know where the tool is across the table, so the first move of the operation
+can pass over any part of the stock. Measured along the tilted tool from the
+origin of the tilted plane, the clearance height is 10 mm up and the highest
+corner of the block is 11.114 mm up, so that first move could hit the block.
+After a regenerate, the warning gives the two heights as the operation sets
+them: the clearance height of 30 mm, and the corner at 31.114 mm. It asks
+for a raise of at least 1.114 mm. Raise the clearance height above the
+highest corner of the stock and of every fixture. This image illustrates
 the fixed tilted pose and the warning state, not a verified facing recipe.
 Before using this setup, align the tilted plane and its origin with the
 intended face, then correct the cut depth and cutting boundary so the cutter

@@ -1,8 +1,7 @@
-//! #1536 / #1605: the default evaluation cap, as a user's import runs it, in
-//! a test binary of its own. truck tessellates on rayon's one global pool;
-//! this import holds pool workers for ~50 s, so any other test sharing the
-//! process queued behind it and missed its hang barrier under load. Cargo
-//! runs test binaries one after another, so alone here it starves nothing.
+//! #1536 / #1605: the jumping face, as a user's import reads it, in a test
+//! binary of its own. Since #917 the solidcore kernel refuses the face when
+//! it reads the file, in well under a second; the binary stays apart so
+//! the pin keeps its own process, as before.
 //! Fixture: testdata/models/bspline_discontinuous.step (see
 //! import_step_guard.rs).
 //!
@@ -32,20 +31,18 @@ fn within<R: Send + 'static>(limit: Duration, f: impl FnOnce() -> R + Send + 'st
     }
 }
 
-/// The default cap, as a user's import runs it: bounded, and named. Since
-/// #1568 raised the cap to 150 M this spends ~10 s in release and ~27 s
-/// in debug (it was 4.5 s debug at 25 M); the lowered-cap pins below cover
-/// the same refusal in milliseconds.
+/// The default import, as a user's runs it: bounded, and named, with what
+/// to do next.
 #[test]
 fn a_face_that_never_converges_is_refused_by_name_within_the_budget() {
     let started = Instant::now();
     let r = within(Duration::from_secs(120), || import::load_model(&testdata("bspline_discontinuous.step")));
     let err = r.expect_err("a surface that never tessellates must be refused").to_string();
-    assert!(
-        err.contains("face #53 (B-spline surface, face 6 of 6 in shell #17)"),
-        "the refusal names the face, its kind and its shell: {err}"
-    );
-    assert!(err.contains("did not converge"), "{err}");
+    assert!(err.contains("face #53") && err.contains("#16"), "the refusal names the face and its solid: {err}");
+    // The solid's size and the face's place in it, as the old "face 6 of 6
+    // in shell #17" said them (#917: the kernel names the solid, #16).
+    assert!(err.contains("first #16 at read: pcurves failed on 1 of 6 faces; first: face #53"), "{err}");
+    assert!(err.contains("edge 0 lies 0.2500 mm off the face's surface"), "{err}");
     assert!(err.contains("import an STL"), "the refusal says what to do: {err}");
     eprintln!("refused in {:?}", started.elapsed());
 }

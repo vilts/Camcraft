@@ -65,8 +65,19 @@ fn a_stepped_profile_reads_its_bands_exactly() {
     assert_eq!(s.holder_profile().bands(), &b[..]);
 }
 
+/// Slack (mm) for the holder stack comparison: float dust only. A stack
+/// read from the spun profile subtracts two heights, so a band length can
+/// differ from the cylinder's in the last bits (#3369: a 17.4625 mm flute
+/// under a 32 mm shank gives a 25.000000000000007 mm holder band).
+const STACK_DUST: f64 = 1e-9;
+
+fn bands_agree(a: &[HolderBand], b: &[HolderBand]) -> bool {
+    let near = |x: f64, y: f64| (x - y).abs() <= STACK_DUST;
+    a.len() == b.len() && a.iter().zip(b).all(|(p, q)| near(p.above, q.above) && near(p.len, q.len) && near(p.r, q.r))
+}
+
 #[test]
-fn a_parametric_holder_stacks_bit_identically_to_the_cylinder() {
+fn a_parametric_holder_stacks_as_the_cylinder() {
     for (name, t) in catalog() {
         if is_lathe(t.kind) {
             assert!(SpunProfile::holder_of(&t).is_none(), "{name}: turning tools are not spun");
@@ -78,7 +89,11 @@ fn a_parametric_holder_stacks_bit_identically_to_the_cylinder() {
             assert!(g.holder_len <= 0.0 || g.holder_radius <= 0.0, "{name}: a holder must draw");
             continue;
         };
-        assert_eq!(h.holder_profile().stack(&g), HolderStack::cylinder(&g), "{name}");
+        let (have, want) = (h.holder_profile().stack(&g), HolderStack::cylinder(&g));
+        let same = bands_agree(&have.bands, &want.bands)
+            && bands_agree(&have.neck, &want.neck)
+            && (have.top - want.top).abs() <= STACK_DUST;
+        assert!(same, "{name}: {have:?} is not {want:?}");
     }
 }
 

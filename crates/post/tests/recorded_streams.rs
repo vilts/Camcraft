@@ -124,6 +124,7 @@ fn tool_change() -> String {
         alternating: false,
         chip_break_dips: false,
         repeat_each_depth: false,
+        start_in_air: false,
     });
     assert!(thread.threads[0].is_sane(&thread.moves), "the thread record sits on its passes");
     assert!(thread.threads[0].reverse_spindle(), "a left-hand thread toward -Z needs M04");

@@ -92,6 +92,7 @@ pub fn plate(control: bool) -> Toolpath {
         cut_height: None,
         pierce_delay: Some(0.5),
         model_excess: 0.0,
+        file_tolerance: false,
     };
     plasma_profile(&loops, &[], &part, &p).unwrap()
 }
@@ -286,6 +287,7 @@ fn a_plasma_document_posts_through_the_app_gate() {
         pierce_height: None,
         cut_height: None,
         pierce_delay: None,
+        picks: Default::default(),
     };
     let src = SrcRef::Entity("plate".into());
     h.execute(&world, CreateOperation::new(&world, "Plasma1", "PT-KERF-150", src, OpParams::PlasmaProfile(op)).expect("op"));
@@ -297,9 +299,10 @@ fn a_plasma_document_posts_through_the_app_gate() {
     assert!(why.contains("Plasma1") && why.contains("post Fanuc does not serve") && why.contains("plasma cutting"), "{why}");
     assert!(!file.exists(), "nothing written");
     // The mount offers the plasma post; the user takes it.
-    let (serves, offer) = camcraft_app::posting::post_offer(&world).expect("a mill post on a plasma table is offered the plasma post");
-    assert_eq!((serves, &offer), ("mill", &PostRef::Named(PLASMA.into())));
-    h.execute(&world, SelectPost::new(&world, offer).expect("select"));
+    // #2374: the 1300PL's file names the plasma post, so that is why.
+    let offer = camcraft_app::posting::post_offer(&world).expect("a mill post on a plasma table is offered the plasma post");
+    assert_eq!((&offer.post, offer.why), (&PostRef::Named(PLASMA.into()), camcraft_app::posting::OfferWhy::Machine));
+    h.execute(&world, SelectPost::new(&world, offer.post).expect("select"));
     assert!(camcraft_app::posting::post_offer(&world).is_none());
     let file = std::env::temp_dir().join(format!("camcraft_plasma_post_{}.nc", std::process::id()));
     let posted = camcraft_app::posting::post_setup(&world, &file).expect("the gate passes a plasma program");

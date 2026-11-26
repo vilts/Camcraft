@@ -26,8 +26,8 @@ use camcraft_app::posting;
 use camcraft_app::schema::PostOptions;
 use serde_json::json;
 use tormach_lathe_support::{
-    g33s, g76, g76_words, gated, lathe_mch, linuxcnc_sane, post, program_with, stock_params, thread_world, thread_world_with, CPS, DEPTH,
-    PITCH,
+    g33s, g76, g76_world, g76_world_with, g76_words, gated, lathe_mch, linuxcnc_sane, post, program_with, stock_params, thread_world,
+    thread_world_with, CPS, DEPTH, PITCH,
 };
 
 fn with_rec(records: &[cnc::Record], f: impl Fn(&mut cnc_thread::ThreadRec)) -> Vec<cnc::Record> {
@@ -73,24 +73,31 @@ fn a_thread_posts_as_g33_passes_by_default_in_mm_and_inch() {
 #[test]
 fn a_thread_posts_as_one_g76_block_with_the_option_in_mm_and_inch() {
     for (inch, file) in [(false, "thread_g76_mm"), (true, "thread_g76_inch")] {
-        let (world, mut history) = thread_world(inch);
+        // #2952: the bar ends at its free end face; the cycle starts one
+        // lead out from it (z 16), in free air.
+        let (world, mut history) = g76_world(inch);
         history.execute(&world, SetPostOptions::new(&world, g76()).expect("G76 chosen"));
         let text = program_with(&world, g76());
         assert_eq!(text.matches("G76").count(), 1, "one block, LinuxCNC's form: {text}");
         assert!(!text.contains("G33"), "the passes are the control's now: {text}");
         let line = text.lines().find(|l| l.starts_with("G76")).expect("G76");
         if !inch {
-            // Drive line Ø12.1 at the thread's top; peak Ø12, so I -0.1;
+            // Drive line Ø12.1 at the cycle's start, z 16 in front of the
+            // end face (#2952); peak Ø12, so I -0.1;
             // J 0.8 = the first 0.4 rung on the diameter; K 2.4 = 1.2
             // deep; R1 equal rungs, Q0 radial, H0 no spring pass.
-            assert!(text.contains("G0 X12.1\nG0 Z14\nG76 "), "X first after G30, then Z (#1604): {text}");
+            assert!(text.contains("G0 X12.1\nG0 Z16\nG76 "), "X first after G30, then Z (#1604): {text}");
             assert_eq!(line, "G76 P2 Z8 I-0.1 J0.8 K2.4 R1 Q0 H0");
         } else {
             // The grid law: Ø12.1 is 0.4764, Ø12 0.4724 (I -0.004, not a
             // second rounding of 0.1 mm); the root rounds OUT to 0.378
-            // (Ø9.6 is 0.37795 in), so K 0.0944 - never deeper.
-            assert!(text.contains("G0 X0.4764\nG0 Z0.5512\nG76 "), "X first after G30, then Z (#1604): {text}");
-            assert_eq!(line, "G76 P0.07874 Z0.315 I-0.004 J0.0314 K0.0944 R1 Q0 H0");
+            // (Ø9.6 is 0.37795 in), so K 0.0944 - never deeper. J 0.0315,
+            // not the shallower 0.0314 (#1619): LinuxCNC's R1 ladder cuts
+            // ceil(K/J) passes, and 0.0944 / 0.0314 is four where the
+            // record lays three; 0.0315 is 0.000004 in over Ø0.8 mm.
+            // z 16 is 0.62992 in.
+            assert!(text.contains("G0 X0.4764\nG0 Z0.6299\nG76 "), "X first after G30, then Z (#1604): {text}");
+            assert_eq!(line, "G76 P0.07874 Z0.315 I-0.004 J0.0315 K0.0944 R1 Q0 H0");
         }
         assert_eq!(gated(&world, file), text, "the in-app post follows the document's option");
         common::write_golden(&format!("nc/tormach-lathe/{file}.nc"), &text);
@@ -109,14 +116,15 @@ fn a_left_hand_thread_posts_toward_the_chuck_under_m4() {
     assert!(text.contains("G97 S800 M4\n") && !text.contains(" M3\n"), "{text}");
     assert!(text.contains("MOUNT THE INSERT FOR M4"), "{text}");
     assert!(g33s(&text).iter().all(|(z, k)| z == "8" && k == "2"), "{text}");
-    let g = program_with(&world, g76());
+    let (g76w, _h) = g76_world_with(false, ThreadHand::Left, PITCH, DEPTH);
+    let g = program_with(&g76w, g76());
     assert!(g.contains("M4\n") && g.contains("G76 P2 Z8 "), "{g}");
     assert_eq!(gated(&world, "lh"), text, "the gated in-app post agrees");
 }
 
 #[test]
 fn a_thread_against_the_spindle_is_refused_by_name() {
-    let (world, _history) = thread_world(false);
+    let (world, _history) = g76_world(false);
     let records = posting::stream_records(&world).expect("generated");
     // A G76 record claiming the other hand than the section's M3.
     let (text, refused) = post(&world, &with_rec(&records, |t| t.hand = ThreadHand::Left), g76());
@@ -189,7 +197,7 @@ fn g76_rounds_to_the_grid_and_never_deeper_than_the_minor() {
     // The record's numbers each ride the half-micron lattice on their
     // own: a minor diameter 1.5 um off the height law and the end
     // point is still one thread, posted - and the root rounds OUT.
-    let (world, _history) = thread_world(false);
+    let (world, _history) = g76_world(false);
     let records = posting::stream_records(&world).expect("generated");
     let bent = with_rec(&records, |t| t.minor_diameter += 0.0015);
     let (text, refused) = post(&world, &bent, g76());
@@ -200,7 +208,7 @@ fn g76_rounds_to_the_grid_and_never_deeper_than_the_minor() {
     // In both units the root the control computes (X + I - K) is never
     // inside the record's minor, and J never exceeds K.
     for inch in [false, true] {
-        let (world, _history) = thread_world(inch);
+        let (world, _history) = g76_world(inch);
         let text = program_with(&world, g76());
         // The drive line: the last X written before the G76 block (#1604:
         // after G30 the X and the Z of the approach are two rapids).
@@ -226,11 +234,13 @@ fn g76_rounds_to_the_grid_and_never_deeper_than_the_minor() {
 
 #[test]
 fn a_g76_record_the_cycle_cannot_state_exactly_is_refused_by_name() {
-    let (world, _history) = thread_world(false);
+    // The free-air world (#2952): its own record posts, so each case
+    // below is refused for its own reason.
+    let (world, _history) = g76_world(false);
     let records = posting::stream_records(&world).expect("generated");
     let bare: Vec<cnc::Record> = records.iter().filter(|r| !matches!(r, cnc::Record::Thread(_))).cloned().collect();
     type Bend = fn(&mut cnc_thread::ThreadRec);
-    let cases: [(&str, Vec<cnc::Record>); 9] = [
+    let cases: [(&str, Vec<cnc::Record>); 10] = [
         ("no thread cycle record", bare),
         // #417: R1's ladder infeeds along one line; its finishing pass
         // is the ladder's own last step, never a stated allowance.
@@ -244,6 +254,8 @@ fn a_g76_record_the_cycle_cannot_state_exactly_is_refused_by_name() {
         ("not an external thread", with_rec(&records, (|t| t.minor_diameter = 13.0) as Bend)),
         // Past the lattice allowance: a real disagreement, not rounding.
         ("diameters and the thread height disagree", with_rec(&records, (|t| t.minor_diameter += 0.01) as Bend)),
+        // #2952: the cycle rapids to each pass depth at its start Z.
+        ("the start point is above material", with_rec(&records, (|t| t.start_in_air = false) as Bend)),
     ];
     for (why, recs) in cases {
         let (text, refused) = post(&world, &recs, g76());
@@ -255,7 +267,7 @@ fn a_g76_record_the_cycle_cannot_state_exactly_is_refused_by_name() {
 #[test]
 fn cached_zero_finish_allowance_g76_refusal_tells_the_user_to_regenerate() {
     for inch in [false, true] {
-        let (world, _history) = thread_world(inch);
+        let (world, _history) = g76_world(inch);
         let records = posting::stream_records(&world).expect("generated");
         // Records cached before #517 used zero instead of the finishing pass's depth.
         let cached = with_rec(&records, |t| t.finish_allowance = 0.0);
@@ -276,7 +288,10 @@ fn cached_zero_finish_allowance_keeps_fanuc_g76_output() {
     for inch in [false, true] {
         let (world, _history) = thread_world(inch);
         let records = posting::stream_records(&world).expect("generated");
-        let cached = with_rec(&records, |t| t.finish_allowance = 0.0);
+        let cached = with_rec(&records, |t| {
+            t.finish_allowance = 0.0;
+            t.start_in_air = true;
+        });
         let mut options = posting::options_value(g76());
         options["Units"] = json!(posting::unit_word(camcraft_app::units::of(&world)));
         let fanuc = include_str!("../../../assets/posts/fanuc-lathe.cps");
@@ -297,7 +312,7 @@ fn g76_takes_the_record_whose_finishing_step_is_the_ladders_own() {
     // #417: the record's finish allowance is the finishing pass's own
     // step. 1.0 deep in rungs of 0.4 lays 0.4, 0.8 and a 0.2 finish -
     // exactly R1's J, 2J clamped at K - so the cycle states it.
-    let (world, _history) = thread_world_with(false, ThreadHand::Right, PITCH, 1.0);
+    let (world, _history) = g76_world_with(false, ThreadHand::Right, PITCH, 1.0);
     let records = posting::stream_records(&world).expect("generated");
     let finish = records
         .iter()

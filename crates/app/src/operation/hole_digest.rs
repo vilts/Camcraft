@@ -100,6 +100,7 @@ mod tests {
             plunge_feed: 100.0,
             holes: Vec::new(),
             cross: vec![*c],
+            picks: Default::default(),
         };
         let mut h = std::hash::DefaultHasher::new();
         params.stamp_with(world, None, None, &mut h);

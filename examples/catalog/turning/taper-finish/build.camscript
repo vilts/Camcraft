@@ -1,0 +1,29 @@
+// Provenance: original CamCraft cone using public command verbs (#2865).
+// Run from this case directory: camcraft-cli script build.camscript
+cam.import("model/taper-finish.obj", "taper-finish");
+cam.call("set_model_link", { model: "taper-finish", path: null });
+cam.call("set_stock", { from_model: "taper-finish" });
+cam.call("load_machine", { builtin: "Lathe" });
+cam.call("add_setup", { name: "Turning" });
+cam.call("set_setup_post", { post: "Fanuc Lathe" });
+cam.call("add_tool", { catalog: "TN-1600-0R8" });
+
+var z = function (v) { return { reference: "fixed", offset: v }; };
+
+// A finish ride on a pre-turned cone. The prepared stock clears the retract.
+cam.call("add_operation", {
+  kind: "Taper Turning", name: "Taper finish", tool: "TN-1600-0R8", source: "taper-finish",
+  params: {
+    tolerance: 0.05, clearance_z: z(70.0), top_z: z(60.0), bottom_z: z(0.0),
+    bottom_dia: 20.0, top_dia: 16.0, feed: 200.0, plunge_feed: 50.0
+  }
+});
+
+cam.generate();
+var verdict = cam.verify();
+if (!verdict.ok) {
+  throw new Error("catalog verify failed: " + JSON.stringify(verdict));
+}
+cam.save("taper-finish.camproj");
+cam.post({ to: "taper-finish.nc" });
+cam.report();

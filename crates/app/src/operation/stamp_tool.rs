@@ -41,6 +41,13 @@ pub(super) fn write(world: &World, tool_name: &str, params: &OpParams, h: &mut s
         crate::tools::ToolKind::ThreadMillSingle => 15,
         crate::tools::ToolKind::Waterjet => 16,
         crate::tools::ToolKind::Wire => 17,
+        // #1444: the undercut cutters append.
+        crate::tools::ToolKind::TSlot => 18,
+        crate::tools::ToolKind::Keyseat => 19,
+        crate::tools::ToolKind::Dovetail => 20,
+        crate::tools::ToolKind::Lollipop => 21,
+        // #3369: the form mill appends.
+        crate::tools::ToolKind::FormMill => 22,
     });
     for v in [
         tool.diameter,
@@ -97,7 +104,22 @@ pub(super) fn write(world: &World, tool_name: &str, params: &OpParams, h: &mut s
         // build (M2.4 B): the congruence door reads it against the
         // face's angle, so a re-cut cone is a different chamfer even
         // when width, depth and the wall itself never moved.
-        crate::tools::ToolKind::Taper => w(h, tool.tip_angle),
+        // #3368: a flat or ball tip is another cutter - bytes only then,
+        // so no sharp taper's digest moves.
+        crate::tools::ToolKind::Taper => {
+            w(h, tool.tip_angle);
+            match tool.tip_form {
+                crate::tools::TaperTip::Sharp => {}
+                crate::tools::TaperTip::Flat => {
+                    h.write_u8(1);
+                    w(h, tool.tip_diameter);
+                }
+                crate::tools::TaperTip::Ball => {
+                    h.write_u8(2);
+                    w(h, tool.tip_diameter);
+                }
+            }
+        }
         // The thread mills digest their form (#894): the flank angle
         // and the pitch range decide which threads the tool may cut
         // and how many rows ride a revolution (the pitch itself rides
@@ -105,6 +127,16 @@ pub(super) fn write(world: &World, tool_name: &str, params: &OpParams, h: &mut s
         crate::tools::ToolKind::ThreadMill | crate::tools::ToolKind::ThreadMillSingle => {
             w(h, tool.tip_angle);
             w(h, tool.pitch_min);
+        }
+        // #3369: a form mill IS its outline - every point, arc and the
+        // pilot's length, so a redrawn form is a different cutter.
+        crate::tools::ToolKind::FormMill => {
+            if let Some(form) = &tool.form {
+                w(h, form.pilot_len);
+                for p in &form.points {
+                    p.iter().for_each(|v| w(h, *v));
+                }
+            }
         }
         _ => {}
     }

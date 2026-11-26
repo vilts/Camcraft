@@ -213,8 +213,25 @@ fn stamp_inner(
         held = pose.unwrap_or(UP);
         poses.push(pose);
     }
+    // #3300: a path that leans states its pose from its first move. The
+    // stations before the first lean hold the upright home, and they
+    // say so - the post commands that zero on the opening move, so the
+    // control knows its rotaries before the first tilted feed (a feed
+    // from an angle it does not know refuses at a stated rotary rate).
+    // A path that never leans stays silent, byte for byte as before.
+    if leaned {
+        for p in poses.iter_mut().filter(|p| p.is_none()) {
+            *p = Some(UP);
+        }
+    }
     let mut b = PathBuilder::new(path.start().unwrap_or(Point3::ZERO));
     let mut k = 0usize;
+    // #3414: the pose the last pushed move carried, and whether the
+    // machine is in air (after a rapid, or before any move). A lean
+    // that arrives from air swings at a standstill first; a lean that
+    // arrives while cutting keeps the modal law.
+    let mut held_pose: Option<[f64; 3]> = None;
+    let mut in_air = true;
     for (i, mv) in path.moves.iter().enumerate() {
         let k0 = k;
         while k < st.len() && st[k].mv == i {
@@ -225,20 +242,66 @@ fn stamp_inner(
             && kinds[k0..k].iter().zip(&st[k0..k]).all(|(kd, s)| *kd == s.kind);
         match (mv.arc, upright, group.last()) {
             // A move that never leans keeps its exact intent: its
-            // upright tips are the plan's own, bit for bit.
+            // upright tips are the plan's own, bit for bit - except
+            // the standstill swing below when the rotaries must
+            // return to upright out of air first.
             (Some(a), true, Some(pose)) => {
                 b.set_axis(*pose);
+                // #3414, the upright arms: a return to upright out of
+                // air swings at a standstill too. A preceding rapid
+                // can hand this move a leaned held_pose, and the
+                // rotaries must not turn back to upright while the
+                // descent reaches the part. The zero-travel rapid
+                // below posts the new pose at the tip the machine
+                // already holds; the ball only rises through the swing
+                // (the old axis's Z stays non-negative), so nothing
+                // new is swept. An opening upright move
+                // (held_pose == None) states the upright home as its
+                // own (#3300) and swings nothing; a pose that already
+                // matches drops in the builder, byte for byte as
+                // before.
+                if in_air && mv.kind != MoveKind::Rapid && held_pose.is_some_and(|h| Some(h) != *pose) {
+                    let here = b.at();
+                    b.push(MoveKind::Rapid, here, None);
+                }
                 b.push_arc_in(mv.kind, mv.to, mv.feed, a.center, a.ccw, a.plane);
+                held_pose = *pose;
+                in_air = mv.kind == MoveKind::Rapid;
             }
             (None, true, Some(pose)) => {
                 b.set_axis(*pose);
+                // #3414: the same standstill swing before the upright
+                // descent - see the arc arm above.
+                if in_air && mv.kind != MoveKind::Rapid && held_pose.is_some_and(|h| Some(h) != *pose) {
+                    let here = b.at();
+                    b.push(MoveKind::Rapid, here, None);
+                }
                 b.push(mv.kind, mv.to, mv.feed);
+                held_pose = *pose;
+                in_air = mv.kind == MoveKind::Rapid;
             }
             _ => {
                 for ((s, pose), kind) in st[k0..k].iter().zip(group).zip(&kinds[k0..k]) {
                     b.set_axis(*pose);
+                    // #3414: a lean never rides the move that reaches
+                    // the part: out of air, the rotaries swing at a
+                    // standstill, at the tip the machine already
+                    // holds, as a zero-travel rapid whose pose is the
+                    // only change - then the cut descends under the
+                    // pose already held. The builder keeps a
+                    // zero-travel move whose pose changed, and the
+                    // post solves it as a pure rotary reorientation.
+                    // When the pose already matches, the swing drops
+                    // and nothing changes. A lean while already
+                    // cutting keeps the modal law below.
+                    if in_air && *kind != MoveKind::Rapid && *pose != held_pose {
+                        let here = b.at();
+                        b.push(MoveKind::Rapid, here, None);
+                    }
                     let feed = if *kind == MoveKind::Rapid { None } else { s.feed };
                     b.push(*kind, tip_of(s.to, *pose, r), feed);
+                    held_pose = *pose;
+                    in_air = *kind == MoveKind::Rapid;
                 }
             }
         }

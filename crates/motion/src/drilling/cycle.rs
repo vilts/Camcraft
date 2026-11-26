@@ -97,7 +97,7 @@ pub fn drill(p: &CycleParams) -> Result<Toolpath, GenError> {
         // (a folded counterbore) has a ring the cycle's single radius
         // cannot reach. Refused here, by name, not left to the
         // verifier's generic gouge after the fact.
-        if matches!(kind, CycleKind::Bore | CycleKind::BackBore | CycleKind::Ream) {
+        if matches!(kind, CycleKind::Bore | CycleKind::BackBore | CycleKind::Ream | CycleKind::FineBore) {
             if h.stepped {
                 return Err(GenError::invalid_at(
                     format!(
@@ -168,8 +168,26 @@ pub fn drill(p: &CycleParams) -> Result<Toolpath, GenError> {
                 b.push(MoveKind::Rapid, Point3::new(h.xy.x, h.xy.y, p.r_z), None);
             }
             CycleKind::BackBore => {
+                // #1480: G89 (and the G85 a post writes for a back-bore
+                // with no dwell) has one F word for both directions, so
+                // the chain feeds out at the feed it fed in at - what the
+                // control runs is what the verifier and simulation read.
                 b.push(MoveKind::Plunge, Point3::new(h.xy.x, h.xy.y, bottom), Some(p.plunge_feed));
-                b.push(MoveKind::Feed, Point3::new(h.xy.x, h.xy.y, p.r_z), Some(p.feed));
+                b.push(MoveKind::Feed, Point3::new(h.xy.x, h.xy.y, p.r_z), Some(p.plunge_feed));
+            }
+            CycleKind::FineBore => {
+                // #1445: G76 - feed in, (dwell), spindle stopped at its
+                // orientation, the tip shifted off the wall, rapid out at
+                // the shifted XY, shift back at R. The chain makes the
+                // shift, so the verifier and the simulation read the
+                // retract where the control runs it, and a post reads its
+                // shift words from this move.
+                let [dx, dy] = super::fine_bore::shift_door(p.tool, p.cycle, mouth)?;
+                let (sx, sy) = (lattice(h.xy.x + dx), lattice(h.xy.y + dy));
+                b.push(MoveKind::Plunge, Point3::new(h.xy.x, h.xy.y, bottom), Some(p.plunge_feed));
+                b.push(MoveKind::Rapid, Point3::new(sx, sy, bottom), None);
+                b.push(MoveKind::Rapid, Point3::new(sx, sy, p.r_z), None);
+                b.push(MoveKind::Rapid, Point3::new(h.xy.x, h.xy.y, p.r_z), None);
             }
             CycleKind::Ream => {
                 // G85: one F word drives both directions, so the chain
@@ -179,8 +197,16 @@ pub fn drill(p: &CycleParams) -> Result<Toolpath, GenError> {
                 b.push(MoveKind::Feed, Point3::new(h.xy.x, h.xy.y, p.r_z), Some(p.plunge_feed));
             }
         }
+        // #1480: a back-bore carries the dwell too (G89 dwells at the
+        // bottom); each post writes its own P unit or refuses by name.
         let dwell = match kind {
-            CycleKind::Spot | CycleKind::Drill | CycleKind::Deep | CycleKind::Bore | CycleKind::FloatingTap => p.dwell,
+            CycleKind::Spot
+            | CycleKind::Drill
+            | CycleKind::Deep
+            | CycleKind::Bore
+            | CycleKind::BackBore
+            | CycleKind::FineBore
+            | CycleKind::FloatingTap => p.dwell,
             _ => 0.0,
         };
         b.push_cycle(Cycle {
@@ -216,7 +242,7 @@ pub fn drill(p: &CycleParams) -> Result<Toolpath, GenError> {
 /// refusal points at it (#261 part 2).
 pub(super) fn refuse_solid_cycle(tool: &crate::tools::Tool, kind: CycleKind, at: Point3) -> Result<(), GenError> {
     if tool.center_cutting
-        || matches!(kind, CycleKind::Tap | CycleKind::FloatingTap | CycleKind::Bore | CycleKind::BackBore | CycleKind::Ream)
+        || matches!(kind, CycleKind::Tap | CycleKind::FloatingTap | CycleKind::Bore | CycleKind::BackBore | CycleKind::Ream | CycleKind::FineBore)
     {
         return Ok(());
     }
@@ -242,6 +268,7 @@ pub(super) fn resolve_choice(p: &CycleParams) -> CycleKind {
         CycleChoice::Bore => CycleKind::Bore,
         CycleChoice::BackBore => CycleKind::BackBore,
         CycleChoice::Ream => CycleKind::Ream,
+        CycleChoice::FineBore { .. } => CycleKind::FineBore,
     }
 }
 

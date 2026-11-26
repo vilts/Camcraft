@@ -15,6 +15,7 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
         )));
     }
     super::program_entry_dto::validate(dto, kind)?; // #155
+    super::sketch_dto::validate(dto, kind)?; // #1862
     // #1720: a flip rides a WCS row and nothing else.
     if dto.flip.is_some() && !matches!(kind, EntityKind::Wcs) {
         return Err(corrupt(format!("'{}' records a flipped axis but is not a WCS", dto.name)));
@@ -30,6 +31,10 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
     if dto.step_source.is_some() && !matches!(kind, EntityKind::Model) {
         return Err(corrupt(format!("'{}' records STEP source but is not a model", dto.name)));
     }
+    // #2463: a source rides a model row only, with a path and a digest.
+    if let Some(src) = &dto.source {
+        src.check(&dto.name, matches!(kind, EntityKind::Model)).map_err(corrupt)?;
+    }
     // #1056: the unknown-fidelity mark rides a mesh row only, and never
     // beside a recorded chord - one entity cannot both know and not know.
     if dto.fidelity_unknown {
@@ -40,12 +45,23 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
             return Err(corrupt(format!("'{}' records a chord error and an unknown fidelity at once", dto.name)));
         }
     }
-    // #1610: a hole is said of a model of unknown fidelity only.
-    if dto.mesh_open.is_some() && !(dto.fidelity_unknown && matches!(kind, EntityKind::Model)) {
-        return Err(corrupt(format!("'{}' names a mesh hole but is not a model marked fidelity unknown", dto.name)));
+    // #1610: a hole is said of a mesh of unknown fidelity only - a model,
+    // or (#1700) a stock copied from one, which carries its source's hole.
+    let copy = matches!(kind, EntityKind::Stock)
+        && dto.stock.as_ref().is_some_and(|s| matches!(s.to_shape(), StockShape::FromModel { .. }));
+    if dto.mesh_open.is_some() && !(dto.fidelity_unknown && (matches!(kind, EntityKind::Model) || copy)) {
+        return Err(corrupt(format!("'{}' names a mesh hole but is not a model marked fidelity unknown, or a stock copied from one", dto.name)));
+    }
+    if dto.file_tolerance && (dto.coarse_mm.is_none() || dto.fidelity_unknown || !(matches!(kind, EntityKind::Model) || copy)) {
+        return Err(corrupt(format!("'{}' records a file tolerance without a known model chord", dto.name)));
+    }
+    // #1339: a vouch is a model's, and never rides beside a flag.
+    if let Some(vouch) = &dto.fidelity_vouched {
+        let flagged = dto.fidelity_unknown || dto.coarse_mm.is_some();
+        vouch.check(&dto.name, matches!(kind, EntityKind::Model), flagged).map_err(corrupt)?;
     }
     match kind {
-        EntityKind::Entry => {}
+        EntityKind::Entry | EntityKind::Sketch => {}
         EntityKind::Model => {
             if dto.stock.is_some()
                 || dto.tool.is_some()
@@ -182,8 +198,11 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
             }
             // #368: a body is a body this build's envelope law accepts,
             // on a tool it fits - or the file refuses by name.
-            if let Some(b) = &tool.body {
-                let body = b.to_body(&dto.name).map_err(corrupt)?;
+            // #2016: a library reference names an entry the library
+            // holds, or the file refuses by name.
+            if let Some(body) =
+                super::tool_body_wire::stated_body(tool.holder.as_ref(), tool.body.as_ref(), &dto.name).map_err(corrupt)?
+            {
                 crate::tool_body::fits(&tool.to_tool(), &body)
                     .map_err(|e| corrupt(format!("tool '{}': {e}", dto.name)))?;
             }
@@ -232,8 +251,40 @@ pub(super) fn validate_kind(dto: &EntityDto, kind: EntityKind) -> Result<(), Pro
                     dto.name
                 )));
             }
+            if !op.area.do_not_touch.is_default() {
+                let cl = op.area.do_not_touch.clearance;
+                if !cl.is_finite() || cl < 0.0 || cl > crate::operation::AREA_DISTANCE_MAX {
+                    return Err(corrupt(format!("'{}' has invalid Do not touch clearance", dto.name)));
+                }
+                if op.area.do_not_touch.items.iter().any(|g| {
+                    g.entity.is_empty() || matches!(g.feature, FeatureSelDto::Vertex { .. })
+                }) {
+                    return Err(corrupt(format!("'{}' has invalid Do not touch pick", dto.name)));
+                }
+                let ctrl = op.area.to_controls();
+                let params = op.params.to_params();
+                if let Some(why) = crate::operation::do_not_touch_unsupported(params.kind()) {
+                    return Err(corrupt(format!("'{}': {why}", dto.name)));
+                }
+                let src_ref = match &op.src {
+                    SrcDto::Stock => crate::operation::SrcRef::Stock,
+                    SrcDto::Entity { name } => crate::operation::SrcRef::Entity(name.clone()),
+                    SrcDto::Selection { items } => crate::operation::SrcRef::Selection(super::area::sel_of(items)),
+                };
+                if let Some(why) = crate::operation::do_not_touch_overlap_issue(
+                    &ctrl.do_not_touch.picks,
+                    Some(&src_ref),
+                    &ctrl,
+                ) {
+                    return Err(corrupt(format!("'{}': {why}", dto.name)));
+                }
+            }
             if let SrcDto::Selection { items } = &op.src
-                && (items.is_empty() || items.iter().any(|g| g.entity.is_empty()))
+                && (items.is_empty()
+                    || items.iter().any(|g| {
+                        g.entity.is_empty()
+                            || matches!(&g.feature, FeatureSelDto::SketchLayer { layer } if layer.is_empty())
+                    }))
             {
                 return Err(corrupt(format!(
                     "'{}' has an empty or half-named geometry selection",

@@ -24,6 +24,7 @@ fn params(side: WireSide) -> WireParams {
         plane_z: -12.0,
         stock: Some(plate()),
         clearance: 1.0,
+        sharp_corners: false,
         tabs: None,
     }
 }

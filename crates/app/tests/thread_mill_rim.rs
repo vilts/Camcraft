@@ -92,8 +92,12 @@ fn ngon(r: f64, n: usize) -> Vec<Point2> {
 /// rays so the top face reaches the block's corners), blind to FLOOR or
 /// through. One closed, outward shell.
 fn polygon_block(rim: &[Point2], through: bool) -> Mesh {
+    polygon_block_height(rim, through, TOP)
+}
+
+fn polygon_block_height(rim: &[Point2], through: bool, top: f64) -> Mesh {
     let mut f: Vec<Triangle> = Vec::new();
-    let outer = cube(Point3::new(-20.0, -20.0, 0.0), Point3::new(20.0, 20.0, TOP));
+    let outer = cube(Point3::new(-20.0, -20.0, 0.0), Point3::new(20.0, 20.0, top));
     f.extend(outer.facets[4..12].iter().cloned());
     if !through {
         f.extend(outer.facets[0..2].iter().cloned());
@@ -112,8 +116,8 @@ fn polygon_block(rim: &[Point2], through: bool) -> Mesh {
     let low = if through { 0.0 } else { FLOOR };
     let centre = Point3::new(0.0, 0.0, FLOOR);
     for k in 0..n {
-        let (p0, p1) = (at(k, TOP), at(k + 1, TOP));
-        let (q0, q1) = (edge(k, TOP), edge(k + 1, TOP));
+        let (p0, p1) = (at(k, top), at(k + 1, top));
+        let (q0, q1) = (edge(k, top), edge(k + 1, top));
         f.push(Triangle::new(p0, q0, q1)); // top face, +z
         f.push(Triangle::new(p0, q1, p1));
         let (b0, b1) = (at(k, low), at(k + 1, low));
@@ -135,21 +139,16 @@ fn hole(x: f64, radius: f64) -> Hole {
 }
 
 fn thread(x: f64, radius: f64) -> OpParams {
+    thread_at(vec![hole(x, radius)], TOP)
+}
+
+fn thread_at(holes: Vec<Hole>, top: f64) -> OpParams {
     OpParams::Thread {
-        break_through: None,
-        clearance_z: Height::fixed(30.0),
-        retract_z: None,
-        top_z: Height::fixed(TOP),
-        bottom_z: None,
-        infeed: 0.1,
-        feed: 400.0,
-        plunge_feed: 150.0,
-        climb: true,
-        holes: vec![hole(x, radius)],
-        pitch: None,
-        hand: camcraft_app::cl::ThreadHand::Right,
-        external: false,
-        passes: camcraft_app::machining2d::ThreadPasses::default(),
+        break_through: None, clearance_z: Height::fixed(top + 10.0), retract_z: None,
+        top_z: Height::fixed(top), bottom_z: None, infeed: 0.1, feed: 400.0, plunge_feed: 150.0,
+        climb: true, holes, pitch: None, hand: camcraft_app::cl::ThreadHand::Right,
+        external: false, passes: camcraft_app::machining2d::ThreadPasses::default(),
+        picks: Default::default(),
     }
 }
 
@@ -172,11 +171,12 @@ fn open_ahead(world: &World, h: &mut History, thread: &OpParams) {
         let (t, op) = (format!("OPEN-T{k}"), format!("OPEN{k}"));
         h.execute(world, AddTool::new(world, &t, tool).expect("open tool"));
         let bore = OpParams::Bore {
-            break_through: None,
+            pass_start: camcraft_app::machining2d::PassStart::Auto,
+            break_through: hole.through.then_some(1.5),
             links: camcraft_app::links::Links::PLANAR,
-            clearance_z: Height::fixed(30.0),
+            clearance_z: Height::fixed(hole.entry_z + 10.0),
             retract_z: None,
-            top_z: Height::fixed(TOP),
+            top_z: Height::fixed(hole.entry_z),
             bottom_z: None,
             stock_to_leave: 0.0,
             stepdown: 5.0,
@@ -185,6 +185,7 @@ fn open_ahead(world: &World, h: &mut History, thread: &OpParams) {
             climb: true,
             tolerance: 0.01,
             holes: vec![*hole],
+            picks: Default::default(),
         };
         h.execute(world, CreateOperation::new(world, &op, &t, SrcRef::Entity("part".into()), bore).expect("create bore"));
         h.execute(world, GenerateOperation::new(world, &op).expect("generate bore"));
@@ -252,7 +253,7 @@ fn a_thread_taken_below_the_models_hole_floor_convicts() {
     let OpParams::Thread { clearance_z, retract_z, top_z, bottom_z, infeed, feed, plunge_feed, climb, pitch, hand, .. } = thread(0.0, 5.0) else {
         unreachable!("a thread op")
     };
-    let p = OpParams::Thread { break_through: None, clearance_z, retract_z, top_z, bottom_z, infeed, feed, plunge_feed, climb, holes: vec![h], pitch, hand, external: false, passes: camcraft_app::machining2d::ThreadPasses::default() };
+    let p = OpParams::Thread { break_through: None, clearance_z, retract_z, top_z, bottom_z, infeed, feed, plunge_feed, climb, holes: vec![h], pitch, hand, external: false, passes: camcraft_app::machining2d::ThreadPasses::default(), picks: Default::default() };
     let w = verdict(drilled_block(5.0), p);
     assert!(gouged(&w), "{w:?}");
 }
@@ -345,4 +346,57 @@ fn a_flat_whose_corners_stand_on_the_circle_convicts() {
 fn a_fine_polygon_bore_still_verifies_clean() {
     assert_eq!(verdict(polygon_block(&ngon(5.0, 48), false), thread(0.0, 5.0)), Vec::new());
     assert_eq!(verdict(polygon_block(&ngon(5.0, 96), true), thread(0.0, 5.0)), Vec::new());
+}
+
+/// Build and generate a detected `TM-0600-P125` thread on a 40 x 40 x 10
+/// through-hole plate (`r 3.3235`), optionally with a lower body under it.
+fn through_plate_world(under: Option<Mesh>) -> World {
+    let world = new_world();
+    let mut h = History::default();
+    let plate = polygon_block_height(&ngon(3.3235, SIDES), true, 10.0);
+    h.execute(&world, ImportModel::from_mesh("part", plate));
+    if let Some(m) = under {
+        h.execute(&world, ImportModel::from_mesh("under", m));
+    }
+    let loc = Location { pos: Point3::new(0.0, 0.0, -5.0), ..Default::default() };
+    h.execute(&world, SetStock::new(&world, StockShape::Box { dx: 60.0, dy: 60.0, dz: 17.0 }, loc).expect("stock"));
+    let src = SrcRef::Entity("part".into());
+    let tm = catalog().into_iter().find(|(n, _)| *n == "TM-0600-P125").map(|(_, t)| t).expect("TM-0600-P125");
+    h.execute(&world, AddTool::new(&world, "TM", tm).expect("thread mill"));
+    let det = camcraft_app::operation::detect_holes(&world, "OP", &thread_at(Vec::new(), 10.0), None, &src).expect("detect");
+    let OpParams::Thread { holes, .. } = &det.params else { unreachable!("thread") };
+    assert!(holes.len() == 1 && holes[0].through, "expected detected through hole: {holes:?}");
+    open_ahead(&world, &mut h, &det.params);
+    h.execute(&world, CreateOperation::new(&world, "OP", "TM", src, det.params).expect("create"));
+    h.execute(&world, GenerateOperation::new(&world, "OP").expect("generate"));
+    world
+}
+
+fn op_warnings(world: &World) -> Vec<Warning> {
+    let e = model::find_by_name(world, "OP").expect("op");
+    model::toolpath_of(world, &e).expect("cached").warnings.into_iter().filter(Warning::blocks_post).collect()
+}
+
+/// #2655: a detected through hole (with its 1-pitch break-through run
+/// out the bottom exit) verifies clean, simulates clean and posts with `TM-0600-P125`.
+#[test]
+fn a_detected_through_hole_with_tm0600_verifies_clean_and_posts() {
+    let world = through_plate_world(None);
+    let w = op_warnings(&world);
+    assert_eq!(w, Vec::new(), "blocking warnings: {w:?}");
+    assert_eq!(camcraft_app::posting::verification_gate(&world), Vec::<String>::new());
+    let sim = camcraft_app::stock_sim::simulate_document(&world).expect("simulates");
+    assert_eq!(sim.dev.gouge_cells, 0, "gouge {} at {:?}", sim.dev.max_gouge, sim.dev.max_gouge_at);
+    camcraft_app::posting::post_setup_unwritten(&world).expect("through-hole thread posts");
+}
+
+/// A through hole's break-through into a second plate standing directly
+/// below its exit still convicts: only the hole's own exit face is excused.
+#[test]
+fn a_through_hole_into_a_lower_part_still_convicts() {
+    let under = cube(Point3::new(-20.0, -20.0, -5.0), Point3::new(20.0, 20.0, -0.5));
+    let world = through_plate_world(Some(under));
+    let w = op_warnings(&world);
+    assert!(gouged(&w), "break-through into lower part must convict: {w:?}");
+    assert!(!camcraft_app::posting::verification_gate(&world).is_empty());
 }

@@ -67,8 +67,10 @@ fn contour_params() -> OpParams {
         tab_height: 0.0,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -87,6 +89,7 @@ fn drill_params(hole: camcraft_app::drilling::Hole, top_z: f64, clearance_z: f64
         plunge_feed: 100.0,
         holes: vec![hole],
         cross: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -234,7 +237,7 @@ fn an_unborn_toolpath_refuses_to_post() {
 }
 
 fn face_params() -> OpParams {
-    OpParams::Face { holes: Default::default(), blend_turns: false,
+    OpParams::Face { holes: Default::default(), blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -244,6 +247,7 @@ fn face_params() -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -570,7 +574,7 @@ fn a_non_g54_slot_is_what_the_script_writes() {
         SetWcsOrigin::new(&world, Location::default()).expect("place the WCS"),
     );
     history.execute(&world, SetSetupWorkOffset::new(&world, "Setup1", Some(1)).expect("pick G55"));
-    let params = OpParams::Face { holes: Default::default(), blend_turns: false,
+    let params = OpParams::Face { holes: Default::default(), blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::of(HeightReference::WorkOffset, 25.0),
@@ -580,6 +584,7 @@ fn a_non_g54_slot_is_what_the_script_writes() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     let cmd = CreateOperation::new(&world, "Face1", "EM-0400-2FL", SrcRef::Stock, params);
     history.execute(&world, cmd.expect("create"));

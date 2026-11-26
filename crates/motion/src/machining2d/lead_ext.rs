@@ -29,7 +29,10 @@ const EXT_SHRINKS: usize = 4;
 /// The ring `pts` restarted at the midpoint of its edge nearest an axis
 /// direction (within `tol_deg`; ties to the longer edge), so the first
 /// cut - and the arc entry tangent to it - runs along X or Y. `None` keeps
-/// the start: its own first edge is already that aligned, or no edge is.
+/// the start: its own first edge is exactly on an axis, no edge is within
+/// the tolerance, or no edge is nearer an axis than the first. Only an
+/// exact edge posts a G18/G19 (`entry_arc::true_arc`), so a first edge
+/// that is merely within the tolerance does not hold the start (#2849).
 pub(super) fn axis_reseat(pts: &[Point2], tol_deg: f64) -> Option<Vec<Point2>> {
     let n = pts.len();
     if n < 3 || !(tol_deg.is_finite() && tol_deg >= 0.0) {
@@ -42,7 +45,7 @@ pub(super) fn axis_reseat(pts: &[Point2], tol_deg: f64) -> Option<Vec<Point2>> {
         (ang.min(90.0 - ang), dist(a, b))
     };
     let (d0, l0) = dev(0);
-    if d0 <= tol_deg && l0 > 0.0 {
+    if d0 == 0.0 && l0 > 0.0 {
         return None;
     }
     let mut best: Option<(usize, f64, f64)> = None;
@@ -60,6 +63,9 @@ pub(super) fn axis_reseat(pts: &[Point2], tol_deg: f64) -> Option<Vec<Point2>> {
         }
     }
     let (i, _, _) = best?;
+    if i == 0 {
+        return None;
+    }
     let (a, b) = (pts[i], pts[(i + 1) % n]);
     // The midpoint keeps the aligned coordinate exact: (y + y) / 2 == y.
     let mut v = Vec::with_capacity(n + 1);
@@ -303,4 +309,29 @@ pub(super) fn retrace(poly: &[Point2], walk: &[Seg], ov: f64) -> (Vec<Point2>, V
         }
     }
     (p2, w2)
+}
+
+#[cfg(test)]
+mod reseat_tests {
+    use super::*;
+
+    #[test]
+    fn a_first_edge_inside_the_tolerance_but_off_the_axis_reseats_to_the_exact_edge() {
+        // #2849: a fine chord 0.93 degrees off X held the start, and the
+        // arc entry on it had no standard plane. The exact edge wins.
+        let off = 0.93_f64.to_radians().tan();
+        let pts = [Point2::new(10.0, -10.0), Point2::new(9.0, -10.0 + off), Point2::new(-10.0, 0.0), Point2::new(-10.0, -12.0), Point2::new(4.0, -13.0)];
+        let v = axis_reseat(&pts, 1.0).expect("reseated");
+        assert_eq!(v[0], Point2::new(-10.0, -6.0));
+        assert_eq!(v.len(), pts.len() + 1);
+    }
+
+    #[test]
+    fn an_exact_first_edge_and_a_first_edge_that_is_the_best_keep_the_start() {
+        let exact = [Point2::new(0.0, 0.0), Point2::new(5.0, 0.0), Point2::new(5.0, 9.0), Point2::new(0.0, 4.0)];
+        assert!(axis_reseat(&exact, 1.0).is_none());
+        let off = 0.5_f64.to_radians().tan();
+        let best = [Point2::new(0.0, 0.0), Point2::new(10.0, 10.0 * off), Point2::new(3.0, 9.0)];
+        assert!(axis_reseat(&best, 1.0).is_none());
+    }
 }

@@ -2,40 +2,56 @@
 //! its page and the accessible import status, without coarse-model advice.
 //! Provenance: our own box fixture with one wall omitted.
 //!
+//! Since #917 the solidcore reader refuses a STEP shell with a face missing
+//! at read ("the outer shell is not closed"), so no STEP text reaches an
+//! incomplete model at the pinned solidcore commit. The model lands here
+//! through the import's own landing step (`land_import_for_test`) with the
+//! hole line that `camcraft_geometry::step` writes for a left-out face; the
+//! kernel's partial mesh is pinned in `crates/kernel/tests/machining_mesh_open.rs`.
+//!
 //! Gate map (#1610): covers ui::egui_app::pages (model_page),
 //! ui::state (finish_import), ui::egui_app::panes (status_bar).
 
+use camcraft_app::commands::ImportModel;
+use camcraft_app::geometry::{cube, Mesh, Point3};
 use egui_kittest::kittest::NodeT;
 
 use super::*;
 
+/// The hole line of a solid whose sixth face the mesher left out.
+const HOLE: &str = "closed shell of solid #16 (6 faces) meshes open: face 6 of 6 got no mesh from the kernel (a test reason)";
+const SAID: &str = "Incomplete: closed shell of solid #16 (6 faces) meshes open";
+
 #[test]
 fn incomplete_model_page_and_import_status_name_the_hole_and_post_refusal() {
     let _guard = snapshot_guard();
-    let fixture =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/box.step");
-    let text = std::fs::read_to_string(fixture).expect("box fixture");
-    let shell = "#17 = CLOSED_SHELL('', (#18, #25, #32, #39, #46, #53));";
-    assert_eq!(text.matches(shell).count(), 1, "fixture layout changed");
-    let open = text.replace(shell, "#17 = CLOSED_SHELL('', (#18, #25, #32, #39, #46));");
-    let path = std::env::temp_dir().join(format!("incomplete-ui-{}.step", std::process::id()));
-    std::fs::write(&path, open).expect("write incomplete shell");
     let name = format!("incomplete-ui-{}", std::process::id());
+    // The box with its top wall left out: the two facets at z = 1.
+    let walls: Vec<_> = cube(Point3::new(0.0, 0.0, 0.0), Point3::new(1.0, 1.0, 1.0))
+        .facets
+        .iter()
+        .copied()
+        .filter(|t| !(t.a.z == 1.0 && t.b.z == 1.0 && t.c.z == 1.0))
+        .collect();
+    assert_eq!(walls.len(), 10, "one wall of two facets is left out");
+    let mut cmd = ImportModel::from_mesh(&name, Mesh::from_facets(walls))
+        .with_fidelity(Some(camcraft_app::model_fidelity::UNKNOWN_MM));
+    cmd.hole = Some(HOLE.to_string());
     let mut h = shell_harness();
     {
         let st = &mut h.state_mut().state;
-        st.pending.push_back(CommandKind::ImportFile(path.clone()));
+        let file = std::env::temp_dir().join(format!("{name}.step"));
+        st.land_import_for_test(file, cmd);
         st.settle();
         st.ui_target = UiTarget::Model(name.clone());
     }
-    let _ = std::fs::remove_file(path);
     h.run_steps(3);
     assert!(
         h.query_by_label(&format!("Model: {name}")).is_some(),
         "the model page is open"
     );
     let summary = h
-        .query_all_by_label_contains("Incomplete: closed shell #17 (5 faces) meshes open")
+        .query_all_by_label_contains(SAID)
         .find(|node| {
             node.accesskit_node()
                 .value()
@@ -52,7 +68,8 @@ fn incomplete_model_page_and_import_status_name_the_hole_and_post_refusal() {
         "{label}"
     );
     for advice in [
-        "This model was too large",
+        "This model is approximated more coarsely",
+        "export the file again with a tighter tolerance",
         "Raise the STEP facet budget",
         "Reduced fidelity",
     ] {
@@ -76,7 +93,7 @@ fn incomplete_model_page_and_import_status_name_the_hole_and_post_refusal() {
         .expect("the real import status is accessible in the status strip");
     let status = status_node.accesskit_node().value().expect("status text");
     for said in [
-        "Incomplete: closed shell #17 (5 faces) meshes open",
+        SAID,
         "Its operations are refused at the post",
         "re-export the model, or import an STL",
     ] {

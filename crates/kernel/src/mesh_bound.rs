@@ -203,7 +203,10 @@ pub fn analytic_tri_bound(s: &brep::Surface, tri: [P3; 3], d_corners: [f64; 3]) 
             let tau_min = (min_norm_on_triangle(t_pts[0], t_pts[1], t_pts[2]) - d_rho).max(0.0);
             (tau_max - minor_radius).abs().max((minor_radius - tau_min).abs())
         }
-        S::Spline { .. } | S::RationalSpline { .. } | S::PlacedRevolution { .. } => return None,
+        S::Spline { .. }
+        | S::RationalSpline { .. }
+        | S::PlacedRevolution { .. }
+        | S::Blend { .. } => return None,
     };
     b.is_finite().then_some(b.max(dmax))
 }

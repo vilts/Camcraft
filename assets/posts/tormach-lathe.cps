@@ -33,6 +33,10 @@ programUnits = "mm inch"; // #902: writes the document's unit (postOptions.Units
 // Explain G-code (#1399): T0101 is tool 1, offset 1 (the PathPilot lathe
 // T word above), never "tool 101". Read only when Explain is on.
 explainTool = "station-offset";
+explains = "paren"; // #1389: PathPilot comments and LinuxCNC extended coordinate systems
+explainWords = {
+  "G59.1": "WORK OFFSET 7", "G59.2": "WORK OFFSET 8", "G59.3": "WORK OFFSET 9"
+};
 // liveTooling is NOT declared: PathPilot's lathe tables list no C axis
 // and no live-tool words, so the engine refuses a C-axis section by
 // name before this script ever sees it.
@@ -194,7 +198,11 @@ function block(words) {
   for (var i = 0; i < words.length; i++) {
     if (words[i] !== "" && words[i] !== null && words[i] !== undefined) a.push(words[i]);
   }
-  if (a.length > 0) writeln(a.join(" "));
+  if (a.length > 0) {
+    var line = a.join(" "), c = explain(a);
+    if (c && line.length + 1 + c.length <= 80) line += " " + c;
+    writeln(line);
+  }
 }
 function msg(s) { if (typeof message === "function") message(s); else writeln("(" + clean(s, 200) + ")"); }
 // Refuse by name, once per reason per program (per-line is noise).
@@ -316,7 +324,7 @@ function toolNote() {
 }
 // A WARN record (only a gate-refused program carries one) is voiced as
 // a cleaned comment - never a bare line, never a nested parenthesis.
-function onComment(s) { flushPass(); note(clean(s, 200)); }
+function onComment(s) { flushPass(); note(commentText(s)); }
 // The bar-feeder lifecycle (M5.2): PathPilot states no feeder words, so
 // the intent is a comment, the advance in the program's own unit.
 function onPartLoading() {
@@ -633,6 +641,24 @@ function meridianArc(p) {
   if (r0 === null || r1 === null || rc === null) return;
   if (!has(c.K)) { refuse("arc without a K centre word"); return; }
   if (fedFromG30("an arc")) return;  // #1604
+  // #3442: an arc whose written ends coincide is no arc block (arcFate,
+  // PRELUDE), on this post's own X (radius) and Z words; the stream's
+  // direction seen in the (Z, radius) frame is the block's own.
+  var cwB = p.CircularDirection === "CW";
+  if (yz) cwB = !cwB;
+  var fate = arcFateOf({
+    plane: "XZ", ccw: !cwB, rotary: false,
+    start: { X: r0, Y: 0, Z: p.StartZ }, end: { X: r1, Y: 0, Z: p.Z }, center: { X: rc, Y: 0, Z: c.K }
+  }, function (k, v) { return k === "X" ? xWord(v) : (k === "Z" ? zWord(v) : ""); },
+  // #3474: the centre the control reads: the written start plus the
+  // written I (a radius, doubled to the diameter X scale) and K.
+  function (k, d) { return (k === "X" ? 2 : 1) * _arcWordNum(fu(d)); });
+  if (fate !== "arc") {
+    // #3474: a short arc whose written ends differ on one ray: the feed move.
+    if (fate === "linear") block(["G1", xWord(r1), zWord(p.Z), feedWord(p.FeedRate)]);
+    at(r1, p.Z);
+    return;
+  }
   var cw = p.CircularDirection === "CW";
   if (yz) cw = !cw;                       // the +Y meridian seen from +Y is mirrored
   block([
@@ -727,7 +753,9 @@ function g76Wanted() { return typeof postOptions !== "undefined" && postOptions.
 // exactly the grid numbers chosen here, never three roundings that
 // disagree. The root is rounded OUTWARD (never deeper than the
 // record's minor diameter - a deeper root is a gouge of the thread
-// form); J, the first depth, is rounded shallower.
+// form); J, the first depth, is rounded shallower - unless the
+// shallower J would make the control cut one pass more than the record
+// lays (#1619, below).
 function gridStep() { return inch ? 0.0001 : 0.001; }
 function gridOf(mm) { return len(mm) / gridStep(); }               // mm -> grid steps (real)
 function gridWord(n) { return trim0(Number(n * gridStep()).toFixed(inch ? 4 : 3)); }
@@ -780,6 +808,16 @@ function g76Why(p, r0, r1) {
   if (rev !== spinRev) {
     return "a " + p.Hand + "-hand thread cut " + (p.EndZ < p.Z ? "toward" : "away from") + " the chuck needs " + (rev ? "M4" : "M3") + ", the section's spindle runs " + (spinRev ? "M4" : "M3");
   }
+  // #2952 (the law of #2878): the public LinuxCNC G-code reference's
+  // G76 section says that, with no entry taper (this post writes no E
+  // / L), the tool rapids to the cut depth at the start Z, then
+  // synchronizes and cuts. If the start point stands above
+  // material (not in free air in front of the end face or in a relief
+  // groove wider than the insert), refuse the cycle by name and never
+  // write it. A record without the value (an older cache) reads false.
+  if (p.StartInAir !== true) {
+    return "the start point is above material (G76 moves the insert to pass depth at rapid traverse) - start the thread in free air in front of the end face or in a relief groove wider than the insert, regenerate the operation, or choose G33 passes";
+  }
   return null;
 }
 
@@ -789,12 +827,28 @@ function g76Grid(p, r0) {
   var x = Math.round(gridOf(2 * r0));
   var peak = Math.round(gridOf(p.MajorDiameter));
   var root = Math.ceil(gridOf(p.MinorDiameter) - 1e-6);   // outward: never deeper than the minor
-  var j = Math.floor(gridOf(2 * p.FirstDepth) + 1e-6);     // shallower: never a heavier first cut
+  var jRec = gridOf(2 * p.FirstDepth);                     // the record's first depth, real
   var k = peak - root;
   if (!(x - peak >= 1)) return { why: "the drive line is not clear of the crest at the control's resolution" };
   if (!(k >= 1)) return { why: "the thread depth is below the control's resolution" };
+  // #1619: R1 (LinuxCNC: "R1.0 selects constant depth") cuts J, 2J, ...
+  // and clamps the last pass at K, so the control cuts ceil(K/J)
+  // passes. The record lays ceil(height / first depth) equal rungs
+  // (g76Why holds the equal ladder); J must make the control's count
+  // that same number: (n-1)J < K <= nJ. J is the grid's shallower
+  // rounding when that keeps the count; when it would add a pass, the
+  // one grid step up - never a full step heavier than the record's
+  // first depth. Anything else is refused by name.
+  var n = Math.max(1, Math.ceil(p.ThreadHeight / p.FirstDepth - 1e-9));
+  var lo = Math.ceil(k / n);                                // nJ >= K
+  var hi = n > 1 ? Math.floor((k - 1) / (n - 1)) : k;       // (n-1)J < K
+  var j = Math.min(Math.floor(jRec + 1e-6), hi);            // shallower: the record's first cut or less
+  if (j < lo) j = lo;                                       // shallower adds a pass: one step up
   if (!(j >= 1)) return { why: "the first-pass depth is below the control's resolution" };
-  return { x: x, i: peak - x, j: Math.min(j, k), k: k };
+  if (!(j <= hi && j - jRec < 1 - 1e-6)) {
+    return { why: "no first depth J on the control's grid makes R1's equal ladder cut the record's " + n + " passes (K " + gridWord(k) + ")" };
+  }
+  return { x: x, i: peak - x, j: j, k: k };
 }
 
 // A THREAD record: with G76 chosen, a rapid to the drive line at the

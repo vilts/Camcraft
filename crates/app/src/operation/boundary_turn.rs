@@ -87,15 +87,26 @@ pub(super) fn turn_refusal(e: GenError, a: f64) -> GenError {
 }
 
 /// Face laid in the turned frame and turned back to the part's: the path
-/// by [`turn_path`], a refusal by [`turn_refusal`].
+/// by [`turn_path`], a refusal by [`turn_refusal`]. The user's start and
+/// exit picks (#3326) arrive in the part's frame and are turned into the
+/// laid frame, where the facer reads the corner nearest each.
 pub(super) fn face_over_back(
     laid: &Region,
     p: &machining2d::FaceParams,
     lead: f64,
     solid: Option<&Region>,
     turn: f64,
+    keep: Option<&machining2d::FaceKeep<'_>>,
+    picks: &crate::path_picks::PathPicks,
 ) -> Result<Toolpath, GenError> {
-    let path = machining2d::face_over(laid, p, lead, solid).map_err(|e| turn_refusal(e, -turn))?;
+    let mut laid_picks = picks.clone();
+    if turn != 0.0 {
+        let (s, c) = exact_sin_cos(turn);
+        for k in laid_picks.start.iter_mut().chain(&mut laid_picks.exit) {
+            k.xy = Point2::new(c * k.xy.x - s * k.xy.y, s * k.xy.x + c * k.xy.y);
+        }
+    }
+    let path = machining2d::face_picked(laid, p, lead, solid, keep, &laid_picks).map_err(|e| turn_refusal(e, -turn))?;
     turn_path(path, -turn)
 }
 
@@ -133,6 +144,16 @@ pub(super) fn face_band_sane(
         }
     }
     Ok(())
+}
+
+/// #3338: the kept side of an open boundary with its two lines offset
+/// apart - the picked line by `picked`, the outer (stock) line by
+/// `outer`. The kept side grows by the larger value, and `reach` grown
+/// by `outer` clips the outer line back; the far side, shrunk by
+/// `picked`, cuts the picked line later in the law.
+pub(super) fn grow_apart(keep: &Region, reach: &Region, picked: f64, outer: f64, corner: CornerStyle) -> Result<Region, GenError> {
+    let wide = super::boundary::grow(keep, picked.max(outer), corner)?;
+    Ok(wide.intersect(&super::boundary::grow(reach, outer, corner)?)?)
 }
 
 #[cfg(test)]
@@ -225,9 +246,32 @@ mod law {
             feed: 1200.0,
             plunge_feed: 300.0,
             climb: true,
-            blend_turns: false,
+            blend_turns: false, blend_radius: None,
             holes: machining2d::FaceHoles::Lift,
             stock_top: None,
+        }
+    }
+
+    /// #3326: a start pick is stated in the part's frame; under every
+    /// turn the raster enters beside the part corner that the pick names.
+    #[test]
+    fn a_start_pick_names_the_part_corner_under_every_turn() {
+        let part = Region::new(vec![Loop::new(vec![
+            Point2::new(-30.0, -10.0),
+            Point2::new(30.0, -10.0),
+            Point2::new(30.0, 10.0),
+            Point2::new(-30.0, 10.0),
+        ])
+        .expect("loop")])
+        .expect("region");
+        let pick = Point2::new(29.0, 9.0);
+        let picks = crate::path_picks::PathPicks { start: vec![crate::path_picks::PathPick::xy(pick)], exit: Vec::new() };
+        for turn in [0.0, std::f64::consts::FRAC_PI_2, std::f64::consts::PI, 3.0 * std::f64::consts::FRAC_PI_2] {
+            let laid = turn_region(&part, turn).expect("laid");
+            let path = face_over_back(&laid, &facing(), 0.0, None, turn, None, &picks).expect("faced");
+            let at = path.moves.iter().find(|m| m.kind == crate::cl::MoveKind::Plunge).map(|m| m.to).expect("a plunge");
+            // The entry stands a radius inside one edge and a radius out past the other.
+            assert!((at.x - 30.0).abs() <= 5.0 + 1e-9 && (at.y - 10.0).abs() <= 5.0 + 1e-9, "turn {turn}: {at:?}");
         }
     }
 
@@ -245,7 +289,7 @@ mod law {
             let Err(e) = machining2d::face_over(&laid, &facing(), 0.0, None) else { continue };
             refused += 1;
             let raw = e.location().expect("the strip names its spot");
-            let back = face_over_back(&laid, &facing(), 0.0, None, turn).expect_err("refused");
+            let back = face_over_back(&laid, &facing(), 0.0, None, turn, None, &Default::default()).expect_err("refused");
             let at = back.location().expect("spot carried back");
             assert!(in_strip(at), "turn {turn}: {at:?} (laid frame said {raw:?})");
             assert!((at.z - 10.0).abs() < 1e-9, "{at:?}");
@@ -259,7 +303,7 @@ mod law {
         // The strip across the rows as they are: holes side by side along X.
         let laid = turn_region(&holed_plate(), std::f64::consts::FRAC_PI_2).expect("laid");
         let e = machining2d::face_over(&laid, &facing(), 0.0, None).expect_err("refused");
-        let same = face_over_back(&laid, &facing(), 0.0, None, 0.0).expect_err("refused");
+        let same = face_over_back(&laid, &facing(), 0.0, None, 0.0, None, &Default::default()).expect_err("refused");
         assert_eq!(same.location(), e.location());
         assert!(same.location().is_some());
     }

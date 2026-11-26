@@ -80,6 +80,7 @@ fn params(radius: f64, cycle: CycleChoice) -> OpParams {
         plunge_feed: 80.0,
         holes: vec![hole],
         cross: vec![],
+        picks: Default::default(),
     }
 }
 

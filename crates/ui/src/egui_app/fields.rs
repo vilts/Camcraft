@@ -12,7 +12,9 @@ pub(super) use flecs_ecs::prelude::World;
 
 pub(super) use camcraft_app::machining2d::{ARC_FIT_TOL, FaceHoles, Lead, PocketStrategy, Side};
 pub(super) use camcraft_app::model;
-pub(super) use camcraft_app::operation::{self, Height, OpParams, Tilt};
+pub(super) use camcraft_app::operation::{
+    self, ChainOverride, ChainSide, Height, OpParams, SrcRef, Tilt,
+};
 pub(super) use camcraft_app::units::{self, Unit};
 
 pub(super) use crate::operations::{
@@ -20,7 +22,7 @@ pub(super) use crate::operations::{
 };
 pub(super) use crate::state::State;
 
-pub(super) use super::heights_page::{HEIGHT_SRC_ID, LEVELS, corner_note, height_editor, retract_hop, retract_note};
+pub(super) use super::heights_page::{HEIGHT_SRC_ID, LEVELS, corner_note, height_editor, retract_hop, retract_radius_hop, retract_note};
 pub(super) use super::kind_editors::*;
 pub(super) use super::layout::{
     CTRL_W, auto_opt, auto_value, button, check_row, consequence, group, hint, list_row, prop_row,
@@ -176,6 +178,14 @@ pub(crate) fn num_row(ui: &mut Ui, u: Unit, v: &mut f64) {
     }
 }
 
+/// [`num_feed`] inside a `prop_row`, named by that row's label (#1119).
+pub(crate) fn num_feed_row(ui: &mut Ui, u: Unit, v: &mut f64) {
+    let r = num_sized(ui, u, v, 2, &format!(" {}", u.feed_suffix()), CTRL_W);
+    if let Some(l) = super::layout::row_label_id(ui) {
+        r.labelled_by(l);
+    }
+}
+
 /// [`num_plain`] inside a `prop_row`, named by that row's label (#1119).
 pub(crate) fn num_plain_row(ui: &mut Ui, v: &mut f64) {
     let r = plain_drag(ui, v);
@@ -212,8 +222,20 @@ pub(crate) fn int_range_row<N: egui::emath::Numeric>(
 
 /// A lens-free number with its unit as the suffix ("°", "s", "%").
 pub(crate) fn num_unit(ui: &mut Ui, v: &mut f64, unit: &str) {
+    unit_drag(ui, v, unit);
+}
+
+/// [`num_unit`] inside a `prop_row`, named by that row's label.
+pub(crate) fn num_unit_row(ui: &mut Ui, v: &mut f64, unit: &str) {
+    let r = unit_drag(ui, v, unit);
+    if let Some(l) = super::layout::row_label_id(ui) {
+        r.labelled_by(l);
+    }
+}
+
+fn unit_drag(ui: &mut Ui, v: &mut f64, unit: &str) -> egui::Response {
     let r = super::layout::value_with_unit(ui, v, unit, 0.1);
-    ring(ui, r);
+    ring(ui, r)
 }
 
 /// The 3+2 index editor (M5.1 stage B): the group's header checkbox arms
@@ -255,6 +277,81 @@ pub(crate) fn combo_owned(ui: &mut Ui, id: &str, idx: &mut usize, names: &[Strin
     ComboBox::from_id_salt(id).width(CTRL_W).selected_text(cur).show_ui(ui, |ui| {
         for (i, n) in names.iter().enumerate() {
             ui.selectable_value(idx, i, n.as_str());
+        }
+    });
+}
+
+/// #1864: Per-chain side and direction overrides for DXF sketch contours.
+pub(super) fn sketch_chain_overrides_ui(
+    ui: &mut Ui,
+    world: &World,
+    src: &SrcRef,
+    overrides: &mut Vec<ChainOverride>,
+) {
+    let infos = crate::frame_cost::time("ui/properties.op.fields.sketch_chain_overrides", || {
+        operation::sketch_chain_infos(world, src)
+    });
+    if infos.is_empty() {
+        return;
+    }
+    group(ui, "Per-chain overrides", None, |ui| {
+        hint(ui, "Override Auto side or cut direction per DXF chain");
+        for (i, info) in infos.iter().enumerate() {
+            let existing = overrides
+                .iter()
+                .position(|o| o.entity == info.entity && o.chain == info.chain);
+            let mut side = existing.and_then(|k| overrides[k].side);
+            let mut reverse = existing.is_some_and(|k| overrides[k].reverse);
+            let auto_tag = if !info.closed {
+                "Centerline"
+            } else {
+                match info.auto_side {
+                    Some(Side::Inside) => "Auto: Inside",
+                    Some(Side::Outside) => "Auto: Outside",
+                    _ => "Auto",
+                }
+            };
+            ui.horizontal(|ui| {
+                ui.label(format!("{} · {} ({auto_tag})", info.label, info.layer));
+                if info.closed {
+                    let mut idx = match side {
+                        None => 0,
+                        Some(ChainSide::Inside) => 1,
+                        Some(ChainSide::Outside) => 2,
+                    };
+                    combo(ui, &format!("c_ov_side_{i}"), &mut idx, &["Auto", "Inside", "Outside"]);
+                    side = match idx {
+                        1 => Some(ChainSide::Inside),
+                        2 => Some(ChainSide::Outside),
+                        _ => None,
+                    };
+                } else {
+                    ui.label("Centerline");
+                    if side.is_some() && small_button(ui, "Clear side").clicked() {
+                        side = None;
+                    }
+                }
+                ui.checkbox(&mut reverse, "Reverse");
+            });
+            match (existing, side, reverse) {
+                (Some(k), None, false) => {
+                    overrides.remove(k);
+                }
+                (Some(k), s, rev) => {
+                    overrides[k].side = s;
+                    overrides[k].reverse = rev;
+                }
+                (None, s, rev) => {
+                    if s.is_some() || rev {
+                        overrides.push(ChainOverride {
+                            entity: info.entity.clone(),
+                            chain: info.chain,
+                            side: s,
+                            reverse: rev,
+                        });
+                    }
+                }
+            }
         }
     });
 }

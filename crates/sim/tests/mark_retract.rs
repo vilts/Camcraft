@@ -6,7 +6,7 @@
 //! enters beyond it is swept against the part as it stands: the shank
 //! and holder over the whole lift, and the column the edge rises
 //! through above its own top. A part overhang above the end of an open
-//! engraving line is a `RapidInStock` on the lift, not a pass.
+//! engraving line is a `RapidInPart` on the lift, not a pass.
 //!
 //! Provenance: our own fixtures (plain boxes) over the solid law; no
 //! vendor material consulted.
@@ -35,6 +35,7 @@ fn cutter() -> Cutter {
         holder_len: 40.0,
         body: None,
         neck: None,
+        undercut: None,
     }
 }
 
@@ -67,7 +68,7 @@ fn a_holder_lifting_into_an_overhang_above_the_lines_end_is_a_rapid_in_the_part(
     // no cutting move reaches it. The retract to Z 130 carries the
     // holder through it.
     let over_end = part(&[(p(5.0, 22.0, 105.0), p(25.0, 38.0, 110.0))]);
-    assert_eq!(hits(&line_then_lift(9.7, 130.0), &over_end, &cutter()), vec![Warning::RapidInStock { at: 1 }]);
+    assert_eq!(hits(&line_then_lift(9.7, 130.0), &over_end, &cutter()), vec![Warning::RapidInPart { at: 1 }]);
     // A lift that stops under the slab touches nothing.
     assert_eq!(hits(&line_then_lift(9.7, 14.0), &over_end, &cutter()), Vec::new());
     // The same slab over the line's START (18 mm from the end, past the
@@ -82,14 +83,14 @@ fn the_edge_is_excused_only_where_it_already_stands() {
     // the lift. The edge rises out of its kerf into a slab at Z 40..45.
     let bare = Cutter { shank_len: 0.0, holder_len: 0.0, ..cutter() };
     let roofed = part(&[(p(5.0, 22.0, 40.0), p(25.0, 38.0, 45.0))]);
-    assert_eq!(hits(&line_then_lift(9.7, 60.0), &roofed, &bare), vec![Warning::RapidInStock { at: 1 }]);
+    assert_eq!(hits(&line_then_lift(9.7, 60.0), &roofed, &bare), vec![Warning::RapidInPart { at: 1 }]);
     assert_eq!(hits(&line_then_lift(9.7, 15.0), &roofed, &bare), Vec::new(), "stopped under the slab");
     // A shank narrower than the cutter: a lip 2.5 mm from the axis just
     // above the edge's top (Z 29.7) clears the 2 mm shank on the cut
     // and on the lift, and is struck by the 3 mm edge as it rises.
     let necked = Cutter { shank_radius: 2.0, ..cutter() };
     let lipped = part(&[(p(17.5, 25.0, 31.0), p(25.0, 35.0, 33.0))]);
-    assert_eq!(hits(&line_then_lift(9.7, 130.0), &lipped, &necked), vec![Warning::RapidInStock { at: 1 }]);
+    assert_eq!(hits(&line_then_lift(9.7, 130.0), &lipped, &necked), vec![Warning::RapidInPart { at: 1 }]);
     // The same lip clear of the edge by its radius: nothing.
     let clear = part(&[(p(18.2, 25.0, 31.0), p(25.0, 35.0, 33.0))]);
     assert_eq!(hits(&line_then_lift(9.7, 130.0), &clear, &necked), Vec::new());

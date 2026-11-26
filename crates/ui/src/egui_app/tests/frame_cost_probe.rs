@@ -97,10 +97,48 @@ pub(super) fn top_chains(st: &State) -> Vec<GeoSel> {
         .collect()
 }
 
-/// The welded face with the most strips (fig8.camproj's own pick).
+/// A convex welded vertical wall with two horizontal rims of the same XY bounds.
+/// Strip counts change when STEP refinement changes. A wall's projection
+/// gives this fixture a closed area without the folds of a rounded fillet.
 fn biggest_patch(st: &State) -> GeoSel {
     let f = features(st);
-    let p = feature::patches(&f).into_iter().max_by_key(|p| p.faces.len()).expect("fig8 has a welded face");
+    let rim_bounds = |ring: &feature::PatchRing| {
+        if !ring.closed || ring.verts.len() < 3 { return None; }
+        let mut lo = [f64::INFINITY; 3];
+        let mut hi = [f64::NEG_INFINITY; 3];
+        for &v in &ring.verts {
+            let p = f.verts.get(v as usize)?;
+            for axis in 0..3 {
+                lo[axis] = lo[axis].min(p[axis]);
+                hi[axis] = hi[axis].max(p[axis]);
+            }
+        }
+        (hi[2] - lo[2] < 1e-6 && hi[0] > lo[0] && hi[1] > lo[1]).then_some((lo, hi))
+    };
+    let p = feature::patches(&f).into_iter().filter_map(|p| {
+        let rings = feature::patch_rings(&f, p.id)?;
+        if rings.len() != 2 { return None; }
+        let (lo0, hi0) = rim_bounds(&rings[0])?;
+        let (lo1, hi1) = rim_bounds(&rings[1])?;
+        if (lo0[2] - lo1[2]).abs() < 1e-6
+            || (0..2).any(|axis| (lo0[axis] - lo1[axis]).abs() > 1e-6 || (hi0[axis] - hi1[axis]).abs() > 1e-6)
+        { return None; }
+        // A bore rim is convex. Keep the fill-cache fixture independent
+        // of STEP refinement on the concave outer fig8 wall.
+        let points: Vec<_> = rings[0].verts.iter().map(|&i| f.verts[i as usize]).collect();
+        let mut turn = 0.0_f64;
+        for i in 0..points.len() {
+            let (a, b, c) = (points[i], points[(i + 1) % points.len()], points[(i + 2) % points.len()]);
+            let cross = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+            if cross.abs() > 1e-8 {
+                if turn != 0.0 && cross.signum() != turn { return None; }
+                turn = cross.signum();
+            }
+        }
+        if turn == 0.0 { return None; }
+        Some((p, (hi0[0] - lo0[0]) * (hi0[1] - lo0[1])))
+    }).max_by(|a, b| a.1.total_cmp(&b.1)).map(|(p, _)| p)
+        .expect("fig8 has a convex welded vertical wall with matching horizontal rims");
     GeoSel { entity: "fig8".into(), feature: FeatureSel::Patch(p.id) }
 }
 
@@ -253,10 +291,16 @@ fn still_frames_on_fig8_name_their_costs() {
 /// and its filled area preview.
 pub(super) fn adaptive_preview(h: &mut Harness<'static, ShellUi>) {
     let patch = biggest_patch(&h.state().state);
+    adaptive_preview_with(h, patch, Some(Containment::Outside));
+}
+
+/// [`adaptive_preview`] on `patch` under the given Containment (`None`:
+/// the default).
+fn adaptive_preview_with(h: &mut Harness<'static, ShellUi>, patch: GeoSel, containment: Option<Containment>) {
     create(h, ADAPTIVE, OpType::Adaptive2D, vec![patch]);
     run(h, |st| {
         let op = model::find_by_name(&st.world, ADAPTIVE).and_then(|e| model::operation_of(&st.world, &e)).expect("adaptive");
-        let area = AreaControls { containment: Some(Containment::Outside), ..AreaControls::default() };
+        let area = AreaControls { containment, ..AreaControls::default() };
         st.pending.push_back(CommandKind::EditOperationBoundary { name: ADAPTIVE.into(), params: op.params, area });
     });
     open(h, UiTarget::Operation(ADAPTIVE.into()));
@@ -281,6 +325,27 @@ pub(super) fn adaptive_preview(h: &mut Harness<'static, ShellUi>) {
 fn fill(h: &Harness<'static, ShellUi>) -> crate::boundary_viz::Fill {
     let p = h.state().state.boundary_view.preview.as_ref().expect("a preview");
     p.fill.clone().expect("a filled preview")
+}
+
+/// #2766: the default Containment fills too. The region of the patch is
+/// the enclosed area minus the part that stands in it; that difference
+/// left loops of about 1e-8 mm2, and the triangulator refused them. The
+/// patch is the welded face with the most strips (the concave outer wall).
+#[test]
+fn area_preview_of_the_default_containment_is_filled() {
+    let mut h = fig8();
+    let f = features(&h.state().state);
+    let wall = feature::patches(&f).into_iter().max_by_key(|p| p.faces.len()).expect("fig8 has a welded face");
+    adaptive_preview_with(&mut h, GeoSel { entity: "fig8".into(), feature: FeatureSel::Patch(wall.id) }, None);
+    let st = &h.state().state;
+    let op = model::find_by_name(&st.world, ADAPTIVE).and_then(|e| model::operation_of(&st.world, &e)).expect("adaptive");
+    assert_eq!(op.area.containment, None, "the default Containment");
+    let region = operation::region_of(&st.world, &op).expect("a region");
+    let slivers: Vec<f64> = region.loops().iter().map(|l| l.area()).filter(|a| a.abs() < 1e-4).collect();
+    assert!(slivers.is_empty(), "no loop of near-zero area: {slivers:?}");
+    let tri = |t: &[camcraft_app::geo2d::Point2; 3]| 0.5 * ((t[1].x - t[0].x) * (t[2].y - t[0].y) - (t[2].x - t[0].x) * (t[1].y - t[0].y)).abs();
+    let filled: f64 = fill(&h).iter().map(tri).sum();
+    assert!((filled - region.area()).abs() < 1e-6 * region.area(), "the fill covers the region: {filled} of {}", region.area());
 }
 
 /// #2246: the preview's triangles are made when the draft or the document

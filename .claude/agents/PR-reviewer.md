@@ -233,6 +233,16 @@ merge.
      under the safety floor the targeted heavy step (`<crate> heavy:
      <target>`) with its result and who ran it. "Not run" is never a pass
      for a required step;
+
+     Include this fixed row in every review comment, also when not built.
+     Fill it for `<headRefOid>`. Use `Not run` with a reason when no run
+     completed; never leave the result blank.
+     A red light run stays a note, not a blocker by itself.
+
+     | Step | Result | Head | Evidence |
+     |---|---|---|---|
+     | Light lane (`cargo xtask gate light`) | <PASS / FAIL / Not run> | `<headRefOid>` | <where; counts and log/run URL, or reason not run> |
+
    - Requested before merge (numbered, each with file:line and the fix);
    - Questions / notes (not blocking);
    - closing line: "A maintainer will approve and merge by hand."

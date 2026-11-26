@@ -18,7 +18,7 @@
 //! verdict lives in this file.
 
 use camcraft_motion::cl::MoveKind;
-use camcraft_motion::finishing3d::{deburr, DeburrParams};
+use camcraft_motion::finishing3d::{deburr, deburr_edges, DeburrEdges, DeburrParams};
 use camcraft_motion::geo2d::{Loop, Point2, Region};
 use camcraft_motion::geometry::{Point3, Triangle};
 use camcraft_motion::machining2d::{chamfer, ChamferParams, GenError};
@@ -27,23 +27,31 @@ fn p3(x: f64, y: f64, z: f64) -> Point3 {
     Point3::new(x, y, z)
 }
 
-/// A 90-deg cone taking a 2-wide break above the z-window; the
-/// rapids plane sits where every op's does.
+/// A 90-deg cone taking a break of chord `2 * sqrt(2)` above the
+/// z-window - a 2 mm setback on each face of a 90-degree edge (#1890);
+/// the rapids plane sits where every op's does.
 fn params(top_z: f64, bottom_z: f64) -> DeburrParams {
     DeburrParams {
-        width: 2.0,
+        width: 2.0 * std::f64::consts::SQRT_2,
         tip_angle_deg: 90.0,
         clearance_z: 20.0,
         top_z,
         bottom_z,
         feed: 500.0,
         plunge_feed: 100.0,
+        min_edge_angle_deg: 0.0, // #1888: the filters at rest (deburr_filters.rs)
+        exclude_holes: false,
+        hole_min_diameter: 0.0,
+        hole_max_diameter: 0.0,
+        unreachable: camcraft_motion::finishing3d::UnreachableEdges::SkipWithNote,
+        sizing: camcraft_motion::finishing3d::DeburrBreak::default(),
     }
 }
 
-/// The tip stands `width / tan(half-angle)` under the edge: at 90
+/// The tip stands `setback / tan(half-angle)` under the edge, and a
+/// 90-degree edge's setback is `width / sqrt(2)` (#1890): at 90
 /// degrees of included angle the half-angle is 45, tan is 1, and the
-/// drop is the width itself. Stated as a number once, here.
+/// drop is the 2 mm setback itself. Stated as a number once, here.
 const DROP: f64 = 2.0;
 
 /// A closed box: x0..x1, y0..y1, z0..z1, every triangle wound
@@ -181,57 +189,44 @@ fn rim_of_an_open_mesh_rides_the_whole_loop() {
 }
 
 #[test]
-fn convex_creases_all_ride_a_closed_box_breaks_every_level_edge() {
-    // Every dihedral of a box is convex: the level creases ride at the
-    // two level lines z - DROP, around the corners. The four vertical
-    // corner creases climb steeper than the cone's flank - a vertical
-    // cone riding one would countersink the corner down to the window
-    // floor (#303) - so they are skipped, and the path says so.
+fn convex_top_creases_ride_each_corner_and_skip_vertical_edges() {
+    // The top circuit is accessible to the cone. The box underside is
+    // outside this window; a separate pin requires its named refusal.
     let f = box_mesh(0.0, 0.0, 40.0, 20.0, -10.0, 0.0);
-    let t = deburr(&f, &params(2.0, -12.0)).expect("a box is all burr");
+    let t = deburr(&f, &params(0.0, -4.0)).expect("the top creases ride");
     assert_eq!(t.notes.len(), 1, "only the steep skip speaks: {:?}", t.notes);
     assert!(t.notes[0].contains("4 edges climb steeper"), "{:?}", t.notes);
     let corners = [(0.0, 0.0), (40.0, 0.0), (40.0, 20.0), (0.0, 20.0)];
-    for c in cut_points(&t) {
-        assert!(
-            corners.iter().any(|(x, y)| (c.x - x).abs() < 1e-9 && (c.y - y).abs() < 1e-9),
-            "a tip stood off the corner lines: {c:?}"
-        );
-        assert!(
-            (c.z - (0.0 - DROP)).abs() < 1e-9 || (c.z - (-10.0 - DROP)).abs() < 1e-9,
-            "a crease tip off the level lines: {c:?}"
-        );
+    let cut = cut_points(&t);
+    for c in &cut {
+        assert!(corners.iter().any(|(x, y)| (c.x - x).abs() < 1e-9 && (c.y - y).abs() < 1e-9), "off corner: {c:?}");
+        assert!((c.z + DROP).abs() < 1e-9, "off top break: {c:?}");
     }
-    // Both level lines and all four corners made it into the path.
     for (x, y) in corners {
-        for z in [-DROP, -10.0 - DROP] {
-            assert!(
-                cut_points(&t).iter().any(|c| (c.x - x).abs() < 1e-9 && (c.y - y).abs() < 1e-9 && (c.z - z).abs() < 1e-9),
-                "the corner ({x},{y}) level {z} never rode"
-            );
-        }
+        assert!(cut.iter().any(|c| (c.x - x).abs() < 1e-9 && (c.y - y).abs() < 1e-9), "missing corner ({x},{y})");
     }
-    // No cut move runs up a corner line: every feed is level.
     for m in t.moves.iter().filter(|m| m.kind == MoveKind::Feed) {
         assert!((m.from.z - m.to.z).abs() < 1e-9, "a feed climbed a vertical corner: {m:?}");
     }
-    // The declared breaks are the two level loops at the edges' own Z.
-    assert_eq!(t.breaks.len(), 2, "{:?}", t.breaks);
-    for b in &t.breaks {
-        assert!((b.depth - DROP).abs() < 1e-9 && (b.slope - 1.0).abs() < 1e-9, "{b:?}");
-        let z = b.edge[0].z;
-        assert!(z == 0.0 || z == -10.0, "a break off the edge levels: {b:?}");
-        assert!(b.edge.iter().all(|p| p.z == z), "a level loop that climbs: {b:?}");
-    }
+    assert_eq!(t.breaks.len(), 1, "{:?}", t.breaks);
+    let b = &t.breaks[0];
+    assert!((b.depth - DROP).abs() < 1e-9 && (b.slope - 1.0).abs() < 1e-9, "{b:?}");
+    assert!(b.edge.iter().all(|p| p.z == 0.0), "the break follows the top: {b:?}");
 }
 
 #[test]
 fn concave_creases_are_pencil_s_corner_not_a_burr() {
     // The C-channel: two reflex edges (inner wall meets floor and
     // ceiling at y = 1). Nothing cut INTERIOR to x stands on either
-    // reflex line; the convex channel-bottom crease does cut.
+    // reflex line; the selected convex top crease does cut.
     let poly = [(0.0, 0.0), (4.0, 0.0), (4.0, 1.0), (1.0, 1.0), (1.0, 3.0), (4.0, 3.0), (4.0, 4.0), (0.0, 4.0)];
-    let t = deburr(&prism(&poly, 6.0), &params(10.0, -4.0)).expect("convex edges exist");
+    let picks = [
+        vec![p3(0.0, 1.0, 1.0), p3(6.0, 1.0, 1.0)],
+        vec![p3(0.0, 1.0, 3.0), p3(6.0, 1.0, 3.0)],
+        vec![p3(0.0, 0.0, 4.0), p3(6.0, 0.0, 4.0)],
+    ];
+    let t = deburr_edges(&prism(&poly, 6.0), &params(10.0, -4.0), &DeburrEdges { include: &picks, exclude: &[] })
+        .expect("the selected convex top crease exists");
     for c in cut_points(&t) {
         if c.x > 1e-9 && c.x < 6.0 - 1e-9 {
             let on_reflex = (c.y - 1.0).abs() < 1e-9
@@ -240,19 +235,18 @@ fn concave_creases_are_pencil_s_corner_not_a_burr() {
         }
     }
     assert!(
-        cut_points(&t).iter().any(|c| c.y.abs() < 1e-9 && (c.z + DROP).abs() < 1e-9),
-        "the channel's convex bottom crease never stood in the path"
+        cut_points(&t).iter().any(|c| c.y.abs() < 1e-9 && (c.z - (4.0 - DROP)).abs() < 1e-9),
+        "the channel's selected convex top crease never stood in the path"
     );
 }
 
 #[test]
 fn the_window_clips_along_the_edges_own_line() {
-    // A trapezoid curtain in y = 0: the top rim level at z 0, its two
-    // sides falling 1 in 2 to z -10 (shallower than the 90-deg cone's
-    // flank, so they ride). With the tip window [-4, -2] the top rim
-    // (tip -2) rides whole and each side is cut short - its kept end
-    // stands exactly ON the window floor, the rim's own slope's doing,
-    // not a drop of the whole segment.
+    // A trapezoid curtain has side-edge slope 1/2. In its edge-normal
+    // plane the swept 90-degree cone contacts are (2d/5,0,-4d/5)
+    // and (0,2d/sqrt(3),0), where d is the tip drop. Their chord is
+    // d*sqrt(32/15), so width 2*sqrt(2) requires d=sqrt(15)/2.
+    // Intersect the edge z=x/2 with each tip-window endpoint directly.
     let f = vec![
         Triangle::new(p3(-20.0, 0.0, -10.0), p3(30.0, 0.0, -10.0), p3(10.0, 0.0, 0.0)),
         Triangle::new(p3(-20.0, 0.0, -10.0), p3(10.0, 0.0, 0.0), p3(0.0, 0.0, 0.0)),
@@ -260,12 +254,17 @@ fn the_window_clips_along_the_edges_own_line() {
     let t = deburr(&f, &params(-2.0, -4.0)).expect("top rim is in reach");
     assert!(t.notes.is_empty(), "nothing steep here: {:?}", t.notes);
     let cut = cut_points(&t);
-    let want = keys(&[p3(-4.0, 0.0, -4.0), p3(0.0, 0.0, -2.0), p3(10.0, 0.0, -2.0), p3(14.0, 0.0, -4.0)]);
+    let d = 15f64.sqrt() / 2.0;
+    let left_top = 2.0 * (-2.0 + d);
+    let left_floor = 2.0 * (-4.0 + d);
+    let want = keys(&[p3(left_floor, 0.0, -4.0), p3(left_top, 0.0, -2.0),
+        p3(0.0, 0.0, -2.0), p3(10.0, 0.0, -2.0),
+        p3(10.0 - left_top, 0.0, -2.0), p3(10.0 - left_floor, 0.0, -4.0)]);
     let mut got = keys(&cut);
     got.sort_unstable();
     got.dedup();
-    assert_eq!(got, want, "one clipped circuit: the rim plus two clipped sides");
-    assert_eq!(t.moves.iter().filter(|m| m.kind == MoveKind::Plunge).count(), 1);
+    assert_eq!(got, want, "the level rim and both independently sized clipped sides");
+    assert_eq!(t.moves.iter().filter(|m| m.kind == MoveKind::Plunge).count(), 3);
     for c in &cut {
         assert!(c.z >= -4.0 - 1e-9 && c.z <= -2.0 + 1e-9, "a tip outside the programmed window: {c:?}");
     }
@@ -303,12 +302,20 @@ fn a_weld_gone_wrong_is_skipped_out_loud() {
 
     // Manifold: three facets welded on one edge - a weld gone wrong
     // is no edge to break; skipped with its own note.
-    let pages = vec![
+    let mut pages = vec![
         Triangle::new(p3(0.0, 0.0, 0.0), p3(0.0, 0.0, 1.0), p3(1.0, 0.0, 0.5)),
         Triangle::new(p3(0.0, 0.0, 0.0), p3(0.0, 0.0, 1.0), p3(-0.5, 0.87, 0.5)),
         Triangle::new(p3(0.0, 0.0, 0.0), p3(0.0, 0.0, 1.0), p3(-0.5, -0.87, 0.5)),
     ];
-    let t = deburr(&pages, &params(1.0, -3.0)).expect("the page rims are edges");
+    // Select the nonmanifold seam and a separate accessible patch.
+    // The sloping page rims do not have a supported cone contact.
+    pages.extend([
+        Triangle::new(p3(0.0, 10.0, 0.0), p3(2.0, 10.0, 0.0), p3(2.0, 12.0, 0.0)),
+        Triangle::new(p3(0.0, 10.0, 0.0), p3(2.0, 12.0, 0.0), p3(0.0, 12.0, 0.0)),
+    ]);
+    let picks = [vec![p3(0.0, 0.0, 0.0), p3(0.0, 0.0, 1.0)],
+        vec![p3(0.0, 10.0, 0.0), p3(2.0, 10.0, 0.0), p3(2.0, 12.0, 0.0), p3(0.0, 12.0, 0.0), p3(0.0, 10.0, 0.0)]];
+    let t = deburr_edges(&pages, &params(1.0, -3.0), &DeburrEdges { include: &picks, exclude: &[] }).expect("the selected patch rides");
     assert!(t.notes.iter().any(|n| n.contains("more than two facets")), "{:?}", t.notes);
 }
 
@@ -342,6 +349,8 @@ fn deburr_at_the_wall_corner_is_chamfer_byte_for_byte() {
     // circuit chamfer.rs posts and the same single Z. Byte law, up
     // to the last-bit difference between w * tan(45) and w / tan(45)
     // - quantized to microns, which no real disagreement survives.
+    // #1890: deburr's `width` is the chamfer's chord, so the twin of
+    // chamfer's 2 mm leg is the chord `2 * sqrt(2)` of a 90-deg edge.
     let (w, top_z) = (2.0, 0.0);
     let box_ = box_mesh(0.0, 0.0, 40.0, 20.0, -10.0, top_z);
     // The window at exactly the crease tip's LEVEL isolates the top
@@ -349,7 +358,7 @@ fn deburr_at_the_wall_corner_is_chamfer_byte_for_byte() {
     // segment), the bottom rims stand far below. The level comes from
     // drop(), not the DROP constant - tan(45 deg) is one ulp shy of
     // 1, and an exact-boundary window must be exact.
-    let mut w3 = params(0.0, 0.0);
+    let mut w3 = DeburrParams { width: w * std::f64::consts::SQRT_2, ..params(0.0, 0.0) };
     let level = -w3.drop();
     w3.top_z = level;
     w3.bottom_z = level;
@@ -357,6 +366,7 @@ fn deburr_at_the_wall_corner_is_chamfer_byte_for_byte() {
     let cp = ChamferParams {
         width: w,
         angle_deg: 45.0,
+        minimum_cone_radius: 0.0,
         clearance_z: 20.0,
         retract_z: None,
         top_z,
@@ -387,16 +397,14 @@ fn deburr_at_the_wall_corner_is_chamfer_byte_for_byte() {
 
 #[test]
 fn every_run_leaves_its_cut_straight_up_before_the_next_traverse() {
-    // #304: a closed box rides as several runs (the rims, the corner
-    // tip lines), and the cone ends each one still in the edge it
-    // broke. Every rapid that starts below the clearance plane must be
-    // the vertical retract out of that break - a diagonal one would
-    // drag the cone up and across the part.
-    let f = box_mesh(0.0, 0.0, 40.0, 20.0, -10.0, 0.0);
-    let p = params(2.0, -12.0);
-    let t = deburr(&f, &p).expect("a box is all burr");
+    // Two accessible top circuits require separate runs and a traverse.
+    // Each run ends with the cone still touching the broken edge.
+    let mut f = box_mesh(0.0, 0.0, 40.0, 20.0, -10.0, 0.0);
+    f.extend(box_mesh(60.0, 0.0, 100.0, 20.0, -10.0, 0.0));
+    let p = params(0.0, -4.0);
+    let t = deburr(&f, &p).expect("both top circuits ride");
     let plunges = t.moves.iter().filter(|m| m.kind == MoveKind::Plunge).count();
-    assert!(plunges >= 2, "the box must ride as several runs to test the links: {plunges}");
+    assert!(plunges >= 2, "the two boxes must give separate runs to test the links: {plunges}");
     for (i, m) in t.moves.iter().enumerate() {
         if m.kind != MoveKind::Rapid || m.from.z >= p.clearance_z - 1e-9 {
             continue;

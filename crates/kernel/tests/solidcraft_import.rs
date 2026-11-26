@@ -9,6 +9,8 @@
 //!
 //! Gate map (#1456): covers camcraft_kernel::solidcraft.
 
+#[path = "solidcraft_import/blend.rs"]
+mod blend;
 mod sc_util;
 mod step_util;
 

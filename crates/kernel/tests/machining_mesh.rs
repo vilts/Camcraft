@@ -43,11 +43,15 @@ fn solidcraft_sample_meshes_within_the_app_chord() {
     assert!(mesh.report.deviation.samples > 0);
     assert!(mesh.report.volume > 0.0);
     assert_eq!(mesh.report.faces, imported.solid.record.faces.len());
+    // #917: the adaptive bound proves the first plan at the app chord, so
+    // no finer replan is made (before #917 the bound needed one).
     assert!(
-        mesh.report
+        !mesh.report
             .notes
             .iter()
-            .any(|note| note.contains("replanned"))
+            .any(|note| note.contains("replanned")),
+        "{:?}",
+        mesh.report.notes
     );
     for face in 0..imported.solid.record.faces.len() {
         assert!(
@@ -67,20 +71,21 @@ fn solidcraft_sample_still_refuses_an_out_of_tolerance_mesh() {
     )
     .expect("the Solidcraft sample must import as a checked solid");
     let rec = &imported.solid.record;
-    // At 0.1 mm, solidcore-tess plans a coarse mesh whose continuous projected
-    // deviation exceeds 0.1 mm (and far exceeds TOL).
+    // At 0.1 mm, solidcore-tess plans a coarse mesh whose parametric reading
+    // exceeds 0.1 mm; the adaptive continuous bound (#917) proves it within
+    // 0.1 mm, and it far exceeds TOL.
     let (coarse_plan, _) = solidcore_tess::plan(rec, &MeshTolerance::chord(0.1), 150.0)
         .expect("coarse plan must build");
     let coarse_01 = mesh_deviation::measure_within(&coarse_plan, rec, 0.1, &CancelToken::new())
         .expect("coarse plan must measure");
-    assert!(coarse_01.largest() > 0.1, "{coarse_01:?}");
+    assert!(coarse_01.parametric > 0.1 && coarse_01.largest() <= 0.1, "{coarse_01:?}");
     let coarse_tol = mesh_deviation::measure_within(&coarse_plan, rec, TOL, &CancelToken::new())
         .expect("coarse plan must measure against TOL");
     assert!(coarse_tol.largest() > TOL, "{coarse_tol:?}");
-    // Under projection (#1029), replanning at 0.05 mm brings it within 0.1 mm
-    // even though face 36 parametric over-reads > 0.13 mm.
+    // Under projection (#1029) the 0.1 mm request passes even though the
+    // parametric reading over-reads past 0.1 mm.
     let ok = machining_mesh(&imported.solid, 0.1, &CancelToken::new())
-        .expect("0.1 mm request passes via projection after 0.05 mm replan");
+        .expect("0.1 mm request passes via projection");
     assert!(ok.report.deviation.parametric > 0.1 && ok.report.deviation.largest() <= 0.1);
     // An un-reducible > 0.1 mm spline bump on box.step still refuses with Deviation.
     let mut bad = solid("box.step");

@@ -28,7 +28,7 @@
       ]
     }
   },
-  "controller": {
+  "controller": { "post": "Doosan DNM",
     "synced_configuration": {
       "parts": {
         "X": { "coordinate": 0, "max_normal_speed": 15000.0, "max_rapid_speed": 36000.0 },

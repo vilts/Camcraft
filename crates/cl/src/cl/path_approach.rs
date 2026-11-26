@@ -13,24 +13,25 @@ use crate::geometry::Point3;
 const SEED_EPS: f64 = 1e-9;
 
 impl Toolpath {
-    /// Seat the opening approach over the work offset's origin (#2382).
+    /// Seat the opening approach over its own entry point (#2901).
     ///
     /// The generators seed their builder at the frame's zero on the
-    /// clearance plane (`seed`); the setup's WCS origin is where the
-    /// program starts. When the first move is a rapid out of `seed` to
-    /// somewhere else, its start moves to `at` (X/Y) on the same plane.
-    /// The rapid's end is untouched, so no posted block changes - the
-    /// post writes ends only - but the drawn approach, the simulation
-    /// and the checks read the WCS origin, not the world's.
+    /// clearance plane (`seed`). The machine never visits that point:
+    /// after a tool change its X/Y is not known, and the post writes a
+    /// Z-only G00 and then the entry X/Y. So when the first move is a
+    /// rapid out of `seed` to somewhere else, its start moves to the
+    /// rapid's own end X/Y on the same plane. The rapid's end is
+    /// untouched, so no posted block changes - the post writes ends
+    /// only - and the drawn approach, the simulation, the fixture checks
+    /// and the link router see no travel from a point the machine never
+    /// visits: not the frame zero, not the WCS origin (#2382's seat,
+    /// reversed here).
     ///
     /// A path that does not open that way (a hole list seeded on its
     /// first hole, a lathe seeded at its own station, a zero-length
     /// rapid that says the cut starts AT the seed) is left as it is.
     /// Returns whether the start moved.
-    pub fn seat_approach(&mut self, seed: Point3, at: [f64; 2]) -> bool {
-        if !at.iter().all(|v| v.is_finite()) {
-            return false;
-        }
+    pub fn seat_approach(&mut self, seed: Point3) -> bool {
         let Some(first) = self.moves.first_mut() else {
             return false;
         };
@@ -38,11 +39,12 @@ impl Toolpath {
             && (first.from.y - seed.y).abs() <= SEED_EPS
             && (first.from.z - seed.z).abs() <= SEED_EPS;
         let leaves = (first.to.x - first.from.x).abs() > SEED_EPS || (first.to.y - first.from.y).abs() > SEED_EPS;
-        if first.kind != MoveKind::Rapid || first.arc.is_some() || !at_seed || !leaves {
+        let finite = first.to.x.is_finite() && first.to.y.is_finite();
+        if first.kind != MoveKind::Rapid || first.arc.is_some() || !at_seed || !leaves || !finite {
             return false;
         }
-        first.from.x = at[0];
-        first.from.y = at[1];
+        first.from.x = first.to.x;
+        first.from.y = first.to.y;
         true
     }
 }

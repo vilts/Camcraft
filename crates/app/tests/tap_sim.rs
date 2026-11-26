@@ -111,6 +111,7 @@ fn tapped_world(half_width: f64) -> (World, History) {
         plunge_feed: 600.0,
         holes: vec![hole(half_width)],
         cross: vec![],
+        picks: Default::default(),
     };
     world_with_op(half_width, TAP, tool, params)
 }
@@ -160,7 +161,7 @@ fn tapped_to(half_width: f64, bottom: f64) -> (World, History) {
         feed: 600.0,
         plunge_feed: 600.0,
         holes: vec![Hole { floor_z: bottom, ..hole(half_width) }],
-        cross: vec![],
+        cross: vec![], picks: Default::default(),
     };
     world_with_op(half_width, TAP, tool, params)
 }
@@ -230,6 +231,7 @@ fn a_tap_whose_shank_rides_into_the_hole_is_still_convicted() {
         plunge_feed: 600.0,
         holes: vec![hole(3.0)],
         cross: vec![],
+        picks: Default::default(),
     };
     let (world, _history) = world_with_op(2.5, "TAP-M6-SHANK", tool, params);
     let warns = blocking_warnings(&world);
@@ -260,6 +262,7 @@ fn drill_case(name: &str, tool: Tool) {
         plunge_feed: 600.0,
         holes: vec![hole(2.5)],
         cross: vec![],
+        picks: Default::default(),
     };
     let (world, _history) = world_with_op(2.5, name, tool, params);
     let warns = blocking_warnings(&world);

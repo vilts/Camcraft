@@ -25,11 +25,12 @@ pub(super) fn params() -> WireParams {
         tabs: None,
         stock: None,
         clearance: 1.0,
+        sharp_corners: false,
     }
 }
 
 pub(super) fn ruled(pairing: WirePairing) -> WireRuled {
-    WireRuled { top_z: H, pairing, tolerance: 0.05, widening: WireWidening::PerRuling, max_deg: Some(30.0), machine: "M".into() }
+    WireRuled { top_z: H, pairing, tolerance: 0.05, heal_tolerance: 0.0, widening: WireWidening::PerRuling, max_deg: Some(30.0), machine: "M".into() }
 }
 
 pub(super) fn rect(hx: f64, hy: f64) -> Loop {

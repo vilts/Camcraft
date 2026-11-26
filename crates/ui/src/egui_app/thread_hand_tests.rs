@@ -28,6 +28,7 @@ fn threading() -> OpParams {
         plunge_feed: 40.0,
         infeed_plan: Default::default(),
         hand: ThreadHand::Right,
+        picks: Default::default(),
     }
 }
 

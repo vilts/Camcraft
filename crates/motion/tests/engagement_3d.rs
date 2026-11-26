@@ -47,6 +47,7 @@ fn box_facets(min: [f64; 3], max: [f64; 3]) -> Vec<Triangle> {
 
 fn p3(entry: Entry3D, strategy: PocketStrategy, limit: f64) -> Pocket3DParams {
     Pocket3DParams {
+        pass_start: Default::default(),
         links: Links { approach: Approach { max_engagement: limit, ..Approach::DEFAULT }, ..Links::ROUGH3D },
         tool_diameter: D,
         stepover: 3.0,

@@ -1,0 +1,366 @@
+'$Include "jescript.sbh"
+sub SetOrigin
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_HEIGHT,"20.000",je_dim)
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_NOMEOBJ,"NINE20",je_dim)
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_MATERIAL,"0001",je_dim)
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_THREAD,"Berco Cut 0.25",je_dim)
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_POSX,"0",je_dim)
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_POSY,"0",je_dim)
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_POSZ,"0",je_dim)
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_ROTATION,"0",je_dim)
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_DIML,"120.000",je_dim)
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_DIMB,"100.000",je_dim)
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_POSPOSX,"-60.000",je_dim)
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_POSPOSY,"-50.000",je_dim)
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_POSPOSZ,"-20.000",je_dim)
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_VALSECP,"3.0",je_dim)
+  ok=JE_AttribObject(PIECE,SETATTR,je_piece,NULL,NULL,NULL,ID_VALRETP,"30.0",je_dim)
+  ok=JE_GenerateAttrib(c_tecauto,c_tecauto_t)
+  ok=JE_GenerateAttrib(c_tecassign,c_tecass_fi)
+  ok=JE_GenerateAttrib(c_tecalert,c_tecalert_sea)
+end sub
+sub CutPunch
+  ok=JE_CreateQuality(je_piece,"CCB030","0.30,1.50,1.00,F,F,F",je_q1)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_Create(GROUP,je_piece,"NINE20",NULL)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_Create(WORK,je_piece,"NINE20","CUT1")
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_GEOMETRY,"AGIE.USING_NINE201.ISO",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_PUNCH,c_punch,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_WORKCOND,"2",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_QUALITY,je_q1,je_dim)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_THREAD,"Berco Cut 0.25",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_ENTRYMODE,c_entper,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_HEIGHT,"20.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_POSX,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_POSY,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_SEPCUT,"1.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_REVCUT,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_COMMPOINTENTRY,"3.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_COMMPOINTEXIT,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_PRIORITY,"10",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_RADIUSMINLA,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_I_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_E_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_ENTRY,"2",je_dim)
+  ok=JE_CreateStartPoint(WORK,"stp1",je_piece,"NINE20","CUT1")
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT1","stp1",ID_POSX,"-45.000",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT1","stp1",ID_POSY,"-32.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_STP,"stp1",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT1",NULL,ID_STPMODE,c_work,je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT1","stp1",ID_STP_PL,"4",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT1","stp1",ID_DIAMETER,"2.0",je_dim)
+  ok=JE_GenerateCuts(WORK,je_piece,"NINE20","CUT1",ASDELETE,NULL)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_Create(WORK,je_piece,"NINE20","CUT2")
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_GEOMETRY,"AGIE.USING_NINE202.ISO",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_PUNCH,c_punch,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_WORKCOND,"2",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_QUALITY,je_q1,je_dim)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_THREAD,"Berco Cut 0.25",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_ENTRYMODE,c_entper,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_HEIGHT,"20.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_POSX,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_POSY,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_SEPCUT,"1.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_REVCUT,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_COMMPOINTENTRY,"3.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_COMMPOINTEXIT,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_PRIORITY,"10",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_RADIUSMINLA,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_I_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_E_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_ENTRY,"2",je_dim)
+  ok=JE_CreateStartPoint(WORK,"stp1",je_piece,"NINE20","CUT2")
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT2","stp1",ID_POSX,"-13.000",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT2","stp1",ID_POSY,"-32.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_STP,"stp1",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT2",NULL,ID_STPMODE,c_work,je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT2","stp1",ID_STP_PL,"4",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT2","stp1",ID_DIAMETER,"2.0",je_dim)
+  ok=JE_GenerateCuts(WORK,je_piece,"NINE20","CUT2",ASDELETE,NULL)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_Create(WORK,je_piece,"NINE20","CUT3")
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_GEOMETRY,"AGIE.USING_NINE203.ISO",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_PUNCH,c_punch,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_WORKCOND,"2",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_QUALITY,je_q1,je_dim)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_THREAD,"Berco Cut 0.25",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_ENTRYMODE,c_entper,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_HEIGHT,"20.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_POSX,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_POSY,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_SEPCUT,"1.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_REVCUT,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_COMMPOINTENTRY,"3.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_COMMPOINTEXIT,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_PRIORITY,"10",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_RADIUSMINLA,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_I_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_E_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_ENTRY,"2",je_dim)
+  ok=JE_CreateStartPoint(WORK,"stp1",je_piece,"NINE20","CUT3")
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT3","stp1",ID_POSX,"19.000",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT3","stp1",ID_POSY,"-32.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_STP,"stp1",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT3",NULL,ID_STPMODE,c_work,je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT3","stp1",ID_STP_PL,"4",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT3","stp1",ID_DIAMETER,"2.0",je_dim)
+  ok=JE_GenerateCuts(WORK,je_piece,"NINE20","CUT3",ASDELETE,NULL)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_Create(WORK,je_piece,"NINE20","CUT4")
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_GEOMETRY,"AGIE.USING_NINE204.ISO",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_PUNCH,c_punch,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_WORKCOND,"2",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_QUALITY,je_q1,je_dim)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_THREAD,"Berco Cut 0.25",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_ENTRYMODE,c_entper,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_HEIGHT,"20.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_POSX,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_POSY,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_SEPCUT,"1.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_REVCUT,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_COMMPOINTENTRY,"3.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_COMMPOINTEXIT,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_PRIORITY,"10",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_RADIUSMINLA,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_I_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_E_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_ENTRY,"2",je_dim)
+  ok=JE_CreateStartPoint(WORK,"stp1",je_piece,"NINE20","CUT4")
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT4","stp1",ID_POSX,"-45.000",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT4","stp1",ID_POSY,"0.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_STP,"stp1",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT4",NULL,ID_STPMODE,c_work,je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT4","stp1",ID_STP_PL,"4",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT4","stp1",ID_DIAMETER,"2.0",je_dim)
+  ok=JE_GenerateCuts(WORK,je_piece,"NINE20","CUT4",ASDELETE,NULL)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_Create(WORK,je_piece,"NINE20","CUT5")
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_GEOMETRY,"AGIE.USING_NINE205.ISO",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_PUNCH,c_punch,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_WORKCOND,"2",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_QUALITY,je_q1,je_dim)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_THREAD,"Berco Cut 0.25",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_ENTRYMODE,c_entper,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_HEIGHT,"20.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_POSX,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_POSY,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_SEPCUT,"1.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_REVCUT,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_COMMPOINTENTRY,"3.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_COMMPOINTEXIT,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_PRIORITY,"10",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_RADIUSMINLA,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_I_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_E_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_ENTRY,"2",je_dim)
+  ok=JE_CreateStartPoint(WORK,"stp1",je_piece,"NINE20","CUT5")
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT5","stp1",ID_POSX,"-13.000",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT5","stp1",ID_POSY,"0.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_STP,"stp1",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT5",NULL,ID_STPMODE,c_work,je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT5","stp1",ID_STP_PL,"4",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT5","stp1",ID_DIAMETER,"2.0",je_dim)
+  ok=JE_GenerateCuts(WORK,je_piece,"NINE20","CUT5",ASDELETE,NULL)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_Create(WORK,je_piece,"NINE20","CUT6")
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_GEOMETRY,"AGIE.USING_NINE206.ISO",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_PUNCH,c_punch,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_WORKCOND,"2",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_QUALITY,je_q1,je_dim)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_THREAD,"Berco Cut 0.25",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_ENTRYMODE,c_entper,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_HEIGHT,"20.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_POSX,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_POSY,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_SEPCUT,"1.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_REVCUT,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_COMMPOINTENTRY,"3.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_COMMPOINTEXIT,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_PRIORITY,"10",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_RADIUSMINLA,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_I_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_E_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_ENTRY,"2",je_dim)
+  ok=JE_CreateStartPoint(WORK,"stp1",je_piece,"NINE20","CUT6")
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT6","stp1",ID_POSX,"19.000",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT6","stp1",ID_POSY,"0.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_STP,"stp1",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT6",NULL,ID_STPMODE,c_work,je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT6","stp1",ID_STP_PL,"4",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT6","stp1",ID_DIAMETER,"2.0",je_dim)
+  ok=JE_GenerateCuts(WORK,je_piece,"NINE20","CUT6",ASDELETE,NULL)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_Create(WORK,je_piece,"NINE20","CUT7")
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_GEOMETRY,"AGIE.USING_NINE207.ISO",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_PUNCH,c_punch,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_WORKCOND,"2",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_QUALITY,je_q1,je_dim)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_THREAD,"Berco Cut 0.25",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_ENTRYMODE,c_entper,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_HEIGHT,"20.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_POSX,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_POSY,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_SEPCUT,"1.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_REVCUT,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_COMMPOINTENTRY,"3.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_COMMPOINTEXIT,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_PRIORITY,"10",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_RADIUSMINLA,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_I_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_E_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_ENTRY,"2",je_dim)
+  ok=JE_CreateStartPoint(WORK,"stp1",je_piece,"NINE20","CUT7")
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT7","stp1",ID_POSX,"-45.000",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT7","stp1",ID_POSY,"32.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_STP,"stp1",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT7",NULL,ID_STPMODE,c_work,je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT7","stp1",ID_STP_PL,"4",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT7","stp1",ID_DIAMETER,"2.0",je_dim)
+  ok=JE_GenerateCuts(WORK,je_piece,"NINE20","CUT7",ASDELETE,NULL)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_Create(WORK,je_piece,"NINE20","CUT8")
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_GEOMETRY,"AGIE.USING_NINE208.ISO",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_PUNCH,c_punch,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_WORKCOND,"2",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_QUALITY,je_q1,je_dim)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_THREAD,"Berco Cut 0.25",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_ENTRYMODE,c_entper,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_HEIGHT,"20.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_POSX,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_POSY,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_SEPCUT,"1.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_REVCUT,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_COMMPOINTENTRY,"3.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_COMMPOINTEXIT,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_PRIORITY,"10",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_RADIUSMINLA,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_I_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_E_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_ENTRY,"2",je_dim)
+  ok=JE_CreateStartPoint(WORK,"stp1",je_piece,"NINE20","CUT8")
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT8","stp1",ID_POSX,"-13.000",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT8","stp1",ID_POSY,"32.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_STP,"stp1",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT8",NULL,ID_STPMODE,c_work,je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT8","stp1",ID_STP_PL,"4",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT8","stp1",ID_DIAMETER,"2.0",je_dim)
+  ok=JE_GenerateCuts(WORK,je_piece,"NINE20","CUT8",ASDELETE,NULL)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_Create(WORK,je_piece,"NINE20","CUT9")
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_GEOMETRY,"AGIE.USING_NINE209.ISO",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_PUNCH,c_punch,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_WORKCOND,"2",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_QUALITY,je_q1,je_dim)
+  if (ok<>0) then
+    stop
+  end if
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_THREAD,"Berco Cut 0.25",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_ENTRYMODE,c_entper,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_HEIGHT,"20.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_POSX,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_POSY,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_SEPCUT,"1.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_REVCUT,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_COMMPOINTENTRY,"3.0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_COMMPOINTEXIT,"0",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_PRIORITY,"10",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_RADIUSMINLA,"T",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_I_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_E_TYPE,c_radius_rm,je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_ENTRY,"2",je_dim)
+  ok=JE_CreateStartPoint(WORK,"stp1",je_piece,"NINE20","CUT9")
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT9","stp1",ID_POSX,"19.000",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT9","stp1",ID_POSY,"32.000",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_STP,"stp1",je_dim)
+  ok=JE_AttribObject(WORK,SETATTR,je_piece,"NINE20","CUT9",NULL,ID_STPMODE,c_work,je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT9","stp1",ID_STP_PL,"4",je_dim)
+  ok=JE_AttribObject(STARTPOINT,SETATTR,je_piece,"NINE20","CUT9","stp1",ID_DIAMETER,"2.0",je_dim)
+  ok=JE_GenerateCuts(WORK,je_piece,"NINE20","CUT9",ASDELETE,NULL)
+  if (ok<>0) then
+    stop
+  end if
+end sub
+sub main
+  ok=JE_Initiate
+  if (ok=0) then
+    SetOrigin
+    CutPunch
+    ok=JE_AttribObject(PIECE,SETATTR,je_piece,je_grp,NULL,NULL,ID_STATEGY,"EW",je_dim)
+    ok=JE_ClosePiece(je_piece)
+  else
+    stop
+  end if
+end sub

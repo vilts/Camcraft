@@ -11,6 +11,67 @@ use camcraft_app::posting;
 use super::{ErrorScope, PostView, State};
 
 impl State {
+    pub(super) fn create_agie_inspection(
+        &mut self,
+        name: String,
+        tool: String,
+        drawing: String,
+        chain: camcraft_app::geometry::sketch_chains::ChainId,
+        start: [f64; 2],
+        setup: Option<String>,
+    ) {
+        if camcraft_app::setup::active(&self.world) != setup {
+            self.refuse(ErrorScope::Operation, "The active setup changed. Select the inspection opening again.".into());
+            return;
+        }
+        match camcraft_app::commands::CreateOperation::agie_inspection(&self.world, &name, &tool, &drawing, chain, start) {
+            Ok(cmd) => {
+                self.history.execute(&self.world, cmd);
+                self.doc_version += 1;
+                self.pending.push_back(super::CommandKind::Select(Some(name.clone())));
+                self.ui_target = super::UiTarget::Operation(name.clone());
+                self.status = format!("{name} created for nominal inspection with no machining condition");
+            }
+            Err(why) => self.refuse(ErrorScope::Operation, format!("Inspection opening refused: {why}")),
+        }
+    }
+
+    pub(super) fn import_agie_drawing(&mut self) {
+        let Some(path) = crate::file_dialog::FileDialog::new().set_title("Import inspection drawing")
+            .add_filter("DXF", &["dxf"]).pick_file() else { return; };
+        let setup = camcraft_app::setup::active(&self.world);
+        match camcraft_app::commands::ImportDxf::new(&self.world, setup.as_deref(), &path, &Default::default()) {
+            Ok(cmd) => {
+                let name = cmd.name().to_owned();
+                self.history.execute(&self.world, cmd);
+                self.doc_version += 1;
+                self.status = format!("Imported DXF drawing {name}");
+            }
+            Err(why) => self.refuse(ErrorScope::Operation, format!("Drawing import refused: {why}")),
+        }
+    }
+
+    pub(super) fn export_agie_inspection(&mut self, name: &str) {
+        let Some(path) = crate::file_dialog::FileDialog::new()
+            .set_title("New Agie inspection directory • physical stock XY unknown (length and width 0)")
+            .set_file_name("INSPECT")
+            .save_file()
+        else {
+            return;
+        };
+        self.export_agie_inspection_to(name, &path);
+    }
+
+    pub(crate) fn export_agie_inspection_to(&mut self, name: &str, path: &Path) {
+        self.status = match camcraft_app::operation::export_agie_inspection(&self.world, name, path) {
+            Ok(r) => format!(
+                "{} {} • {} nominal spans • chain {} • {}",
+                r.review, path.display(), r.nominal_blocks, r.chain, r.setup
+            ),
+            Err(why) => format!("Agie inspection export refused: {why}"),
+        };
+    }
+
     /// The Output choice: `true` writes one file per operation.
     pub(super) fn set_per_op_output(&mut self, per_op: bool) {
         // #389: routed to the active setup's own options when it has them.

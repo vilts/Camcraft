@@ -107,6 +107,7 @@ fn drill() -> OpParams {
         plunge_feed: 100.0,
         holes: XS.iter().map(|&x| hole(x)).collect(),
         cross: Vec::new(),
+        picks: Default::default(),
     }
 }
 

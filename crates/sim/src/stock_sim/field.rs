@@ -75,6 +75,11 @@ pub(crate) const SEED_R: f64 = 1.7320508075688772; // sqrt(3), cells
 /// distance near the surface.
 pub(crate) const HOP: f64 = 0.5773502691896258; // 1 / sqrt(3), cells
 
+/// One cut layer: brick key -> 512 cell values. A brick is shared, so a
+/// clone of the field copies the keys and the pointers only; a write
+/// copies its brick first when a clone still holds it (#2194).
+pub(crate) type CutLayer = HashMap<[i32; 3], Arc<[f64; BRICK3]>>;
+
 /// One narrow-band signed-distance grid: a watertight mesh sampled
 /// once into sparse bricks. Construct with `SdfField::from_mesh`.
 #[derive(Clone, Debug)]
@@ -84,25 +89,26 @@ pub struct SdfField {
     pub(crate) cap: f64,
     pub(crate) mesh: Arc<Vec<Triangle>>,
     /// Shared on clone (the mesh layer is written only while seeding),
-    /// so a playback snapshot copies the cut layers, never this one.
+    /// so a playback snapshot never copies this one.
     pub(crate) bricks: Arc<HashMap<[i32; 3], Box<[f64; BRICK3]>>>,
     /// M7.1 B's subtraction layer: per cell, the running max of the
     /// negated swept-tool distances; NaN cells and absent bricks say
-    /// "no tool has claimed this cell".
-    pub(crate) cuts: HashMap<[i32; 3], Box<[f64; BRICK3]>>,
+    /// "no tool has claimed this cell". Its bricks are shared on clone
+    /// and copied on write (`CutLayer`), as are the two layers below.
+    pub(crate) cuts: CutLayer,
     /// M7.1 C's ray-entry companion: per claimed cell, the lowest
     /// point ABOVE the center whose proven-removed status is certain
     /// (the vertical ray's first solid crossing, a lower bound),
     /// kept as a min. NaN says "this cell's ray never meets the
     /// solid" - lateral claims like a pocket's rim, whose surface
     /// stays the mesh's own. `field_ray` owns the law.
-    pub(crate) cut_ups: HashMap<[i32; 3], Box<[f64; BRICK3]>>,
+    pub(crate) cut_ups: CutLayer,
     /// #637 E2a: `cut_ups`'s mirror - the distance DOWN from a claimed
     /// cell's centre to the ray's entry into the swept solid. Written
     /// only by a flipped bake (`field_turn`), where every "up" record
     /// becomes a "down" one; read by the up-march (`march_up`, E2b)
     /// for the floor of a column a cut from below reached.
-    pub(crate) cut_downs: HashMap<[i32; 3], Box<[f64; BRICK3]>>,
+    pub(crate) cut_downs: CutLayer,
     /// M7.3's cost law: the cut region, the full-brick ledger and the
     /// counters (`field_batch::CostLedger`), boxed so the `Stock`
     /// enum's arms stay the same size class.
@@ -314,11 +320,31 @@ impl SdfField {
     /// that changes the value must mark the brick dirty (the only one,
     /// `claim_record`, does) - the playback upload trusts that ledger.
     pub(crate) fn cut_mut(&mut self, key: [i32; 3]) -> &mut f64 {
-        &mut self
-            .cuts
-            .entry(brick_of(key))
-            .or_insert_with(|| Box::new([f64::NAN; BRICK3]))[in_brick(key)]
+        &mut layer_brick_mut(&mut self.cuts, brick_of(key))[in_brick(key)]
     }
+
+    /// Bytes this field holds that `prev` does not (#2194): each cut
+    /// brick that is not `prev`'s own allocation at the same key, and
+    /// the map entries, which every clone copies. Pointer identity is
+    /// the test, so equal bricks in two allocations count twice: the
+    /// answer is never under what the field holds beyond `prev`.
+    #[must_use]
+    pub fn cut_bytes_after(&self, prev: &SdfField) -> usize {
+        let layers = [(&self.cuts, &prev.cuts), (&self.cut_ups, &prev.cut_ups), (&self.cut_downs, &prev.cut_downs)];
+        let (mut own, mut entries) = (0usize, 0usize);
+        for (now, was) in layers {
+            entries = entries.saturating_add(now.len());
+            own = own.saturating_add(now.iter().filter(|(k, b)| !was.get(*k).is_some_and(|p| Arc::ptr_eq(p, b))).count());
+        }
+        own.saturating_mul(BRICK3 * std::mem::size_of::<f64>())
+            .saturating_add(entries.saturating_mul(std::mem::size_of::<([i32; 3], Arc<[f64; BRICK3]>)>()))
+    }
+}
+
+/// A cut layer's brick for writing, allocated when absent and copied
+/// first when a clone of the field still shares it (copy-on-write).
+pub(crate) fn layer_brick_mut(layer: &mut CutLayer, brick: [i32; 3]) -> &mut [f64; BRICK3] {
+    Arc::make_mut(layer.entry(brick).or_insert_with(|| Arc::new([f64::NAN; BRICK3])))
 }
 
 /// The brick a cell lives in.

@@ -39,6 +39,8 @@ pub struct TrochoidDto {
     pub return_feed: f64,
     pub plunge_feed: f64,
     pub climb: bool,
+    #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+    pub picks: PathPicksDto,
 }
 
 impl TrochoidDto {
@@ -64,6 +66,7 @@ impl TrochoidDto {
             return_feed,
             plunge_feed,
             climb,
+            picks,
         } = p
         else {
             return TrochoidDto::from_params(&crate::operation::retype_params(
@@ -95,6 +98,7 @@ impl TrochoidDto {
             return_feed: *return_feed,
             plunge_feed: *plunge_feed,
             climb: *climb,
+            picks: PathPicksDto::from_picks(picks),
         }
     }
 
@@ -121,6 +125,7 @@ impl TrochoidDto {
             return_feed: self.return_feed,
             plunge_feed: self.plunge_feed,
             climb: self.climb,
+            picks: self.picks.to_picks(),
         }
     }
 }

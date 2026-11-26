@@ -1,0 +1,704 @@
+{
+  "version": 76,
+  "machine": {
+    "path": "built-in: EMCO VMC-200",
+    "machine": {
+      "model": "EMCO VMC-200",
+      "vendor": "Camcraft",
+      "spindle_min": 50.0,
+      "spindle_max": 4500.0,
+      "axes": [
+        {
+          "name": "X",
+          "feed": 4000.0,
+          "rapid": 10500.0,
+          "travel": [
+            -420.0,
+            420.0
+          ]
+        },
+        {
+          "name": "Y",
+          "feed": 4000.0,
+          "rapid": 10500.0,
+          "travel": [
+            -330.0,
+            330.0
+          ]
+        },
+        {
+          "name": "Z",
+          "feed": 4000.0,
+          "rapid": 10500.0,
+          "travel": [
+            -240.0,
+            240.0
+          ]
+        }
+      ],
+      "max_tool_length": null,
+      "max_tool_diameter": null,
+      "spindle_d": null,
+      "spindle_len": null,
+      "kind": "mill",
+      "tool_count": 12,
+      "coolants": [
+        {
+          "name": "Flood",
+          "mCode": "M8"
+        }
+      ],
+      "spindles": 1,
+      "safe_retract_z": 0.0,
+      "post": "Siemens 810M"
+    }
+  },
+  "post": {
+    "named": "Siemens 810M"
+  },
+  "entities": [
+    {
+      "name": "5MM DRILL",
+      "translation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "kind": "tool",
+      "tool": {
+        "kind": "drill",
+        "diameter": 5.0,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 12.0,
+        "shank_d": 5.0,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 1800.0,
+        "feed": 180.0,
+        "number": 2
+      }
+    },
+    {
+      "name": "6MM EM",
+      "translation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "kind": "tool",
+      "tool": {
+        "kind": "end_mill",
+        "diameter": 6.0,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 15.0,
+        "shank_d": 6.0,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 2500.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 4,
+        "number": 1
+      }
+    },
+    {
+      "name": "Peck Pair",
+      "translation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "kind": "operation",
+      "operation": {
+        "order": 1,
+        "tool": "5MM DRILL",
+        "src": "stock",
+        "params": {
+          "drill": {
+            "clearance_z": {
+              "reference": "fixed",
+              "offset": 30.0
+            },
+            "retract_z": {
+              "reference": "fixed",
+              "offset": 24.0
+            },
+            "top_z": {
+              "reference": "fixed",
+              "offset": 20.0
+            },
+            "cycle": "peck",
+            "peck": 3.0,
+            "dwell": 0.0,
+            "feed": 180.0,
+            "plunge_feed": 180.0,
+            "holes": [
+              {
+                "xy": [
+                  20.0,
+                  20.0
+                ],
+                "radius": 2.5,
+                "entry_z": 20.0,
+                "floor_z": 14.0,
+                "through": false,
+                "stepped": false
+              },
+              {
+                "xy": [
+                  40.0,
+                  20.0
+                ],
+                "radius": 2.5,
+                "entry_z": 20.0,
+                "floor_z": 14.0,
+                "through": false,
+                "stepped": false
+              }
+            ],
+            "break_through_from": "full_diameter"
+          }
+        },
+        "stamp": 1132747003707328629,
+        "cache": {
+          "moves": [
+            {
+              "kind": "rapid",
+              "from": [
+                20.0,
+                20.0,
+                30.0
+              ],
+              "to": [
+                20.0,
+                20.0,
+                20.0
+              ]
+            },
+            {
+              "kind": "plunge",
+              "from": [
+                20.0,
+                20.0,
+                20.0
+              ],
+              "to": [
+                20.0,
+                20.0,
+                17.0
+              ],
+              "feed": 180.0
+            },
+            {
+              "kind": "rapid",
+              "from": [
+                20.0,
+                20.0,
+                17.0
+              ],
+              "to": [
+                20.0,
+                20.0,
+                18.0
+              ]
+            },
+            {
+              "kind": "plunge",
+              "from": [
+                20.0,
+                20.0,
+                18.0
+              ],
+              "to": [
+                20.0,
+                20.0,
+                14.0
+              ],
+              "feed": 180.0
+            },
+            {
+              "kind": "rapid",
+              "from": [
+                20.0,
+                20.0,
+                14.0
+              ],
+              "to": [
+                20.0,
+                20.0,
+                20.0
+              ]
+            },
+            {
+              "kind": "rapid",
+              "from": [
+                20.0,
+                20.0,
+                20.0
+              ],
+              "to": [
+                20.0,
+                20.0,
+                24.0
+              ]
+            },
+            {
+              "kind": "rapid",
+              "from": [
+                20.0,
+                20.0,
+                24.0
+              ],
+              "to": [
+                40.0,
+                20.0,
+                24.0
+              ]
+            },
+            {
+              "kind": "rapid",
+              "from": [
+                40.0,
+                20.0,
+                24.0
+              ],
+              "to": [
+                40.0,
+                20.0,
+                20.0
+              ]
+            },
+            {
+              "kind": "plunge",
+              "from": [
+                40.0,
+                20.0,
+                20.0
+              ],
+              "to": [
+                40.0,
+                20.0,
+                17.0
+              ],
+              "feed": 180.0
+            },
+            {
+              "kind": "rapid",
+              "from": [
+                40.0,
+                20.0,
+                17.0
+              ],
+              "to": [
+                40.0,
+                20.0,
+                18.0
+              ]
+            },
+            {
+              "kind": "plunge",
+              "from": [
+                40.0,
+                20.0,
+                18.0
+              ],
+              "to": [
+                40.0,
+                20.0,
+                14.0
+              ],
+              "feed": 180.0
+            },
+            {
+              "kind": "rapid",
+              "from": [
+                40.0,
+                20.0,
+                14.0
+              ],
+              "to": [
+                40.0,
+                20.0,
+                20.0
+              ]
+            },
+            {
+              "kind": "rapid",
+              "from": [
+                40.0,
+                20.0,
+                20.0
+              ],
+              "to": [
+                40.0,
+                20.0,
+                24.0
+              ]
+            },
+            {
+              "kind": "rapid",
+              "from": [
+                40.0,
+                20.0,
+                24.0
+              ],
+              "to": [
+                40.0,
+                20.0,
+                30.0
+              ]
+            }
+          ],
+          "warnings": [],
+          "cycles": [
+            {
+              "kind": "peck",
+              "xy": [
+                20.0,
+                20.0
+              ],
+              "r_z": 20.0,
+              "bottom_z": 14.0,
+              "entry_z": 20.0,
+              "peck": 3.0,
+              "dwell": 0.0,
+              "first_move": 1
+            },
+            {
+              "kind": "peck",
+              "xy": [
+                40.0,
+                20.0
+              ],
+              "r_z": 20.0,
+              "bottom_z": 14.0,
+              "entry_z": 20.0,
+              "peck": 3.0,
+              "dwell": 0.0,
+              "first_move": 8
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Perimeter Skim",
+      "translation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "kind": "operation",
+      "operation": {
+        "order": 0,
+        "tool": "6MM EM",
+        "src": "stock",
+        "params": {
+          "contour": {
+            "stock_to_leave": 0.0,
+            "clearance_z": {
+              "reference": "fixed",
+              "offset": 30.0
+            },
+            "retract_z": {
+              "reference": "fixed",
+              "offset": 24.0
+            },
+            "top_z": {
+              "reference": "fixed",
+              "offset": 20.0
+            },
+            "bottom_z": {
+              "reference": "fixed",
+              "offset": 19.0
+            },
+            "stepdown": 1.0,
+            "feed": 600.0,
+            "plunge_feed": 180.0,
+            "climb": true,
+            "lead": "none",
+            "tolerance": 0.01,
+            "tab_count": 0,
+            "tab_width": 0.0,
+            "tab_height": 0.0,
+            "side": "outside",
+            "entry": "plunge",
+            "helix_radius": 1.0
+          }
+        },
+        "stamp": 5953797924592679907,
+        "cache": {
+          "moves": [
+            {
+              "kind": "rapid",
+              "from": [
+                30.345689,
+                -22.980017,
+                30.0
+              ],
+              "to": [
+                30.345689,
+                -22.980017,
+                30.0
+              ]
+            },
+            {
+              "kind": "rapid",
+              "from": [
+                30.345689,
+                -22.980017,
+                30.0
+              ],
+              "to": [
+                30.345689,
+                -22.980017,
+                22.0
+              ]
+            },
+            {
+              "kind": "plunge",
+              "from": [
+                30.345689,
+                -22.980017,
+                22.0
+              ],
+              "to": [
+                30.345689,
+                -22.980017,
+                19.0
+              ],
+              "feed": 180.0
+            },
+            {
+              "kind": "feed",
+              "from": [
+                30.345689,
+                -22.980017,
+                19.0
+              ],
+              "to": [
+                30.0,
+                -23.0,
+                19.0
+              ],
+              "feed": 600.0
+            },
+            {
+              "kind": "feed",
+              "from": [
+                30.0,
+                -23.0,
+                19.0
+              ],
+              "to": [
+                -30.0,
+                -23.0,
+                19.0
+              ],
+              "feed": 600.0
+            },
+            {
+              "kind": "feed",
+              "from": [
+                -30.0,
+                -23.0,
+                19.0
+              ],
+              "to": [
+                -33.0,
+                -20.0,
+                19.0
+              ],
+              "feed": 600.0,
+              "arc": {
+                "center": [
+                  -30.0,
+                  -20.0
+                ],
+                "ccw": false
+              }
+            },
+            {
+              "kind": "feed",
+              "from": [
+                -33.0,
+                -20.0,
+                19.0
+              ],
+              "to": [
+                -33.0,
+                20.0,
+                19.0
+              ],
+              "feed": 600.0
+            },
+            {
+              "kind": "feed",
+              "from": [
+                -33.0,
+                20.0,
+                19.0
+              ],
+              "to": [
+                -30.0,
+                23.0,
+                19.0
+              ],
+              "feed": 600.0,
+              "arc": {
+                "center": [
+                  -30.0,
+                  20.0
+                ],
+                "ccw": false
+              }
+            },
+            {
+              "kind": "feed",
+              "from": [
+                -30.0,
+                23.0,
+                19.0
+              ],
+              "to": [
+                30.0,
+                23.0,
+                19.0
+              ],
+              "feed": 600.0
+            },
+            {
+              "kind": "feed",
+              "from": [
+                30.0,
+                23.0,
+                19.0
+              ],
+              "to": [
+                33.0,
+                20.0,
+                19.0
+              ],
+              "feed": 600.0,
+              "arc": {
+                "center": [
+                  30.0,
+                  20.0
+                ],
+                "ccw": false
+              }
+            },
+            {
+              "kind": "feed",
+              "from": [
+                33.0,
+                20.0,
+                19.0
+              ],
+              "to": [
+                33.0,
+                -20.0,
+                19.0
+              ],
+              "feed": 600.0
+            },
+            {
+              "kind": "feed",
+              "from": [
+                33.0,
+                -20.0,
+                19.0
+              ],
+              "to": [
+                30.345689,
+                -22.980017,
+                19.0
+              ],
+              "feed": 600.0,
+              "arc": {
+                "center": [
+                  29.999999,
+                  -20.0
+                ],
+                "ccw": false
+              }
+            },
+            {
+              "kind": "rapid",
+              "from": [
+                30.345689,
+                -22.980017,
+                19.0
+              ],
+              "to": [
+                30.345689,
+                -22.980017,
+                30.0
+              ]
+            }
+          ],
+          "warnings": []
+        }
+      }
+    },
+    {
+      "name": "Stock",
+      "translation": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "rotation": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "rev": 1,
+      "kind": "stock",
+      "stock": {
+        "box": {
+          "dx": 60.0,
+          "dy": 40.0,
+          "dz": 20.0
+        }
+      }
+    }
+  ]
+}

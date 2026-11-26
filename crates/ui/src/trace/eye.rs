@@ -48,6 +48,8 @@ pub use super::eye_geom::{encode, fit, preview_camera};
 use super::TracePass;
 use crate::viewport::Camera;
 
+mod layer_state;
+
 /// GPU trace budget per frame: past it the trace runs at an integer
 /// fraction of the viewport (a 4K panel traces at half resolution).
 pub(crate) const GPU_PIXELS: u64 = 1 << 21;
@@ -143,6 +145,11 @@ impl StockEye {
     /// vision remap): clean, rest, gouge, unjudged.
     pub fn set_palette(&mut self, p: &crate::egui_app::colorvision::Semantic) {
         self.verdict = Self::verdict_of(p);
+    }
+
+    /// #2958: the composite follows the viewport pass's sample count.
+    pub fn set_samples(&mut self, device: &wgpu::Device, samples: u32) {
+        self.composite.set_samples(device, samples);
     }
 
     /// The same eye with its GPU march dropped: the CPU fallback a

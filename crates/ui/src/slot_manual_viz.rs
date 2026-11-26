@@ -59,7 +59,10 @@ pub fn draft_points(state: &State) -> Option<([f64; 3], [f64; 3])> {
     }
     let op = camcraft_app::model::find_by_name(&state.world, &state.op_ui.name)
         .and_then(|e| camcraft_app::model::operation_of(&state.world, &e))?;
-    let z = operation::resolve_height(&state.world, op.setup.as_deref(), Some(&op.src), *top_z)?;
+    // A per-frame display read: the sketch Z span may come from the frame memo.
+    let z = operation::display_heights(|| {
+        operation::resolve_height(&state.world, op.setup.as_deref(), Some(&op.src), *top_z)
+    })?;
     let frame = match tilt {
         Some(tilt) => Some(tilt.frame()?),
         None => None,

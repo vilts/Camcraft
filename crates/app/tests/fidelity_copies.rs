@@ -50,7 +50,8 @@ fn face() -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
+        picks: Default::default(),
     }
 }
 
@@ -79,7 +80,7 @@ fn op_problem(world: &World) -> Option<String> {
     model_fidelity::op_problem(world, "OP", &op)
 }
 
-const REFUSAL: &str = "OP: model 'blank' was imported too coarsely to verify; re-import with a larger STEP facet budget (surfaces are approximated to within 0.030 mm)";
+const REFUSAL: &str = "OP: model 'blank' was imported too coarsely to verify; re-import with a larger STEP facet budget, or export the file again with a tighter tolerance (surfaces are approximated to within 0.030 mm)";
 
 #[test]
 fn a_stock_copy_keeps_its_flag_when_its_source_is_deleted() {
@@ -236,6 +237,7 @@ fn faced(coarse_mm: Option<f64>) -> World {
 #[test]
 fn the_eyes_colours_are_gated_at_the_tightened_verdict_tolerance() {
     let world = faced(Some(TIGHT));
+    // No file-tolerance cause was recorded: the copy keeps the strict law.
     let want = DEV_TOL - (TIGHT - 0.005);
     assert_eq!(model_fidelity::program_tol(&world), model_fidelity::verdict_tol(&world));
     let fv = stock_view::field_view_with(&world, 2_000.0).expect("view");

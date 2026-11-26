@@ -16,6 +16,15 @@
 //! person's habit for their own machine, not the part's, so it is kept
 //! here too (written only when off; absent reads as on).
 //!
+//! #1945 adds the AI Chat's "Offline only" switch: the person's policy
+//! for their own machine, kept here (written only when on). API keys are
+//! never kept here - they live in the OS keychain or the environment
+//! (`app::ai::secret`), and this file has no field that could hold one.
+//!
+//! #1873 adds the optional path of the external `cadmpeg` program that
+//! converts native CAD files to STEP: where a program is installed is a
+//! fact of this machine, not of the part (written only when set).
+//!
 //! Provenance: our own design, specced from issue #877; the folder and
 //! the atomic write are `app::recent`'s (#662).
 
@@ -31,13 +40,36 @@ pub const FILE_NAME: &str = "prefs.json";
 pub const FORMAT: &str = "camcraft-prefs/1";
 
 /// What the user chose for the screen.
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ViewPrefs {
     pub theme: ThemeRef,
     pub color_vision: ColorVision,
     /// #889: the tool library import leaves the file's holder bodies
     /// out (the page's "Import tool holders" unticked). `false` = take them.
     pub skip_tool_holders: bool,
+    /// #1945: the AI Chat reaches loopback model runtimes only.
+    pub ai_offline_only: bool,
+    /// #1873: where the `cadmpeg` program is, when it is not on `PATH`.
+    /// `None` searches `PATH`.
+    pub cadmpeg_path: Option<String>,
+    /// #2428: check GitHub for a newer release at startup (at most once/day).
+    pub check_for_updates: bool,
+    /// #2428: UTC Unix timestamp (seconds) of the last startup update check.
+    pub last_update_check_utc: Option<u64>,
+}
+
+impl Default for ViewPrefs {
+    fn default() -> Self {
+        Self {
+            theme: ThemeRef::Dark,
+            color_vision: ColorVision::Off,
+            skip_tool_holders: false,
+            ai_offline_only: false,
+            cadmpeg_path: None,
+            check_for_updates: true,
+            last_update_check_utc: None,
+        }
+    }
 }
 
 /// The theme as the file spells it: a built-in name or a path, never one
@@ -62,6 +94,18 @@ struct OnDisk {
     /// #889: written only when false (holders left out of an import).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     import_tool_holders: Option<bool>,
+    /// #1945: written only when true (offline-only AI chat).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ai_offline_only: Option<bool>,
+    /// #1873: written only when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cadmpeg_path: Option<String>,
+    /// #2428: written only when false (update checks default to on).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    check_for_updates: Option<bool>,
+    /// #2428: written only when set (epoch seconds).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_update_check_utc: Option<serde_json::Value>,
 }
 
 fn vision_word(c: ColorVision) -> &'static str {
@@ -84,8 +128,22 @@ impl ViewPrefs {
         };
         let color_vision =
             (self.color_vision != ColorVision::Off).then(|| vision_word(self.color_vision).to_owned());
-        let import_tool_holders = self.skip_tool_holders.then_some(false);
-        let disk = OnDisk { format: FORMAT.to_owned(), theme, color_vision, import_tool_holders };
+        let skip_tool_holders = self.skip_tool_holders;
+        let import_tool_holders = skip_tool_holders.then_some(false);
+        let ai_offline_only = self.ai_offline_only.then_some(true);
+        let cadmpeg_path = self.cadmpeg_path.clone();
+        let check_for_updates = (!self.check_for_updates).then_some(false);
+        let last_update_check_utc = self.last_update_check_utc.map(serde_json::Value::from);
+        let disk = OnDisk {
+            format: FORMAT.to_owned(),
+            theme,
+            color_vision,
+            import_tool_holders,
+            ai_offline_only,
+            cadmpeg_path,
+            check_for_updates,
+            last_update_check_utc,
+        };
         serde_json::to_string_pretty(&disk).unwrap_or_else(|e| {
             tracing::warn!("preferences not serialised: {e}");
             String::new()
@@ -124,7 +182,32 @@ impl ViewPrefs {
             },
         };
         let skip_tool_holders = disk.import_tool_holders == Some(false);
-        Ok((Self { theme, color_vision, skip_tool_holders }, notes))
+        let ai_offline_only = disk.ai_offline_only == Some(true);
+        // #1873: a blank path is "not set", never a program named "".
+        let cadmpeg_path = disk.cadmpeg_path.filter(|p| !p.trim().is_empty());
+        let check_for_updates = disk.check_for_updates != Some(false);
+        let last_update_check_utc = match disk.last_update_check_utc {
+            None | Some(serde_json::Value::Null) => None,
+            Some(v) => match v.as_u64() {
+                Some(ts) => Some(ts),
+                None => {
+                    notes.push(String::from("lastUpdateCheckUtc is not a UTC epoch integer - ignored"));
+                    None
+                }
+            },
+        };
+        Ok((
+            Self {
+                theme,
+                color_vision,
+                skip_tool_holders,
+                ai_offline_only,
+                cadmpeg_path,
+                check_for_updates,
+                last_update_check_utc,
+            },
+            notes,
+        ))
     }
 }
 
@@ -172,3 +255,8 @@ pub fn save(path: &Path, prefs: &ViewPrefs) -> Result<(), String> {
         why
     })
 }
+
+pub use crate::prefs_setups::{
+    PanelSetups, SETUP_NAME_MAX, SETUPS_FILE_NAME, SETUPS_FORMAT, SavedSetup, load_setups,
+    save_setups, setup_name, setups_path,
+};

@@ -44,7 +44,7 @@ fn document() -> (World, History) {
     let world = new_world();
     let mut h = History::default();
     h.execute(&world, ImportModel::from_mesh("part", cube(p(40.0, 30.0, 0.0), p(50.0, 40.0, 10.0))));
-    h.execute(&world, ImportModel::from_mesh("vise", Mesh { facets: vise().into() }));
+    h.execute(&world, ImportModel::from_mesh("vise", Mesh::from_facets(vise())));
     h.execute(&world, TagFixture::new(&world, "vise", None).expect("mark the vise"));
     h.execute(&world, CreateSetup::new(&world, None, None).expect("Setup1"));
     let shape = StockShape::Cylinder { diameter: 20.0, height: 20.0 };
@@ -109,8 +109,8 @@ fn a_cylinder_cap_mated_across_its_plane_is_refused() {
     let (world, _h) = document();
     let before = (bounds(&world, &stock_name(&world)), bounds(&world, "part"));
     let spec = cap_on(&world, [-1.0, 30.0, 15.25]);
-    let cap = camcraft_app::pick::feature_name_or_kind(&world, &spec.mates[0].part.entity, spec.mates[0].part.feature);
-    let stop = camcraft_app::pick::feature_name_or_kind(&world, &spec.mates[0].fixture.entity, spec.mates[0].fixture.feature);
+    let cap = camcraft_app::pick::feature_name_or_kind(&world, &spec.mates[0].part.entity, &spec.mates[0].part.feature);
+    let stop = camcraft_app::pick::feature_name_or_kind(&world, &spec.mates[0].fixture.entity, &spec.mates[0].fixture.feature);
     let Err(e) = LocatePart::new(&world, &spec) else { panic!("the cap would stand across the stop face") };
     let e = e.to_string();
     assert!(!e.contains("0x"), "no hex ids in refusal: {e}");

@@ -10,30 +10,45 @@
 use super::edit::find_op;
 use super::tools::req_str;
 use crate::commands::SetOperationGeometry;
+use crate::geometry::sketch_chains::ChainId;
 use crate::model;
-use crate::operation::{self, FeatureSel, GeoSel, OpParams, SrcRef};
+use crate::operation::{self, ChainOverride, ChainSide, FeatureSel, GeoSel, OpParams, SrcRef};
 use crate::script::Env;
 
 use flecs_ecs::prelude::{Entity, World};
 use serde_json::{json, Map, Value};
 
 /// The string form of a feature id: `face:0x…`, `chain:0x…`,
-/// `patch:0x…` (a welded smooth face), `vertex:0x…`.
-pub(super) fn feature_id(f: FeatureSel) -> String {
-    let kind = match f {
-        FeatureSel::Face(_) => "face",
-        FeatureSel::Chain(_) => "chain",
-        FeatureSel::Patch(_) => "patch",
-        FeatureSel::Vertex(_) => "vertex",
-    };
-    format!("{kind}:{:#018x}", f.id())
+/// `patch:0x…`, `vertex:0x…`, `sketch_chain:<32-hex>`, `sketch_layer:<layer>`.
+pub(super) fn feature_id(f: &FeatureSel) -> String {
+    match f {
+        FeatureSel::Face(id) => format!("face:{id:#018x}"),
+        FeatureSel::Chain(id) => format!("chain:{id:#018x}"),
+        FeatureSel::Patch(id) => format!("patch:{id:#018x}"),
+        FeatureSel::Vertex(id) => format!("vertex:{id:#018x}"),
+        FeatureSel::SketchChain(id) => format!("sketch_chain:{id}"),
+        FeatureSel::SketchLayer(layer) => format!("sketch_layer:{layer}"),
+    }
 }
 
 /// [`feature_id`]'s inverse; anything else is refused by its text.
 pub(super) fn parse_feature_id(s: &str) -> Result<FeatureSel, String> {
-    let bad = || format!("bad feature id '{s}' - use an id list_features prints, like \"face:0x00ab…\"");
-    let (kind, hex) = s.trim().split_once(':').ok_or_else(bad)?;
-    let hex = hex.strip_prefix("0x").or_else(|| hex.strip_prefix("0X")).unwrap_or(hex);
+    let bad = || format!("bad feature id '{s}' - use an id list_features prints, like \"face:0x00ab…\" or \"sketch_chain:…\"");
+    let (kind, rest) = s.trim().split_once(':').ok_or_else(bad)?;
+    if kind == "sketch_layer" {
+        if rest.is_empty() {
+            return Err(bad());
+        }
+        return Ok(FeatureSel::SketchLayer(rest.to_owned()));
+    }
+    let hex = rest.strip_prefix("0x").or_else(|| rest.strip_prefix("0X")).unwrap_or(rest);
+    if kind == "sketch_chain" {
+        if hex.is_empty() || hex.len() > 32 {
+            return Err(bad());
+        }
+        let id = u128::from_str_radix(hex, 16).map_err(|_| bad())?;
+        return Ok(FeatureSel::SketchChain(ChainId(id)));
+    }
     if hex.is_empty() || hex.len() > 16 {
         return Err(bad());
     }
@@ -61,7 +76,18 @@ pub(super) fn req_model(env: &Env, name: &str) -> Result<Entity, String> {
     Ok(e)
 }
 
-/// One `{model, id}` pick, the model checked to be a part.
+/// A pickable entity for operation geometry: an imported part model or a placed DXF profile.
+pub(super) fn req_pick_target(env: &Env, name: &str) -> Result<Entity, String> {
+    let w = &env.world;
+    let e = model::find_by_name(w, name)
+        .ok_or_else(|| format!("no model named '{name}' - import a model or DXF profile first"))?;
+    if crate::sketch::is_sketch(w, &e) {
+        return Ok(e);
+    }
+    req_model(env, name)
+}
+
+/// One `{model, id}` pick, checked to be on a part model.
 pub(super) fn pick_of(env: &Env, v: &Value) -> Result<GeoSel, String> {
     let Value::Object(m) = v else {
         return Err(format!("a pick is an object {{\"model\", \"id\"}}, got {v}"));
@@ -76,6 +102,51 @@ pub(super) fn pick_of(env: &Env, v: &Value) -> Result<GeoSel, String> {
     // #692: the one pick rule - an id is taken only if a click could land on it.
     crate::pick::check_pickable(&env.world, &pick)?;
     Ok(pick)
+}
+
+fn parse_chain_side(v: &Value) -> Result<Option<ChainSide>, String> {
+    match v {
+        Value::Null => Ok(None),
+        Value::String(s) if s == "inside" => Ok(Some(ChainSide::Inside)),
+        Value::String(s) if s == "outside" => Ok(Some(ChainSide::Outside)),
+        other => Err(format!("\"side\" must be \"inside\", \"outside\", or null, got {other}")),
+    }
+}
+
+struct ContourPick {
+    sel: GeoSel,
+    override_spec: Option<(Option<ChainSide>, bool)>,
+}
+
+fn contour_pick_of(env: &Env, v: &Value) -> Result<ContourPick, String> {
+    let Value::Object(m) = v else {
+        return Err(format!("a pick is an object {{\"model\", \"id\"}}, got {v}"));
+    };
+    if let Some(k) = m.keys().find(|k| !matches!(k.as_str(), "model" | "id" | "side" | "reverse")) {
+        return Err(format!("unexpected pick key \"{k}\" - allowed: model, id, side, reverse"));
+    }
+    let entity = req_str(m, "model")?;
+    req_pick_target(env, entity)?;
+    let feature = parse_feature_id(req_str(m, "id")?)?;
+    let pick = GeoSel { entity: entity.to_owned(), feature };
+    crate::pick::check_pickable(&env.world, &pick)?;
+    let side = match m.get("side") {
+        None => None,
+        Some(sv) => parse_chain_side(sv)?,
+    };
+    let reverse = match m.get("reverse") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(b)) => *b,
+        Some(other) => return Err(format!("\"reverse\" must be a boolean, got {other}")),
+    };
+    let has_override = side.is_some() || reverse;
+    if has_override && !matches!(pick.feature, FeatureSel::SketchChain(_)) {
+        return Err(format!(
+            "per-chain \"side\" and \"reverse\" require a sketch_chain id, not '{}'",
+            feature_id(&pick.feature)
+        ));
+    }
+    Ok(ContourPick { sel: pick, override_spec: has_override.then_some((side, reverse)) })
 }
 
 /// A pick list: a non-empty array of `{model, id}`.
@@ -94,7 +165,7 @@ pub(super) fn picks_view(w: &World, items: &[GeoSel]) -> Vec<Value> {
         .map(|g| {
             json!({
                 "model": g.entity,
-                "id": feature_id(g.feature),
+                "id": feature_id(&g.feature),
                 "name": crate::pick::geo_label(w, g),
             })
         })
@@ -105,8 +176,10 @@ pub(super) fn picks_view(w: &World, items: &[GeoSel]) -> Vec<Value> {
 /// said at the pick instead, before anything lands in the History.
 pub(super) fn kind_door(w: &World, label: &str, params: &OpParams, items: &[GeoSel]) -> Result<(), String> {
     let first = |pred: fn(&FeatureSel) -> bool| items.iter().find(|g| pred(&g.feature));
-    if matches!(params, OpParams::MultiAxisContour { .. }) {
-        // Its picks ARE the path: curves only (selection's drive_chains).
+    if matches!(params, OpParams::MultiAxisContour { .. } | OpParams::RotaryFlow { .. }) {
+        // Their picks ARE the path: curves only (selection's
+        // drive_chains) - the contour's chains machine where they
+        // stand, and the flow band's chains span the band.
         if let Some(g) = first(|f| !matches!(f, FeatureSel::Chain(_))) {
             return Err(format!(
                 "{} is not an edge chain - a {label} operation machines picked edge chains",
@@ -129,11 +202,42 @@ pub(super) fn kind_door(w: &World, label: &str, params: &OpParams, items: &[GeoS
 /// features (`SrcRef::Selection`), one undo step.
 pub(super) fn set_operation_geometry(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
     let key = find_op(env, req_str(a, "operation")?)?;
-    let items = picks_of(env, a.get("picks"), "picks")?;
+    let raw = match a.get("picks") {
+        Some(Value::Array(items)) if !items.is_empty() => items,
+        Some(Value::Array(_)) => return Err("\"picks\" needs at least one pick".into()),
+        None | Some(Value::Null) => return Err("\"picks\" is required".into()),
+        Some(other) => return Err(format!("\"picks\" must be an array of picks, got {other}")),
+    };
+    let mut items = Vec::with_capacity(raw.len());
+    let mut overrides = Vec::new();
+    for entry in raw {
+        let parsed = contour_pick_of(env, entry)?;
+        if let Some((side, reverse)) = parsed.override_spec
+            && let FeatureSel::SketchChain(chain) = parsed.sel.feature
+        {
+            overrides.push(ChainOverride {
+                entity: parsed.sel.entity.clone(),
+                chain,
+                side,
+                reverse,
+            });
+        }
+        items.push(parsed.sel);
+    }
     let e = model::find_by_name(&env.world, &key).ok_or_else(|| format!("no operation named '{key}'"))?;
     let op = model::operation_of(&env.world, &e).ok_or_else(|| format!("'{key}' is not an operation"))?;
     kind_door(&env.world, op.params.kind().info().label, &op.params, &items)?;
-    let cmd = SetOperationGeometry::new(&env.world, &key, items).map_err(|e| e.to_string())?;
+    let cmd = if matches!(op.params, OpParams::Contour { .. }) {
+        SetOperationGeometry::with_chain_overrides(&env.world, &key, items, overrides)
+    } else if !overrides.is_empty() {
+        return Err(format!(
+            "per-chain overrides apply to 2D Contour only, not {}",
+            op.params.kind()
+        ));
+    } else {
+        SetOperationGeometry::new(&env.world, &key, items)
+    }
+    .map_err(|e| e.to_string())?;
     env.history.execute(&env.world, cmd);
     geometry_view(env, &key)
 }
@@ -157,11 +261,27 @@ pub(super) fn geometry_view(env: &Env, key: &str) -> Result<Value, String> {
             operation::selection_notes(w, op.setup.as_deref(), items, &op.params),
         ),
     };
+    let chain_overrides: Vec<Value> = match &op.params {
+        OpParams::Contour { chain_overrides, .. } => chain_overrides
+            .iter()
+            .map(|o| {
+                json!({
+                    "model": o.entity,
+                    "chain": o.chain.to_string(),
+                    "side": o.side.map(|s| match s { ChainSide::Inside => "inside", ChainSide::Outside => "outside" }),
+                    "reverse": o.reverse,
+                })
+            })
+            .collect(),
+        _ => Vec::new(),
+    };
     Ok(json!({
         "operation": key,
         "kind": op.params.kind().info().label,
         "source": source,
+        "chain_overrides": chain_overrides,
         "area": super::area::area_view(w, &op.area),
+        "do_not_touch": super::do_not_touch::view(w, &op.area.do_not_touch),
         "area_applies": operation::area_unsupported(op.params.kind()).is_none(),
         "notes": notes,
     }))
@@ -180,8 +300,8 @@ pub(super) fn pick_list_schema(what: &str) -> Value {
         "items": {
             "type": "object",
             "properties": {
-                "model": { "type": "string", "description": "The model the feature is on." },
-                "id": { "type": "string", "description": "A feature id from list_features: face:0x…, chain:0x…, patch:0x… or vertex:0x…." }
+                "model": { "type": "string", "description": "The model or DXF profile the feature is on." },
+                "id": { "type": "string", "description": "A feature id from list_features: face:0x…, chain:0x…, patch:0x…, vertex:0x…, sketch_chain:<hex>, or sketch_layer:<layer>." }
             },
             "required": ["model", "id"],
             "additionalProperties": false
@@ -192,10 +312,11 @@ pub(super) fn pick_list_schema(what: &str) -> Value {
 pub(super) fn s_list_features() -> Value {
     obj(
         json!({
-            "model": { "type": "string", "description": "Model name (see get_job)." },
-            "kinds": { "type": "array", "items": { "type": "string", "enum": ["faces", "chains", "patches", "vertices"] },
-                "description": "Which feature kinds to list; default all." },
-            "limit": { "type": "integer", "minimum": 1, "description": "Rows per kind (default 500)." }
+            "model": { "type": "string", "description": "Model or DXF profile name (see get_job)." },
+            "kinds": { "type": "array", "items": { "type": "string", "enum": ["faces", "chains", "patches", "vertices", "layers"] },
+                "description": "Which feature kinds to list; default all model kinds or sketch chains and layers." },
+            "limit": { "type": "integer", "minimum": 1, "description": "Rows per kind (default 500; 25 with compact)." },
+            "compact": { "type": "boolean", "description": "Short rows (id, name and the facts a pick is chosen by; counts in place of loops and bounds) for a small context window (default false)." }
         }),
         &["model"],
     )
@@ -209,7 +330,21 @@ pub(super) fn s_set_geometry() -> Value {
     obj(
         json!({
             "operation": { "type": "string", "description": "Operation name (key or label)." },
-            "picks": pick_list_schema("The features to machine, in order. A loop is picked by every chain list_features names for it.")
+            "picks": {
+                "type": "array",
+                "description": "The features to machine, in order. For 2D Contour on DXF profiles, sketch_chain entries may also carry optional per-chain \"side\" (\"inside\"|\"outside\"|null) and \"reverse\" (boolean) overrides.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "model": { "type": "string", "description": "The model or DXF profile the feature is on." },
+                        "id": { "type": "string", "description": "A feature id from list_features: face:0x…, chain:0x…, patch:0x…, vertex:0x…, sketch_chain:<hex>, or sketch_layer:<layer>." },
+                        "side": { "type": ["string", "null"], "enum": ["inside", "outside", null], "description": "Optional per-chain side override for sketch_chain picks on 2D Contour." },
+                        "reverse": { "type": "boolean", "description": "Optional direction flip relative to operation climb for sketch_chain picks on 2D Contour." }
+                    },
+                    "required": ["model", "id"],
+                    "additionalProperties": false
+                }
+            }
         }),
         &["operation", "picks"],
     )

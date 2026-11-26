@@ -132,6 +132,7 @@ pub fn fixture(name: &str) -> (World, PostOptions) {
             let p = OpParams::Facing {
                 tolerance: 0.05, clearance_z: h(25.0), top_z: h(16.0), bottom_z: h(14.0),
                 stepdown: 0.5, feed: 150.0, plunge_feed: 80.0,
+                picks: Default::default(),
             };
             create(&w, &mut hi, "F1", "TN-1600-0R8", p);
             (w, plain)
@@ -142,10 +143,12 @@ pub fn fixture(name: &str) -> (World, PostOptions) {
             let rough = OpParams::ProfileRough {
                 tolerance: 0.05, clearance_z: h(25.0), top_z: h(16.0), bottom_z: h(-16.0),
                 stepdown: 0.8, stock_to_leave: 0.25, feed: 150.0, plunge_feed: 80.0,
+                picks: Default::default(),
             };
             let finish = OpParams::ProfileFinish {
                 tolerance: 0.05, clearance_z: h(25.0), top_z: h(16.0), bottom_z: h(2.0),
                 feed: 120.0, plunge_feed: 60.0,
+                picks: Default::default(),
             };
             create(&w, &mut hi, "R1", "TN-1600-0R8", rough);
             create(&w, &mut hi, "S1", "TN-1600-0R8", finish);
@@ -157,11 +160,13 @@ pub fn fixture(name: &str) -> (World, PostOptions) {
             let groove = OpParams::GrooveFinish {
                 tolerance: 0.05, clearance_z: h(20.0), top_z: h(-3.6), bottom_z: h(-6.8),
                 feed: 150.0, plunge_feed: 60.0,
+                picks: Default::default(),
             };
             let part = OpParams::Part {
                 tolerance: 0.05, clearance_z: h(20.0), top_z: h(28.0), bottom_z: h(-10.0), stepdown: 0.5,
                 feed: 150.0, plunge_feed: 60.0, bar_load: true, bar_advance: 30.0, bar_unload: true,
-                bar_transfer: false, inspect_tol: 0.0,
+                bar_transfer: false, inspect_tol: 0.0, kerf: Default::default(),
+                picks: Default::default(),
             };
             create(&w, &mut hi, "G1", "GT-0200", groove);
             create(&w, &mut hi, "P1", "GT-0300", part);
@@ -176,6 +181,7 @@ pub fn fixture(name: &str) -> (World, PostOptions) {
                 break_through_from: Default::default(),
                 clearance_z: h(30.0), retract_z: None, top_z: h(20.0), bottom_z: None, cycle: CycleChoice::Auto,
                 peck: 0.0, dwell: 0.0, feed: 120.0, plunge_feed: 80.0, holes: vec![hole], cross: vec![],
+                picks: Default::default(),
             };
             create(&w, &mut hi, "AX1", "DR-0400", p);
             (w, plain)
@@ -193,7 +199,8 @@ fn thread(g76: bool, dips: bool) -> (World, PostOptions) {
     let (major, pitch, depth) = (6.0, 2.0, 1.2);
     let end: f64 = if dips { 24.0 } else { 14.0 };
     let half = depth * (30.0_f64).to_radians().tan();
-    let mut m = vec![(0.0, -16.0), (major, -16.0), (major, 8.0 - half)];
+    let z0 = if g76 { -26.0 } else { -16.0 };
+    let mut m = vec![(0.0, z0), (major, z0), (major, 8.0 - half)];
     let mut c = 8.0;
     while c <= end + 1e-9 {
         m.push((major - depth, c));
@@ -203,19 +210,27 @@ fn thread(g76: bool, dips: bool) -> (World, PostOptions) {
         }
         c += pitch;
     }
-    m.push((major, end + half));
-    m.push((major, 40.0));
-    m.push((0.0, 40.0));
-    let stock = StockShape::Cylinder { diameter: 12.0, height: 56.0 };
-    let (w, mut hi) = world(stock, -16.0, revolve(&m, 16), &["TD-1732-60"]);
+    let bar_top = if g76 {
+        // #2878: G76 starts in free air in front of the free end face.
+        end + half
+    } else {
+        m.push((major, end + half));
+        m.push((major, 40.0));
+        40.0
+    };
+    m.push((0.0, bar_top));
+    let stock = StockShape::Cylinder { diameter: 12.0, height: bar_top - z0 };
+    let (w, mut hi) = world(stock, z0, revolve(&m, 16), &["TD-1732-60"]);
     let infeed_plan = if dips {
         ThreadInfeed { dips: ThreadDips { interval: 4.0, height: 0.3, length: 0.0 }, ..ThreadInfeed::default() }
     } else {
         ThreadInfeed::default()
     };
+    let top_z = if g76 { end + pitch + 0.3 } else { end + 0.3 };
     let p = OpParams::Threading {
-        tolerance: 0.05, clearance_z: h(end + 10.0), top_z: h(end + 0.3), bottom_z: h(7.7), pitch, depth,
+        tolerance: 0.05, clearance_z: h(end + 10.0), top_z: h(top_z), bottom_z: h(7.7), pitch, depth,
         infeed: 0.4, feed: 120.0, plunge_feed: 40.0, hand: ThreadHand::Right, infeed_plan,
+        picks: Default::default(),
     };
     create(&w, &mut hi, "TH1", "TD-1732-60", p);
     let threading = if g76 { ThreadingOutput::G76Cycle } else { ThreadingOutput::G32Passes };

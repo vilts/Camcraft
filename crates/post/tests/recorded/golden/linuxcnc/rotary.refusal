@@ -1,0 +1,2 @@
+; linuxcnc.cps refused rotary: 1 warning(s), the program is never released
+warning: tilted move in operation Index - the LinuxCNC post is 3-axis and writes no rotary words

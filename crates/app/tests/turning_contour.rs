@@ -197,6 +197,7 @@ fn ch_params(angle_deg: f64) -> OpParams {
         angle_deg,
         feed: 200.0,
         plunge_feed: 50.0,
+        picks: Default::default(),
     }
 }
 
@@ -210,6 +211,7 @@ fn tp_params(bottom_dia: f64, top_dia: f64) -> OpParams {
         top_dia,
         feed: 200.0,
         plunge_feed: 50.0,
+        picks: Default::default(),
     }
 }
 
@@ -224,6 +226,7 @@ fn mp_params() -> OpParams {
         passes: 3,
         feed: 200.0,
         plunge_feed: 50.0,
+        picks: Default::default(),
     }
 }
 
@@ -499,6 +502,7 @@ fn an_upward_window_refuses_at_the_create_door() {
         angle_deg: 45.0,
         feed: 200.0,
         plunge_feed: 50.0,
+        picks: Default::default(),
     };
     let Err(err) =
         CreateOperation::new(&world, "CU1", "TN-1600-0R8", SrcRef::Entity("bar".into()), params)

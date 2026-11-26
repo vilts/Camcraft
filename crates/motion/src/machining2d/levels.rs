@@ -30,6 +30,8 @@ use super::slots::chord_clears;
 /// never bless a gouge.
 pub(super) enum Cert<'a> {
     Region(&'a Region),
+    /// Cutter-center disk of a Circular vault band or the authored rim.
+    RingDisk { center: Point2, radius: f64, tess: &'a Region },
     Stadium { a: Point2, b: Point2, h: f64, tess: &'a Region },
 }
 
@@ -38,7 +40,7 @@ impl Cert<'_> {
     pub(super) fn room(&self) -> &Region {
         match self {
             Cert::Region(r) => r,
-            Cert::Stadium { tess, .. } => tess,
+            Cert::Stadium { tess, .. } | Cert::RingDisk { tess, .. } => tess,
         }
     }
 
@@ -49,6 +51,9 @@ impl Cert<'_> {
     pub(super) fn chord_ok(&self, p: Point2, q: Point2) -> bool {
         match self {
             Cert::Region(r) => chord_clears(r, p, q),
+            Cert::RingDisk { center, radius, .. } => {
+                [p, q].iter().all(|v| (v.x - center.x).hypot(v.y - center.y) <= radius + 1e-7)
+            }
             Cert::Stadium { a, b, h, .. } => {
                 dist_to_seg(p, *a, *b) <= h + 1e-7 && dist_to_seg(q, *a, *b) <= h + 1e-7
             }
@@ -162,6 +167,15 @@ pub(super) struct Motion {
     /// user's entry (helix, ramp, arc), not a silent plunge - the pocket
     /// family opts in (`with_solid_restart`).
     pub(super) solid_restart: bool,
+    /// #3316: a keep-down pass link must also run through material this
+    /// path already cut (the start-side plan's open pieces end on walls,
+    /// beside stock no cut has reached yet).
+    pub(super) cleared_links: bool,
+    /// #3747: a ring area round a part links ring to ring in the plane.
+    pub(super) ring_links: Option<super::ring_links::RingLinks>,
+    /// #3746: a start-side ladder's air round the stock box; its Arc
+    /// entry plunges there and arcs onto the first ring.
+    pub(super) air: Option<super::air_entry::AirRoom>,
 }
 
 impl Motion {
@@ -189,6 +203,9 @@ impl Motion {
             holes: Vec::new(),
             ring_zig: false,
             solid_restart: false,
+            cleared_links: false,
+            ring_links: None,
+            air: None,
         }
     }
 
@@ -302,6 +319,31 @@ pub(super) fn run_levels(
 /// climb, or a keep-down feed where proved). The z the tool last
 /// ENGAGED decides which moment is which: a level whose earlier passes
 /// came out degenerate still crosses in over new material.
+/// Mutable ladder cursor shared between `run_level_walks` and
+/// per-level keep-out walks (#2055).
+#[derive(Clone)]
+pub(super) struct WalkState {
+    first: bool,
+    pub(super) last_cut_z: Option<f64>,
+    above: f64,
+    st: LinkState,
+}
+
+impl WalkState {
+    pub(super) fn new(top_z: f64) -> Self {
+        Self { first: true, last_cut_z: None, above: top_z, st: LinkState::default() }
+    }
+
+    pub(super) fn finish(&self, b: &mut PathBuilder, m: &Motion) {
+        self.st.tally.say(b, "level/pass");
+        if let Some(n) = m.links.approach.engagement_note()
+            && !self.first
+        {
+            b.note_once(&n);
+        }
+    }
+}
+
 pub(super) fn run_level_walks(
     b: &mut PathBuilder,
     passes: &[Vec<Point2>],
@@ -311,78 +353,75 @@ pub(super) fn run_level_walks(
     center: Option<&Cert<'_>>,
     links_cert: Option<&Cert<'_>>,
 ) {
-    let mut first = true;
-    let mut last_cut_z: Option<f64> = None;
-    let mut above = m.top_z;
-    let mut st = LinkState::default();
+    let mut ws = WalkState::new(m.top_z);
     for &z in zs {
-        for (pi, pass) in passes.iter().enumerate() {
-            let Some((_, rest)) = pass.split_first() else {
-                continue;
+        walk_one_level(b, z, passes, runs, m, center, links_cert, None, &mut ws);
+    }
+    ws.finish(b, m);
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn walk_one_level(
+    b: &mut PathBuilder,
+    z: f64,
+    passes: &[Vec<Point2>],
+    runs: Option<&[Vec<Seg>]>,
+    m: &Motion,
+    center: Option<&Cert<'_>>,
+    links_cert: Option<&Cert<'_>>,
+    prev_center: Option<&Region>,
+    ws: &mut WalkState,
+) {
+    for (pi, pass) in passes.iter().enumerate() {
+        let Some((_, rest)) = pass.split_first() else {
+            continue;
+        };
+        if rest.is_empty() {
+            continue;
+        }
+        let walk = runs.and_then(|r| r.get(pi)).map(Vec::as_slice);
+        let prev_z = ws.last_cut_z.unwrap_or(m.clearance_z);
+        if ws.last_cut_z != Some(z) {
+            ws.above = ws.last_cut_z.unwrap_or(m.top_z);
+        }
+        let mat_top = ws.above;
+        let lv = LevelWalk { passes, pass, walk, z, prev_z, mat_top, prev_center };
+        if ws.first {
+            let dove = descend(b, m.entry, false, center, &lv, m.clearance_z, m);
+            ws.st.begin_level(dove);
+        } else if ws.last_cut_z == Some(z) {
+            if let Some(Some(ret)) = m.micro.get(pi) {
+                super::microlift::link(b, ret, z, m);
+            } else {
+                pass_link(b, &lv, m, links_cert, &mut ws.st);
+            }
+        } else {
+            let (arm, zig, cert) = match m.links.transition {
+                Some(t) => (t, true, links_cert),
+                None => (m.entry, false, center),
             };
-            if rest.is_empty() {
-                continue;
-            }
-            let walk = runs.and_then(|r| r.get(pi)).map(Vec::as_slice);
-            let prev_z = last_cut_z.unwrap_or(m.clearance_z);
-            // The material's top over this level (M11.3's plunge height):
-            // the plane above it - the last level cut when this level is
-            // entered, kept for its later passes - or the top of the cut.
-            if last_cut_z != Some(z) {
-                above = last_cut_z.unwrap_or(m.top_z);
-            }
-            let mat_top = above;
-            let lv = LevelWalk { passes, pass, walk, z, prev_z, mat_top };
-            if first {
-                // The first entry: the entry family, from clearance.
-                let dove = descend(b, m.entry, false, center, &lv, m.clearance_z, m);
-                st.begin_level(dove);
-            } else if last_cut_z == Some(z) {
-                if let Some(Some(ret)) = m.micro.get(pi) {
-                    super::microlift::link(b, ret, z, m);
-                } else {
-                    pass_link(b, &lv, m, links_cert, &mut st);
-                }
-            } else {
-                // A level change. The transition, when the user set one,
-                // proves against the link area; "same as entry" keeps
-                // the entry's own certification, byte for byte.
-                let (arm, zig, cert) = match m.links.transition {
-                    Some(t) => (t, true, links_cert),
-                    None => (m.entry, false, center),
-                };
-                level_link(b, arm, zig, cert, &lv, m, &mut st);
-            }
-            // The engagement limit (M11.3 D, owed): the cut out of a
-            // level's descent stays slowed for its first tool diameter,
-            // until the full-width engagement of the bore settles.
-            let entered = last_cut_z != Some(z);
-            let scale = m.links.approach.engagement_scale();
-            first = false;
-            if entered && scale < 1.0 && m.arc_radius > 0.0 {
-                let segs = match walk {
-                    Some(w) => w.to_vec(),
-                    None => vec![Seg::Line(rest.to_vec())],
-                };
-                push_settling(b, &segs, z, m.feed, m.feed * scale, m.arc_radius);
-            } else {
-                match walk {
-                    Some(w) => push_segs(b, w, z, m.feed),
-                    None => {
-                        for q in rest {
-                            b.push(MoveKind::Feed, Point3::new(q.x, q.y, z), Some(m.feed));
-                        }
+            level_link(b, arm, zig, cert, &lv, m, &mut ws.st);
+        }
+        let entered = ws.last_cut_z != Some(z);
+        let scale = m.links.approach.engagement_scale();
+        ws.first = false;
+        if entered && scale < 1.0 && m.arc_radius > 0.0 {
+            let segs = match walk {
+                Some(w) => w.to_vec(),
+                None => vec![Seg::Line(rest.to_vec())],
+            };
+            push_settling(b, &segs, z, m.feed, m.feed * scale, m.arc_radius);
+        } else {
+            match walk {
+                Some(w) => push_segs(b, w, z, m.feed),
+                None => {
+                    for q in rest {
+                        b.push(MoveKind::Feed, Point3::new(q.x, q.y, z), Some(m.feed));
                     }
                 }
             }
-            last_cut_z = Some(z);
         }
-    }
-    st.tally.say(b, "level/pass");
-    if let Some(n) = m.links.approach.engagement_note()
-        && !first
-    {
-        b.note_once(&n);
+        ws.last_cut_z = Some(z);
     }
 }
 

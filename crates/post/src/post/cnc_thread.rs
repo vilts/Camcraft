@@ -44,6 +44,10 @@ pub struct ThreadRec {
     /// The passes carry chip-break dips (issue #419): written `DIP 1`
     /// only when set, the `ALT` precedent.
     pub chip_break_dips: bool,
+    /// The cycle's rapid infeed stands completely in free air (issue
+    /// #2878): written `AIR 1` only when set, so older streams without
+    /// it read false and refuse G76 by name.
+    pub start_in_air: bool,
 }
 
 /// µm-integer text, the stream's length law.
@@ -75,6 +79,7 @@ impl ThreadRec {
             alternating: t.alternating,
             repeat_each_depth: t.repeat_each_depth,
             chip_break_dips: t.chip_break_dips,
+            start_in_air: t.start_in_air,
         }
     }
 
@@ -103,6 +108,7 @@ impl ThreadRec {
         m.insert("Alternating".into(), json!(self.alternating));
         m.insert("RepeatEachDepth".into(), json!(self.repeat_each_depth));
         m.insert("ChipBreakDips".into(), json!(self.chip_break_dips));
+        m.insert("StartInAir".into(), json!(self.start_in_air));
         m
     }
 
@@ -111,7 +117,7 @@ impl ThreadRec {
     pub fn line(&self) -> String {
         format!(
             "THREAD X {} Y {} Z {} EX {} EY {} EZ {} MAJOR {} MINOR {} LEAD {:.6} HEIGHT {} \
-             FIRST {} MIN {} FINISH {} ANGLE {:.6} SPRING {} PULLOUT {} HAND {}{}{}{}\n",
+             FIRST {} MIN {} FINISH {} ANGLE {:.6} SPRING {} PULLOUT {} HAND {}{}{}{}{}\n",
             q(self.start[0]),
             q(self.start[1]),
             q(self.start[2]),
@@ -132,6 +138,7 @@ impl ThreadRec {
             if self.alternating { " ALT 1" } else { "" },
             if self.repeat_each_depth { " REP 1" } else { "" },
             if self.chip_break_dips { " DIP 1" } else { "" },
+            if self.start_in_air { " AIR 1" } else { "" },
         )
     }
 
@@ -152,9 +159,9 @@ impl ThreadRec {
 /// missing, repeated, unknown or non-finite word is refused by name - a cycle the parser guessed at
 /// is a thread cut to the wrong depth.
 pub fn parse<'a>(mut it: impl Iterator<Item = &'a str>) -> Result<Option<ThreadRec>, String> {
-    const KEYS: [&str; 19] = [
+    const KEYS: [&str; 20] = [
         "X", "Y", "Z", "EX", "EY", "EZ", "MAJOR", "MINOR", "LEAD", "HEIGHT", "FIRST", "MIN", "FINISH", "ANGLE",
-        "SPRING", "PULLOUT", "ALT", "REP", "DIP",
+        "SPRING", "PULLOUT", "ALT", "REP", "DIP", "AIR",
     ];
     let mut seen: BTreeMap<&str, f64> = BTreeMap::new();
     let mut hand: Option<ThreadHand> = None;
@@ -206,6 +213,7 @@ pub fn parse<'a>(mut it: impl Iterator<Item = &'a str>) -> Result<Option<ThreadR
     let alternating = flag("ALT")?;
     let repeat_each_depth = flag("REP")?;
     let chip_break_dips = flag("DIP")?;
+    let start_in_air = flag("AIR")?;
     Ok(Some(ThreadRec {
         start: [um("X")?, um("Y")?, um("Z")?],
         end: [um("EX")?, um("EY")?, um("EZ")?],
@@ -223,6 +231,7 @@ pub fn parse<'a>(mut it: impl Iterator<Item = &'a str>) -> Result<Option<ThreadR
         alternating,
         repeat_each_depth,
         chip_break_dips,
+        start_in_air,
     }))
 }
 

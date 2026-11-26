@@ -1,5 +1,5 @@
-//! #2047 (#1198 slice c): turn a body by its rings. With the bar's Rotate
-//! mode on, the selected part wears three rings; a drag on a ring is a
+//! #2047 / #2624: turn a body by its rings. With the bar's Move
+//! gizmo on, the selected part wears arrows and three rings; a ring drag is a
 //! preview while the button is down and ONE undoable `MoveModel` on
 //! release, with the dragged angle shown above the bar. The turn makes the
 //! generated operation stale, so the post refuses until a regenerate; the
@@ -13,6 +13,7 @@
 use std::f64::consts::FRAC_PI_4;
 
 use camcraft_app::schema::Location;
+use egui_kittest::kittest::NodeT;
 
 use super::*;
 use crate::interact::project_uv;
@@ -35,17 +36,22 @@ fn press_escape(h: &mut Harness<'static, ShellUi>) {
     h.run();
 }
 
-/// Rotate mode on (the bar button), the Block selected (a viewport click).
+/// The combined Move gizmo on, the Block selected by a viewport click.
 fn turning_block() -> Harness<'static, ShellUi> {
     let mut h = shell_harness();
     h.run();
-    let nav = hud(h.state()).nav_rect(viewcube::Nav::Rotate).center();
+    let nav = hud(h.state()).nav_rect(viewcube::Nav::Move).center();
     click_viewport(&mut h, nav);
-    assert!(h.state().state.rotate_handles, "the bar's Rotate button turns the mode on");
+    assert!(h.state().state.rotate_handles && h.state().state.move_handles, "Move shows rings and arrows together");
     assert!(h.state().state.pending.is_empty(), "a mode toggle is view state, not a command");
     let c = vp_center(h.state());
     click_viewport(&mut h, c);
     assert_eq!(h.state().state.status, "selected Block");
+    assert_eq!(turn_drag::rings_px(&h.state().state).len(), 3, "one ring per axis");
+    assert_eq!(move_drag::arms_px(&h.state().state).len(), 3, "arrows stay visible beside the rings");
+    h.get_by_label("Rotate value").click();
+    h.run();
+    assert!(h.state().state.rotate_handles && h.state().state.move_handles, "choosing a value does not hide handles");
     h.state_mut().state.history.mark_clean();
     h
 }
@@ -107,6 +113,8 @@ fn a_ring_drag_is_one_undoable_turn_that_stales_the_path_and_carries_the_stock()
     let mut h = turning_block();
     assert!(camcraft_app::posting::program_ops(&h.state().state.world).is_ok(), "the seed posts before the turn");
     let before = block(h.state());
+    let entity = model::find_by_name(&h.state().state.world, "Block").expect("Block");
+    let centre_before = move_drag::shown_center(&h.state().state, &entity).expect("part centre");
     let from = z_ring(&h, FRAC_PI_4);
     assert_eq!(turn_drag::ring_at(&h.state().state, [from.x, from.y]), Some(2), "the Z ring is under the cursor");
     set_pos(&mut h, from);
@@ -130,6 +138,13 @@ fn a_ring_drag_is_one_undoable_turn_that_stales_the_path_and_carries_the_stock()
     assert!(st.history.is_dirty(), "the release is a history step");
     assert!(st.status.starts_with("turned Block +"), "{}", st.status);
     assert_ne!(block(h.state()).rot, before.rot, "the Block turned");
+    let want = camcraft_app::geometry::quat_mul(
+        camcraft_app::geometry::quat_from_axis_angle(2, 20f64.to_radians()), before.rot,
+    );
+    let actual = block(h.state()).rot;
+    assert!(actual.iter().zip(want).all(|(a, b)| (a - b).abs() < 0.005), "drag turns about Z by 20 degrees: {actual:?}");
+    let centre_after = move_drag::shown_center(st, &entity).expect("turned part centre");
+    assert!(centre_before.iter().zip(centre_after).all(|(a, b)| (a - b).abs() < 1e-8), "the ring drag preserves the part centre");
     // The turn made the generated path stale: the post refuses by name.
     let refusal = camcraft_app::posting::program_ops(&st.world).err().unwrap_or_default();
     assert!(refusal.contains("regenerate"), "stale after the turn: {refusal:?}");
@@ -226,4 +241,140 @@ fn empty_space_still_orbits_in_rotate_mode() {
     button_at(&mut h, egui::PointerButton::Primary, p + egui::vec2(25.0, 0.0), false);
     h.run_steps(2);
     assert!(!h.state().state.history.is_dirty());
+}
+
+#[test]
+fn shift_drag_snaps_to_the_bar_angle_step() {
+    let mut h = turning_block();
+    assert!(h.query_by_label("Rotate snap step").is_some(), "the bar shows the rotate snap step");
+    assert!(h.query_by_label("Rotate angle").is_some(), "the bar shows the angle field");
+    let before = block(h.state());
+    let from = z_ring(&h, FRAC_PI_4);
+    h.input_mut().events.push(Event::ModifiersChanged(Modifiers::SHIFT));
+    h.input_mut().events.push(Event::PointerMoved(from));
+    h.run();
+    h.input_mut().events.push(Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::SHIFT,
+    });
+    h.run();
+    let to = z_ring(&h, FRAC_PI_4 + 0.9);
+    h.input_mut().events.push(Event::PointerMoved(to));
+    h.run();
+    let turned = h.state().state.body_turn.as_ref().map(|d| d.angle).expect("still turning");
+    assert!(
+        (turned.to_degrees() - 90.0).abs() < 1e-9,
+        "Shift snaps ~51.6 deg to the default 90 deg step, got {}",
+        turned.to_degrees()
+    );
+    h.input_mut().events.push(Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::SHIFT,
+    });
+    h.run();
+    h.input_mut().events.push(Event::ModifiersChanged(Modifiers::NONE));
+    h.run_steps(2);
+    assert_ne!(block(h.state()).rot, before.rot);
+    assert!(h.state().state.status.contains("+90.0\u{b0}"), "{}", h.state().state.status);
+    assert_eq!(h.state().state.handle_bar.rotate_draft, "+90.0", "the angle stays in the bar");
+    assert!(h.state().state.history.is_dirty());
+    h.state_mut().state.pending.push_back(CommandKind::Undo);
+    h.run_steps(2);
+    assert!(!h.state().state.history.is_dirty());
+    assert_eq!(block(h.state()), before);
+}
+
+#[test]
+fn changing_snap_step_in_the_bar_changes_shift_drag_snap() {
+    let mut h = turning_block();
+    h.get_by_label("Rotate snap step").click();
+    h.run();
+    h.get_by_label("Rotate snap step").type_text("15");
+    h.run();
+    h.input_mut().events.push(Event::Key {
+        key: Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run();
+    assert!((h.state().state.handle_bar.rotate_snap_deg - 15.0).abs() < 1e-6);
+    let from = z_ring(&h, FRAC_PI_4);
+    h.input_mut().events.push(Event::ModifiersChanged(Modifiers::SHIFT));
+    h.input_mut().events.push(Event::PointerMoved(from));
+    h.run();
+    h.input_mut().events.push(Event::PointerButton {
+        pos: from,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::SHIFT,
+    });
+    h.run();
+    let to = z_ring(&h, FRAC_PI_4 + 0.9);
+    h.input_mut().events.push(Event::PointerMoved(to));
+    h.run();
+    let turned = h.state().state.body_turn.as_ref().map(|d| d.angle.to_degrees()).expect("turning");
+    assert!((turned - 45.0).abs() < 1e-6, "15 deg step snaps ~51.6 deg to 45.0, got {turned}");
+}
+
+#[test]
+fn typing_an_angle_in_the_bar_turns_the_part_about_the_chosen_axis_as_one_undo_step() {
+    let mut h = turning_block();
+    let before = block(h.state());
+    h.get_by_label("Axis Z").click();
+    h.run();
+    h.get_by_label("Rotate angle").click();
+    h.run();
+    h.get_by_label("Rotate angle").type_text("45");
+    h.run();
+    h.get_by_label("Set").click();
+    h.run_steps(2);
+    assert_ne!(block(h.state()).rot, before.rot, "the Block turned");
+    let refusal = camcraft_app::posting::program_ops(&h.state().state.world).err().unwrap_or_default();
+    assert!(refusal.contains("regenerate"), "stale after typed turn: {refusal:?}");
+    assert!(h.state().state.history.is_dirty());
+    h.state_mut().state.pending.push_back(CommandKind::Undo);
+    h.run_steps(2);
+    assert!(!h.state().state.history.is_dirty(), "one typed turn, one undo step");
+    assert_eq!(block(h.state()), before);
+    assert!(camcraft_app::posting::program_ops(&h.state().state.world).is_ok());
+}
+
+#[test]
+fn combined_gizmo_exposes_each_handle_and_keeps_both_value_editors_reachable() {
+    let mut h = turning_block();
+    for axis in ["X", "Y", "Z"] {
+        for label in [format!("Move along {axis}"), format!("Rotate about {axis}")] {
+            let node = h.get_by_role_and_label(egui::accesskit::Role::Button, &label);
+            assert!(!node.accesskit_node().is_disabled(), "{label} is available in the isometric view");
+        }
+    }
+    assert!(h.query_by_label("Rotate angle").is_some());
+    h.get_by_label("Move value").click();
+    h.run();
+    assert!(h.query_by_label("Move distance").is_some());
+    assert!(h.query_by_label("Move snap step").is_some());
+    assert_eq!(turn_drag::rings_px(&h.state().state).len(), 3);
+    assert_eq!(move_drag::arms_px(&h.state().state).len(), 3);
+}
+
+#[test]
+fn edge_on_ring_accessibility_is_disabled_while_the_visible_ring_stays_enabled() {
+    let mut h = turning_block();
+    let st = &mut h.state_mut().state;
+    st.cam = st.cam.toward([0.0, 0.0, 1.0]);
+    st.cam.projection = crate::viewport::ProjectionMode::Orthographic;
+    h.run();
+    for axis in ["X", "Y"] {
+        let label = format!("Rotate about {axis}");
+        let node = h.get_by_role_and_label(egui::accesskit::Role::Button, &label);
+        assert!(node.accesskit_node().is_disabled(), "edge-on ring {axis} cannot start a turn");
+    }
+    let z = h.get_by_role_and_label(egui::accesskit::Role::Button, "Rotate about Z");
+    assert!(!z.accesskit_node().is_disabled(), "the face-on Z ring still works");
 }

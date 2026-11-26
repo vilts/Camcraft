@@ -61,8 +61,13 @@ fn to_square(x: f64, y: f64, h: f64) -> f64 {
 fn clears_around_the_part(kind: OpParams, label: &str, clear: f64) {
     let world = world(block_with_boss(), 50.0);
     let o = op(SrcRef::Entity("part".into()), kind, AreaControls::default());
-    let (path, warns) = run(&world, &o).unwrap_or_else(|e| panic!("{label}: whole-part source generates: {e}"));
-    assert_eq!(warns, 0, "{label}: verify stays clean");
+    let (path, warns) = operation::generate(&world, &o, "").unwrap_or_else(|e| panic!("{label}: whole-part source generates: {e}"));
+    let areas = camcraft_app::machining2d::rings_fallbacks(&path.notes);
+    assert_eq!(warns.len(), usize::from(areas > 0), "{label}: only the fallback is reported: {warns:?}");
+    assert!(warns.iter().all(|w| {
+        matches!(w, camcraft_app::verify::Warning::StrategyFallback { areas: n, .. } if *n == areas)
+            && !w.blocks_post()
+    }), "{label}: unexpected warnings: {warns:?}");
     let mut outside = 0usize;
     for m in path.moves.iter().filter(|m| m.kind == MoveKind::Feed) {
         for k in 0..=16 {

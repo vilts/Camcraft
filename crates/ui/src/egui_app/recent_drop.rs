@@ -96,6 +96,7 @@ pub(super) fn press(state: &mut State, kind: RecentKind) {
     state.ribbon_mode_open = false;
     state.ribbon_view_open = false;
     state.ribbon_theme_open = false;
+    state.ribbon_settings_open = false;
 }
 
 /// The list's rows, pure geometry in the strip's global frame (the

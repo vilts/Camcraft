@@ -103,8 +103,9 @@ fn contour_params(d: f64, lead: Lead, side: Side) -> ContourParams {
         tab_height: 0.0,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
+        picks: Default::default(),
     }
 }
 
@@ -160,7 +161,7 @@ fn verdicts() -> Vec<(&'static str, Vec<Warning>)> {
         ("face_square_40x40_blended.cl", true, None, None),
         ("face_square_40x40_stepped.cl", false, Some(2.0), Some(1.5)),
     ] {
-        let p = FaceParams { holes: Default::default(), tool_diameter: 10.0, stepover: 8.0, clearance_z: 5.0, cut_z: -2.0, top_z: top, stepdown: step, feed: 500.0, plunge_feed: 100.0, climb: true, blend_turns: blend, stock_top: None };
+        let p = FaceParams { holes: Default::default(), tool_diameter: 10.0, stepover: 8.0, clearance_z: 5.0, cut_z: -2.0, top_z: top, stepdown: step, feed: 500.0, plunge_feed: 100.0, climb: true, blend_turns: blend, blend_radius: None, stock_top: None };
         let t = face(&reg, &p).expect("face");
         check(name, &t, section_law(&t, &reg, &part, &g10, Mode::Boundary, top.unwrap_or(-2.0), 5.0));
     }
@@ -231,6 +232,9 @@ fn verdicts() -> Vec<(&'static str, Vec<Warning>)> {
         cutting: Vec::new(),
         outline: Vec::new(),
         turning: None,
+        tip_form: Default::default(),
+        tip_diameter: 0.0,
+        form: None,
     };
     let hole = |x: f64, y: f64, r: f64, floor: f64, through: bool| Hole { xy: Point2::new(x, y), radius: r, entry_z: 0.0, floor_z: floor, through, stepped: false };
     let cycle = |holes: &[Hole], tool: &Tool, clear: f64| {

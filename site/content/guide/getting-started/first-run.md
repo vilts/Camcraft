@@ -31,7 +31,7 @@ Shortcuts on this page are written with Ctrl. On macOS, press Cmd in their place
     (Ctrl+P).
   - **Setup:** {{ <icon name="tree-setup" /> }} **Setups**, {{ <icon name="tree-stock" /> }} **Stock**, {{ <icon name="tree-wcs" /> }} **Origin** (the work offset), {{ <icon name="tools" /> }} **Tools** and the
     machine button, which switches the workspace between Milling, Turning
-    and Mill-turning.
+    and Mill-turning (a lathe with live tooling).
   - **Operation groups** for the machine you are on: Milling 2D, Milling
     3D, Drilling and Multi-axis on a mill; Turning on a lathe. Each group
     opens a list of its operations. Right-click (Control-click or a two-finger
@@ -56,6 +56,21 @@ why in its tooltip, for example "No tool yet - add one (Setup > Tools)" or
 Every keyboard shortcut and mouse gesture, for Windows, Linux and macOS, is
 on the [Keyboard and mouse](@/guide/getting-started/keyboard-and-mouse.md) page.
 
+### The start page
+
+When you start CamCraft with no file named, it shows the start page in
+place of the panes. The page lists your recent projects, newest first.
+Click a project to open it. A project file that is no longer there is
+greyed and marked **(missing)**; hover it to see where it was. The page
+also has **Open project…**, **New project** and **Back to the project**.
+
+The {{ <icon name="home" /> }} **Home** button at the top right, beside **Donate**, shows the page
+again at any time. Press it again, or choose **Back to the project**, to
+return to your document. The page closes by itself when the document
+changes, for example when a project opens. Opening a project from the
+page asks first if you have unsaved changes, as any project open does.
+The version number shows at the right end of the ribbon.
+
 ### Open an example project
 
 A release package ships example projects in an `examples` folder beside
@@ -66,14 +81,37 @@ the entry reads **No example projects**. The entry is absent when the
 folder is missing and in the browser build. Opening an example asks first
 if you have unsaved changes, as any project open does.
 
+### Open a file from the command line
+
+The desktop executable accepts one file on the command line:
+
+```sh
+camcraft-ui part.step
+camcraft-ui job.camproj
+```
+
+A model file is imported; a project file is opened. Options can accompany
+the path. An unreadable file, an unknown extension or multiple file paths
+produce an `open refused` status message and leave an empty project.
+See [Command line](@/guide/automate/cli.md#open-a-file-in-the-window)
+for supported extensions and the distinction from the headless tool.
+
 ### What you see after opening a document
 
 Opening a document frames the camera on the opened part and stock, so
 orbiting turns about the part and not about the old view's target. Press F
 to frame again at any time. On a lathe, the viewport lays the spindle axis
-from left to right with the cross-slide up (a mill-turn keeps the milling
-view). This changes only the view,
+from left to right with the cross-slide up (a mill-turn, which is a lathe with live tooling, keeps
+the milling view). This changes only the view,
 not the work offset or the posted program.
+
+### Update notices
+
+The desktop app checks GitHub Releases at startup, at most once in
+24 hours. When it finds a newer version, **Update available: vX.Y.Z**
+appears in the title bar. Select it to open the release notes in your
+browser. To turn off startup checks, clear **Check for updates** in
+**Settings**.
 
 ### Themes and screen readers
 
@@ -82,6 +120,21 @@ take their sizes and colours from the theme, so text and glyphs read
 clearly in both Horizon Day and Teal Night. Browser rows, their eye
 toggles and context-menu rows carry accessibility labels, so a screen
 reader or an automated test can name them.
+
+### Line width and anti-aliasing
+
+The viewport's **Display** button opens a menu whose **Graphics** group
+sets how the viewport draws:
+
+- **Line width** (1, 1.5, 2 or 3 pt; 1.5 is the default) sets the width of
+  toolpaths, height planes, outlines and axes. These lines always have
+  smooth edges.
+- **Anti-aliasing** (Off, 2x or 4x; 4x is the default) smooths the edges
+  of models and stock. 4x uses the most graphics memory; turn it down on
+  a slow integrated graphics chip. A count that the graphics device does
+  not offer is shown, but cannot be chosen.
+
+Both choices are kept for the next start.
 
 ## A first toolpath
 
@@ -119,7 +172,10 @@ Complete first parts on one machine each:
 [Your first router part](@/guide/getting-started/first-router-part.md) (a
 sheet-goods router job) and
 [Your first 4-axis part](@/guide/getting-started/first-4axis-part.md)
-(indexed 3+1 work on a Tormach 770MX with a microARC 4).
+(indexed 3+1 work on a Tormach 770MX with a microARC 4). On the same
+machine,
+[Your first continuous 4-axis program](@/guide/getting-started/first-continuous-4axis-part.md)
+posts and air-cuts a program that turns A during the feed moves.
 
 ## Undo
 

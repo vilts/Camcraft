@@ -109,12 +109,17 @@ fn stepped_slotted_flange() -> Mesh {
 }
 
 fn world_with(mesh: Mesh, oversized_stock: bool) -> (World, History) {
+    world_with_dz(mesh, oversized_stock, 17.0)
+}
+
+/// [`world_with`] with the stock box `dz` high (its top at Z `dz`).
+fn world_with_dz(mesh: Mesh, oversized_stock: bool, dz: f64) -> (World, History) {
     let world = new_world();
     let mut h = History::default();
     h.execute(&world, ImportModel::from_mesh("flange", mesh));
     let (dx, dy, x0, y0) = if oversized_stock { (120.0, 80.0, -60.0, -40.0) } else { (100.0, 60.0, -50.0, -30.0) };
     let loc = Location { pos: Point3::new(x0, y0, 0.0), ..Default::default() };
-    h.execute(&world, SetStock::new(&world, StockShape::Box { dx, dy, dz: 17.0 }, loc).expect("stock"));
+    h.execute(&world, SetStock::new(&world, StockShape::Box { dx, dy, dz }, loc).expect("stock"));
     let t = catalog().into_iter().find(|(n, _)| *n == TOOL).map(|(_, t)| t).expect("catalog");
     h.execute(&world, AddTool::new(&world, TOOL, t).expect("tool"));
     (world, h)
@@ -139,9 +144,11 @@ fn contour_params(top_z: Height, stepdown: f64, tab_width: f64, tab_height: f64)
         tab_height,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -230,18 +237,23 @@ fn assert_full_plate_outline(t: &Toolpath, z: f64, tag: &str) {
 
 #[test]
 fn case1_chamfered_island_top_contours_plate_to_bottom_with_tabs() {
-    for oversized in [false, true] {
-        let (world, mut h) = world_with(stepped_slotted_flange(), oversized);
+    // #2597: the stock top at Top Z (15) and over it (17); in the second
+    // case the outline that grows under the chamfer steps down from Z 17.
+    // #2677: at 18.5 (one stepdown over Top Z) the grown ring shares the
+    // Top Z plane with the island top ring, and no lead may cross it.
+    let cases = [(false, 17.0), (true, 17.0), (false, 15.0), (true, 15.0), (false, 18.5), (true, 18.5)];
+    for (oversized, dz) in cases {
+        let (world, mut h) = world_with_dz(stepped_slotted_flange(), oversized, dz);
         let params = contour_params(Height::of(HeightReference::TopOfModel, 0.0), 3.5, 5.0, 1.0);
         let (t, warns) = run(&world, &mut h, params);
         assert!(
             !warns.iter().any(|w| w.blocks_post()),
-            "oversized={oversized}: blocking warnings {warns:?} / {:?}",
+            "oversized={oversized} dz={dz}: blocking warnings {warns:?} / {:?}",
             t.notes
         );
         assert!(
             (deepest_feed_z(&t) - (-0.5)).abs() < EPS,
-            "oversized={oversized}: deepest z {} != -0.5; notes: {:?}",
+            "oversized={oversized} dz={dz}: deepest z {} != -0.5; notes: {:?}",
             deepest_feed_z(&t),
             t.notes
         );
@@ -252,11 +264,19 @@ fn case1_chamfered_island_top_contours_plate_to_bottom_with_tabs() {
             "Case 1 must write 4 tab windows at z -0.5; notes: {:?}",
             t.notes
         );
-        let nc = std::env::temp_dir().join(format!("camcraft-2436-c1-{oversized}-{}.nc", std::process::id()));
+        // Stock over Top Z: the grown island ring takes Z 13.5 (one stepdown
+        // under the stock top 17), not the Top Z plane of the island top ring.
+        // At 18.5 one stepdown under the stock top is Top Z itself.
+        let off_grid = dz > 15.0 && dz < 18.5;
+        assert_eq!(!feeds_at_z(&t, 13.5).is_empty(), off_grid, "oversized={oversized} dz={dz}: pass at Z 13.5");
+        if dz > 18.0 {
+            assert!(!feeds_at_z(&t, 15.0).is_empty(), "oversized={oversized} dz={dz}: pass at Top Z 15");
+        }
+        let nc = std::env::temp_dir().join(format!("camcraft-2436-c1-{oversized}-{dz}-{}.nc", std::process::id()));
         let _ = std::fs::remove_file(&nc);
         let posted = posting::post_setup(&world, &nc);
         let _ = std::fs::remove_file(&nc);
-        assert!(posted.is_ok(), "oversized={oversized}: post blocked: {:?}", posted.err());
+        assert!(posted.is_ok(), "oversized={oversized} dz={dz}: post blocked: {:?}", posted.err());
     }
 }
 

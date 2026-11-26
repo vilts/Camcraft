@@ -29,15 +29,15 @@
 //! feed or a plunge, so a wrong previous tool costs a heavier cut, never
 //! a rapid into stock.
 
-use crate::cl::{PathBuilder, Toolpath};
+use crate::cl::Toolpath;
 use crate::geo2d::Region;
-use crate::geometry::Point3;
 
+use camcraft_sim::verify::AvoidSpec;
+
+use super::corner_relief::CornerRelief;
 use super::face::GenError;
-use super::pocket::{PocketParams, PocketStrategy, pocket_over};
-use super::pocket_emit::{PocketWalks, emit_pocket_passes};
-use super::rest_anchor::anchor_first_pass;
-use super::rest_rings::rest_passes;
+use super::pocket::{PocketParams, PocketStrategy};
+use super::pocket_avoid_level::emit_rest_avoid;
 
 /// How far the previous tool's cleared area is shrunk before it is
 /// subtracted (mm): two polygon-offset arc tolerances (5 um each, one per
@@ -57,10 +57,37 @@ pub const REST_FILM: f64 = 0.02;
 /// all of them inside the pocket's own center area.
 pub const REST_REACH: f64 = 0.05;
 
+/// Where the rest area is read from (#2033). The two modes never mix: a
+/// rest pass in `PreviousOperations` mode is never planned from the
+/// entered previous tool.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RestSource {
+    /// The entered previous tool, trusted ([`rest_pocket`]).
+    #[default]
+    EnteredTool,
+    /// The stock the earlier operations of the setup leave, read at every
+    /// cut depth ([`super::rest_pocket_previous`]). The previous tool
+    /// fields are kept but not read.
+    PreviousOperations,
+}
+
+/// The refusal of the entered-tool planner for a rest group in
+/// `PreviousOperations` mode (#2033): it does not fall back to the
+/// entered tool.
+pub const REST_NEEDS_STOCK: &str = "rest machining from the previous operations needs the stock they leave: it is never planned from the entered previous tool";
+
+/// A corner relief's start may lie this far (mm) outside the rest center
+/// area and still be cut (#3146): the start is a vertex of the pocket's
+/// center area, on the rest center's boundary, and the offsets move that
+/// boundary by up to two arc tolerances (5 um each), as [`REST_MARGIN`].
+pub(super) const RELIEF_START_TOL: f64 = 0.01;
+
 /// The previous tool, as the user entered it. The generator trusts it:
 /// it cannot see what really cut the pocket.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RestParams {
+    /// Which reading plans the rest area (#2033).
+    pub source: RestSource,
     /// Diameter of the tool that roughed the pocket; must be larger than
     /// this operation's tool.
     pub previous_tool_diameter: f64,
@@ -80,7 +107,7 @@ impl RestParams {
     /// [`Self::validate_alone`], and the previous tool must be larger.
     pub fn validate(&self, tool_diameter: f64) -> Result<(), GenError> {
         self.validate_alone()?;
-        if self.previous_tool_diameter <= tool_diameter {
+        if self.source == RestSource::EnteredTool && self.previous_tool_diameter <= tool_diameter {
             return Err(GenError::Invalid(format!(
                 "rest machining needs a previous tool larger than this one: the previous tool is {} mm, this tool is {} mm",
                 self.previous_tool_diameter, tool_diameter
@@ -102,15 +129,19 @@ impl RestParams {
         if !all.into_iter().all(f64::is_finite) {
             return Err(GenError::Invalid("rest machining parameters must be finite".into()));
         }
-        if self.previous_tool_diameter <= 0.0 {
+        // #2033: the previous tool is not read in `PreviousOperations` mode.
+        let entered = self.source == RestSource::EnteredTool;
+        if entered && self.previous_tool_diameter <= 0.0 {
             return Err(GenError::Invalid("the previous tool diameter must be positive".into()));
         }
-        if self.previous_corner_radius < 0.0 || self.previous_corner_radius > self.previous_tool_diameter * 0.5 {
+        if entered
+            && (self.previous_corner_radius < 0.0 || self.previous_corner_radius > self.previous_tool_diameter * 0.5)
+        {
             return Err(GenError::Invalid(
                 "the previous tool's corner radius must be between 0 and its radius".into(),
             ));
         }
-        if self.previous_stock_to_leave < 0.0 {
+        if entered && self.previous_stock_to_leave < 0.0 {
             return Err(GenError::Invalid("the previous stock to leave must not be negative".into()));
         }
         if self.allowance < 0.0 {
@@ -150,6 +181,9 @@ pub fn rest_plan(
         return Err(GenError::Invalid("tool diameter must be positive and stock to leave not negative".into()));
     }
     rest.validate(tool_diameter)?;
+    if rest.source != RestSource::EnteredTool {
+        return Err(GenError::Invalid(REST_NEEDS_STOCK.into()));
+    }
     if region.is_empty() {
         return Err(GenError::Empty("empty pocket region".into()));
     }
@@ -200,7 +234,40 @@ pub fn rest_plan(
 /// plan assume a full pocket; not built for rest areas yet); nothing
 /// left to cut; rest material this tool cannot reach either.
 pub fn rest_pocket(region: &Region, p: &PocketParams, rest: &RestParams) -> Result<Toolpath, GenError> {
+    rest_pocket_with_relief(region, p, rest, &CornerRelief::default())
+}
+
+/// [`rest_pocket`] with optional inside-corner reliefs (#2400) when cutting
+/// unreached corners left by a larger previous cutter.
+pub fn rest_pocket_with_relief(
+    region: &Region,
+    p: &PocketParams,
+    rest: &RestParams,
+    relief: &CornerRelief,
+) -> Result<Toolpath, GenError> {
+    rest_pocket_inner(region, p, rest, None, relief)
+}
+
+/// [`rest_pocket_with_relief`] keeping the full tool clear of `avoid` (#3345).
+pub fn rest_pocket_avoid_with_relief(
+    region: &Region,
+    p: &PocketParams,
+    rest: &RestParams,
+    avoid: &AvoidSpec,
+    relief: &CornerRelief,
+) -> Result<Toolpath, GenError> {
+    rest_pocket_inner(region, p, rest, Some(avoid), relief)
+}
+
+fn rest_pocket_inner(
+    region: &Region,
+    p: &PocketParams,
+    rest: &RestParams,
+    avoid: Option<&AvoidSpec>,
+    relief: &CornerRelief,
+) -> Result<Toolpath, GenError> {
     p.validate()?;
+    relief.validate()?;
     let p = &PocketParams { strategy: rest_strategy(p.strategy)?, ..*p };
     let plan = rest_plan(region, p.tool_diameter, p.stock_to_leave, rest)?;
     if plan.rest.is_empty() {
@@ -224,29 +291,8 @@ pub fn rest_pocket(region: &Region, p: &PocketParams, rest: &RestParams) -> Resu
     )];
     if !plan.previous_fits {
         notes.push("the previous tool fits nowhere in this pocket: the whole pocket is cut".into());
-        return pocket_over(region, &plan.center, p, notes, true, &[]);
     }
-    let (mut passes, cut_center) = rest_passes(&plan, p.tool_diameter, p.tiling_step(), p.climb)?;
-    if p.strategy == PocketStrategy::Zigzag {
-        passes = super::pocket_zigzag::rest_passes(&plan.center, p.tiling_step(), p.climb)?;
-    }
-    anchor_first_pass(&mut passes, &plan, p);
-    let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
-    notes.into_iter().for_each(|n| b.note(n));
-    emit_pocket_passes(
-        b,
-        p,
-        PocketWalks {
-            center: &plan.center,
-            links_center: &cut_center,
-            strategy: p.strategy,
-            passes,
-            room: None,
-            joins: Vec::new(),
-            hold_crossings: true,
-            holes: &[],
-        },
-    )
+    emit_rest_avoid(region, p, &plan, notes, relief, avoid)
 }
 
 /// The strategy a rest pass runs for the asked `strategy`: `Auto` reads as

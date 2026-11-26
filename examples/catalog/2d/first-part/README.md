@@ -8,6 +8,27 @@ A 100 x 60 x 15 mm clean-room aluminum test plate machined from a 100 x 60 x 20 
 2. **2D Pocket (`2D Pocket1`, `EM-0600-4FL`):** Clears the 5 mm shelf around the 60 x 30 mm central island with a helical ramp entry down to `Z10`.
 3. **Drill (`Drill1`, `DR-0600`):** Drills four 6 mm through-holes around the flange at `(±38, ±23)` using `G83` deep peck drilling (`Fanuc` built-in post).
 
+## Images
+
+These images use the same camera. Each operation image shows only that operation's toolpath.
+The PNG files are published on the fork's `catalog-screenshots` branch.
+
+Model without toolpaths:
+
+![First-part model without toolpaths](https://raw.githubusercontent.com/mkinney/Camcraft/catalog-screenshots/catalog/2d/first-part/0-blank.png)
+
+Face (`Face1`):
+
+![First-part Face1 toolpath](https://raw.githubusercontent.com/mkinney/Camcraft/catalog-screenshots/catalog/2d/first-part/1-Face1.png)
+
+2D Pocket (`2D Pocket1`):
+
+![First-part 2D Pocket1 toolpath](https://raw.githubusercontent.com/mkinney/Camcraft/catalog-screenshots/catalog/2d/first-part/2-2D-Pocket1.png)
+
+Drill (`Drill1`):
+
+![First-part Drill1 toolpath](https://raw.githubusercontent.com/mkinney/Camcraft/catalog-screenshots/catalog/2d/first-part/3-Drill1.png)
+
 ## Files
 
 - `model/gen_first_part_obj.py` — parametric watertight voxel-CSG generator for the test solid.

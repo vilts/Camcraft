@@ -1,0 +1,4 @@
+; agie-native.cps refused drill_retract: the post stopped, nothing written
+post: post script: Error: Native wire EDM job files require the desktop or CLI One program post to a new job directory (user.cps:16:9)
+    at onOpen (user.cps:16:9)
+    at <main> (unknown at :1:7)

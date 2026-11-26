@@ -31,7 +31,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::field::{brick_of, center_of, cell_of, SdfField, BRICK, BRICK3};
+use super::field::{brick_of, center_of, cell_of, in_brick, SdfField, BRICK, BRICK3};
 use super::field_cut::Sweep;
 use super::field_ray;
 
@@ -98,8 +98,9 @@ impl SdfField {
         self.cost.stats = CutStats::default();
     }
 
-    /// Bytes a clone of this field copies: the cut layers' bricks (the
-    /// mesh layer is shared) - a playback snapshot's price, measured.
+    /// Bytes the cut layers' bricks hold (the mesh layer is shared): the
+    /// price of a whole copy. A clone shares the bricks until a write
+    /// (`cut_bytes_after` is what a playback snapshot holds of its own).
     #[must_use]
     pub fn cut_layer_bytes(&self) -> usize {
         (self.cuts.len() + self.cut_ups.len() + self.cut_downs.len()).saturating_mul(BRICK3 * std::mem::size_of::<f64>())
@@ -331,10 +332,12 @@ impl SdfField {
     /// Max one claim into the cut layer, counting the brick full.
     fn claim_record(&mut self, key: [i32; 3], v: f64) {
         let cap = self.cap;
-        let slot = self.cut_mut(key);
-        if slot.is_nan() || v > *slot {
-            let was_full = *slot >= cap;
-            *slot = v;
+        // Read first: a visit that changes nothing takes no writable
+        // slot, so it copies no brick that a keyframe shares (#2194).
+        let cur = self.cuts.get(&brick_of(key)).map_or(f64::NAN, |b| b[in_brick(key)]);
+        if cur.is_nan() || v > cur {
+            let was_full = cur >= cap;
+            *self.cut_mut(key) = v;
             if v >= cap && !was_full {
                 *self.cost.full.entry(brick_of(key)).or_insert(0) += 1;
             }

@@ -40,19 +40,29 @@ pub struct CuttingRow {
     pub stepover: Option<f64>,
     /// A material-and-thickness recipe, never selected by material alone.
     pub waterjet: Option<crate::waterjet::WaterjetCutData>,
+    /// #1521: a torch's recipe for one material and plate thickness,
+    /// never selected by material alone.
+    pub plasma: Option<crate::plasma_cut::PlasmaCutData>,
 }
 
 impl CuttingRow {
     /// A plain speed-and-feed row with no step data.
     #[must_use]
     pub const fn plain(material: Option<WorkMaterial>, rpm: f64, feed: f64) -> Self {
-        Self { material, rpm, feed, stepdown: None, stepover: None, waterjet: None }
+        Self { material, rpm, feed, stepdown: None, stepover: None, waterjet: None, plasma: None }
     }
 
     /// Is this the `Unknown` row?
     #[must_use]
     pub fn is_unknown(&self) -> bool {
-        self.material.is_none() && self.waterjet.is_none()
+        self.material.is_none() && !self.is_recipe()
+    }
+
+    /// Is this a material-and-thickness recipe (a waterjet's, or #1521 a
+    /// torch's)? A recipe is never the row in force for a material.
+    #[must_use]
+    pub fn is_recipe(&self) -> bool {
+        self.waterjet.is_some() || self.plasma.is_some()
     }
 }
 
@@ -80,7 +90,7 @@ pub fn unknown_row(rows: &[CuttingRow]) -> Option<&CuttingRow> {
 #[must_use]
 pub fn row_for(rows: &[CuttingRow], material: Option<WorkMaterial>) -> Option<&CuttingRow> {
     material
-        .and_then(|m| rows.iter().find(|r| r.material == Some(m) && r.waterjet.is_none()))
+        .and_then(|m| rows.iter().find(|r| r.material == Some(m) && !r.is_recipe()))
         .or_else(|| unknown_row(rows))
 }
 
@@ -115,7 +125,7 @@ pub fn unknown_of(tool: &crate::tools::Tool) -> Option<CuttingRow> {
 #[must_use]
 pub fn row_in_tool(tool: &crate::tools::Tool, material: Option<WorkMaterial>) -> Option<CuttingRow> {
     material
-        .and_then(|m| tool.cutting.iter().find(|r| r.material == Some(m) && r.waterjet.is_none()).copied())
+        .and_then(|m| tool.cutting.iter().find(|r| r.material == Some(m) && !r.is_recipe()).copied())
         .or_else(|| unknown_of(tool))
 }
 
@@ -171,6 +181,13 @@ pub fn waterjet_row_for(rows: &[CuttingRow], material: WorkMaterial, thickness: 
     rows.iter().find(|r| r.material == Some(material) && r.waterjet.is_some_and(|w| w.thickness == thickness))
 }
 
+/// #1521: a torch's recipe requires both keys; no nearest-thickness
+/// substitution.
+#[must_use]
+pub fn plasma_row_for(rows: &[CuttingRow], material: WorkMaterial, thickness: f64) -> Option<&CuttingRow> {
+    rows.iter().find(|r| r.material == Some(material) && r.plasma.is_some_and(|p| p.thickness == thickness))
+}
+
 /// Validate a table against its tool kind before storing it.
 #[must_use]
 pub fn refusal_for_kind(rows: &[CuttingRow], kind: crate::tools::ToolKind) -> Option<String> {
@@ -178,11 +195,16 @@ pub fn refusal_for_kind(rows: &[CuttingRow], kind: crate::tools::ToolKind) -> Op
     if kind == ToolKind::Wire {
         return (!rows.is_empty()).then(|| "an EDM wire uses machine EDM conditions, not per-material cutting data rows".into());
     }
+    if kind != ToolKind::Torch && rows.iter().any(|r| r.plasma.is_some()) {
+        return Some("plasma cutting data requires a plasma torch".into());
+    }
     if kind != ToolKind::Waterjet {
         if rows.iter().any(|r| r.waterjet.is_some()) {
             return Some("waterjet cutting data requires a waterjet tool".into());
         }
-        return refusal(rows, kind == ToolKind::Torch);
+        // #1521: a torch's recipes have their own law; the plain rows keep theirs.
+        let plain: Vec<CuttingRow> = rows.iter().filter(|r| r.plasma.is_none()).copied().collect();
+        return refusal(&plain, kind == ToolKind::Torch).or_else(|| crate::plasma_cut::rows_refusal(rows));
     }
     for (i, r) in rows.iter().enumerate() {
         let Some(w) = r.waterjet else {

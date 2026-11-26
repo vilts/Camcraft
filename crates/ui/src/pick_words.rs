@@ -17,7 +17,7 @@ pub fn selected(picks: &[GeoSel]) -> String {
     for g in picks {
         let k = match g.feature {
             FeatureSel::Face(_) | FeatureSel::Patch(_) => 0,
-            FeatureSel::Chain(_) => 1,
+            FeatureSel::Chain(_) | FeatureSel::SketchChain(_) | FeatureSel::SketchLayer(_) => 1,
             FeatureSel::Vertex(_) => 2,
         };
         if let Some(c) = counts.get_mut(k) {
@@ -41,12 +41,14 @@ pub fn count(n: usize, word: &str) -> String {
 
 /// The kind of one pick in plain words, with its article.
 #[must_use]
-pub fn kind(f: FeatureSel) -> &'static str {
+pub fn kind(f: &FeatureSel) -> &'static str {
     match f {
         FeatureSel::Face(_) => "a face",
         FeatureSel::Patch(_) => "a curved face",
         FeatureSel::Chain(_) => "an edge",
         FeatureSel::Vertex(_) => "a point",
+        FeatureSel::SketchChain(_) => "a sketch chain",
+        FeatureSel::SketchLayer(_) => "a sketch layer",
     }
 }
 
@@ -86,8 +88,8 @@ mod tests {
         assert_eq!(selected(&[g(FeatureSel::Chain(7))]), "1 edge selected");
         assert_eq!(selected(&[g(FeatureSel::Face(1)), g(FeatureSel::Chain(2))]), "1 face and 1 edge selected");
         for p in [FeatureSel::Face(0xccc7c), FeatureSel::Patch(0xab), FeatureSel::Chain(0xff), FeatureSel::Vertex(0x10)] {
+            assert!(!kind(&p).contains("0x"));
             assert!(!selected(&[g(p)]).contains("0x"));
-            assert!(!kind(p).contains("0x"));
         }
     }
 

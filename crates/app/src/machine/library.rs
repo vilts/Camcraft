@@ -135,7 +135,7 @@ impl MachineEntry {
         let file_name = path
             .file_name()
             .map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
-        match std::fs::read_to_string(path) {
+        match crate::session_files::read_machine(path) {
             Ok(text) => {
                 let model = parse_mch(&text)
                     .ok()
@@ -164,7 +164,7 @@ pub fn read_for_assign(source: &MachineSource) -> Result<(String, super::Machine
     let text: String = match source {
         MachineSource::Builtin(name) => posting::builtin_machine_text(name)?.to_owned(),
         MachineSource::File(path) => {
-            std::fs::read_to_string(path).map_err(|e| format!("machine file {}: {e}", path.display()))?
+            crate::session_files::read_machine(path).map_err(|e| format!("machine file {}: {e}", path.display()))?
         }
     };
     if let Some(first) = validate_text(&text).first() {
@@ -232,7 +232,7 @@ pub fn text_of(source: &MachineSource) -> Result<String, String> {
     match source {
         MachineSource::Builtin(name) => posting::builtin_machine_text(name).map(str::to_owned),
         MachineSource::File(p) => {
-            std::fs::read_to_string(p).map_err(|e| format!("{} cannot be read ({e})", p.display()))
+            crate::session_files::read_machine(p).map_err(|e| format!("{} cannot be read ({e})", p.display()))
         }
     }
 }
@@ -247,6 +247,10 @@ pub fn enumerate_with(world: &World, user_dir: Option<&Path>) -> Vec<MachineEntr
     let mut out = shipped_entries(&posting::machine_scan());
     if let Some(dir) = user_dir {
         out.extend(scan_dir(dir));
+    }
+    // #2950: the session's own files (the browser's picks and drops).
+    for name in crate::session_files::machine_names() {
+        out.push(MachineEntry::from_file(Path::new(&name)));
     }
     let (path, _) = super::of(world);
     let listed = |p: &Path| {

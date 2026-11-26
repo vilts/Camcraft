@@ -99,3 +99,49 @@ ENDSECTION
     assert!(!err.contains("spindle rpm over machine maximum"), "under the cap: {err}");
     assert!(nc.expect("written").contains("S9000 M3"), "the spindle word posts");
 }
+
+#[test]
+fn the_cli_posts_a_vendor_tree_waterjet_machine() {
+    let mch = tmp("waterjet.mch");
+    let cnc = tmp("waterjet.cnc");
+    let out = tmp("waterjet.nc");
+    let vendor = serde_json::json!({
+        "general": { "model": "CLI waterjet", "kind": "waterjet" },
+        "kinematics": { "default": {
+            "units": { "length": "mm", "angle": "degrees" },
+            "parts": [
+                { "id": "x", "name": "X", "type": "linear", "travel": { "min": 0, "max": 460 } },
+                { "id": "y", "name": "Y", "type": "linear", "travel": { "min": -305, "max": 0 } },
+                { "id": "nozzle", "name": "nozzle", "type": "head" }
+            ]
+        } }
+    });
+    std::fs::write(&mch, vendor.to_string()).expect("write vendor tree");
+    std::fs::write(&cnc, "WATERJET ABRASIVE\nSECTION\nRapid X 0 Y 0 Z 0\nJET ON C0 OUTER\nFeed X 10000 Y -10000 Z 0 F300000\nJET OFF C0\nENDSECTION\n").expect("write stream");
+    let result = Command::new(env!("CARGO_BIN_EXE_post"))
+        .arg("--machine")
+        .arg(&mch)
+        .arg(repo("assets/posts/waterjet-iso.cps"))
+        .arg(&cnc)
+        .arg(&out)
+        .output()
+        .expect("run post");
+    let program = std::fs::read_to_string(&out).unwrap_or_default();
+    for file in [&mch, &cnc, &out] {
+        let _ = std::fs::remove_file(file);
+    }
+    let stderr = String::from_utf8_lossy(&result.stderr);
+    assert!(result.status.success(), "{stderr}");
+    assert!(
+        !stderr.contains("warning") && !stderr.contains("not declared a waterjet"),
+        "{stderr}"
+    );
+    assert!(
+        program.contains("G0 X0 Y0") && program.contains("G1 X10 Y-10 F300"),
+        "{program}"
+    );
+    let water = program.find("M10\n").expect("water on");
+    let abrasive = program.find("M12\n").expect("abrasive on");
+    let cut = program.find("G1 X10 Y-10 F300").expect("cut");
+    assert!(water < abrasive && abrasive < cut, "{program}");
+}

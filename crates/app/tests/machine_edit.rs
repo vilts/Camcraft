@@ -245,6 +245,24 @@ fn the_write_is_atomic_and_leaves_no_temp_file() {
 }
 
 #[test]
+fn two_threads_never_share_a_temp_file() {
+    // An autosave thread and a save by the user can write the same file at
+    // the same moment: each must write its own temp file.
+    let p = std::env::temp_dir().join("camcraft_temp_names").join("m.mch");
+    let here = store::temp_path_for(&p).expect("temp path");
+    assert_eq!(store::temp_path_for(&p).as_ref(), Some(&here), "one thread keeps its temp name");
+    assert_eq!(here.parent(), p.parent(), "the temp file is in the target's folder");
+    let there = std::thread::spawn({
+        let p = p.clone();
+        move || store::temp_path_for(&p)
+    })
+    .join()
+    .expect("the second thread ends")
+    .expect("temp path");
+    assert_ne!(here, there, "a second thread writes a different temp file");
+}
+
+#[test]
 fn the_user_folder_resolves_from_the_override_else_the_platform_data_folder() {
     let env = |pairs: &'static [(&'static str, &'static str)]| {
         move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| OsString::from(*v))

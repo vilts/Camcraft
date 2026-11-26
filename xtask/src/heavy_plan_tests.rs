@@ -182,6 +182,26 @@ fn review_requires_targeted_heavy_tests_on_both_paths() {
 }
 
 #[test]
+fn review_report_always_has_a_light_lane_result_row() {
+    // #3846: mentioning the light lane in prose did not keep it in reports.
+    let policy = include_str!("../../.claude/agents/PR-reviewer.md");
+    let report = policy
+        .split("7. **Post the review**")
+        .nth(1)
+        .and_then(|s| s.split("8. **Label**").next())
+        .expect("review report template");
+    for required in [
+        "| Step | Result | Head | Evidence |",
+        "| Light lane (`cargo xtask gate light`) | <PASS / FAIL / Not run> | `<headRefOid>` | <where; counts and log/run URL, or reason not run> |",
+        "Include this fixed row in every review comment, also when not built.",
+        "never leave the result blank",
+        "A red light run stays a note, not a blocker by itself.",
+    ] {
+        assert!(report.contains(required), "review report must keep: {required}");
+    }
+}
+
+#[test]
 fn an_owed_heavy_result_is_allowed_for_p3_and_lower_only() {
     // #3467 allowed a P3-or-lower review to defer the heavy lanes; #3556
     // retired that rule. No review defers a heavy result and no merge waits

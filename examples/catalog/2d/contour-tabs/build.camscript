@@ -1,0 +1,48 @@
+// Example catalog case: 2d/contour-tabs (#2392, #2859).
+// Builds contour-tabs.camproj and posts contour-tabs.nc headlessly through
+// CamCraft's undoable command verbs. Run with CWD = this case directory:
+//   camcraft-cli script build.camscript
+
+cam.import("model/contour-tabs.obj", "contour-tabs");
+// Keep the mesh in the project without a link to the script working directory.
+cam.call("set_model_link", { model: "contour-tabs", path: null });
+
+cam.call("set_stock", {
+  box: { dx: 120.0, dy: 80.0, dz: 6.0 }
+});
+
+cam.call("add_tool", { catalog: "EM-0600-4FL", holder: "none" });
+
+cam.call("add_operation", {
+  kind: "2D Contour",
+  name: "2D Contour1",
+  tool: "EM-0600-4FL",
+  source: "contour-tabs",
+  params: {
+    side: "outside",
+    stock_to_leave: 0.0,
+    clearance_z: { reference: "top_of_stock", offset: 15.0 },
+    retract_z: { reference: "top_of_stock", offset: 5.0 },
+    top_z: { reference: "top_of_stock", offset: 0.0 },
+    bottom_z: { reference: "bottom_of_stock", offset: 0.0 },
+    stepdown: 2.0,
+    feed: 1200.0,
+    plunge_feed: 300.0,
+    climb: true,
+    // A merge patch: remove the seeded linear lead, then set the arc.
+    lead: { linear: null, arc: { radius: 3.0 } },
+    links: { approach: { lead_out: { linear: { length: 4.0 } } } },
+    tab_count: 4,
+    tab_width: 8.0,
+    tab_height: 2.0
+  }
+});
+
+cam.generate();
+var verdict = cam.verify();
+if (!verdict.ok) {
+  throw new Error("catalog verify failed: " + JSON.stringify(verdict));
+}
+cam.save("contour-tabs.camproj");
+cam.post({ to: "contour-tabs.nc" });
+cam.report();

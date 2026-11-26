@@ -73,6 +73,9 @@ impl ArcKind {
             ArcKind::Rev(RevKind::Bull { r, corner, flank }) => {
                 ArcKind::Rev(RevKind::Bull { r: *r, corner: *corner, flank: *flank })
             }
+            ArcKind::Rev(RevKind::Dove { r, cot, flank }) => {
+                ArcKind::Rev(RevKind::Dove { r: *r, cot: *cot, flank: *flank })
+            }
         }
     }
 }
@@ -178,7 +181,9 @@ impl ArcPiece {
         match &self.kind {
             ArcKind::Ball { r } => (*r, 0.0),
             ArcKind::Shanked { r, shank } => (*r, *shank),
-            ArcKind::Rev(RevKind::Flat { r, flank }) | ArcKind::Rev(RevKind::Bull { r, flank, .. }) => (*r, *flank),
+            ArcKind::Rev(RevKind::Flat { r, flank })
+            | ArcKind::Rev(RevKind::Bull { r, flank, .. })
+            | ArcKind::Rev(RevKind::Dove { r, flank, .. }) => (*r, *flank),
             ArcKind::Rev(RevKind::Drill { r, cot, flank }) => (*r, flank.max(r * cot)),
             ArcKind::Rev(RevKind::Taper { r, cot }) => (*r, r * cot),
         }
@@ -201,7 +206,7 @@ impl ArcPiece {
     /// `z` from the lowest anchor; a ball or taper piece is bounded.
     pub(crate) fn spans_above(&self, z: f64) -> bool {
         match &self.kind {
-            ArcKind::Ball { .. } | ArcKind::Rev(RevKind::Taper { .. }) => false,
+            ArcKind::Ball { .. } | ArcKind::Rev(RevKind::Taper { .. }) | ArcKind::Rev(RevKind::Dove { .. }) => false,
             _ => self.z0.min(self.z1) + self.tool_reach().1 >= z,
         }
     }
@@ -293,6 +298,7 @@ fn arc_kind(kind: &ToolKind) -> Option<(f64, ArcKind)> {
         ToolKind::Taper { r, cot } => (0.0, ArcKind::Rev(RevKind::Taper { r: *r, cot: *cot })),
         ToolKind::Drill { r, cot, flank } => (0.0, ArcKind::Rev(RevKind::Drill { r: *r, cot: *cot, flank: *flank })),
         ToolKind::Bull { r, corner, flank } => (0.0, ArcKind::Rev(RevKind::Bull { r: *r, corner: *corner, flank: *flank })),
+        ToolKind::Dove { r, cot, flank } => (0.0, ArcKind::Rev(RevKind::Dove { r: *r, cot: *cot, flank: *flank })),
         ToolKind::Lathe { .. } => return None,
     })
 }

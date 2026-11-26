@@ -8,7 +8,7 @@ use crate::geometry::{Point3, Triangle};
 use crate::stock_sim::dist_seg_tri;
 
 use super::params::SPLIT_MZ;
-use super::support::Sup;
+use super::grid::SupSet;
 
 /// One marched piece: XY samples with their ball-center heights.
 pub(super) type Piece = Vec<(Point2, f64)>;
@@ -34,7 +34,7 @@ pub(super) type Piece = Vec<(Point2, f64)>;
 ///   own chord budget as the only slack.
 ///
 /// Anything else (non-finite input included) keeps the break.
-pub(super) fn bridge_line(pieces: Vec<Piece>, r: f64, tol: f64, chord: f64, sups: &[Sup]) -> Vec<Piece> {
+pub(super) fn bridge_line(pieces: Vec<Piece>, r: f64, tol: f64, chord: f64, sups: &SupSet) -> Vec<Piece> {
     let mut out: Vec<Piece> = Vec::with_capacity(pieces.len());
     for pc in pieces {
         let (Some(&(b, zb)), Some(prev)) = (pc.first(), out.last_mut()) else {
@@ -59,7 +59,7 @@ pub(super) fn bridge_ok(
     r: f64,
     tol: f64,
     chord: f64,
-    sups: &[Sup],
+    sups: &SupSet,
 ) -> bool {
     let d = (b.x - a.x).hypot(b.y - a.y);
     // NaN fails every compare below: refused, never a silent pass.

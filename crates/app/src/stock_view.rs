@@ -147,6 +147,13 @@ pub fn field_view_with(world: &flecs_ecs::prelude::World, texels: f64) -> Result
     let (mut stock, planned, cell) = display_parts(world, texels)?;
     let pose_tol = crate::stock_sim::rotary_pose_tol(cell);
     for p in &planned {
+        // #1444: an undercut cutter removes its true head and neck.
+        if let Some(u) = &p.undercut {
+            stock
+                .simulate_undercut(&u.moves, &u.cutter, u.neck_len)
+                .map_err(|e| format!("the field view could not cut the program: {}: {e}", p.name))?;
+            continue;
+        }
         let op = SimOp { moves: &p.moves, radius: p.radius, ball: p.ball, cone: p.cone, corner: p.corner };
         // A rotary op turns the part: its moves are chorded about the
         // fitted axis (M13.1, `stock_sim::rotary`), never cut as the

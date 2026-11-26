@@ -62,7 +62,7 @@ pub fn build(source: &str, place: LathePlacement, zone: Option<InsertZone>, plac
         facets: Arc::clone(&facets),
         csys: Vec::new(),
     }];
-    Ok(ToolBody { source: source.to_owned(), facets, frame: BodyFrame::Lathe { place, zone, clearance: Arc::new(clearance) }, spun: None, machine_default: false, pieces })
+    Ok(ToolBody { source: source.to_owned(), facets, frame: BodyFrame::Lathe { place, zone, clearance: Arc::new(clearance) }, spun: None, machine_default: false, library: None, pieces })
 }
 
 /// Can `tool` carry a lathe body (with insert zone `zone`)? Only a

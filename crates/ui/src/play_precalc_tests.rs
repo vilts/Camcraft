@@ -3,7 +3,7 @@
 //! stored calculation and starts a new one. Provenance: our own
 //! fixtures (a staged face) over the M7.1 field engine.
 //!
-//! Gate map (M4.4): covers ui::play_precalc, ui::actions::ensure_field_view (precalc stamp, #2280 stop line).
+//! Gate map (M4.4): covers ui::play_precalc, ui::actions::ensure_field_view (precalc stamp, #2280 stop line), ui::egui_app::shell (the transport holds its playhead, #2611).
 
 use camcraft_app::commands::{AddTool, CreateOperation, EditOperationParams, GenerateOperation, SetStock};
 use camcraft_app::geometry::{Point3, IDENTITY_Q};
@@ -14,7 +14,7 @@ use camcraft_app::stock_play::Precalc;
 use camcraft_app::tools::catalog;
 
 use crate::actions::ensure_field_view;
-use crate::play_precalc::{playback_stop, precalc_readout, stop_readout};
+use crate::play_precalc::{advance_playhead, holds_playhead, playback_stop, precalc_readout, stop_readout};
 use crate::state::{Sim, State};
 
 fn face(stepover: f64) -> OpParams {
@@ -29,11 +29,12 @@ fn face(stepover: f64) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
+        picks: Default::default(),
     }
 }
 
-fn faced_state() -> State {
+pub(crate) fn faced_state() -> State {
     let mut state = State::new();
     let w = &state.world;
     let loc = Location { pos: Point3::ZERO, rot: IDENTITY_Q };
@@ -83,6 +84,69 @@ fn an_edit_of_the_operation_retires_the_stored_calculation() {
     let after = play.index().total();
     assert!(after > before, "the stored calculation was for {before} moves; the edited program has {after}");
     assert_ne!(play.precalc(), Precalc::Off, "and it calculates again");
+}
+
+/// Texels drawn as material in `fv`'s packed lattice, `max(mesh, cut)
+/// < 0`, with the uncut stock's count (an unclaimed cut texel is
+/// negative, so the uncut stock is the mesh layer alone).
+fn drawn_solid(fv: &camcraft_app::stock_view::FieldView) -> Option<(usize, usize)> {
+    let base = &fv.packed.as_ref()?.base;
+    let cut = camcraft_app::stock_sim::preview::pack_cut(fv.stock.field()?, &base.meta);
+    let uncut = base.mesh.iter().filter(|m| **m < 0.0).count();
+    Some((uncut, base.mesh.iter().zip(&cut).filter(|(m, c)| m.max(**c) < 0.0).count()))
+}
+
+/// #2611: the transport played on while the stock removal was
+/// calculated, and the stock on screen stayed uncut (no frame is
+/// published before the calculation ends): the tool moved over stock
+/// it showed no cut in. The playhead now waits for the calculation, so
+/// the picture is never behind it; once playback runs, the stock that
+/// the frames draw shows the removal.
+#[test]
+fn the_playhead_waits_for_the_calculation_and_then_the_drawn_stock_shows_the_cut() {
+    use std::time::{Duration, Instant};
+    let mut state = faced_state();
+    state.sim = Some(Sim::new());
+    // The eye's first frame starts the playback worker.
+    ensure_field_view(&mut state);
+    let total = crate::egui_app::shell::cached_script(&mut state).total;
+    assert!(total > 1.0, "the face program takes time to play: {total} s");
+    let mut held = 0;
+    for _ in 0..5 {
+        if !holds_playhead(&state) {
+            break;
+        }
+        held += 1;
+        advance_playhead(&mut state, 0.1, total);
+        ensure_field_view(&mut state);
+        let t = state.sim.as_ref().map(|s| s.t);
+        assert_eq!(t, Some(0.0), "the playhead waits while the stock removal is calculated");
+        assert!(state.field_view.is_none(), "no picture before the calculation ends");
+    }
+    assert!(held > 0, "the calculation runs while the first frames play");
+    // Cancel: the calculation stops, the playback goes on and cuts live.
+    state.field_play.as_ref().expect("worker").cancel_precalc();
+    let t0 = Instant::now();
+    while holds_playhead(&state) {
+        assert!(t0.elapsed() < Duration::from_secs(120), "the cancel ends the calculation");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let mut cut_seen = None;
+    while cut_seen.is_none() {
+        let t = state.sim.as_ref().map_or(0.0, |s| s.t);
+        assert!(t < total && t0.elapsed() < Duration::from_secs(300), "no drawn removal up to {t} s of {total} s");
+        advance_playhead(&mut state, 0.1, total);
+        ensure_field_view(&mut state);
+        if let Some(Ok(fv)) = &state.field_view
+            && let Some((uncut, n)) = drawn_solid(fv)
+            && n < uncut
+        {
+            cut_seen = Some((uncut, n));
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let t = state.sim.as_ref().map_or(0.0, |s| s.t);
+    assert!(t > 0.0, "the playhead runs again after the calculation: {t} s; drawn {cut_seen:?}");
 }
 
 /// #2280: an operation with no toolpath after a generated one. The

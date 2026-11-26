@@ -39,7 +39,7 @@ every binary at startup.
 - Every module starts with a one-line provenance comment: what it
   implements and which public source it was written from.
 - No platform-specific assumptions in core code: the same source builds on
-  Windows, Linux, macOS and FreeBSD.
+  Windows, Linux and macOS.
 
 ## Never crash, never gouge
 

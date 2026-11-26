@@ -76,7 +76,7 @@ fn path_of(moves: Vec<Move>) -> Toolpath {
 fn hits_on(body_x: [f64; 2], moves: Vec<Move>) -> Result<Vec<(usize, bool)>, String> {
     let body = LatheClearance::of(&cuboid([body_x[0], -3.0, -4.0], [body_x[1], 3.0, 4.0])).map_err(|e| e.to_string())?;
     let tool = crate::tools::catalog().into_iter().find(|(n, _)| *n == "TN-1600-0R8").map(|(_, t)| t).ok_or("catalog TN-1600-0R8")?;
-    let params = OpParams::ProfileFinish { tolerance: 0.05, clearance_z: Height::fixed(30.0), top_z: Height::fixed(16.0), bottom_z: Height::fixed(0.0), feed: 150.0, plunge_feed: 80.0 };
+    let params = OpParams::ProfileFinish { tolerance: 0.05, clearance_z: Height::fixed(30.0), top_z: Height::fixed(16.0), bottom_z: Height::fixed(0.0), feed: 150.0, plunge_feed: 80.0, picks: Default::default() };
     let path = path_of(moves);
     let part = cylinder(6.0, -16.0, 16.0);
     let cx = Meridian { part: &part, stock: None, nose: 0.8, margin: 0.01, z_tol: 1e-6, drills: &[], band: 0.0, body: None, ahead: &[], outward: None };

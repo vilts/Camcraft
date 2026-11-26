@@ -199,7 +199,7 @@ fn square_to(world: &World, g: &GeoSel, d: Option<[f64; 3]>, axis: [f64; 3], til
 /// a pick cannot set for its role is refused by name, never guessed.
 fn datum_for(world: &World, g: &GeoSel, role: Role) -> Result<Datum, String> {
     let pose = crate::setup_align::view_pose;
-    match (g.feature, role) {
+    match (&g.feature, role) {
         (FeatureSel::Vertex(_), Role::Origin) => Ok(Datum {
             dir: None,
             anchor: vertex(world, g)?,
@@ -223,11 +223,11 @@ fn datum_for(world: &World, g: &GeoSel, role: Role) -> Result<Datum, String> {
         }
         (FeatureSel::Face(_), _) => match outward_normal(world, g, pose)? {
             Some(_) if role == Role::Origin => {
-                let c = face_origin(world, &g.entity, g.feature).map_err(|why| why.to_owned())?;
+                let c = face_origin(world, &g.entity, g.feature.clone()).map_err(|why| why.to_owned())?;
                 Ok(Datum { dir: None, anchor: c.centroid, plane: None, ends: None })
             }
             Some(n) => {
-                let c = face_origin(world, &g.entity, g.feature).map_err(|why| why.to_owned())?;
+                let c = face_origin(world, &g.entity, g.feature.clone()).map_err(|why| why.to_owned())?;
                 Ok(Datum { dir: Some(n), anchor: c.centroid, plane: Some((c.centroid, n)), ends: None })
             }
             // Not flat: a curved face is a wall, and a wall fits its own
@@ -235,6 +235,10 @@ fn datum_for(world: &World, g: &GeoSel, role: Role) -> Result<Datum, String> {
             None => wall_datum(world, g, role),
         },
         (FeatureSel::Patch(_), _) => wall_datum(world, g, role),
+        (FeatureSel::SketchChain(_), _) | (FeatureSel::SketchLayer(_), _) => Err(format!(
+            "{} is a DXF sketch pick - pick a model face, edge or vertex",
+            super::geo_label(world, g)
+        )),
     }
 }
 

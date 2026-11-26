@@ -21,7 +21,7 @@ fn editor_on(tool: &str) -> Harness<'static, ShellUi> {
     harness.run();
     rack(&mut harness.state_mut().state, &[tool]);
     harness.run();
-    crate::actions::open_tool_editor(&mut harness.state_mut().state, tool);
+    crate::actions::open_tool_shape_editor(&mut harness.state_mut().state, tool);
     harness.run();
     harness.run();
     harness

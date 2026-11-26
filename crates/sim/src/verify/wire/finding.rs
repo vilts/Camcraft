@@ -46,7 +46,13 @@ pub enum WireFinding {
     /// stated verify tolerance the reading is past (0 when none is
     /// stated) and `deepest` the deepest reading of any move at any
     /// plane - what a verify tolerance would have to cover (#1170).
-    Gouge { move_no: usize, z: f64, at: Point2, depth: f64, moves: usize, tol: f64, deepest: f64 },
+    /// `chord`: `tol` is the model's chord tolerance, not stated (#3210).
+    Gouge { move_no: usize, z: f64, at: Point2, depth: f64, moves: usize, tol: f64, deepest: f64, chord: bool },
+    /// A constant taper's kerf of move `move_no` (1-based) stands `off`
+    /// mm off a drafted wall at `z`, past the model's chord tolerance
+    /// `tol`, where it cuts that wall at another height (#3210): the
+    /// first such move, and the count of moves that do.
+    Undercut { move_no: usize, z: f64, at: Point2, off: f64, moves: usize, tol: f64 },
     /// The closed cut frees no material.
     NothingFreed { z: f64 },
     /// The piece freed is not the one the stated side drops.
@@ -86,12 +92,18 @@ impl WireFinding {
                 at.y,
                 if *clear <= 0.0 { "at the point itself".to_owned() } else { format!("{clear:.4} mm from it") }
             ),
-            WireFinding::Gouge { move_no, z, at, depth, moves, tol, deepest } => format!(
+            WireFinding::Gouge { move_no, z, at, depth, moves, tol, deepest, chord } => format!(
                 "gouge: the kerf of move {move_no} enters the part by {depth:.4} mm near X{:.3} Y{:.3} at Z{z:.3}{} ({moves} move(s) gouge{})",
                 at.x,
                 at.y,
-                if *tol > 0.0 { format!(", past the stated verify tolerance {tol:.4} mm") } else { String::new() },
+                if *tol > 0.0 { format!(", past {} {tol:.4} mm", tol_name(*chord)) } else { String::new() },
                 if *deepest > *depth + 5e-5 { format!("; the deepest reading at any height is {deepest:.4} mm") } else { String::new() }
+            ),
+            WireFinding::Undercut { move_no, z, at, off, moves, tol } => format!(
+                "undercut: the kerf of move {move_no} stands {off:.4} mm off the part near X{:.3} Y{:.3} at Z{z:.3}, past {} {tol:.4} mm - the taper does not follow the wall's draft and the cut leaves material there; set the taper to the wall's angle ({moves} move(s) undercut)",
+                at.x,
+                at.y,
+                tol_name(true)
             ),
             WireFinding::NothingFreed { z } => format!(
                 "the cut frees no material at Z{z:.3} - nothing drops when it closes (no closed cut, or no stock around the opening to judge the slug)"
@@ -135,8 +147,8 @@ impl WireFinding {
     /// The first plane's gouge, its `deepest` raised to a later plane's.
     pub(super) fn first_gouge(first: Option<Self>, next: Option<Self>) -> Option<Self> {
         match (first, next) {
-            (Some(WireFinding::Gouge { move_no, z, at, depth, moves, tol, deepest }), Some(WireFinding::Gouge { deepest: more, .. })) => {
-                Some(WireFinding::Gouge { move_no, z, at, depth, moves, tol, deepest: deepest.max(more) })
+            (Some(WireFinding::Gouge { move_no, z, at, depth, moves, tol, deepest, chord }), Some(WireFinding::Gouge { deepest: more, .. })) => {
+                Some(WireFinding::Gouge { move_no, z, at, depth, moves, tol, deepest: deepest.max(more), chord })
             }
             (first, next) => first.or(next),
         }
@@ -153,25 +165,39 @@ impl WireFinding {
             _ => None,
         }
     }
+
+    /// The gouge said under the model's chord tolerance (#3210).
+    pub(super) fn under_chord(self) -> Self {
+        match self {
+            WireFinding::Gouge { move_no, z, at, depth, moves, tol, deepest, .. } => {
+                WireFinding::Gouge { move_no, z, at, depth, moves, tol, deepest, chord: true }
+            }
+            f => f,
+        }
+    }
+}
+
+/// The name of the tolerance the kerf law judged under: stated by the
+/// cut (#1170), or the model's chord tolerance (#3210).
+fn tol_name(chord: bool) -> &'static str {
+    if chord { "the model's chord tolerance" } else { "the stated verify tolerance" }
 }
 
 impl WireVerdict {
-    /// The stated verify tolerance the kerf law judged under, and the
-    /// deepest reading it let pass (#1170); `None` when none is stated.
+    /// The verify tolerance the kerf law judged under, and the deepest
+    /// reading it let pass (#1170, #3210); `None` when it is zero.
     #[must_use]
     pub fn tolerance_said(&self) -> Option<String> {
         if self.verify_tol <= 0.0 {
             return None;
         }
+        let name = tol_name(self.chord);
         Some(match &self.under {
             Some(u) => format!(
-                "kerf judged under the stated verify tolerance {:.4} mm: the kerf enters the model's facets by at most {:.4} mm, near X{:.3} Y{:.3} at Z{:.3}",
+                "kerf judged under {name} {:.4} mm: the kerf enters the model's facets by at most {:.4} mm, near X{:.3} Y{:.3} at Z{:.3}",
                 self.verify_tol, u.depth, u.at.x, u.at.y, u.z
             ),
-            None => format!(
-                "kerf judged under the stated verify tolerance {:.4} mm: no reading needed it",
-                self.verify_tol
-            ),
+            None => format!("kerf judged under {name} {:.4} mm: no reading needed it", self.verify_tol),
         })
     }
 }

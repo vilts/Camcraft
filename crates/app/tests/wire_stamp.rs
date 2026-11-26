@@ -54,18 +54,28 @@ fn prism(pts: &[(f64, f64)]) -> Mesh {
 
 fn wire_op(side: WireSide, start: Option<[f64; 2]>) -> WireContourOp {
     WireContourOp {
+        lead_arc_radius: None,
         top_z: Height::fixed(12.0),
         bottom_z: Height::fixed(0.0),
         condition: "C110".into(),
         side,
-        start,
+        picks: camcraft_app::path_picks::PathPicks {
+            start: start
+                .map(|[x, y]| camcraft_app::path_picks::PathPick::xy(camcraft_app::geo2d::Point2::new(x, y)))
+                .into_iter()
+                .collect(),
+            exit: Vec::new(),
+        },
         tabs: None,
         capture: false,
+        both_pieces_restrained: false,
+        stock_centered_in_xy_travel: false,
         taper_deg: 0.0,
         four_axis: None,
         burnout: None,
         clearance: operation::DEFAULT_CLEARANCE,
         skims: Vec::new(),
+        sharp_corners: false,
     }
 }
 
@@ -223,7 +233,9 @@ fn the_four_sides_stamp_apart_and_a_closed_cut_ignores_the_clearance() {
 fn an_unrelated_edit_and_a_round_trip_leave_the_cuts_ok() {
     let (world, mut h) = doc();
     let punch = params(&world, "Punch1");
-    edit(&world, &mut h, "Punch1", WireContourOp { start: Some([-12.0, 25.0]), ..punch });
+    let mut edited = punch.clone();
+    edited.picks.start = vec![camcraft_app::path_picks::PathPick::xy(camcraft_app::geo2d::Point2::new(-12.0, 25.0))];
+    edit(&world, &mut h, "Punch1", edited);
     assert_eq!(status(&world, "Punch1"), OpStatus::Stale, "the punch's own edit is its own");
     assert_eq!(status(&world, "Cutoff1"), OpStatus::Ok, "another op's edit never touches the open run");
     assert!(h.undo(&world));
@@ -251,8 +263,9 @@ fn four(pairing: WirePairingRule, sync: &[(Pt, Pt)], tolerance: f64) -> WireCont
 /// is written only when the block is stated, so this value does not
 /// move; if a toolchain changes `DefaultHasher`, re-pin it only after
 /// checking the arm still writes nothing for `four_axis: None`.
-/// Re-pinned for the v3 stamp salt and the mounted wire tool digest.
-const ONE_PROFILE_STAMP: u64 = 10_941_136_346_482_132_007;
+/// Re-pinned for the v3 stamp salt and the mounted wire tool digest,
+/// and again for the v4 salt (#2901).
+const ONE_PROFILE_STAMP: u64 = 9_618_028_259_464_931;
 
 /// Done means (M3, PR #1181 item 2): the pairing rule, each sync point
 /// on each side of each pair, and the tolerance each move the stamp, so

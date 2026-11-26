@@ -47,6 +47,7 @@ fn opened() -> State {
         hand: ThreadHand::Right,
         external: false,
         passes: camcraft_app::machining2d::ThreadPasses::default(),
+        picks: Default::default(),
     };
     state.history.execute(
         &state.world,

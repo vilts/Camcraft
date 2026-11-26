@@ -85,9 +85,9 @@ fn job_turned(part: bool, rot: [f64; 4], dz: f64) -> (World, History) {
 fn mark(trace: bool, top: f64, bottom: f64) -> OpParams {
     let (clearance_z, top_z, bottom_z) = (Height::fixed(25.0), Height::fixed(top), Height::fixed(bottom));
     if trace {
-        OpParams::Trace { clearance_z, retract_z: None, top_z, bottom_z, stepdown: 10.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None }
+        OpParams::Trace { clearance_z, retract_z: None, top_z, bottom_z, stepdown: 10.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None, picks: Default::default() }
     } else {
-        OpParams::Engrave { clearance_z, retract_z: None, top_z, bottom_z, stepdown: 10.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None }
+        OpParams::Engrave { clearance_z, retract_z: None, top_z, bottom_z, stepdown: 10.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None, picks: Default::default() }
     }
 }
 
@@ -109,10 +109,11 @@ fn slot(a: f64, b: f64, bottom: f64) -> OpParams {
         plunge_feed: 200.0,
         climb: true,
         entry: Entry3D::Plunge,
-        helix_radius: 1.0,
+        helix_radius: 1.0, blend_turns: false, blend_radius: None,
         tilt: None,
         extend_start: 0.0,
         extend_end: 0.0,
+        picks: Default::default(),
     }
 }
 
@@ -137,12 +138,14 @@ fn trochoid(a: f64, b: f64, bottom: f64) -> OpParams {
         return_feed: 2000.0,
         plunge_feed: 200.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
 /// A Circular of `radius` about the pocket's centre, from the top to `bottom`.
 fn circular(radius: f64, bottom: f64) -> OpParams {
     OpParams::Circular {
+        pass_start: Default::default(),
         links: camcraft_app::links::Links::PLANAR,
         center: Point2::new(0.0, 0.0),
         radius,
@@ -160,6 +163,7 @@ fn circular(radius: f64, bottom: f64) -> OpParams {
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
         tilt: None,
+        picks: Default::default(),
     }
 }
 

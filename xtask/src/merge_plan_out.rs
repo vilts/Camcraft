@@ -17,6 +17,10 @@ fn head(p: &Plan, n: u32) -> String {
 /// The plan as the text the skill reads.
 pub fn render(p: &Plan) -> String {
     let mut s = format!("base {}\n", p.base_sha);
+    let _ = writeln!(s, "trial check: {}", if p.checked { "PASS (cargo check --tests; no runtime tests)" } else { "not run; use --check before merging" });
+    for (n, files) in &p.excluded {
+        let _ = writeln!(s, "EXCLUDED #{n} @{}: {}", head(p, *n), files.join(", "));
+    }
     if !p.unknown.is_empty() {
         let _ = writeln!(s, "WARNING: GitHub has not computed mergeability yet for {} - run again before trusting wave 1", refs(&p.unknown));
     }
@@ -93,8 +97,12 @@ fn wave2_entry(p: &Plan, w: &Refresh) -> String {
 pub fn to_json(p: &Plan) -> String {
     let w1: Vec<String> = p.wave1.iter().map(|n| format!("{{{},\"kind\":\"clean\"}}", common(p, *n))).collect();
     let w2: Vec<String> = p.wave2.iter().map(|w| wave2_entry(p, w)).collect();
+    let validation = if p.checked {
+        let excluded = p.excluded.iter().map(|(n, files)| format!("{{{},\"files\":{}}}", common(p, *n), jstrs(files))).collect::<Vec<_>>().join(",");
+        format!(",\"checked\":true,\"excluded\":[{excluded}]")
+    } else { String::new() };
     format!(
-        "{{\"base\":{},\"wave1\":[{}],\"wave2\":[{}],\"unknown\":{}}}\n",
+        "{{\"base\":{},\"wave1\":[{}],\"wave2\":[{}],\"unknown\":{}{validation}}}\n",
         jstr(&p.base_sha),
         w1.join(","),
         w2.join(","),

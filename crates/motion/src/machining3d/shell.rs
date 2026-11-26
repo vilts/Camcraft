@@ -72,6 +72,8 @@
 //! Provenance: our own design, specced from published CAM offset-shell
 //! roughing behavior, per the Clean-Room Protocol.
 
+use camcraft_sim::verify::{AVOID_PAD, AvoidSpec};
+
 use crate::geo2d::Point2;
 use crate::geometry::Triangle;
 
@@ -85,14 +87,29 @@ struct TriBox {
     zmax: f64,
 }
 
+struct AvoidRoofBox {
+    x0: f64,
+    x1: f64,
+    y0: f64,
+    y1: f64,
+    /// Protected tip height floor (`item_zmax + req_clear`).
+    tip_z: f64,
+}
+
 pub(super) struct Field {
     tris: Vec<TriBox>,
+    avoid: Vec<AvoidRoofBox>,
 }
 
 impl Field {
+    /// Box the model without protected-item roofs.
+    pub(super) fn new(facets: &[Triangle]) -> Result<Self, String> {
+        Self::new_with_avoid(facets, None)
+    }
+
     /// Box the model. A non-finite vertex is a corrupt model, said by
     /// name, exactly as the waterline scan says it.
-    pub(super) fn new(facets: &[Triangle]) -> Result<Self, String> {
+    pub(super) fn new_with_avoid(facets: &[Triangle], avoid_spec: Option<&AvoidSpec>) -> Result<Self, String> {
         let mut tris = Vec::with_capacity(facets.len());
         for f in facets {
             if !(f.a.is_finite() && f.b.is_finite() && f.c.is_finite()) {
@@ -106,7 +123,31 @@ impl Field {
                 zmax: f.a.z.max(f.b.z).max(f.c.z),
             });
         }
-        Ok(Self { tris })
+        let mut avoid = Vec::new();
+        if let Some(av) = avoid_spec {
+            let pad = av.clearance.max(0.0) + AVOID_PAD;
+            for item in &av.items {
+                for f in &item.tris {
+                    avoid.push(AvoidRoofBox {
+                        x0: f.a.x.min(f.b.x).min(f.c.x),
+                        x1: f.a.x.max(f.b.x).max(f.c.x),
+                        y0: f.a.y.min(f.b.y).min(f.c.y),
+                        y1: f.a.y.max(f.b.y).max(f.c.y),
+                        tip_z: f.a.z.max(f.b.z).max(f.c.z) + pad,
+                    });
+                }
+                for &(a, b) in &item.edges {
+                    avoid.push(AvoidRoofBox {
+                        x0: a[0].min(b[0]),
+                        x1: a[0].max(b[0]),
+                        y0: a[1].min(b[1]),
+                        y1: a[1].max(b[1]),
+                        tip_z: a[2].max(b[2]) + pad,
+                    });
+                }
+            }
+        }
+        Ok(Self { tris, avoid })
     }
 
     /// The conservative roof: the highest facet zmax whose XY box
@@ -125,6 +166,19 @@ impl Field {
         top
     }
 
+    fn avoid_roof(&self, q: Point2, rad: f64) -> Option<f64> {
+        let r2 = rad * rad;
+        let mut top: Option<f64> = None;
+        for t in &self.avoid {
+            let dx = (q.x - t.x1).max(t.x0 - q.x).max(0.0);
+            let dy = (q.y - t.y1).max(t.y0 - q.y).max(0.0);
+            if dx * dx + dy * dy <= r2 {
+                top = Some(top.map_or(t.tip_z, |z| z.max(t.tip_z)));
+            }
+        }
+        top
+    }
+
     /// The shell tip of the cut VERTEX `q` of a level at plane `z`:
     /// never above the plane, never below the level's own stepdown
     /// budget (`floor_z` - the same axial bite a plain ladder's dive
@@ -133,10 +187,13 @@ impl Field {
     /// promised this vertex: `r + ℓ`, widened only for a sweep wider
     /// than any chord reaching it (a helix orbit, by its radius).
     pub(super) fn tip(&self, q: Point2, z: f64, rad: f64, leave: f64, floor_z: f64) -> f64 {
-        match self.roof(q, rad) {
-            // Pure air within the corridor: the plain level cut.
-            None => z,
-            Some(roof) => z.min(roof + leave).max(floor_z),
+        let part = self.roof(q, rad).map(|roof| roof + leave);
+        let avoid = self.avoid_roof(q, rad);
+        match (part, avoid) {
+            (None, None) => z,
+            (Some(p), None) => z.min(p).max(floor_z),
+            (None, Some(a)) => z.min(a).max(floor_z),
+            (Some(p), Some(a)) => z.min(p.max(a)).max(floor_z),
         }
     }
 }

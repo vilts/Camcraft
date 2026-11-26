@@ -133,10 +133,11 @@ pub(super) fn default_machine_problems(world: &World) -> Vec<String> {
     let v = match default_machine_checked() {
         Ok(v) => v,
         Err(why) => {
-            // #2319: the refusal names the setups that post with it.
+            // Name the setups and operations that need the default machine.
             let named: Vec<&str> = bare.iter().map(String::as_str).filter(|n| !n.is_empty()).collect();
             let who = if named.is_empty() { "the setup".to_owned() } else { named.join(", ") };
-            return vec![format!("machine of {who}: {why}")];
+            let operations: Vec<&str> = ops.iter().map(|(name, _)| name.as_str()).collect();
+            return vec![format!("machine of {who} for {}: {why}", operations.join(", "))];
         }
     };
     let m = default_limits(&v);

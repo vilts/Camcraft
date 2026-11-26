@@ -26,6 +26,8 @@ pub struct DrillAhead {
 /// alone (less removed, never more).
 pub struct TurnedAhead {
     pub nose: f64,
+    /// Half-width of a grooving blade (#2878); 0 for non-blade tools.
+    pub band: f64,
     pub moves: Vec<Move>,
 }
 
@@ -37,7 +39,7 @@ pub fn turned_ahead(world: &World, name: &str, setup: Option<&str>) -> Vec<Turne
     ahead_of(world, name, setup, true)
         .into_iter()
         .filter(|a| a.cut && a.kind.info().family() == crate::operation::Family::Turn)
-        .map(|a| TurnedAhead { nose: a.nose.unwrap_or(0.0), moves: a.moves })
+        .map(|a| TurnedAhead { nose: a.nose.unwrap_or(0.0), band: a.band, moves: a.moves })
         .collect()
 }
 

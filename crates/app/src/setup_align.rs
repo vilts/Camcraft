@@ -22,11 +22,12 @@
 //!   then calls the very function it called before #326, so an untouched
 //!   setup is byte-identical (paths, stamps, posts and saved files).
 //! - **Refuse what is not verified.** Generation in an aligned setup is
-//!   wired for the 17 verified 2D/3D/hole mill kinds (`Face`, `Contour`,
+//!   wired for the 18 verified 2D/3D/hole mill kinds (`Face`, `Contour`,
 //!   `Pocket`, `Adaptive2D`, `Offset2D`, `Trace`, `Engrave`, `Chamfer2D`,
 //!   `Circular`, `Slot`, `TrochoidalSlot`, `Drill`, `Bore`, `Thread`,
-//!   `Deburr`, `Pocket3D`, `Finish3D` - area controls and `Detect holes`
-//!   included: #1743, #2210, #2276) on `Mill` and `MillTurn`, the 10
+//!   `Deburr`, `Pocket3D`, `Finish3D`, `Probe` - area controls and
+//!   `Detect holes` included: #1743, #2210, #2276; the probe's pick
+//!   reads the setup frame: #2285) on `Mill` and `MillTurn`, the 10
 //!   5-axis and rotary kinds (`Contour5D`, `Parallel5D`, `Swarf`,
 //!   `AdvancedSwarf`, `RotaryContour`, `RotaryParallel`, `RotaryOffset`,
 //!   `MultiAxisRough`, `Flow5D`, `MultiAxisContour`; `drive_chains` and
@@ -34,7 +35,7 @@
 //!   turning kinds on `MillTurn`, all 12 turning kinds and `Drill` on
 //!   `Lathe`, `PlasmaProfile` on `Plasma`, `WireContour` (including 4-axis
 //!   ruled picks) on `WireEdm`, and `SinkerBurn` (including
-//!   `electrode_from_faces`) on `SinkerEdm`. `Probe`, 5-axis/rotary on
+//!   `electrode_from_faces`) on `SinkerEdm`. 5-axis/rotary on
 //!   non-`Mill` machines, a tilted plane and `Waterjet` are refused by
 //!   name ([`generation_problem`]).
 
@@ -59,6 +60,61 @@ pub fn stored(world: &World, setup: &str) -> Option<Location> {
 #[must_use]
 pub fn alignment(world: &World, declared: Option<&str>) -> Option<Location> {
     crate::setup::effective(world, declared).and_then(|s| stored(world, &s))
+}
+
+/// The least share of the part's turning axis that must lie along the
+/// document Z (to count as modelled standing) and along the spindle (to
+/// count as held up it): a clear limit, never a decision at 0.
+pub const PART_OFF_UP: f64 = 0.5;
+
+/// Why this setup cannot say which end of the part is free (#3452).
+/// The Part arm refuses with it only where the model goes on past the
+/// parting plane on both sides: there the chuck-side rule decides which
+/// piece is the part, and that rule means "the piece at the free end, as
+/// modelled". At an end of the model the model itself is the part, and
+/// no setup can turn that wrong.
+///
+/// What fixes the sign: the part AS MODELLED is the as-modelled setup
+/// (no alignment), which holds the document +Z up the spindle. The
+/// part's own turning axis is fitted on `facets` (the setup frame) and
+/// read back into the document frame:
+/// - modelled standing (the axis at least [`PART_OFF_UP`] along the
+///   document Z): the setup holds it as modelled when the document-up end
+///   of the axis points up the spindle by [`PART_OFF_UP`] or more; end
+///   for end when it points down by as much; anything between is no
+///   clear hold;
+/// - modelled lying down (along X or Y): no setup is "as modelled", so
+///   nothing says which end the user means as free.
+///
+/// `None` with no alignment (as modelled), or where no axis can be
+/// fitted (the kernel refuses that by name).
+#[must_use]
+pub fn part_off_problem(facets: &[Triangle], a: Option<Location>) -> Option<String> {
+    let a = a?;
+    let d = crate::multiaxis::axis::fit(facets).ok()?.dir;
+    let n = d.dot(d).sqrt();
+    if !n.is_finite() || n <= 0.0 {
+        return None;
+    }
+    let doc = quat_rotate_point(quat_conjugate(a.rot), d);
+    let why = if doc.z.abs() / n < PART_OFF_UP {
+        "the part is modelled lying down, so the setup cannot say which end of it is the free end"
+    } else {
+        let up = doc.z.signum() * d.z / n;
+        if up >= PART_OFF_UP {
+            return None;
+        }
+        if up <= -PART_OFF_UP {
+            "the setup holds the part end for end, so the chuck holds the end that is free as modelled"
+        } else {
+            "the setup does not stand the part's axis along the spindle, so its free end cannot be read"
+        }
+    };
+    Some(format!(
+        "a part-off cannot run here: the model goes on past the parting plane on both sides, and {why}. \
+         Which piece to keep cannot be chosen yet - put the parting plane at an end of the model, or part \
+         off in a setup that holds the part as modelled"
+    ))
 }
 
 /// Does any setup of the document hold the part aligned?
@@ -128,7 +184,7 @@ pub fn facets_in(world: &World, entity: &Entity, declared: Option<&str>) -> Opti
     )
 }
 
-fn bounds(points: impl Iterator<Item = Point3>) -> Option<Aabb> {
+pub(crate) fn bounds(points: impl Iterator<Item = Point3>) -> Option<Aabb> {
     let mut min = [f64::MAX; 3];
     let mut max = [f64::MIN; 3];
     let mut any = false;
@@ -379,7 +435,7 @@ fn verified_mill(params: &crate::operation::OpParams) -> bool {
             | OpParams::Offset2D { .. } | OpParams::Trace { .. } | OpParams::Engrave { .. }
             | OpParams::Chamfer2D { .. } | OpParams::Circular { .. } | OpParams::TrochoidalSlot { .. } | OpParams::Slot { .. }
             | OpParams::Drill { .. } | OpParams::Bore { .. } | OpParams::Thread { .. } | OpParams::Deburr { .. }
-            | OpParams::Pocket3D { .. } | OpParams::Finish3D { .. }
+            | OpParams::Pocket3D { .. } | OpParams::Finish3D { .. } | OpParams::Probe { .. }
     )
 }
 
@@ -390,7 +446,10 @@ fn verified_multiaxis(params: &crate::operation::OpParams) -> bool {
         OpParams::Contour5D { .. } | OpParams::Parallel5D { .. } | OpParams::Swarf { .. }
             | OpParams::AdvancedSwarf { .. } | OpParams::RotaryContour { .. } | OpParams::RotaryParallel { .. }
             | OpParams::RotaryOffset { .. } | OpParams::MultiAxisRough { .. } | OpParams::Flow5D { .. }
-            | OpParams::MultiAxisContour { .. }
+            | OpParams::MultiAxisContour { .. } | OpParams::MultiAxisDeburr { .. }
+            // The flow band verifies under the same radial law
+            // (#2826).
+            | OpParams::RotaryFlow { .. }
     )
 }
 
@@ -438,7 +497,7 @@ pub fn generation_problem(world: &World, op: &crate::schema::Operation) -> Optio
         if kind == crate::machine::Kind::Mill {
             return Some(format!(
                 "{head} - {label} is not supported yet in an aligned setup (Face, 2D Contour, 2D Pocket, \
-                 2D Adaptive, 2D Offset, Trace, Engrave, 2D Chamfer, Circular, Slot, Trochoidal Slot, Drill, Bore, Thread, Deburr, 3D Pocket, 3D Finish, 5-Axis Contour, 5-Axis Parallel, Swarf, Advanced Swarf, Rotary Contour, Rotary Parallel, Rotary Offset, Multi-Axis Rough, 5-Axis Flow and Multi-Axis Contour are); set the setup's part alignment back to As modelled, or machine it in another setup"
+                 2D Adaptive, 2D Offset, Trace, Engrave, 2D Chamfer, Circular, Slot, Trochoidal Slot, Drill, Bore, Thread, Probe, Deburr, 3D Pocket, 3D Finish, 5-Axis Contour, 5-Axis Parallel, Swarf, Advanced Swarf, Rotary Contour, Rotary Parallel, Rotary Offset, Multi-Axis Rough, 5-Axis Flow and Multi-Axis Contour are); set the setup's part alignment back to As modelled, or machine it in another setup"
             ));
         }
         return Some(format!(

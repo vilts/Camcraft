@@ -4,8 +4,9 @@ use crate::cl::{lattice, MoveKind, PathBuilder};
 use crate::geo2d::Point2;
 use crate::geometry::Point3;
 
-use super::params::Finish3DParams;
-use super::support::{Sup, support_at};
+use super::params::{Finish3DParams, GapLink};
+use super::grid::SupSet;
+use super::support::{support_at};
 /// Append a sample to the piece being marched. Runs are walked once;
 /// only the zero-length duplicate a finished bisection can leave
 /// behind is refused. The stored point rides the micron lattice
@@ -281,6 +282,7 @@ fn march_curve_seek(
 }
 
 /// The ladder's own choreography: curve to curve inside one pass
+/// links straight when `gap_link`'s sweep certifies the link, else
 /// hops at `hop` (the retract FEEDed up, so the envelope sees the
 /// column it vacates); pass to pass climbs to clearance with
 /// rapids, like a level change among rings; the very first entry
@@ -303,7 +305,7 @@ pub(super) const RAMP_PROBE_MAX: i64 = 4096;
 /// legal centers - linear z between them can only ride ABOVE a
 /// constant support, so the loop proves it and no special case is
 /// needed. Too long to certify within the probe cap: refused, hop.
-pub(super) fn diagonal_ok(from: Point3, to: Point3, r: f64, p: &Finish3DParams, sups: &[Sup]) -> bool {
+pub(super) fn diagonal_ok(from: Point3, to: Point3, r: f64, p: &Finish3DParams, sups: &SupSet) -> bool {
     let d = (to.x - from.x).hypot(to.y - from.y);
     if !(d.is_finite() && to.x.is_finite() && to.y.is_finite() && to.z.is_finite()) {
         return false;
@@ -346,11 +348,12 @@ pub(super) fn emit_runs(
     b: &mut PathBuilder,
     p: &Finish3DParams,
     r: f64,
-    sups: &[Sup],
+    sups: &SupSet,
     runs: &[Vec<(Point2, f64)>],
     continuing: bool,
 ) {
     let hop = p.retract_z.unwrap_or(p.clearance_z).min(p.clearance_z);
+    let model_top = sups.iter().flat_map(|s| s.tri.iter().map(|v| v.z)).fold(f64::NEG_INFINITY, f64::max);
     for (i, run) in runs.iter().enumerate() {
         let (x0, y0) = (run[0].0.x, run[0].0.y);
         let z0 = run[0].1 - r;
@@ -366,8 +369,23 @@ pub(super) fn emit_runs(
             // run's first point, so the plunge below collapses to
             // nothing by push's own zero-length law.
             b.push(MoveKind::Feed, Point3::new(x0, y0, z0), Some(p.feed));
+        } else if p.gap_link == GapLink::Straight
+            && super::gaplink::straight_ok(cur, Point3::new(x0, y0, z0), r, sups)
+        {
+            // The smoothest link the facets certify: one straight
+            // move at the run ends' own heights, no hop at all -
+            // and the plunge below collapses to nothing the same
+            // way. Where the sweep refuses, the plain hop below
+            // stands, byte for byte as every older file ran.
+            b.push(MoveKind::Feed, Point3::new(x0, y0, z0), Some(p.feed));
         } else {
-            let trav = hop.max(z0);
+            // The plain hop (#3627): never below the run end (the tool
+            // rests on the part there), and across only at a plane over
+            // every facet or one the exact sweep clears - else clearance.
+            let trav = hop.max(z0).max(cur.z);
+            let (a, c) = (Point3::new(cur.x, cur.y, trav), Point3::new(x0, y0, trav));
+            let clear = trav >= model_top || super::gaplink::straight_ok(a, c, r, sups);
+            let trav = if clear { trav } else { p.clearance_z.max(trav) };
             b.push(MoveKind::Feed, Point3::new(cur.x, cur.y, trav), Some(p.feed));
             b.push(MoveKind::Rapid, Point3::new(x0, y0, trav), None);
         }

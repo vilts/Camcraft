@@ -61,6 +61,7 @@ fn op() -> Operation {
             plunge_feed: 80.0,
             holes: vec![],
             cross: vec![hole()],
+            picks: Default::default(),
         },
         stamp: None,
         setup: None,

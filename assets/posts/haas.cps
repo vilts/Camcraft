@@ -15,6 +15,7 @@ setCodePage = "utf-8";
 capabilities = 1; // reference contract: integer feature mask (bit 1 = milling)
 coolantModes = true; // reads PARAM Coolant (#112/#150): the engine refuses non-Flood ops for a post without it
 afterModes = true; // reads PARAM AfterOperation (#110): the engine refuses a stop or home ask for a post without it
+fineBoring = true; // #1445: writes G76 with the I and J shift words (Haas Mill Operator's Manual, G76 Fine Boring Canned Cycle)
 axisInversion = true; // verified on the engine's mirrored stream for an inverted X/Y (#374): goldens + equivalence test
 probeAxisInversion = true; // probing blocks verified on the mirrored stream (#392): macro interpreter on a simulated inverted machine
 workOffsetIndex = true; // reads PARAM WorkOffset as the 1-based offset number (#931)
@@ -103,7 +104,7 @@ function has(v) { return v !== null && v !== undefined && isFinite(v); }
 // #902: the program's unit is the document's (postOptions.Units, "mm"
 // or "inch"; absent = mm), never the machine file's. The stream speaks
 // mm and mm/min: an inch program writes every length / 25.4 at four
-// decimals and every feed in in/min at two; angles, seconds and rpm
+// decimals and every feed in in/min at four (#3694); angles, seconds and rpm
 // carry no length and are written as they come.
 var inch = false;
 function trimNum(s) {
@@ -121,9 +122,40 @@ function fn(v) {  // a length as text (comments): mm at three decimals, or inch 
 }
 function fu(v) { return pt(fn(v)); }  // a length word, with its point
 function fa(v) { return pt(has(v) ? trimNum(Number(v).toFixed(3)) : "0"); }  // angle (deg) at 3 decimals with point
-function ff(v) {  // a feed: whole mm/min, or in/min at two decimals
-  if (!(has(v) && v > 0)) return "0";
-  return inch ? trimNum((v / 25.4).toFixed(2)) : String(Math.round(v));
+// #3681: a feed word always carries its decimal point too (`F600.`, never
+// `F600`). Haas Setting 77 (Scale Integer F; Haas Mill Operator's Manual
+// 96-8000, Settings, "77 - Scale Integer F") scales an F word with no
+// point: at its default an mm control reads F600 as 0.6 mm/min. With the
+// point, every value of Setting 77 reads the same feed.
+// #3694: a feed keeps its fraction - mm/min at three decimals, in/min at
+// four, trailing zeros trimmed (`F600.`, `F34.5`, `F1.3583`). A G84 tap
+// feeds at pitch x rpm, and the control cuts the pitch F / S: a feed
+// rounded to a whole mm/min (34.5 to F35.) cuts a wrong pitch. The stream
+// carries 0.001 mm/min, so an mm feed posts as the stream states it.
+function ff(v) {
+  if (!(has(v) && v > 0)) return "0.";
+  var s = trimNum(Number(inch ? v / 25.4 : v).toFixed(inch ? 4 : 3));
+  // A feed below one output step is refused, never written as F0.
+  if (Number(s) === 0) msg("feed rate " + v + " mm/min is below the smallest feed this post writes");
+  return pt(s);
+}
+// #3694: the pitch a G84 block cuts is F / S as written. A feed or a speed
+// that the words cannot hold exactly moves that pitch; more than 0.01
+// percent off the stream's pitch (feed / rpm) is refused by name. Returns
+// false when refused.
+function tapPitchHolds(v) {
+  if (!(sRpm > 0)) return true;   // spindleStopped() refuses this case
+  var sOut = Math.round(sRpm);
+  var fOut = Number(ff(v)) * (inch ? 25.4 : 1);
+  var want = v / sRpm;
+  var got = sOut > 0 ? fOut / sOut : 0;
+  var err = Math.abs(got - want) / want;
+  if (err > 1e-4) {
+    msg("canned cycle G84 (tap) feed " + v + " mm/min at " + sRpm + " rpm posts as F" + ff(v) + " S" + sOut +
+      " - refused: the written pitch is " + (err * 100).toFixed(3) + " percent off the tap pitch (limit 0.01 percent)");
+    return false;
+  }
+  return true;
 }
 function eps() { return inch ? "0.0001" : "0.001"; } // one output step, the probe checks' band
 function ni(v) { return has(v) ? String(Math.round(v)) : "0"; } // integer word
@@ -217,6 +249,7 @@ function retractHome(xyToo) {
 }
 function xyz(p) { return [wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ)]; }
 function wo(letter, v, o) { return has(v) ? letter + fu(v - o) : ""; }  // axis word, origin-relative
+function arcWord(k, v) { return wo(k, v, k === "X" ? orgX : (k === "Y" ? orgY : orgZ)); }  // #3442: a position word as written, for arcFate
 function msg(s) {  // counted warning where the host offers message()
   if (typeof message === "function") message(s); else writeln("; " + s);
 }
@@ -390,6 +423,8 @@ function joinDash(parts) {  // the non-empty parts, " - " between
   return a.join(" - ");
 }
 function note(s) { block(["(" + s + ")"]); }
+// Program notes use this dialect without truncating the stated bound.
+function onComment(s) { note(commentText(s)); }
 function commentParam(name, value) {
   if (name === "SetupName") setupName = clean(value);
   else if (name === "OperationName") opName = clean(value);
@@ -659,8 +694,15 @@ function onSectionEnd() { endPreamble(); hopZ = null; clearZ = null; }  // #1028
 // the program moves between holes at the hop the path was verified at,
 // never at R. A cut leaving the hole is no chain a cycle replaces:
 // refused by name.
+// #1445: a fine bore (G76) shifts off the wall at the bottom, rapids out
+// at the shifted XY and shifts back at R. The control makes those three
+// rapids itself, so the chain's copies are the cycle's own: at the hole's
+// XY or at the shifted XY, at or below R.
+var fineOpen = false, fineX = 0, fineY = 0;  // the open G76 group's shifted XY (world)
 function onHole(p) {
-  return Math.abs(p.X - cycX) < 1e-6 && Math.abs(p.Y - cycY) < 1e-6 && p.Z <= cycR + 1e-6;
+  if (!(p.Z <= cycR + 1e-6)) return false;
+  if (Math.abs(p.X - cycX) < 1e-6 && Math.abs(p.Y - cycY) < 1e-6) return true;
+  return fineOpen && Math.abs(p.X - fineX) < 1e-6 && Math.abs(p.Y - fineY) < 1e-6;
 }
 function chainRapid() {  // true: the open group's own retract, swallowed
   seatKnown = true;
@@ -823,6 +865,9 @@ function emitArcWithRadius(p, g, fwd) {
 function onCircular() {
   startPreamble();
   compRefuse("an arc");
+  // #3442: an arc whose written ends coincide is no arc block (arcFate, PRELUDE).
+  var fate = arcFate(arcWord, arcIncOf(fu));  // #3474: I J K are increments from the start
+  if (fate !== "arc") { if (fate === "linear") onLinear(); return; }
   if (!tiltOk(properties) || chainCut()) return;
   if (spindleStopped("arc move " + (properties.CircularDirection === "CW" ? "G2" : "G3"))) return;
   var p = properties;
@@ -898,6 +943,7 @@ function onCycle() {
   else if (p.CycleType === "BORE") g = "G86";
   else if (p.CycleType === "BACKBORE") g = "G89";
   else if (p.CycleType === "REAM") g = "G85";   // #1445: feed in, feed out at F, no dwell
+  else if (p.CycleType === "FINEBORE") g = "G76"; // #1445: feed in, dwell, oriented stop, shift I J, rapid out
   else {
     // #1445: a cycle kind this post does not know is refused by name,
     // never posted as the G81 default (a rapid out it never asked for).
@@ -926,14 +972,34 @@ function onCycle() {
     msg("canned cycle " + g + " dwell is not supported by this post - a " + p.P + " s dwell is refused, not dropped; set the dwell to 0");
     return;
   }
+  // #1445: G76 shifts the stopped tool by I (along X) and J (along Y)
+  // before the rapid out (Haas G76: I and J, used when Q is not; Q takes
+  // its direction from Setting 27, which a program cannot state, so this
+  // post never writes Q). The shift is the chain's own move. With no
+  // shift the tip drags up the finished wall: refused by name.
+  var fine = g === "G76";
+  if (fine && !(has(p.ShiftX) && has(p.ShiftY) && (Math.abs(p.ShiftX) > 1e-9 || Math.abs(p.ShiftY) > 1e-9))) {
+    msg("canned cycle G76 (fine bore) has no shift - refused: the stopped tip would drag up the finished wall; state the shift X and Y");
+    return;
+  }
+  // Read the same unit conversion and rounding that w uses for I and J.
+  // A nonzero millimetre shift can become zero in an inch program.
+  if (fine && Number(fn(p.ShiftX)) === 0 && Number(fn(p.ShiftY)) === 0) {
+    msg("canned cycle G76 (fine bore) shift rounds to zero in the output unit - refused: the stopped tip would drag up the finished wall");
+    return;
+  }
   if (spindleStopped("canned cycle " + g)) return;
+  if (g === "G84" && !tapPitchHolds(p.FeedRate)) return;
   if (!xyFirst(p.X, p.Y, p.R, false)) return;  // #1633: refused - the move is not written
   cycleSeat(p);
   var sig = g + "|" + p.Z + "|" + p.R + "|" + p.Q;
+  // #1445: every G76 hole posts its whole block - the I and J words are
+  // never left to the control's modal memory.
+  if (fine) sig += "|" + p.X + "|" + p.Y + "|" + p.ShiftX + "|" + p.ShiftY;
   // #1820, #2350: Haas keeps P modal on its dwell cycles (G82, G83, G89 -
   // Haas G82/G89 formats read P as the bottom dwell). A changed dwell must
   // reopen the cycle so every hole posts its own P, never the last one's.
-  var dwellCycle = g === "G82" || g === "G83" || g === "G89";
+  var dwellCycle = g === "G82" || g === "G83" || g === "G89" || fine;  // #1445: G76 reads P as its bottom dwell
   if (dwellCycle) sig += "|" + ms;
   if (inCycle && sig === cycleSig) {
     block([wo("X", p.X, orgX), wo("Y", p.Y, orgY)]);
@@ -945,6 +1011,8 @@ function onCycle() {
     if ((p.CycleType === "PECK" || p.CycleType === "DEEP") && has(p.Q) && p.Q > 0) {
       words.push(w("Q", p.Q));
     }
+    // I and J are increments (the shift), not positions: no origin shift.
+    if (fine) words.push(w("I", p.ShiftX), w("J", p.ShiftY));
     // Haas G83/G04 documentation: integer P is milliseconds. P0 clears
     // a previous dwell; omitting P would reuse it even after a new G82,
     // G83 or G89 (#2350).
@@ -954,6 +1022,8 @@ function onCycle() {
     cycleSig = sig;
   }
   cycX = p.X; cycY = p.Y; cycR = p.R;
+  fineOpen = fine;
+  if (fine) { fineX = p.X + p.ShiftX; fineY = p.Y + p.ShiftY; }
   seatKnown = true;
   inCycle = true;
 }

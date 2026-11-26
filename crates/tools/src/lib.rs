@@ -14,6 +14,8 @@ pub mod catalog_asset;
 #[cfg(test)]
 mod catalog_asset_tests;
 pub mod cutting;
+// #3068: the router chip-load curve by cutter diameter.
+pub mod cutting_router;
 // #541: the sinker EDM electrode as a tool record.
 pub mod electrode;
 // #1152: the body electrode's outline law.
@@ -22,6 +24,8 @@ pub mod electrode_outline;
 pub mod holder_profile;
 // #793: the built-in BT/CAT taper holder library, drawn as spun profiles.
 pub mod holder_library;
+// #3367: the tool meridian (lines and arcs) and its convex atoms.
+pub mod meridian;
 // #93: a drawn revolved (spun) profile for milling tools and holders.
 pub mod spun;
 // #93 slice 2: a milling tool's own drawn cutter, checked against its numbers.
@@ -39,14 +43,29 @@ pub mod orientation;
 // #894: the thread mills - form constants, sanity and the pitch door.
 pub mod thread_mill;
 pub mod thread_hand;
+// #1444: the undercut cutters - T-slot, keyseat, dovetail, lollipop.
+pub mod undercut;
 pub mod catalog_fields;
 // #890: a tool's cutting data per workpiece material.
 pub mod cutting_rows;
 pub mod waterjet;
+// #1521: a torch's cut-data recipe per material and plate thickness.
+pub mod plasma_cut;
 pub mod wire;
 pub mod tools;
+// #3368: a tapered mill's tip form (sharp, flat, ball) and its geometry.
+pub mod taper;
+// #3369: a form mill's outline, pilot bearing and router bit presets.
+pub mod form_mill;
 // #1186: the tool sanity law, said by name.
 pub mod tool_sanity;
+// #2566: machine controller tool tables (Tormach PathPilot CSV, Hurco WinMax TCM).
+pub mod tool_table;
+mod tool_table_hurco;
+mod tool_table_hurco_export;
+mod tool_table_pathpilot;
+mod tool_table_pathpilot_desc;
+mod tool_table_xml;
 // #891: turning surface speed, feed per rev and the max-rpm clamp.
 pub mod turning_data;
 

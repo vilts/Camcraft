@@ -8,6 +8,7 @@ use camcraft_app::geometry::{Aabb, Triangle};
 use camcraft_app::model;
 use camcraft_app::operation::{self, Height, OpParams, SrcRef, Tilt};
 use camcraft_app::schema::{Location, Operation, SetupDef};
+use camcraft_app::sketch_data::SketchData;
 use camcraft_app::units::Unit;
 use flecs_ecs::prelude::{Entity, World};
 
@@ -18,11 +19,20 @@ impl PartialEq for Mesh {
     }
 }
 
+struct SketchPtr(Weak<SketchData>);
+impl PartialEq for SketchPtr {
+    fn eq(&self, rhs: &Self) -> bool {
+        self.0.ptr_eq(&rhs.0)
+    }
+}
+
 #[derive(PartialEq)]
 struct Body {
     name: String,
     entity: Entity,
     mesh: Option<Mesh>,
+    sketch: Option<SketchPtr>,
+    sketch_setup: Option<String>,
     pose: Option<Location>,
     stock: bool,
     fixture: bool,
@@ -58,10 +68,13 @@ impl Key {
                 .into_iter()
                 .map(|(name, entity)| {
                     let mesh = model::facets_of(world, &entity);
+                    let sk = camcraft_app::sketch::sketch_of(world, &entity);
                     Body {
                         name,
                         entity,
                         mesh: mesh.map(|m| Mesh(Arc::downgrade(&m))),
+                        sketch: sk.as_ref().map(|s| SketchPtr(Arc::downgrade(&s.data))),
+                        sketch_setup: sk.and_then(|s| s.setup),
                         pose: model::transform_of(world, &entity),
                         stock: model::is_stock(world, &entity),
                         fixture: model::is_fixture(world, &entity),
@@ -86,6 +99,13 @@ struct AdviceKey {
     this: Option<String>,
 }
 
+#[derive(PartialEq)]
+struct UnresolvedKey {
+    geometry: Key,
+    src: Option<SrcRef>,
+    params: OpParams,
+}
+
 struct Entry {
     key: Key,
     bounds: Option<Option<Aabb>>,
@@ -96,6 +116,56 @@ thread_local! {
     static BUILDS: Cell<u64> = const { Cell::new(0) };
     static ADVICE: RefCell<Option<(AdviceKey, Option<String>)>> = const { RefCell::new(None) };
     static ADVICE_BUILDS: Cell<u64> = const { Cell::new(0) };
+    static UNRESOLVED: RefCell<Vec<(UnresolvedKey, Option<String>)>> = const { RefCell::new(Vec::new()) };
+    static UNRESOLVED_BUILDS: Cell<u64> = const { Cell::new(0) };
+}
+
+/// The pane-wide unresolved-heights note, cached by geometry, source and params.
+pub(crate) fn unresolved_note(
+    world: &World,
+    setup: Option<&str>,
+    src: Option<&SrcRef>,
+    params: &OpParams,
+) -> Option<String> {
+    let key = UnresolvedKey {
+        geometry: Key::of(world, setup, None),
+        src: src.cloned(),
+        params: params.clone(),
+    };
+    let hit = UNRESOLVED.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        memo.retain(|(k, _)| {
+            k.geometry.bodies.iter().all(|b| {
+                b.mesh.as_ref().is_none_or(|m| m.0.strong_count() > 0)
+                    && b.sketch.as_ref().is_none_or(|s| s.0.strong_count() > 0)
+            })
+        });
+        let i = memo.iter().position(|(k, _)| *k == key)?;
+        let entry = memo.remove(i);
+        let note = entry.1.clone();
+        memo.push(entry);
+        Some(note)
+    });
+    if let Some(note) = hit {
+        return note;
+    }
+    UNRESOLVED_BUILDS.with(|n| n.set(n.get().saturating_add(1)));
+    let note = operation::display_heights(|| operation::resolve_params(world, setup, src, params))
+        .err()
+        .map(|why| format!("{why}; set the source up or switch the reference"));
+    UNRESOLVED.with(|memo| {
+        let mut memo = memo.borrow_mut();
+        if memo.len() >= 8 {
+            memo.remove(0);
+        }
+        memo.push((key, note.clone()));
+    });
+    note
+}
+
+#[cfg(test)]
+pub(crate) fn unresolved_builds() -> u64 {
+    UNRESOLVED_BUILDS.with(Cell::get)
 }
 
 /// The draft's display advice follows geometry, machine kind, units and program order,
@@ -188,7 +258,7 @@ pub(crate) fn height(
         {
             return *value;
         }
-        let value = build(|| {
+        let value = build(|| operation::display_heights(|| {
             let frame = operation::OpFrame::new(setup.map(str::to_owned), tilt)
                 .checked_frame()
                 .map_err(|_| "the 3+2 index commands no direction - its angles are not finite")?;
@@ -196,7 +266,7 @@ pub(crate) fn height(
                 operation::missing_source(world, setup, src, h.reference)
                     .unwrap_or("source missing")
             })
-        });
+        }));
         // Bound memory during long spinbox drags without losing a frame's rows.
         if entry.heights.len() >= 32 {
             let _ = entry.heights.remove(0);

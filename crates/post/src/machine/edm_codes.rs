@@ -19,17 +19,18 @@ pub const CODE_MAX: usize = 64;
 /// The names the generic sinker post (`sinker-iso.cps`, #542) reads,
 /// with the placeholders each text may hold (the post fills them): the
 /// unit word for the machine's unit (`metric` or `inch`), the electrode
-/// pickup and its reference, the condition select, the burn to depth
-/// and the program end. Orbit words are `edm.orbits[].word`
+/// pickup and its reference, the condition select, the burn to depth,
+/// the optional lateral burn and the program end. Orbit words are `edm.orbits[].word`
 /// (`{radius}`). Only a list of names: every one is read through
 /// [`parse_codes`]'s law like any other code.
-pub const SINKER_CODES: [(&str, &str); 7] = [
+pub const SINKER_CODES: [(&str, &str); 8] = [
     ("metric", ""),
     ("inch", ""),
     ("pickup", "{tool}"),
     ("reference", "{offset}"),
     ("condition", "{id}"),
     ("depth", "{z} {f}"),
+    ("side", "{x} {y} {z} {f}"),
     ("end", ""),
 ];
 

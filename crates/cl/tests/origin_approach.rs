@@ -59,18 +59,37 @@ fn a_plain_builder_keeps_its_old_behaviour() {
     assert_eq!(t.moves[0].kind, MoveKind::Plunge);
 }
 
-/// #2382: the opening rapid out of the seed starts over the WCS origin;
-/// its end - the only point a post writes - is untouched.
+/// #2901 (reverses #2382's seat over the WCS origin): the opening rapid
+/// out of the seed starts over its own entry point on the clearance
+/// plane; its end - the only point a post writes - is untouched.
 #[test]
-fn seat_approach_moves_the_seeded_start_to_the_wcs_origin() {
+fn seat_approach_moves_the_seeded_start_over_the_entry_point() {
     let seed = Point3::new(0.0, 0.0, CLEAR);
     let mut b = PathBuilder::approached(seed);
     b.push(MoveKind::Rapid, Point3::new(3.0, 4.0, CLEAR), None);
     b.push(MoveKind::Plunge, Point3::new(3.0, 4.0, 0.0), Some(100.0));
     let mut t = b.finish();
-    assert!(t.seat_approach(seed, [40.0, 20.0]));
-    assert_eq!(t.moves[0].from, Point3::new(40.0, 20.0, CLEAR));
+    assert!(t.seat_approach(seed));
+    assert_eq!(t.moves[0].kind, MoveKind::Rapid, "the approach stays a rapid (#690)");
+    assert_eq!(t.moves[0].from, Point3::new(3.0, 4.0, CLEAR), "no X/Y travel from a point never visited");
     assert_eq!(t.moves[0].to, Point3::new(3.0, 4.0, CLEAR));
+    assert_eq!(t.len(), 2, "no move is added or dropped");
+    assert!(t.is_chained());
+}
+
+/// An opening rapid that also changes height keeps its height change:
+/// it starts on the clearance plane over its own end X/Y (a vertical
+/// rapid), never at the seed's X/Y.
+#[test]
+fn seat_approach_keeps_the_height_of_a_descending_opening_rapid() {
+    let seed = Point3::new(0.0, 0.0, CLEAR);
+    let mut b = PathBuilder::approached(seed);
+    b.push(MoveKind::Rapid, Point3::new(-12.0, 7.0, 2.0), None);
+    b.push(MoveKind::Plunge, Point3::new(-12.0, 7.0, 0.0), Some(100.0));
+    let mut t = b.finish();
+    assert!(t.seat_approach(seed));
+    assert_eq!(t.moves[0].from, Point3::new(-12.0, 7.0, CLEAR));
+    assert_eq!(t.moves[0].to, Point3::new(-12.0, 7.0, 2.0));
     assert!(t.is_chained());
 }
 
@@ -83,19 +102,19 @@ fn seat_approach_leaves_other_openings_alone() {
     b.push(MoveKind::Plunge, Point3::new(0.0, 0.0, -1.0), Some(100.0));
     let mut at_seed = b.finish();
     let before = at_seed.clone();
-    assert!(!at_seed.seat_approach(seed, [40.0, 20.0]));
+    assert!(!at_seed.seat_approach(seed));
     assert_eq!(at_seed.moves, before.moves);
 
     let mut b = PathBuilder::approached(Point3::new(7.0, 8.0, CLEAR));
     b.push(MoveKind::Rapid, Point3::new(9.0, 8.0, CLEAR), None);
     let mut elsewhere = b.finish();
-    assert!(!elsewhere.seat_approach(seed, [40.0, 20.0]));
+    assert!(!elsewhere.seat_approach(seed));
     assert_eq!(elsewhere.moves[0].from, Point3::new(7.0, 8.0, CLEAR));
 
     let mut b = PathBuilder::approached(seed);
-    b.push(MoveKind::Rapid, Point3::new(3.0, 4.0, CLEAR), None);
+    b.push(MoveKind::Rapid, Point3::new(f64::NAN, 4.0, CLEAR), None);
     let mut t = b.finish();
-    assert!(!t.seat_approach(seed, [f64::NAN, 20.0]), "a non-finite origin is refused");
+    assert!(!t.seat_approach(seed), "a non-finite entry is refused");
     assert_eq!(t.moves[0].from, seed);
 }
 

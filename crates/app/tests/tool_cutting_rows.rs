@@ -72,10 +72,11 @@ fn slot(feed: f64) -> OpParams {
         plunge_feed: 200.0,
         climb: true,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
-        helix_radius: 1.0,
+        helix_radius: 1.0, blend_turns: false, blend_radius: None,
         tilt: None,
         extend_start: 0.0,
         extend_end: 0.0,
+        picks: Default::default(),
     }
 }
 
@@ -246,9 +247,10 @@ fn quick_add_and_retarget_seed_the_op_feed_from_the_row() {
     cutting_rows::seed_feed_for_tool(&w, &mut params, &read(&w, "T2"));
     assert_eq!(*camcraft_app::cutting::feed_mut(&mut params).expect("feed"), 410.0);
     let mut drill = operation::seed_params(operation::KindInfo::ALL.iter().position(|k| k.label == "Drill").expect("drill row"));
-    let before = drill.clone();
     cutting_rows::seed_feed_for_tool(&w, &mut drill, &read(&w, "T2"));
-    assert_eq!(drill, before, "a kind with no milling feed is left alone");
+    // #2598: a Drill takes the row's feed for its feed and its plunge.
+    let OpParams::Drill { feed, plunge_feed, .. } = drill else { panic!("a drill op") };
+    assert_eq!((feed, plunge_feed), (410.0, 410.0), "a drill takes the tool's feed");
 }
 
 #[test]

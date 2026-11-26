@@ -17,9 +17,10 @@ use flecs_ecs::prelude::World;
 
 fn params() -> OpParams {
     OpParams::Face {
-        holes: Default::default(), tilt: None, blend_turns: false,
+        holes: Default::default(), tilt: None, blend_turns: false, blend_radius: None,
         stepover: 3.0, clearance_z: Height::fixed(25.0), cut_z: Height::fixed(19.5),
         top_z: None, stepdown: None, feed: 1200.0, plunge_feed: 300.0, climb: true,
+        picks: Default::default(),
     }
 }
 

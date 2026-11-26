@@ -18,13 +18,19 @@ use camcraft_tools::spun::SpunPoint;
 use serde_json::{json, Map, Value};
 
 /// A tool's holder as `get_job` and `set_tool_holder` state it: `null`
-/// for the plain holder cylinder, else the drawn profile's points.
+/// for the plain holder cylinder, else the drawn profile's points and
+/// (#2016) the library reference the tool stores, if it is one.
 pub(super) fn holder_view(world: &flecs_ecs::prelude::World, tool: &str) -> Value {
     let body = model::find_by_name(world, tool).and_then(|e| tool_body::body_of(world, &e));
     match body {
         None => Value::Null,
         Some(b) => json!({
             "source": b.source,
+            // #2016: the library entry the holder is, when it is one;
+            // null for a custom (drawn) holder.
+            "library": b.library.as_ref().map(|r| json!({
+                "entry": r.entry, "gauge_len": fnum(r.gauge_len), "projection": fnum(r.projection),
+            })),
             "lathe": matches!(b.frame, tool_body::BodyFrame::Lathe { .. }),
             "points": b.spun.as_ref().map(|s| s.points().iter()
                 .map(|p| json!({ "z": fnum(p.z), "r": fnum(p.r), "arc": fnum(p.arc) })).collect::<Vec<_>>()),

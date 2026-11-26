@@ -19,7 +19,7 @@ use camcraft_kernel::solidcore_impl::SolidcoreKernel;
 use camcraft_kernel::solidcore_step::{MAX_STEP_BYTES, import_step, read_step};
 use camcraft_kernel::{KernelError, Measure};
 use solidcore::kernel::CancelToken;
-use step_util::{CASE_TIMEOUT, bounded_cancel, truck_read};
+use step_util::{CASE_TIMEOUT, bounded_cancel};
 
 fn models_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models")
@@ -205,14 +205,14 @@ fn corpus() -> Vec<(&'static str, Vec<u8>)> {
 /// "length unit of zero inches" is refused by the SEAM: the reader alone
 /// reads a unit it cannot convert as millimetres, silently.
 ///
-/// Third column: truck-stepio on the same bytes, as the bench reads it
-/// (ruststep + `Table` + mesh; none of crates/app's checks after the
-/// mesh), with its mesh's open triangle sides. FINDINGS against that
-/// path, recorded and not chased here: it answers `Ok` with an OPEN mesh
-/// (open > 0) for a shell with a face dropped, dangling or unreadable and
-/// for a vertex moved off its edges or sent to 1e300, and it reads neither
-/// the solid item nor the length unit. What crates/app does with such a
-/// mesh afterwards is outside this crate's bench.
+/// Third column: RECORDED, not asserted. It is what truck-stepio made of
+/// the same bytes when the bench last ran it (ruststep + `Table` + mesh,
+/// with its mesh's open triangle sides), before #2790 took the reader out
+/// of the workspace (docs/decisions/2790-remove-truck-step.md). FINDINGS
+/// against that path, kept as the record: it answered `Ok` with an OPEN
+/// mesh (open > 0) for a shell with a face dropped, dangling or unreadable
+/// and for a vertex moved off its edges or sent to 1e300, and it read
+/// neither the solid item nor the length unit.
 const KNOWN_STEP_VERDICTS: &[(&str, &str, &str)] = &[
     ("empty file", "Err refused", "Err"),
     ("one space", "Err refused", "Err"),
@@ -239,7 +239,6 @@ const KNOWN_STEP_VERDICTS: &[(&str, &str, &str)] = &[
 fn corrupt_step_files_never_panic_or_hang() {
     let mut observed = Vec::new();
     for (name, bytes) in corpus() {
-        let bytes_for_truck = bytes.clone();
         let v = bounded_cancel(name, CASE_TIMEOUT, move |stop| {
             let mut k = SolidcoreKernel::default();
             let r = import_step(&mut k, &bytes, stop);
@@ -248,20 +247,12 @@ fn corrupt_step_files_never_panic_or_hang() {
             }
             verdict(r.map(|i| i.solids.iter().map(|s| s.measure.volume).sum()))
         });
-        let b = bytes_for_truck;
-        let t = bounded_cancel(name, CASE_TIMEOUT, move |stop| match truck_read(&b, 1.0, stop) {
-            Ok(t) => format!("Ok V={:.3} open={}", t.mesh.volume, t.mesh.open_edges),
-            Err(e) => {
-                println!("{name:<36} truck: {e}");
-                "Err".to_string()
-            }
-        });
-        println!("{name:<36} -> solidcore {v} | truck {t}");
-        observed.push((name.to_string(), v, t));
+        println!("{name:<36} -> solidcore {v}");
+        observed.push((name.to_string(), v));
     }
-    let pinned: Vec<(String, String, String)> = KNOWN_STEP_VERDICTS
+    let pinned: Vec<(String, String)> = KNOWN_STEP_VERDICTS
         .iter()
-        .map(|(n, v, t)| (n.to_string(), v.to_string(), t.to_string()))
+        .map(|(n, v, _recorded_truck)| (n.to_string(), v.to_string()))
         .collect();
     assert_eq!(observed, pinned, "importer verdicts changed - re-triage");
 }
@@ -318,29 +309,7 @@ fn importer_keeps_its_size_and_time_bounds() {
     }
 }
 
-/// #1697: the bench's truck reader on a face whose subdivision never ends
-/// (bspline_discontinuous.step, #1536's fixture) refuses it by name inside
-/// the bound, and obeys a cancelled token; a smooth B-spline still meshes.
-#[test]
-fn truck_side_refuses_a_runaway_face_and_obeys_its_cancel() {
-    let read = |file: &'static str, cancelled: bool| {
-        let bytes = std::fs::read(models_dir().join(file)).unwrap_or_default();
-        assert!(!bytes.is_empty(), "{file}: fixture missing or empty");
-        bounded_cancel(file, CASE_TIMEOUT, move |stop| {
-            if cancelled {
-                stop.cancel();
-            }
-            truck_read(&bytes, 1.0, stop)
-        })
-    };
-    match read("bspline_discontinuous.step", false) {
-        Err(e) => assert!(e.contains("B-spline surface) not meshed: its subdivision did not converge"), "{e}"),
-        Ok(t) => panic!("a runaway face meshed: {t:?}"),
-    }
-    match read("bspline_discontinuous.step", true) {
-        Err(e) => assert!(e.contains("the time bound cancelled its subdivision"), "{e}"),
-        Ok(t) => panic!("a cancelled read meshed: {t:?}"),
-    }
-    let dome = read("bspline_dome.step", false);
-    assert!(dome.as_ref().is_ok_and(|t| t.mesh.triangles > 0), "{dome:?}");
-}
+// #2790: `truck_side_refuses_a_runaway_face_and_obeys_its_cancel` tested
+// the bench's own truck reader and its face meter, which left with
+// truck-stepio. Its findings are recorded and checked in step_agreement.rs
+// (`recorded_truck_readings_keep_their_findings`).

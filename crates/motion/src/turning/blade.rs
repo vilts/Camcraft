@@ -80,6 +80,9 @@ pub struct PartParams {
     pub feed: f64,
     pub plunge_feed: f64,
     pub blade_width: f64,
+    /// #3469: the piece kept and the back stock; the default is the
+    /// #3452 kerf (cut-off piece kept, one flank on the plane).
+    pub kerf: super::parting_law::PartKerf,
 }
 
 /// A plunge cap with room to spare - facing's number, the same

@@ -98,7 +98,7 @@ fn main() -> ExitCode {
         feed,
         plunge_feed: feed / 3.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         holes: FaceHoles::default(),
         stock_top: None,
     };

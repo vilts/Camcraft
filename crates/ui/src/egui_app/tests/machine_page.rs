@@ -10,9 +10,9 @@ use crate::state::SetupPage;
 
 type H = Harness<'static, ShellUi>;
 
-/// The shell at the app's default height (800 px). The 720 px harness
-/// leaves the machine page's button row below the fold: the ribbon is 22 px
-/// taller since #2021 (see `shell_harness`).
+/// The shell at the app's default height (800 px). Kept for the click
+/// tests: before #2105 was fixed the 720 px harness left the machine
+/// page's button row below the fold (the ribbon grew 22 px in #2027).
 fn tall_harness() -> H {
     Harness::builder()
         .with_size(Vec2::new(1280.0, 800.0))
@@ -106,6 +106,33 @@ fn the_machine_page_is_laid_out_in_groups_like_the_wcs_page() {
     assert!(b.windows(2).all(|w| (w[0].top() - w[1].top()).abs() < 1.0 && w[0].right() < w[1].left()), "{b:?}");
     assert!(b.windows(2).all(|w| (w[0].width() - w[1].width()).abs() < 1.0), "equal widths: {b:?}");
     assert!(h.query_by_label("Load machine (.mch)").is_none(), "the no-machine button is not drawn with a machine");
+}
+
+/// #2105: the ribbon is 22 px taller since #2027, and the machine page's
+/// action row fell under the fold of a 720 px window: the user had to
+/// scroll to reach the buttons. The page's visible bottom is NOT the
+/// bottom of the Properties leaf: `pages.rs` gives the page's ScrollArea
+/// the leaf height minus 40 px and draws the separator and the `Close`
+/// footer in that band. So the edge to measure against is the top of
+/// `Close`, read from the same pane as the buttons.
+#[test]
+fn the_machine_page_buttons_fit_without_scrolling_at_720_px() {
+    let mut h = shell_harness();
+    open_machine(&mut h, Some("Tormach 770MX"));
+    let close = h
+        .get_by_role_and_label(egui::accesskit::Role::Pane, "Properties")
+        .query_by_label("Close")
+        .expect("the Close footer of the Properties pane")
+        .rect();
+    let title = rect(&h, GROUPS[2]);
+    assert!(title.top() < close.top(), "the action group title is in the fold: {title:?} vs Close {close:?}");
+    for label in ["Load other", "Edit", "Clear"] {
+        let r = rect(&h, label);
+        assert!(
+            r.bottom() <= close.top() + 1.0,
+            "{label} {r:?} stands below the page's visible bottom - the Close footer {close:?} starts there"
+        );
+    }
 }
 
 /// A lathe states its own facts in the same rows - the page draws no

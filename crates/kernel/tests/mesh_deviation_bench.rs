@@ -1,16 +1,16 @@
 //! The machining-mesh deviation bench (M12.1, #940), kernel release lane:
 //! every STEP fixture under testdata/models meshed for machining at the
 //! app's chord caps (0.005 mm, #689; 0.01 mm, the metre file's floor in
-//! #864), with its triangle count, time and measured deviation, beside
-//! truck's mesh of the same file at the app's own target. The verdicts are
-//! pinned; the numbers are printed for the decision file.
+//! #864), with its triangle count, time and measured deviation. The
+//! verdicts are pinned; the numbers are printed for the decision file.
+//! (#2790: the printed-only column of truck's mesh left with truck-stepio;
+//! it was never asserted.)
 //!
-//! Both meshes are also judged by one common, mesher-blind measure: each
+//! The mesh is also judged by one common, mesher-blind measure: each
 //! triangle's 15 sample points against the NEAREST untrimmed analytic
 //! surface of the record's faces (a lower bound of the distance to the
 //! true face; "n/a" where the record has a spline or revolved face).
-//! Provenance: our own bench design; fixtures are the repo's own; truck's
-//! calls are the app's (crates/app/src/geometry/import/step.rs).
+//! Provenance: our own bench design; fixtures are the repo's own.
 //!
 //! Gate map (M12.1): covers camcraft_kernel::machining_mesh (heavy lane).
 
@@ -26,9 +26,7 @@ use camcraft_kernel::solidcore_impl::SolidcoreKernel;
 use camcraft_kernel::solidcore_step::read_step;
 use solidcore::kernel::CancelToken;
 use solidcore_record::brep;
-use step_util::{CASE_TIMEOUT, TRUCK_MIN_TOL, bounded_cancel};
-use truck_meshalgo::prelude::*;
-use truck_stepio::r#in::Table;
+use step_util::{CASE_TIMEOUT, bounded_cancel};
 
 const TOLS: [f64; 2] = [0.005, 0.01];
 
@@ -88,64 +86,21 @@ fn nearest_analytic(records: &[&brep::Brep], pos: &[P3], tris: &[[usize; 3]]) ->
     Some(worst)
 }
 
-/// truck's mesh of the file at the app's target for chord cap `cap` mm,
-/// scaled to mm: (positions, triangles, chord used in mm).
-/// A triangle soup and the chord it was made at (mm).
-type Soup = (Vec<P3>, Vec<[usize; 3]>, f64);
-
-fn truck_soup(bytes: &[u8], k: f64, cap: f64) -> Result<Soup, String> {
-    let text = std::str::from_utf8(bytes).map_err(|_| "not UTF-8".to_string())?;
-    let ex = ruststep::parser::parse(text).map_err(|e| format!("syntax: {e}"))?;
-    let table = Table::from_data_section(ex.data.first().ok_or("no DATA")?);
-    let mut ids: Vec<&u64> = table.shell.keys().collect();
-    ids.sort_unstable();
-    let (mut pos, mut tris, mut chord) = (Vec::new(), Vec::new(), 0.0_f64);
-    for id in ids {
-        let Some(shell) = table.shell.get(id) else {
-            continue;
-        };
-        let cs = table
-            .to_compressed_shell(shell)
-            .map_err(|e| e.to_string())?;
-        let extent = cs
-            .vertices
-            .iter()
-            .flat_map(|p| [p.x.abs(), p.y.abs(), p.z.abs()])
-            .fold(0.0_f64, f64::max);
-        let tol = (extent * 1e-3).min(cap / k).max(TRUCK_MIN_TOL);
-        chord = chord.max(tol * k);
-        let m = cs.robust_triangulation(tol).to_polygon();
-        let base = pos.len();
-        pos.extend(m.positions().iter().map(|p| [p.x * k, p.y * k, p.z * k]));
-        for f in m.face_iter() {
-            let Some(a) = f.first() else { continue };
-            for w in f.get(1..).unwrap_or_default().windows(2) {
-                if let [b, c] = w {
-                    tris.push([base + a.pos, base + b.pos, base + c.pos]);
-                }
-            }
-        }
-    }
-    if tris.is_empty() {
-        return Err("no triangles".into());
-    }
-    Ok((pos, tris, chord))
-}
-
 fn fmt(d: Option<f64>) -> String {
     d.map_or("n/a".into(), |d| format!("{d:.2e}"))
 }
 
 #[test]
-#[ignore = "kernel release lane: meshes every STEP fixture twice per tolerance (cargo test --release -p camcraft-kernel -- --ignored)"]
+#[ignore = "kernel release lane: meshes every STEP fixture at each tolerance (cargo test --release -p camcraft-kernel -- --ignored)"]
 fn machining_mesh_deviation_bench() {
     let mut observed = Vec::new();
-    for &(file, unit, _) in ROWS {
+    // The unit column is the file's own (read_step scales to mm); it stays
+    // as the record of each fixture's unit.
+    for &(file, _unit, _) in ROWS {
         let bytes = std::fs::read(models().join(file)).unwrap_or_default();
         assert!(!bytes.is_empty(), "{file}: fixture missing");
-        let b = bytes.clone();
         let read = bounded_cancel(file, CASE_TIMEOUT, move |stop| {
-            read_step(&mut SolidcoreKernel::default(), &b, stop)
+            read_step(&mut SolidcoreKernel::default(), &bytes, stop)
         });
         let solids = read.map(|r| r.solids).unwrap_or_default();
         let mut verdicts = [String::new(), String::new()];
@@ -180,19 +135,8 @@ fn machining_mesh_deviation_bench() {
                 }
             }
             let t_sc = t0.elapsed();
-            let t0 = Instant::now();
-            let truck = truck_soup(&bytes, unit, tol);
-            let t_tr = t0.elapsed();
-            let truck_line = match &truck {
-                Ok((p, t, chord)) => format!(
-                    "truck: tris={} chord={chord:.4} common={} ({t_tr:.1?})",
-                    t.len(),
-                    fmt(nearest_analytic(&records, p, t))
-                ),
-                Err(e) => format!("truck: {e}"),
-            };
             println!(
-                "{file} @ {tol} mm: sc-tess tris={tris} judged={gate:.2e} parametric={par:.2e} analytic={ana:.2e} common={} ({t_sc:.1?}) | {truck_line} | {verdict}",
+                "{file} @ {tol} mm: sc-tess tris={tris} judged={gate:.2e} parametric={par:.2e} analytic={ana:.2e} common={} ({t_sc:.1?}) | {verdict}",
                 fmt(mine)
             );
             if verdict == "within" {

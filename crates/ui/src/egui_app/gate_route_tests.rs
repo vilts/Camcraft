@@ -21,7 +21,9 @@ fn no_tool_routes_to_the_tool_library() {
     assert_eq!(gate_route(face, &state), Some(GateRoute::Tools));
     follow_gate(face, &mut state);
     assert_eq!(state.ui_target, UiTarget::None);
-    assert_eq!(state.layout_request, Some(crate::state::LayoutRequest::ToolLibrary));
+    // #3892: the route opens the tool library window, not a dock tab.
+    assert!(state.tool_library.is_some(), "the tool library window is open");
+    assert_eq!(state.layout_request, None, "the dock is not asked for anything");
     assert!(state.status.contains("no tool in the document") && state.status.ends_with("opened the tool library"), "{}", state.status);
 }
 

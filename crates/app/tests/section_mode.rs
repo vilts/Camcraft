@@ -96,7 +96,7 @@ fn make_face_world() -> World {
     add_tool(&world, &mut history, "EM-0400-2FL");
     let params = OpParams::Face {
         holes: FaceHoles::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 15.0,
         clearance_z: Height::fixed(25.0),
@@ -106,6 +106,7 @@ fn make_face_world() -> World {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     let op = CreateOperation::new(&world, "Face3X", "EM-0400-2FL", SrcRef::Stock, params)
         .expect("create face");
@@ -121,7 +122,7 @@ fn make_tilted_pocket_world() -> World {
     add_tool(&world, &mut history, "EM-0600-4FL");
     let block = cube(Point3::new(0.0, 0.0, -20.0), Point3::new(40.0, 30.0, -10.0));
     history.execute(&world, ImportModel::from_mesh("part", block));
-    let params = OpParams::Pocket {
+    let params = OpParams::Pocket { pass_start: Default::default(),
         rest: None,
         blend_radius: None,
         links: Links::PLANAR,
@@ -141,6 +142,8 @@ fn make_tilted_pocket_world() -> World {
         helix_radius: 1.0,
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         blend_turns: false,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     };
     let op = CreateOperation::new(&world, "Tilt32", "EM-0600-4FL", SrcRef::Entity("part".into()), params)
         .expect("create tilted pocket");
@@ -175,6 +178,7 @@ fn make_parallel5d_world() -> World {
         lag_deg: 0.0,
         max_tilt_deg: 60.0,
         shank_avoid: false,
+        picks: Default::default(),
     };
     let op = CreateOperation::new(&world, "Sim5X", "BN-0600", SrcRef::Entity("hill".into()), params)
         .expect("create contour5d");

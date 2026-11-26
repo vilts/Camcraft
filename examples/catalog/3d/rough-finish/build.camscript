@@ -1,0 +1,80 @@
+// Example catalog case: 3d/rough-finish (#2866).
+// Builds rough-finish.camproj and posts rough-finish.nc headlessly through
+// CamCraft's undoable command verbs: a 3D Pocket roughs the dome, then two
+// 3D Finish operations (Parallel and Waterline) finish it.
+// Run with CWD = this case directory:
+//   camcraft-cli script build.camscript
+
+cam.import("model/rough-finish.obj", "rough-finish");
+
+cam.call("set_stock", {
+  box: { dx: 50.0, dy: 50.0, dz: 22.0 }
+});
+
+cam.call("add_tool", { catalog: "EM-0600-4FL", holder: "none" });
+cam.call("add_tool", { catalog: "BN-0600", holder: "none" });
+
+cam.call("add_operation", {
+  kind: "3D Pocket",
+  name: "3D Pocket1",
+  tool: "EM-0600-4FL",
+  source: "rough-finish",
+  params: {
+    stepover: 3.0,
+    stock_to_leave: 0.5,
+    clearance_z: { reference: "top_of_stock", offset: 25.0 },
+    top_z: { reference: "top_of_stock", offset: 0.0 },
+    bottom_z: { reference: "top_of_model", offset: -10.0 },
+    stepdown: 2.0,
+    feed: 1200.0,
+    plunge_feed: 300.0,
+    climb: true,
+    strategy: "auto",
+    entry: "helix",
+    helix_radius: 1.2
+  }
+});
+
+cam.call("add_operation", {
+  kind: "3D Finish",
+  name: "3D Finish Parallel",
+  tool: "BN-0600",
+  source: "rough-finish",
+  params: {
+    pattern: "parallel",
+    stepover: 1.5,
+    tolerance: 0.1,
+    clearance_z: { reference: "top_of_stock", offset: 25.0 },
+    top_z: { reference: "top_of_model", offset: 0.0 },
+    bottom_z: { reference: "top_of_model", offset: -10.0 },
+    feed: 1500.0,
+    plunge_feed: 300.0,
+    climb: true
+  }
+});
+
+cam.call("add_operation", {
+  kind: "3D Finish",
+  name: "3D Finish Waterline",
+  tool: "BN-0600",
+  source: "rough-finish",
+  params: {
+    pattern: "waterline",
+    tolerance: 0.1,
+    clearance_z: { reference: "top_of_stock", offset: 25.0 },
+    top_z: { reference: "top_of_model", offset: 0.0 },
+    bottom_z: { reference: "top_of_model", offset: -10.0 },
+    feed: 1500.0,
+    plunge_feed: 300.0,
+    climb: true
+  }
+});
+
+cam.generate();
+var verdict = cam.verify();
+if (!verdict.ok) {
+  throw new Error("catalog verify failed: " + JSON.stringify(verdict));
+}
+cam.save("rough-finish.camproj");
+cam.post({ to: "rough-finish.nc" });
+cam.report();

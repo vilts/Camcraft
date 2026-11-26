@@ -36,6 +36,10 @@ impl Edm {
         if let Some(r) = pos("max_orbit_radius", self.max_orbit_radius) {
             return Some(r);
         }
+        // #2686: a skim's flushing word would stay active for the next rough cut.
+        if self.skim_flushing.is_some() && self.flushing.is_none() {
+            return Some("edm.skim_flushing: needs edm.flushing (state the rough cut's flushing too)".to_owned());
+        }
         for (i, o) in self.orbits.iter().enumerate() {
             if !ORBIT_KINDS.contains(&o.kind.as_str()) {
                 return Some(format!("edm.orbits[{i}].kind: must be one of {}", ORBIT_KINDS.join(", ")));

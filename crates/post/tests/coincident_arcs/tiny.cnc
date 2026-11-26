@@ -1,0 +1,19 @@
+; HSMW-CNC v1
+PARAM OperationName Arc precision witness
+PARAM SpindleSpeed 6000
+PARAM WorkOffset 1
+PARAM OriginX 0
+PARAM OriginY 0
+PARAM OriginZ 0
+PARAM ToolDiameter 4
+PARAM ClearancePlane 18
+PARAM RetractPlane 18
+PARAM TopOfStock 6
+TOOL 1 EM-0400-2FL
+SECTION Arc precision witness
+Rapid X 18123 Y 5432 Z 18000
+Plunge X 18123 Y 5432 Z 5500 F 45000
+Arc CCW X 18123 Y 5433 Z 5500 F 180000 I 10123 J 5432
+Arc CCW X 18123 Y 5434 Z 5500 F 180000 I 10123 J 5432
+Rapid X 18123 Y 5434 Z 18000
+ENDSECTION

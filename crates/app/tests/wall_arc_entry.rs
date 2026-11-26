@@ -50,9 +50,11 @@ fn user_op() -> OpParams {
         tab_height: 1.0,
         entry: Entry3D::Arc,
         helix_radius: 1.0,
-        blend_turns: true,
+        blend_turns: true, blend_radius: None,
         tilt: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -298,8 +300,9 @@ fn wall_params(entry: Entry3D, tabs: u32) -> ContourParams {
         tab_height: 2.0,
         entry,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
+        picks: Default::default(),
     }
 }
 
@@ -454,9 +457,9 @@ fn the_wall_arc_stands_down_by_name_on_tabbed_levels() {
     let t = contour(&r, &wall_params(Entry3D::Arc, 3)).expect("contour");
     assert_eq!(verify_wall(&t, &r), Vec::new(), "{:?}", t.notes);
     assert!(t.notes.iter().any(|n| n.contains("the arc stands down on tabbed levels")), "{:?}", t.notes);
-    // Untabbed levels (15, 10) still arc; the tabbed bottom grazes
-    // (#2004: the air level at Z 20 is gone).
-    assert_eq!(fans(&t).len(), 2);
+    // Untabbed levels (15, 10, and the tab top at 7: #2579) still arc;
+    // the tabbed bottom grazes (#2004: the air level at Z 20 is gone).
+    assert_eq!(fans(&t).len(), 3);
 }
 
 #[test]

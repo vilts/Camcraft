@@ -136,7 +136,9 @@ fn frames_without_a_change_walk_digest_and_slice_nothing() {
     assert_eq!(after.walks, before.walks, "no chain walk on a still frame");
     assert_eq!(after.digests, before.digests, "no feature digest on a still frame");
     assert_eq!(after.slices, before.slices, "no part slice on a still frame");
-    assert_eq!(after.regions - before.regions, N, "one region build per scene, not per caller");
+    // #2201: the shown region and the Pocket page's note keep their region
+    // across frames under its input: a still frame builds none.
+    assert_eq!(after.regions, before.regions, "no region build on a still frame");
 }
 
 #[test]
@@ -172,5 +174,5 @@ fn a_selection_change_or_a_landing_is_a_new_answer() {
     let before = counts();
     h.run_steps(3);
     let after = counts();
-    assert_eq!((after.walks, after.digests, after.slices), (before.walks, before.digests, before.slices), "and the frames after it are still");
+    assert_eq!(after, before, "and the frames after it are still");
 }

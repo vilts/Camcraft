@@ -15,7 +15,7 @@
             "coolants": [ { "name": "Flood", "mCode": "M8" } ] } }
       ] }
     ] } },
-  "controller": { "synced_configuration": { "parts": {
+  "controller": { "post": "Tormach PathPilot Lathe", "synced_configuration": { "parts": {
     "X": { "coordinate": 0, "max_normal_speed": 150.0, "max_rapid_speed": 150.0 },
     "Z": { "coordinate": 2, "max_normal_speed": 150.0, "max_rapid_speed": 150.0 }
   } } },

@@ -147,6 +147,7 @@ mod tests {
             hand: crate::cl::ThreadHand::Right,
             external: false,
             passes: crate::machining2d::ThreadPasses::default(),
+            picks: Default::default(),
         };
         let low = super::super::thread_op::door(&mill, &op(19.0)).unwrap_or_default();
         assert!(low.contains("the R plane at z 19 is below the top of the hole"), "{low}");

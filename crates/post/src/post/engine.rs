@@ -6,7 +6,7 @@
 //! it reads. The control dialect lives in the script, never here.
 
 use super::cnc::{self, Record};
-use super::js::{is_false, ProgramId, Script};
+use super::js::{is_false, is_true, ProgramId, Script};
 use super::machine;
 use super::PostError;
 use crate::cl::MoveKind;
@@ -37,7 +37,8 @@ pub struct TraceBlock {
 /// The finished program plus the evidence a reviewer needs.
 #[derive(Clone, Debug)]
 pub struct PostOutput {
-    /// The G-code, one line per entry, newline-terminated.
+    /// The G-code, one line per entry, each ended by the script's
+    /// `lineEnding` (`\n`, or `\r\n` for `"crlf"`, #1882).
     pub program: String,
     /// Program line -> stream record, the viewer's sync map (the
     /// record's index doubles as the move index for motion records).
@@ -108,8 +109,17 @@ pub fn run_program_with(
     options: &Value,
     id: &ProgramId,
 ) -> Result<PostOutput, PostError> {
+    // The transforms and callbacks must see the same checked machine as the CLI.
+    let input = super::machine_installation::checked_input(mch).map_err(PostError::Refused)?;
+    let mch = input.as_ref();
     let records = super::normalize_program_order(cnc::parse(stream)?);
-    let mut s = Script::load(cps)?;
+    let operation = records.iter().find_map(|record| match record {
+        Record::Param { name, value } if name == "OperationName" => value.as_str(),
+        _ => None,
+    }).unwrap_or("unnamed operation");
+    let mut s = Script::load_for_program(cps, records.len(), operation)?;
+    let fail_on_warning = is_true(&s.eval_src("typeof failOnWarning !== 'undefined' && failOnWarning === true")?);
+    let mut tool_macros = super::tool_change::Macros::read(&mut s)?;
     // #902: an inch document on a script that cannot write inch.
     if let Some(why) = super::units::refusal(&mut s, options)? {
         return Err(PostError::Refused(why));
@@ -122,11 +132,8 @@ pub fn run_program_with(
     // #1386: Explain G-code on a script that states no comment form is
     // refused by name here, before any hook runs.
     let explain_form = super::explain::form(&mut s, options)?;
-    // #1649: a flipped WCS axis mirrors its own sections about the work
-    // origin - the per-setup statement of the #374 mirror below, so the
-    // two compose (a flipped X on an inverted X posts the standard signs).
-    // First, so a flipped and rotated section is refused by that name: the
-    // two passes never change the same section.
+    // #1649 / #2476: mirror each flipped WCS section and express its yaw
+    // in that frame. The rotation below then gives R(-yaw') F = F R(-yaw).
     let records = super::wcs_flip::apply(records, &s)?;
     // #760: a Z-rotated work offset transforms coordinates into WCS XY
     // (before machine axis inversion so Bake mirrors in WCS slides), and
@@ -135,7 +142,12 @@ pub fn run_program_with(
     // #374: an inverted machine axis - the one place the stream is
     // mirrored into the controller's frame, or refused by name.
     let records = super::invert::apply(records, mch, &s)?;
-    s.set_machine(&machine::script_props(mch))?;
+    // #3477: a section that opens upright after a tilted section, on a
+    // script that does not declare the return - refused by name below.
+    let upright = super::upright_after_tilt::refusal(&mut s, &records)?;
+    s.set_machine(&machine::flatten(mch))?;
+    // #1882: the cut XY box, published before `onOpen`.
+    s.eval_src(&format!("programBounds = {};", super::program_bounds::bounds(&records)))?;
     // #542: whether the manifest's `serves` (#1266) names a sinker EDM -
     // the one script that may voice a sinker section (below).
     let serves_sinker = s
@@ -151,6 +163,14 @@ pub fn run_program_with(
         s.arm_explain(f)?;
     }
     s.call("onOpen", "")?;
+    // #2996: the header notes (a model checked at reduced accuracy) are
+    // part of the header, in the script's own comment form.
+    for note in &id.notes {
+        s.call("onComment", &json!(note).to_string())?;
+    }
+    // #1882: chords for a control without G2/G3, read after `onOpen` so
+    // a declared option may choose them.
+    let chord_tol = super::program_bounds::linearize_tolerance(&mut s)?;
     let head = s.out_len()?;
 
     let mut warnings = Vec::new();
@@ -167,6 +187,8 @@ pub fn run_program_with(
     let mut unguarded: Vec<String> = Vec::new();
     // #671: the plasma header in force and the lit contour.
     let mut torch = super::cnc_torch::TorchLaw::default();
+    // #1882: the waterjet header in force and the open contour.
+    let mut jet = super::cnc_jet::JetLaw::default();
 
     for (i, r) in records.iter().enumerate() {
         let before = s.out_len()?;
@@ -308,12 +330,18 @@ pub fn run_program_with(
                 base.insert("ToolNumber".into(), json!(*number));
                 base.insert("ToolName".into(), json!(name));
                 s.set_properties(&merged(&base, &BTreeMap::new(), pos))?;
-                s.call("onToolChange", &format!("{}, {}", json!(number), json!(name)))?;
+                tool_macros.call(&mut s, *number, name)?;
             }
             Record::Section { begin } => {
+                // #1882: `onSection` reads this section's properties, not the
+                // last record's (a header the previous ENDSECTION cleared).
+                if *begin {
+                    s.set_properties(&merged(&base, &BTreeMap::new(), pos))?;
+                }
                 s.call(if *begin { "onSection" } else { "onSectionEnd" }, "")?;
                 if !*begin {
                     torch.section_end(&mut base, &mut warnings);
+                    jet.section_end(&mut base, &mut warnings);
                 }
             }
             Record::Plasma(p) => {
@@ -336,27 +364,52 @@ pub fn run_program_with(
             Record::Move(m) => {
                 if m.kind == MoveKind::Rapid {
                     torch.rapid(&base, &mut warnings);
+                    jet.rapid(&base, &mut warnings);
                 }
-                let p = m.props();
-                s.set_properties(&merged(&base, &p, pos))?;
-                s.set_current(pos.0, pos.1, pos.2)?;
-                let cmd = p.get("command").cloned().unwrap_or(Value::Null);
-                if is_false(&s.call("onCommand", &cmd.to_string())?) {
-                    swallowed += 1;
-                    swallow = true;
-                } else {
-                    let hook = if m.center.is_some() {
+                // #1882: under `linearizeArcs` an arc posts as its chords.
+                let pieces = match (chord_tol, m.center) {
+                    (Some(t), Some(_)) => super::program_bounds::arc_pieces(pos, m, t)?,
+                    _ => vec![m.clone()],
+                };
+                let mut at = pos;
+                for (k, piece) in pieces.iter().enumerate() {
+                    let mut p = piece.props();
+                    // A chord must retain the complete move's Z change for
+                    // posts that refuse a non-planar cut before writing XY.
+                    p.insert("OriginalZChange".into(), json!(m.z - pos.2));
+                    s.set_properties(&merged(&base, &p, at))?;
+                    s.set_current(at.0, at.1, at.2)?;
+                    let cmd = p.get("command").cloned().unwrap_or(Value::Null);
+                    if k == 0 && is_false(&s.call("onCommand", &cmd.to_string())?) {
+                        swallowed += 1;
+                        swallow = true;
+                        break;
+                    }
+                    let hook = if piece.center.is_some() {
                         "onCircular"
-                    } else if m.kind == MoveKind::Rapid {
+                    } else if piece.kind == MoveKind::Rapid {
                         "onRapid"
-                    } else if m.kind == MoveKind::Plunge && s.hook_exists("onPlunge") {
+                    } else if piece.kind == MoveKind::Plunge && s.hook_exists("onPlunge") {
                         "onPlunge"
                     } else {
                         "onLinear"
                     };
                     s.call(hook, "")?;
+                    at = (piece.x, piece.y, piece.z);
                 }
                 pos = (m.x, m.y, m.z);
+            }
+            Record::Waterjet(w) => {
+                jet.header(&s, &base, &mut warnings);
+                base.extend(w.props());
+                s.set_properties(&merged(&base, &BTreeMap::new(), pos))?;
+            }
+            Record::Jet(j) => {
+                if jet.jet(j, &base, &mut warnings) {
+                    s.set_properties(&merged(&base, &j.props(), pos))?;
+                    s.set_current(pos.0, pos.1, pos.2)?;
+                    super::cnc_jet::fire(&mut s, j)?;
+                }
             }
             Record::Cycle(c) => {
                 if c.kind == crate::cl::CycleKind::FloatingTap && !s.voices_floating_tapping() {
@@ -370,6 +423,12 @@ pub fn run_program_with(
                         _ => None,
                     }).collect();
                 let mut props = c.props();
+                if c.kind == crate::cl::CycleKind::FineBore {
+                    // #1445: refused for a script without `fineBoring`;
+                    // the shift is read from the chain itself.
+                    let op = base.get("OperationName").and_then(Value::as_str).unwrap_or("");
+                    super::fine_bore::voice(s.voices_fine_boring(), c, &records[i + 1..], op, &mut props, &mut warnings);
+                }
                 props.insert("ChainFeedRate".into(), json!(chain.first().and_then(|m| m.feed)));
                 props.insert("ChainBottomZ".into(), json!(chain.iter().map(|m| m.z).reduce(f64::min)));
                 s.set_properties(&merged(&base, &props, pos))?;
@@ -564,6 +623,7 @@ pub fn run_program_with(
     }
 
     torch.close(&mut base, &mut warnings);
+    jet.close(&mut base, &mut warnings);
     let before = s.out_len()?;
     s.call("onClose", "")?;
     let after = s.out_len()?;
@@ -574,12 +634,17 @@ pub fn run_program_with(
         blocks.push(TraceBlock { record: None, label: "end".into(), first: before, last: after });
     }
 
+    let eol = super::line_ending::read(&mut s)?;
     let (out, msgs) = s.drain()?;
     warnings.extend(msgs);
+    warnings.extend(upright);
+    if fail_on_warning && !warnings.is_empty() {
+        return Err(PostError::Refused(warnings.join("; ")));
+    }
     let mut program = String::new();
     for l in &out {
         program.push_str(l);
-        program.push('\n');
+        program.push_str(eol);
     }
     Ok(PostOutput {
         program,

@@ -157,9 +157,11 @@ fn contour_params() -> OpParams {
         tab_height: 1.0,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -170,8 +172,10 @@ fn params(kind: OpType) -> (OpParams, &'static str) {
     let clear = Height::of(HeightReference::TopOfModel, 20.0);
     let top = Height::of(HeightReference::TopOfModel, 0.0);
     let tool = match &mut p {
-        OpParams::Drill { clearance_z, top_z, bottom_z, retract_z, .. } => {
+        OpParams::Drill { clearance_z, top_z, bottom_z, retract_z, feed, plunge_feed, .. } => {
             (*clearance_z, *top_z, *bottom_z, *retract_z) = (clear, top, None, None);
+            // #2598: DR-0600's own feed.
+            (*feed, *plunge_feed) = (115.0, 115.0);
             "DR-0600"
         }
         OpParams::Bore { clearance_z, top_z, bottom_z, retract_z, stepdown, stock_to_leave, .. } => {
@@ -180,7 +184,9 @@ fn params(kind: OpType) -> (OpParams, &'static str) {
             *stock_to_leave = 0.1;
             "EM-0400-2FL"
         }
-        OpParams::Thread { clearance_z, top_z, bottom_z, retract_z, pitch, .. } => {
+        OpParams::Thread { clearance_z, top_z, bottom_z, retract_z, pitch, feed, .. } => {
+            // #2598: TM-0600-P125's own feed at the edge.
+            *feed = 400.0;
             // The thread stops 1.5 mm above the plate floor: the opening
             // bore leaves the floor of the stock box there.
             (*clearance_z, *top_z, *bottom_z, *retract_z) = (clear, top, Some(Height::fixed(1.5 - HALF_T)), None);

@@ -9,14 +9,15 @@
 use crate::approach::CENTER_CUT_REFUSAL;
 use crate::cl::{MoveKind, PathBuilder};
 use crate::entry::{Entry3D, chord_hits_plan};
-use crate::geo2d::Point2;
+use crate::geo2d::{Point2, Region};
 use crate::geometry::Point3;
-use crate::links::{Link, LinkTally, Links, NOT_PROVED, TOO_LONG};
+use crate::links::{CLEARANCE_PLANE, Link, LinkTally, Links, NOT_PROVED, TOO_LONG};
 
 use super::arcs::Seg;
 use super::descent::{Cuts, Lvl, entry_restart, feed_down, plan, push, restart, start};
 use crate::plunge_law;
 use super::levels::{Cert, Motion};
+use super::slots::chord_clears;
 
 /// One pass's place in the ladder, as a descent onto it reads it.
 pub(super) struct LevelWalk<'a> {
@@ -27,13 +28,16 @@ pub(super) struct LevelWalk<'a> {
     pub prev_z: f64,
     /// The material's top at this level (M11.3 B's plunge height).
     pub mat_top: f64,
+    /// Previous level's cutter-center region when per-level keep-outs vary
+    /// with height (#2055); `None` shares `cert`.
+    pub prev_center: Option<&'a Region>,
 }
 
 /// What the links remember across one ladder: the lifts to name, and the
 /// dive link cut at the level last entered - a planar feed a keep-down
 /// link on that plane must not cross (until the next level begins, it is
 /// the level the tool stands on).
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct LinkState {
     pub tally: LinkTally,
     level: Vec<Vec<Point2>>,
@@ -117,7 +121,14 @@ pub(super) fn level_link(
             let l = Lvl { cen, passes: lv.passes, pass: lv.pass, walk: lv.walk, mat_top: lv.mat_top };
             let d = plan(arm, zig, &l, at, lv.z, lv.prev_z, m);
             let s = start(&d, &l, at, m);
-            match link_proof(cen, &[lv.passes, &st.level], at, s, &m.links) {
+            match link_proof(cen, &[lv.passes, &st.level], at, s, &m.links)
+                .and_then(|()| {
+                    if lv.prev_center.is_none_or(|pc| chord_clears(pc, at, s)) {
+                        Ok(())
+                    } else {
+                        Err(NOT_PROVED)
+                    }
+                }) {
                 Ok(()) => {
                     b.push(MoveKind::Feed, Point3::new(s.x, s.y, lv.prev_z), Some(m.feed));
                     push(b, &d, &l, lv.z, lv.prev_z, m)
@@ -147,22 +158,38 @@ pub(super) fn pass_link(b: &mut PathBuilder, lv: &LevelWalk, m: &Motion, cert: O
     };
     let cur = b.at();
     let at = Point2::new(cur.x, cur.y);
-    let plane = match m.links.pass {
-        Link::Clearance => m.clearance_z,
-        Link::Retract => m.hop_z,
-        Link::KeepDown => {
-            let proof = cert.map_or(Err(NOT_PROVED), |c| link_proof(c, &[passes, &st.level], at, e, &m.links));
-            match proof {
-                Ok(()) => {
+    // #3747: round a part the rings link in the plane, whatever the pass
+    // link: a lift needs a named reason (`ring_links`). #3824: the link
+    // tries the edge of the area too, before it lifts.
+    let proof = match (&m.ring_links, m.links.pass) {
+        (Some(rl), _) => Some(super::ring_links::link(b, rl, m, cert, &[passes, &st.level], e, z)),
+        (None, Link::KeepDown) => Some(
+            cert.map_or(Err(NOT_PROVED), |c| link_proof(c, &[passes, &st.level], at, e, &m.links))
+                .and_then(|()| if !m.cleared_links || through_cut(b, at, e, z, m.tool_r()) { Ok(()) } else { Err(NOT_PROVED) })
+                .map(|()| {
                     b.push(MoveKind::Feed, Point3::new(e.x, e.y, z), Some(m.feed));
-                    return;
-                }
-                Err(why) => {
-                    st.tally.lift(why, at, z);
-                    m.hop_z
-                }
-            }
+                    vec![at, e]
+                }),
+        ),
+        (None, _) => None,
+    };
+    let plane = match (proof, m.links.pass) {
+        (Some(Ok(walk)), _) => {
+            st.level.push(walk);
+            return;
         }
+        // #3822: a failed ring link lifts to the plane the user chose for
+        // the pass link: Clearance to the clearance height, else retract.
+        (Some(Err(why)), Link::Clearance) => {
+            st.tally.lift_to(why, CLEARANCE_PLANE, at, z);
+            m.clearance_z
+        }
+        (Some(Err(why)), _) => {
+            st.tally.lift(why, at, z);
+            m.hop_z
+        }
+        (None, Link::Clearance) => m.clearance_z,
+        (None, _) => m.hop_z,
     };
     // The climb-and-dive every planar ladder has posted between passes:
     // the floor its neighbours already cleared, crossed in air.
@@ -183,9 +210,14 @@ pub(super) fn pass_link(b: &mut PathBuilder, lv: &LevelWalk, m: &Motion, cert: O
     {
         let l = Lvl { cen, passes, pass: lv.pass, walk: lv.walk, mat_top };
         let from = (mat_top + m.links.approach.plunge_height).min(plane);
-        let d = if cc { entry_restart(&l, at, z, from, m) } else { restart(&l, at, z, from, m) };
+        let d = if cc { entry_restart(b, &l, at, z, from, plane, m) } else { restart(b, &l, at, z, from, plane, m) };
         st.level.extend(push(b, &d, &l, z, plane, m));
         return;
+    }
+    // #3884: a start-side pass start in material that the feed below
+    // plunges into is named, never silent.
+    if cc && m.solid_restart && m.cleared_links && plunge_law::into_solid(b, e, z, mat_top, m.tool_r()) {
+        super::entry_warn::plunge_into_stock(b, m, e, z);
     }
     // #1665: a pass that starts where the last one ended (the bore's ring
     // after its radial sweep) is entered by a plunge back down the column
@@ -200,6 +232,18 @@ pub(super) fn pass_link(b: &mut PathBuilder, lv: &LevelWalk, m: &Motion, cert: O
     }
     b.push(MoveKind::Rapid, Point3::new(e.x, e.y, plane), None);
     feed_down(b, e, z, mat_top, m, m.plunge_feed);
+}
+
+/// #3316: does the chord `a -> s` at `z` run through material this path
+/// already cut - the column under every sample (a quarter radius apart)
+/// cleared by the centre-cutting law ([`plunge_law::column_cleared`])?
+fn through_cut(b: &PathBuilder, a: Point2, s: Point2, z: f64, tool_r: f64) -> bool {
+    let len = (s.x - a.x).hypot(s.y - a.y);
+    let n = (len / (0.25 * tool_r).max(1e-3)).ceil().clamp(1.0, 1e5) as usize;
+    (0..=n).all(|k| {
+        let t = k as f64 / n as f64;
+        plunge_law::column_cleared(b.moves(), Point2::new(a.x + t * (s.x - a.x), a.y + t * (s.y - a.y)), z, tool_r)
+    })
 }
 
 /// The keep-down link law: `a -> s` within the stay-down limit, inside

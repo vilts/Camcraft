@@ -13,6 +13,7 @@ use crate::turn_drag;
 /// The rings are computed once per frame and serve the paint, the hot
 /// ring and the cursor.
 pub(crate) fn draw(ui: &egui::Ui, state: &State, pointer: Option<[f32; 2]>, pane: egui::Rect, font: &egui::FontId) {
+    let Some(r) = turn_drag::rings(state) else { return };
     let rings = turn_drag::rings_px(state);
     if rings.is_empty() {
         return;
@@ -23,21 +24,33 @@ pub(crate) fn draw(ui: &egui::Ui, state: &State, pointer: Option<[f32; 2]>, pane
     let under = pointer.and_then(|p| turn_drag::ring_in(&rings, p));
     let hot = live.or(under);
     for (axis, pts) in &rings {
+        let enabled = turn_drag::ring_enabled(state, r.center, *axis);
         let col = ink.triad.get(*axis).copied().unwrap_or(egui::Color32::WHITE);
-        let dim = live.is_some_and(|a| a != *axis);
+        let dim = !enabled || live.is_some_and(|a| a != *axis);
         let col = if dim { col.gamma_multiply(0.35) } else { col };
         let w = if hot == Some(*axis) { 3.5 } else { 2.0 };
         let line: Vec<egui::Pos2> = pts.iter().map(|p| egui::pos2(p[0], p[1])).collect();
+        let label = format!("Rotate about {}", ["X", "Y", "Z"][*axis]);
+        let response = ui.interact(egui::Rect::from_points(&line), ui.id().with(("turn_handle", axis)), egui::Sense::hover());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label));
+        if !enabled {
+            ui.ctx().accesskit_node_builder(response.id, |node| {
+                node.set_description(turn_drag::edge_on_hint(*axis));
+            });
+        }
+        if under == Some(*axis) {
+            response.on_hover_text(if enabled { format!("{label}: drag the ring. Hold Shift to snap.") } else { turn_drag::edge_on_hint(*axis) });
+        }
         ui.painter().add(egui::Shape::line(line.clone(), egui::Stroke::new(w + 2.0, shade)));
         ui.painter().add(egui::Shape::line(line, egui::Stroke::new(w, col)));
     }
     if let Some(text) = turn_drag::readout(state) {
-        let bar = super::viewport_bar::bar_rect(pane);
+        let bar = super::viewport_bar::panel_rect(pane, true);
         let at = egui::pos2(bar.center().x, bar.min.y - 6.0);
         ui.painter().text(at + egui::vec2(1.0, 1.0), egui::Align2::CENTER_BOTTOM, &text, font.clone(), shade);
         ui.painter().text(at, egui::Align2::CENTER_BOTTOM, text, font.clone(), egui::Color32::WHITE);
     }
-    if under.is_some() || live.is_some() {
+    if under.is_some_and(|axis| turn_drag::ring_enabled(state, r.center, axis)) || live.is_some() {
         ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
     }
 }

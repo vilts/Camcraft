@@ -129,8 +129,118 @@ use super::*;
 /// reasons naming turned-off un-carriable fields. Pre-v69 `Pocket` +
 /// `Adaptive` files open as `Adaptive2D` (Spiral); older builds must
 /// refuse v69 files rather than silently drop `needs_review` and post.
-pub const PROJECT_VERSION: u32 = 69;
+/// v70 (#2016): a tool may name its library holder (`holder` on the
+/// tool) in place of a drawn `body`. Absent is what every older file
+/// states: a `body` (a drawn copy of a library holder included) or the
+/// holder cylinder, read and judged as before, so a v69 file steps up
+/// unchanged. An old reader (including v0.22.0 at v62 and v69 builds)
+/// must refuse a v70 file rather than drop the reference and judge the
+/// smaller cylinder in its place.
+/// v71 (#1862): a DXF profile is an entity row of kind `sketch`, placed
+/// on the stock of a setup. A v70 file has none and steps up unchanged.
+/// An old reader must refuse a v71 file rather than open a setup without
+/// the profiles its operations cut.
+/// v72 (#2463): a model may record the file it was imported from and that
+/// file's SHA-256 (`source`): a linked model, imported again when the file
+/// changes. Absent is not linked - what every v71 model was - so a v71
+/// file steps up unchanged. An old reader must refuse a v72 file rather
+/// than save a linked model back unlinked without a word.
+/// v73 (#2055): an operation's `area` controls may state `"do_not_touch"`
+/// protected faces/edges and standoff clearance. An old reader (up to v72)
+/// must refuse the file rather than ignore the protection and cut across a
+/// protected feature. A v72 file steps up unchanged with empty protection.
+/// v74 (#1864): feature selections add `sketch_chain` and `sketch_layer`
+/// variants on DXF profiles, and `Contour` adds `chain_overrides`
+/// (absent is empty, so a v73 file steps up unchanged). An old reader
+/// must refuse a v74 file rather than drop per-chain side or direction
+/// overrides or reject sketch picks without explanation.
+/// v75 (#3181): a machine can record its controller model, exact NC software,
+/// installed options and tool-change procedure. A v74 file leaves them
+/// unstated. Older readers must refuse v75 to prevent losing these facts.
+/// v76 (#1890): a 3D Deburr `width` is the chamfer chord across the
+/// edge, not the cone's setback at the edge's level, and Deburr adds
+/// `break_mode`, `break_depth`, `break_profile` and `passes` (absent is
+/// one Constant Width chamfer pass). A v75 width steps up by sqrt(2),
+/// the chord of its setback on a 90-degree edge, so the cut depth stays.
+/// An old reader must refuse a v76 file rather than read the chord as a
+/// setback and cut each break sqrt(2) times deeper.
+/// v77 (#3447): a setup may state its creation order (`order`), and the
+/// program posts setups in that order. Absent sorts by name - what every
+/// v76 file posted - so a v76 file steps up unchanged. An old reader must
+/// refuse a v77 file rather than drop the order and post a setup before
+/// the setup its datum comes from.
+/// v78 (#2604): a stored machine may hold `reserved_tools`, the tool
+/// numbers and names kept for a probe or a tool setter. Absent reserves
+/// nothing, what every v77 machine was, so a v77 file steps up unchanged.
+/// An old reader must refuse a v78 file rather than drop the reservations
+/// and post a cutting tool at a reserved probe pocket.
+/// v79 (#3368) is the tip-form conditional rung (its own const below).
+/// v80 (#3153): a 2D Chamfer may select a positive `minimum_cone_radius`
+/// (the tip offset). The zero default is omitted, so a v78/v79 Chamfer reads
+/// and cuts exactly as before. v79 stays the #3368 tip-form step, which a
+/// v80 reader reads as is. An old reader must refuse v80 rather than
+/// drop a positive radius and post the old tip-on-wall cone.
+/// v81 (#2772): the rotary kinds' operations may state their own
+/// rotation axis (`stated_axis`, a direction through the setup's work
+/// offset origin, overriding the machine's stated rotary line). Absent
+/// is what every v80 file stated: follow the machine, else fit the axis
+/// off the model - so a v78, v79 and v80 file steps up unchanged. An
+/// old reader must refuse a v81 file rather than drop the statement
+/// and turn the part about an axis the user never named.
+/// v82 (#2826): the Rotary Flow operation arrives (`rotary_flow`, the
+/// picked guide chains' kind, its heights read as ball-center radii
+/// about the stated axis). No older file names the arm, so a v81 file
+/// steps up unchanged. This step is a compatibility break: every file
+/// this build writes says v82, and a v81 reader refuses the new files
+/// (see the `BREAKING CHANGE` footer of the commit that stepped the
+/// ladder). An old reader must refuse a v82 file rather than drop the
+/// op it cannot read: the post would re-open a document whose flow
+/// band op vanished without a word.
+pub const PROJECT_VERSION: u32 = 82;
 
+/// v79 (#3368), a conditional step of the release it shipped in: only
+/// a file that held a flat or ball taper tip said 79, and an older
+/// reader had to refuse such a file rather than read the tip as sharp
+/// (a sharp tip is a smaller tool than the real one, and a toolpath
+/// planned for it can gouge). The ladder has since stepped past it
+/// (#3153's v80, then #2772's v81): every file this build writes says
+/// [`PROJECT_VERSION`], tip form or not, and a v79 file reads as the
+/// v78 file it is, plus the tip keys this build reads natively.
+///
+/// The step is isolated here: [`written_project_version`] and
+/// [`tip_form_read_version`]. To remove it, delete the two functions,
+/// this const and [`NEWEST_PROJECT_VERSION`], and call sites read
+/// `PROJECT_VERSION` again.
+pub const TIP_FORM_PROJECT_VERSION: u32 = 79;
+/// The newest version this build reads: a tip-form file's, else
+/// [`PROJECT_VERSION`].
+pub const NEWEST_PROJECT_VERSION: u32 =
+    if TIP_FORM_PROJECT_VERSION > PROJECT_VERSION { TIP_FORM_PROJECT_VERSION } else { PROJECT_VERSION };
+const _: () = assert!(
+    PROJECT_VERSION != TIP_FORM_PROJECT_VERSION,
+    "v79 is the tip-form step of #3368: step PROJECT_VERSION past it, or fold the tip form into the unconditional ladder"
+);
+
+/// #3368: the version a save writes - [`TIP_FORM_PROJECT_VERSION`] when a
+/// tool states a flat or ball taper tip and the ladder is still below it,
+/// else [`PROJECT_VERSION`].
+#[must_use]
+pub fn written_project_version(holds_tip_form: bool) -> u32 {
+    if holds_tip_form { PROJECT_VERSION.max(TIP_FORM_PROJECT_VERSION) } else { PROJECT_VERSION }
+}
+
+/// #3368: a v79 tip-form file reads as the v78 file it is (plus the tip
+/// keys, which the ladder reads natively now that it has stepped past
+/// v79 - and which a v78-only reader reads as absent = sharp, so the
+/// older reader refuses the file it cannot read whole).
+#[must_use]
+pub fn tip_form_read_version(version: u32) -> u32 {
+    if version == TIP_FORM_PROJECT_VERSION && TIP_FORM_PROJECT_VERSION > PROJECT_VERSION {
+        PROJECT_VERSION
+    } else {
+        version
+    }
+}
 #[derive(Debug, thiserror::Error)]
 pub enum ProjectError {
     #[error("I/O error: {0}")]
@@ -310,6 +420,8 @@ pub enum EntityKind {
     Setup,
     /// A Pause / Home entry of the operation list (#155).
     Entry,
+    /// A DXF profile placed on a setup's stock (#1862).
+    Sketch,
 }
 
 /// The file mirror of `StockShape`, kept separate so the domain enum can
@@ -373,8 +485,11 @@ pub struct ToolDto {
     /// #894 addition, additive (no version step): a single-form thread
     /// mill's finest pitch. Absent from every older file and written
     /// only when set; absent is the inert 0.0 every other kind means.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub pitch_min: f64,
+    /// #3662: on a single-form mill an ABSENT key reads as its one pitch
+    /// (a converter that read only the tooth); a stated 0 stays 0, so
+    /// the sanity law refuses it by name as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pitch_min: Option<f64>,
     /// Tap thread hand; older tools default to right-hand.
     #[serde(default, skip_serializing_if = "camcraft_tools::thread_hand::ThreadHand::is_right")]
     pub thread_hand: camcraft_tools::thread_hand::ThreadHand,
@@ -417,6 +532,13 @@ pub struct ToolDto {
     /// holder cylinder, what every older tool judged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub body: Option<super::tool_body_wire::ToolBodyDto>,
+    /// #2016 (v70): the library holder the tool sits in, by reference
+    /// (`tool_body_wire::HolderRefDto`). Written in place of `body`,
+    /// never beside it; the body is drawn from the named entry on
+    /// load. An entry this build's library does not hold refuses the
+    /// file by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<super::tool_body_wire::HolderRefDto>,
     /// #93 slice 2, additive (no version step): the tool's drawn
     /// cutter outline, `[z, r, arc]` per point tip-up. Absent is the
     /// outline its numbers draw - every older file. A reader that
@@ -468,6 +590,19 @@ pub struct ToolDto {
     /// sizes - the outline's bounds, so never a smaller electrode.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub outline: Vec<[f64; 2]>,
+    /// #3368: a chamfer mill's tip form and tip diameter. Absent is a
+    /// sharp tip, what every older file meant; written only for a flat
+    /// or ball tip. Such a file says [`TIP_FORM_PROJECT_VERSION`], so an
+    /// older build refuses it and never reads the tip as sharp.
+    #[serde(default, skip_serializing_if = "camcraft_tools::taper::TaperTip::is_sharp")]
+    pub tip_form: camcraft_tools::taper::TaperTip,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub tip_diameter: f64,
+    /// #3369: a form mill's outline, pilot and preset. Only the
+    /// `form_mill` kind states it, and an older build refuses that word,
+    /// so no version step is needed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub form: Option<camcraft_tools::form_mill::FormSpec>,
 }
 
 #[allow(clippy::trivially_copy_pass_by_ref)]
@@ -541,6 +676,18 @@ pub enum ToolKindDto {
     ThreadMillSingle,
     /// Wire EDM wire (#2011): additive in the same way.
     Wire,
+    /// The undercut cutters (#1444): additive words - no older file
+    /// names them. They read the shared keys: `diameter` the head,
+    /// `flute_len` its height, `shank_d` and `shank_len` the neck,
+    /// `tip_angle` the dovetail's flank angle.
+    TSlot,
+    Keyseat,
+    Dovetail,
+    Lollipop,
+    /// The form mill (#3369): an additive word - an older build refuses
+    /// it by name, so it never reads the outline as another tool. The
+    /// outline rides the `form` key.
+    FormMill,
 }
 
 impl ToolDto {
@@ -565,12 +712,18 @@ impl ToolDto {
                 ToolKind::ThreadMill => ToolKindDto::ThreadMill,
                 ToolKind::ThreadMillSingle => ToolKindDto::ThreadMillSingle,
                 ToolKind::Wire => ToolKindDto::Wire,
+                ToolKind::TSlot => ToolKindDto::TSlot,
+                ToolKind::Keyseat => ToolKindDto::Keyseat,
+                ToolKind::Dovetail => ToolKindDto::Dovetail,
+                ToolKind::Lollipop => ToolKindDto::Lollipop,
+                ToolKind::FormMill => ToolKindDto::FormMill,
             },
             diameter: t.diameter,
             corner_r: t.corner_r,
             tip_angle: t.tip_angle,
             pitch: t.pitch,
-            pitch_min: t.pitch_min,
+            // Written only when set, as before #3662 (0 is absent).
+            pitch_min: (t.pitch_min != 0.0).then_some(t.pitch_min),
             thread_hand: t.thread_hand,
             nose_radius: t.nose_radius,
             width: t.width,
@@ -590,6 +743,7 @@ impl ToolDto {
             center_cutting: t.center_cutting,
             number: None,
             body: None,
+            holder: None,
             cutter: None,
             orientation: t.orientation,
             part_number: t.catalog.part_number.clone(),
@@ -600,6 +754,9 @@ impl ToolDto {
             cutting_data: super::cutting_rows_dto::rows_to_write(&t.cutting, t.rpm, t.feed),
             turning: t.turning,
             outline: t.outline.clone(),
+            tip_form: t.tip_form,
+            tip_diameter: t.tip_diameter,
+            form: t.form.clone(),
         }
     }
 
@@ -609,6 +766,14 @@ impl ToolDto {
     pub(super) fn to_tool(&self) -> Tool {
         let mut tool = self.tool_as_written();
         camcraft_tools::cutting_rows::canonical(&mut tool);
+        // #3369: a preset form that states no points (a catalogue entry)
+        // reads as the points its preset writes.
+        camcraft_tools::form_mill::fill(&mut tool);
+        // #3662: a single-form thread mill whose definition has no
+        // `pitch_min` key reads as a range of its one pitch (never wider).
+        if self.pitch_min.is_none() {
+            camcraft_tools::thread_mill::read_unstated_range(&mut tool);
+        }
         tool
     }
 
@@ -633,12 +798,17 @@ impl ToolDto {
                 ToolKindDto::ThreadMill => ToolKind::ThreadMill,
                 ToolKindDto::ThreadMillSingle => ToolKind::ThreadMillSingle,
                 ToolKindDto::Wire => ToolKind::Wire,
+                ToolKindDto::TSlot => ToolKind::TSlot,
+                ToolKindDto::Keyseat => ToolKind::Keyseat,
+                ToolKindDto::Dovetail => ToolKind::Dovetail,
+                ToolKindDto::Lollipop => ToolKind::Lollipop,
+                ToolKindDto::FormMill => ToolKind::FormMill,
             },
             diameter: self.diameter,
             corner_r: self.corner_r,
             tip_angle: self.tip_angle,
             pitch: self.pitch,
-            pitch_min: self.pitch_min,
+            pitch_min: self.pitch_min.unwrap_or(0.0),
             thread_hand: self.thread_hand,
             nose_radius: self.nose_radius,
             width: self.width,
@@ -669,6 +839,9 @@ impl ToolDto {
             cutting: self.cutting_data.iter().map(|r| r.to_row()).collect(),
             turning: self.turning,
             outline: self.outline.clone(),
+            tip_form: self.tip_form,
+            tip_diameter: self.tip_diameter,
+            form: self.form.clone(),
         }
     }
 }
@@ -691,6 +864,25 @@ pub struct GeoSelDto {
     pub feature: FeatureSelDto,
 }
 
+/// #1864: 32-digit lowercase hex encoding of [`sketch_chains::ChainId`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChainIdDto(pub crate::geometry::sketch_chains::ChainId);
+
+impl Serialize for ChainIdDto {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_str(&self.0)
+    }
+}
+
+impl<'de> Deserialize<'de> for ChainIdDto {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(d)?;
+        crate::geometry::sketch_chains::parse_chain_id_hex(&s)
+            .map(ChainIdDto)
+            .ok_or_else(|| serde::de::Error::custom(format!("invalid sketch chain id '{s}' - expected 32 lowercase hex digits")))
+    }
+}
+
 /// The file mirror of `operation::FeatureSel`.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -701,4 +893,8 @@ pub enum FeatureSelDto {
     /// M13.4: additive - files written before it never carry the tag,
     /// so they load unchanged.
     Vertex { id: u64 },
+    /// #1864: canonical 32-digit hex `ChainId` on a DXF sketch entity.
+    SketchChain { id: ChainIdDto },
+    /// #1864: named layer on a DXF sketch entity.
+    SketchLayer { layer: String },
 }

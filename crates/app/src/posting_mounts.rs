@@ -245,6 +245,13 @@ fn post_mounts_with(
     refuse_per_op(world, "one file per mount")?;
     // #1532: "One file per setup" writes each setup as its own mount's file.
     let mounts = super::setup_change::split(world, program_mounts(world, explicit.is_none()));
+    if mounts.len() > 1 && match explicit {
+        Some((Some(post), _)) => super::agie::is_native(post),
+        Some((None, _)) => false,
+        None => mounts.iter().any(|mount| super::agie::is_native(&mount.post)),
+    } {
+        return Err("A native wire EDM job requires a single mount and setup".into());
+    }
     if mounts.len() <= 1 {
         let posted = match explicit {
             None => super::post_setup_with_script_options(world, out_path, extra)?,
@@ -354,6 +361,8 @@ fn post_each(
             path,
             mount,
             posted: Posted {
+                bundle_files: Vec::new(),
+                controller_review: None,
                 ops,
                 lines: out.program.lines().count(),
                 program: out.program,

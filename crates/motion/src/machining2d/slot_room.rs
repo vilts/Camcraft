@@ -18,6 +18,9 @@ use super::face::GenError;
 mod geom;
 use geom::{face_overshoot, hull};
 
+#[path = "slot_room_line.rs"]
+mod line;
+
 /// How far a picked edge may stray from its chord, or the second edge
 /// from parallel to the first, mm.
 pub const STRAIGHT_TOL: f64 = 0.01;
@@ -50,6 +53,9 @@ enum Room {
     /// A picked face (or closed ring): its region, inside the frame's
     /// minimum-area rectangle.
     Face(Region),
+    /// A picked centerline (#1868): the slot's two ends, `s0` and `s1`
+    /// on the line `t0 = t1`. It bounds no width.
+    Line,
 }
 
 /// Where a selection lets a slot cut: a rectangle frame - `u` along the
@@ -178,13 +184,14 @@ impl SlotBound {
         match self.room {
             Room::Edges => "the picked edges",
             Room::Face(_) => "the picked face",
+            Room::Line => "the picked centerline",
         }
     }
 
     fn leave(&self) -> &'static str {
         match self.room {
             Room::Edges => "leave",
-            Room::Face(_) => "leaves",
+            Room::Face(_) | Room::Line => "leaves",
         }
     }
 
@@ -202,6 +209,9 @@ impl SlotBound {
     /// A room no longer than it is wide, or a face its best slot leaves.
     pub fn fit(&self) -> Result<SlotFit, GenError> {
         let (l, w) = self.room();
+        if matches!(self.room, Room::Line) {
+            return Err(GenError::Invalid("the picked centerline gives a slot its two ends, not its width".into()));
+        }
         if w.is_nan() || w <= FIT_TOL {
             return Err(GenError::Invalid(format!("{} {} no width for a slot", self.picks(), self.leave())));
         }
@@ -258,6 +268,9 @@ impl SlotBound {
         let Err(e) = self.confine(a, b, width) else {
             return Ok(());
         };
+        if matches!(self.room, Room::Line) {
+            return Err(e);
+        }
         match self.fit() {
             Ok(_) => Err(e),
             Err(f) => Err(GenError::Invalid(format!("{} (the picks seed no slot: {})", bare(&e), bare(&f)))),
@@ -276,6 +289,9 @@ impl SlotBound {
             return Err(GenError::Invalid("slot endpoints and width must be finite, the width positive".into()));
         }
         let no = |why: String| Err(GenError::Invalid(format!("the slot does not fit the selection: {why}")));
+        if matches!(self.room, Room::Line) {
+            return self.confine_line(a, b).or_else(no);
+        }
         let r = 0.5 * width;
         let (sa, sb, ta, tb) = (dot(a, self.u), dot(b, self.u), dot(a, self.n), dot(b, self.n));
         let (l, w) = self.room();
@@ -285,14 +301,14 @@ impl SlotBound {
         if across > w + FIT_TOL {
             let room = match self.room {
                 Room::Edges => format!("{picks} stand only {w:.3} mm apart"),
-                Room::Face(_) => format!("{picks} is only {w:.3} mm wide"),
+                Room::Face(_) | Room::Line => format!("{picks} is only {w:.3} mm wide"),
             };
             return no(format!("it is {across:.3} mm wide across the slot, but {room} - narrow it or re-pick"));
         }
         if along > l + FIT_TOL {
             let room = match self.room {
                 Room::Edges => format!("{picks} share only {l:.3} mm"),
-                Room::Face(_) => format!("{picks} is only {l:.3} mm long"),
+                Room::Face(_) | Room::Line => format!("{picks} is only {l:.3} mm long"),
             };
             return no(format!("it is {along:.3} mm long end to end, but {room} - shorten it or re-pick"));
         }
@@ -302,6 +318,7 @@ impl SlotBound {
                 .map(|&(s, t)| (self.s0 - (s - r)).max(s + r - self.s1).max(self.t0 - (t - r)).max(t + r - self.t1))
                 .fold(0.0_f64, f64::max),
             Room::Face(region) => face_overshoot(region, a, b, r)?,
+            Room::Line => 0.0,
         };
         if out > FIT_TOL {
             return no(format!(
@@ -330,6 +347,7 @@ impl SlotBound {
         let dt = dot(origin, n) - dot(origin, self.n);
         let room = match &self.room {
             Room::Edges => Room::Edges,
+            Room::Line => Room::Line,
             Room::Face(region) => {
                 let loops = region
                     .loops()

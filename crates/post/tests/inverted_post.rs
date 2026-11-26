@@ -192,6 +192,7 @@ fn a_threading_cycle_refuses_by_name() {
         repeat_each_depth: false,
         hand: camcraft_post::cl::ThreadHand::Right,
         chip_break_dips: false,
+        start_in_air: false,
     }));
     let e = refused("fanuc", &["X"], &with(vec![t, Record::Thread(None)]));
     assert!(e.contains("a threading cycle is not supported for an inverted axis"), "{e}");
@@ -247,12 +248,21 @@ fn an_inverted_z_or_other_letter_refuses_by_name() {
 
 #[test]
 fn every_unverified_dialect_refuses_by_name() {
-    for stem in ["sinumerik", "heidenhain", "mazak", "tormach", "grblhal", "tinyg", "fanuc-lathe"] {
-        let e = refused(stem, &["X"], &probe_records());
+    // #2475: each mill script declares the flag now (`wcs_flip_dialects`).
+    // A script that does not - a lathe script, or a mill script of the
+    // user's own without the line - is still refused.
+    let undeclared = cps("sinumerik").replace("axisInversion = true;", "");
+    assert_ne!(undeclared, cps("sinumerik"), "the sinumerik script declares the flag");
+    for (stem, text) in [("fanuc-lathe", cps("fanuc-lathe")), ("tormach-lathe", cps("tormach-lathe")), ("sinumerik, flag removed", undeclared)] {
+        let e = match engine::run(&text, &machine(&["X"]), &probe_stream()) {
+            Ok(out) => panic!("{stem}: must refuse, posted:\n{}", out.program),
+            Err(e) => e.to_string(),
+        };
         assert_eq!(
             e,
             "machine VMC 3-AXIS has an inverted X axis, and this post script is not verified for an inverted \
-             axis (it does not declare axisInversion = true) - post with a script that does (Fanuc, Haas)",
+             axis (it does not declare axisInversion = true) - post with a script that does (each built-in mill \
+             post does)",
             "{stem}"
         );
     }

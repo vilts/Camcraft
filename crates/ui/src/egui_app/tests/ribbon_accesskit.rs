@@ -63,6 +63,30 @@ fn section_dropdown_rows_expose_menu_items() {
 }
 
 #[test]
+fn multiaxis_dropdown_lists_and_creates_rotary_flow() {
+    let mut h = shell_harness();
+    // The flow band cuts with a ball (#2826): seed one so the Create
+    // cell is not dark - the tool law's own gate.
+    let ball = camcraft_app::tools::catalog()
+        .into_iter()
+        .find(|(n, _)| *n == "BN-0600")
+        .map(|(_, t)| t)
+        .expect("the catalog's ball-nose entry");
+    let st = h.state_mut();
+    st.state
+        .history
+        .execute(&st.state.world, camcraft_app::commands::AddTool::new(&st.state.world, "BN-0600", ball).expect("tool"));
+    h.run();
+    h.get_by_role_and_label(Role::Button, "Multi").click();
+    h.run_steps(2);
+    let flow = h.get_by_role_and_label(Role::MenuItem, "Rotary Flow");
+    assert!(!flow.accesskit_node().is_disabled(), "the Multi-axis group lists Rotary Flow enabled");
+    flow.click();
+    h.run_steps(2);
+    assert!(model::find_by_name(&h.state().state.world, "Rotary Flow1").is_some());
+}
+
+#[test]
 fn view_dropdown_rows_expose_menu_items() {
     let mut h = shell_harness();
     h.run();

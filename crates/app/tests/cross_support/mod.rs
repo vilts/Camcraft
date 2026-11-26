@@ -229,6 +229,7 @@ pub fn cross_params(cross: Vec<CrossHole>, bottom_z: Option<Height>) -> OpParams
         plunge_feed: 80.0,
         holes: vec![],
         cross,
+        picks: Default::default(),
     }
 }
 

@@ -31,6 +31,7 @@ const TOOL: &str = "EM-1000-4FL";
 
 fn pocket_op(strategy: PocketStrategy) -> OpParams {
     OpParams::Pocket3D {
+        pass_start: Default::default(),
         links: Links::ROUGH3D,
         stepover: 4.0,
         stock_to_leave: 0.0,
@@ -49,6 +50,8 @@ fn pocket_op(strategy: PocketStrategy) -> OpParams {
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         feed_opt: false,
         shell: false,
+        method: camcraft_app::machining2d::AdaptiveMethod::Spiral,
+        picks: Default::default(),
     }
 }
 
@@ -71,6 +74,13 @@ fn user_job(params: OpParams) -> (World, Toolpath, Vec<String>) {
     let mut h = History::default();
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/Milling-test.step");
     let imp = ImportModel::new(&path).expect("the user's STEP imports");
+    // PR #2904 replaces the 952-facet truck mesh with solidcore's mesh.
+    // The cutting regions and fitted arcs use this measured mesh.
+    // Issue #3886: the solidcore bump of PR #3802 (df899f029) meshes this
+    // fixture to 5232 facets (6228 at its parent 940cc5d0e).
+    if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
+        assert_eq!(imp.mesh.facets.len(), 5232, "the mesh behind the Linux path pin");
+    }
     let name = imp.name.clone();
     h.execute(&world, imp);
     let loc = Location { pos: Point3::new(0.0, 0.0, -7.0), ..Default::default() };
@@ -94,6 +104,13 @@ fn the_users_bore_roughs_adaptive_level_by_level_and_verifies_clean() {
     assert!(warns.is_empty(), "every level verifies clean: {warns:?}\nnotes {:?}", path.notes);
     let planar = path.moves.iter().filter(|m| m.kind == MoveKind::Feed && m.from.z == m.to.z).count();
     assert!(planar > 0, "the ladder cuts");
+    let mut levels: Vec<f64> = path.moves.iter()
+        .filter(|m| m.kind == MoveKind::Feed && m.from.z == m.to.z)
+        .map(|m| m.to.z)
+        .collect();
+    levels.sort_by(f64::total_cmp);
+    levels.dedup();
+    assert_eq!(levels, [0.0, 5.0, 10.0, 15.0], "every intended level cuts; no stock-face air level");
     // The HSM plan's arcs ride the levels (or the level says why not).
     let arcs = path.moves.iter().filter(|m| m.arc.is_some() && m.from.z == m.to.z).count();
     let fell: Vec<&String> = path.notes.iter().filter(|n| n.contains("Offset rings cut the level at Z")).collect();
@@ -148,7 +165,7 @@ fn the_users_bore_roughs_adaptive_level_by_level_and_verifies_clean() {
 /// planned from the air, and every level keeps the HSM plan and verifies
 /// clean against the part solid.
 #[test]
-#[ignore = "heavy lane: issue #1950 blocked (maintainer decides), expected red: stock-ring plans exceed optimal load and fall back to Offset rings; HSM Adaptive over every whole-model level of the user's STEP, ring and bore, verified (~90 s debug, release tier); the level's debug twin is motion pocket_hsm::ring_tests::the_stock_ring_level_reaches_the_air_planner_with_the_stock"]
+#[ignore = "known-fail #1950 | pocket3d_hsm | the_users_whole_model_bore_roughs_adaptive_on_each_level | every level keeps the HSM plan"]
 fn the_users_whole_model_bore_roughs_adaptive_on_each_level() {
     let world = new_world();
     let mut h = History::default();
@@ -164,37 +181,110 @@ fn the_users_whole_model_bore_roughs_adaptive_on_each_level() {
     h.execute(&world, GenerateOperation::new(&world, "Op1").expect("generate"));
     let e = model::find_by_name(&world, "Op1").expect("op");
     let tp = model::toolpath_of(&world, &e).expect("cached path");
-    let warns: Vec<String> = tp.warnings.iter().map(|w| format!("{w:?}")).collect();
-    assert!(warns.is_empty(), "every level verifies clean: {warns:?}
-notes {:?}", tp.path.notes);
+    let areas = camcraft_app::machining2d::rings_fallbacks(&tp.path.notes);
+    assert_eq!(tp.warnings.len(), usize::from(areas > 0), "only the fallback is reported: {:?}", tp.warnings);
+    assert!(tp.warnings.iter().all(|w| {
+        matches!(w, camcraft_app::verify::Warning::StrategyFallback { areas: n, .. } if *n == areas)
+            && !w.blocks_post()
+    }), "unexpected warnings: {:?}\nnotes {:?}", tp.warnings, tp.path.notes);
     let fell: Vec<&String> = tp.path.notes.iter().filter(|n| n.contains("Offset rings cut")).collect();
+    // known-fail-assert
     assert!(fell.is_empty(), "every level keeps the HSM plan: {fell:?}");
     assert!(tp.path.notes.iter().any(|n| n.contains("cut from the air")), "{:?}", tp.path.notes);
     assert!(!tp.path.notes.iter().any(|n| n.contains("planning budget")), "{:?}", tp.path.notes);
 }
 
+/// The bore's (moves, planar feeds, arcs) after the solidcore bump of PR
+/// #3802 (issue #3886). The bump changes only the mesh (6228 -> 5232
+/// facets); the planner is the same. Each level still takes one of the two
+/// HSM plans the bore had before: the 334.31 mm plan (397 planar feeds, 72
+/// arcs) or the 999.92 mm plan (1933 planar feeds, 918 arcs). Before the
+/// bump only Z 10 took the long plan; now Z 15 and Z 5 take it. Every level
+/// verifies clean and none falls back. The long plan itself is issue #4010.
+const BORE_PIN: (usize, usize, usize) = (4688, 4660, 1980);
+/// The reading before the bump, at 940cc5d0e (the parent of df899f029).
+#[cfg(any(
+    all(target_os = "windows", target_arch = "x86_64"),
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64")
+))]
+const BORE_PIN_BEFORE_3802: (usize, usize, usize) = (3158, 3130, 1141);
+
 /// The bore's (moves, planar feeds, arcs) on this platform (issue #980).
 fn bore_path_matches(got: (usize, usize, usize)) -> bool {
     if cfg!(all(target_os = "windows", target_arch = "x86_64")) {
-        // Issue #2004 (PR #2013): measured at 7c46c4d4c (release/v0.23.0),
-        // release, two runs identical; the Z 20 air level is gone, every
-        // other level is unchanged. Before: (16017, 15360, 1427), issue
-        // #1402, main 5eeb0370e.
-        got == (4716, 4688, 549)
+        // Issue #3886: (4688, 4660, 1980) measured on Windows x86_64,
+        // release, at 6d0381f19 and 2e2d40cb3 (after the solidcore bump of
+        // PR #3802); this platform does not assert the facet count.
+        // Issue #3050: before it, measured on Windows x86_64, release, at d66400b78
+        // (upstream main): every level verifies clean, none falls back.
+        // The PR #2904 mesh (6228 facets at the same chord cap) moved the
+        // counts; they now equal the Linux and macOS arm64 triple. Before:
+        // (4716, 4688, 549), issue #2004 (PR #2013), 7c46c4d4c; and before
+        // that (16017, 15360, 1427), issue #1402, main 5eeb0370e.
+        got == BORE_PIN
     } else if cfg!(all(target_os = "linux", target_arch = "x86_64")) {
-        // Issue #2004 (PR #2013): measured by the cut runner, release, run
-        // 44127297984 at a8bb30f0c; every level verifies clean, none falls
-        // back, and no planning budget is reached. Before: (16029, 15372,
-        // 1427), issue #882.
-        got == (4726, 4698, 549)
+        // PR #2904 (bac4a96c7) changes this fixture's mesh from 952 to
+        // 6228 facets at the same chord cap (decision #917). The fixture
+        // and HSM planner are unchanged; the mesh changes the cutting
+        // regions and their proved arc fits. The old truck-mesh reading
+        // was (4726, 4698, 549), issue #2004 (PR #2013). Every cutting
+        // level still verifies clean, with no fallback or planning-budget
+        // stop. Issue #3886: the solidcore bump of PR #3802 makes the mesh
+        // 5232 facets; measured in release at df899f029 and baad348f1, and
+        // (3158, 3130, 1141) with 6228 facets at its parent 940cc5d0e.
+        got == BORE_PIN
+    } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        // Issue #2371: measured in release on PR #2934 at 48071efd4 and
+        // unmodified main 61a817bed. Every level verifies clean, none
+        // falls back, and no planning budget is reached. Issue #3886: NOT
+        // measured on macOS after the solidcore bump of PR #3802. Windows
+        // and Linux both moved to BORE_PIN, and macOS equalled them before,
+        // so the pin follows them; measure it at the next macOS run.
+        got == BORE_PIN
     } else {
-        // Not measured here yet (macOS aarch64 included: its pin of issue
-        // #882, (16026, 15382, 1413), went stale with PR #2013, and issue
-        // #2371 owes its new triple). Measure this platform and add its
-        // exact triple above. Until then a band covering both measured ones.
+        // Not measured here yet. Measure this platform and add its exact
+        // triple above. Until then use the existing fallback band.
         let (moves, planar, arcs) = got;
         (4706..=4736).contains(&moves) && (4678..=4708).contains(&planar) && (539..=559).contains(&arcs)
     }
+}
+
+/// The exact pin of a measured platform rejects each adjacent count.
+#[cfg(any(
+    all(target_os = "windows", target_arch = "x86_64"),
+    all(target_os = "linux", target_arch = "x86_64"),
+    all(target_os = "macos", target_arch = "aarch64")
+))]
+fn assert_bore_pin_is_exact(pin: (usize, usize, usize)) {
+    assert!(bore_path_matches(pin));
+    let (m, p, a) = pin;
+    for got in [(m - 1, p, a), (m + 1, p, a), (m, p - 1, a), (m, p + 1, a), (m, p, a - 1), (m, p, a + 1)] {
+        assert!(!bore_path_matches(got), "the count pin must reject {got:?}");
+    }
+}
+
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn the_linux_x86_64_bore_count_pin_is_exact() {
+    assert_bore_pin_is_exact(BORE_PIN);
+    assert!(!bore_path_matches((4726, 4698, 549)), "the count pin must reject the old truck-mesh reading");
+    assert!(!bore_path_matches(BORE_PIN_BEFORE_3802), "the count pin must reject the reading before the solidcore bump");
+}
+
+#[test]
+#[cfg(all(target_os = "windows", target_arch = "x86_64"))]
+fn the_windows_x86_64_bore_count_pin_is_exact() {
+    assert_bore_pin_is_exact(BORE_PIN);
+    assert!(!bore_path_matches((4716, 4688, 549)), "the count pin must reject the old truck-mesh reading");
+    assert!(!bore_path_matches(BORE_PIN_BEFORE_3802), "the count pin must reject the reading before the solidcore bump");
+}
+
+#[test]
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn the_macos_arm64_bore_count_pin_is_exact() {
+    assert_bore_pin_is_exact(BORE_PIN);
+    assert!(!bore_path_matches(BORE_PIN_BEFORE_3802), "the count pin must reject the reading before the solidcore bump");
 }
 
 #[test]

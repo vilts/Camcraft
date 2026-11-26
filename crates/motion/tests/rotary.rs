@@ -24,6 +24,7 @@ fn p3(x: f64, y: f64, z: f64) -> Point3 {
 
 fn finish(top_z: f64, bottom_z: f64) -> Finish3DParams {
     Finish3DParams {
+        gap_link: camcraft_motion::finishing3d::GapLink::Jump,
         pattern: FinishPattern::Waterline,
         stepover: None,
         tool_diameter: 2.0,
@@ -42,6 +43,7 @@ fn finish(top_z: f64, bottom_z: f64) -> Finish3DParams {
         entry_ramp: false,
         steep_stepover: None,
         pencil_reference: None,
+        waterlines: true,
     }
 }
 
@@ -317,15 +319,73 @@ fn the_rotary_parallel_runs_the_laid_bar_axially() {
 }
 
 #[test]
-fn the_kinds_refuse_each_other_degenerate_stances_by_name() {
+fn a_standing_bar_refuses_parallel_by_name() {
     let p = finish(28.0, 0.0);
     let c = control(0.0, 0.0, None);
     let e = rotary_parallel(&lathe_bar(16), &p, &c).expect_err("a standing bar has no axial passes here");
     assert!(e.to_string().contains("Rotary Contour"), "{e}");
-    let q = Finish3DParams {
+}
+
+// ---- the held-end law (#2343) -------------------------------------
+
+/// A plain round bar of radius 3 from station `x0` to `x1`, laid along x.
+fn laid_stock(x0: f64, x1: f64) -> Vec<Triangle> {
+    revolve(16, &[(0.0, x0), (3.0, x0), (3.0, x1), (0.0, x1)])
+        .into_iter()
+        .map(|f| Triangle::new(laid(f.a), laid(f.b), laid(f.c)))
+        .collect()
+}
+
+/// The lowest and highest station a cutting ball center stands at.
+fn cut_span(path: &camcraft_motion::cl::Toolpath) -> (f64, f64) {
+    path.moves
+        .iter()
+        .filter(|m| m.kind == MoveKind::Feed)
+        .flat_map(|m| [m.from.x, center(m, 1.0).x])
+        .fold((f64::MAX, f64::MIN), |(l, h), x| (l.min(x), h.max(x)))
+}
+
+#[test]
+fn the_parallel_leaves_the_end_face_where_the_stock_goes_on() {
+    use camcraft_motion::multiaxis::rotary_parallel_in;
+    let (facets, c) = (laid_bar(16), control(0.0, 0.0, None));
+    let p = Finish3DParams {
         clearance_z: 10.0,
         ..finish(3.0, -3.0)
     };
-    let e = rotary_contour(&laid_bar(16), &q, &c).expect_err("a laid bar's rings need a different height law");
-    assert!(e.to_string().contains("Rotary Parallel"), "{e}");
+    // The plain raster goes a ball radius past each end (stations 0 and
+    // 28) and down the end faces.
+    let plain = rotary_parallel(&facets, &p, &c).expect("the plain raster");
+    let (lo, hi) = cut_span(&plain);
+    assert!(lo < -0.9 && hi > 28.9, "the plain raster passes each end: {lo}..{hi}");
+    assert!(plain.notes.iter().all(|n| !n.contains("end face")), "{:?}", plain.notes);
+    // The bar goes on 20 mm past station 0, into the chuck: the ball
+    // center stays on the model's side of that plane; the free end is as before.
+    let held = rotary_parallel_in(&facets, Some(&laid_stock(-20.0, 28.0)), &p, &c).expect("a held bar");
+    let (lo, hi) = cut_span(&held);
+    assert!(lo >= -1e-6, "the ball center passed the held end's plane: station {lo}");
+    assert!(lo < 1e-6, "the turned surface is finished to its end: {lo}");
+    assert!(hi > 28.9, "the free end face is still cut: {hi}");
+    let note = "Rotary Parallel: the stock goes on 20.000 mm past the end of the model at (0.000, 0.000, 0.000) - that end face is left";
+    assert!(held.notes.iter().any(|n| n.starts_with(note)), "{:?}", held.notes);
+    // No link feeds across the stretch that was left: each feed that
+    // ends below the retract radius stays in the window too.
+    for m in held.moves.iter().filter(|m| m.kind != MoveKind::Rapid) {
+        assert!(center(m, 1.0).x >= -1e-6, "a feed or plunge stands past the plane: {m:?}");
+    }
+    // Under the sloped-entry law no ramp starts past the held end's
+    // plane: an infeed there stays a radial plunge.
+    let sloped = Finish3DParams { entry_ramp: true, ..p };
+    let ramped = rotary_parallel_in(&facets, Some(&laid_stock(-20.0, 28.0)), &sloped, &c).expect("sloped entries");
+    assert!(ramped.notes.iter().any(|n| n.contains("ramp in along the pass")), "{:?}", ramped.notes);
+    for m in ramped.moves.iter().filter(|m| m.kind != MoveKind::Rapid) {
+        assert!(m.from.x >= -1e-6 && m.to.x >= -1e-6, "a ramp runs in from past the plane: {m:?}");
+    }
+    // Stock that ends with the model, or goes on by no more than the
+    // tool's diameter (a facing allowance), changes nothing.
+    for stock in [laid_stock(0.0, 28.0), laid_stock(-2.0, 30.0)] {
+        let same = rotary_parallel_in(&facets, Some(&stock), &p, &c).expect("free ends");
+        assert_eq!(same.moves, plain.moves);
+        assert_eq!(same.notes, plain.notes);
+    }
 }

@@ -1,0 +1,26 @@
+// Original CAMCraft example. Run from the project root with a fresh output name.
+cam.call("load_machine", {builtin: "AGIECUT Classic 2S (template)"});
+// This synthetic job explicitly selects the resident recipe and its preview gap.
+cam.call("edit_machine", {patch: {edm: {conditions: [{
+  id: "AGIE_QN2", role: "rough", gap: 0.005, wire_diameter: 0.25
+}]}}});
+cam.call("add_tool", {catalog: "EDM-W025"});
+cam.call("set_stock", {box: {dx: 80, dy: 60, dz: 20}});
+cam.call("import_dxf", {path: "examples/agie/racetrack.dxf"});
+cam.call("move_dxf_profile", {name: "racetrack", position: [2, 1], angle: 90});
+cam.call("set_wcs", {origin: [0, 0, 20]});
+cam.call("add_operation", {
+  kind: "Wire Contour", name: "Punch1", source: "racetrack", tool: "EDM-W025",
+  params: {
+    top_z: 20, bottom_z: 0, side: "punch", condition: "AGIE_QN2",
+    start: [2, -16], capture: true
+  }
+});
+// Select the closed chain of the drawing as the punch outline.
+const outline = cam.call("list_features", {model: "racetrack", kinds: ["chains"]})
+  .chains.find(chain => chain.closed);
+cam.call("set_operation_geometry", {operation: "Punch1",
+  picks: [{model: "racetrack", id: outline.id}]
+});
+cam.generate();
+cam.post({to: "RACE20", cps: "Native wire EDM job files", options: {separationLengthMm: 1.0}});

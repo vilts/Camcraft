@@ -28,6 +28,26 @@ const INTACT: &[&str] = &[
     "negative zone tolerance",
 ];
 
+/// `text` with the value of its `<tol> - Brep ZoneTol3d` header line set to
+/// `value`. Found by the line's label, not by the writer's number format:
+/// solidcore 2016386 (#917) writes `1e-5` where 55d0e76 wrote
+/// `0.0000100000000000`, and a literal edit then changed nothing.
+fn zone_tolerance(text: &str, value: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    for line in text.lines() {
+        if line.trim_end().ends_with("- Brep ZoneTol3d") {
+            out.push(format!("{value} - Brep ZoneTol3d"));
+        } else {
+            out.push(line.to_string());
+        }
+    }
+    let mut s = out.join("\n");
+    if text.ends_with('\n') {
+        s.push('\n');
+    }
+    s
+}
+
 /// Corrupt native files: each name, the raw reader's verdict and the
 /// importer's verdict, pinned so a port bump that changes any of them fails
 /// here and gets looked at. Every importer verdict outside [`INTACT`] must
@@ -71,31 +91,13 @@ fn corpus() -> Vec<(&'static str, Vec<u8>)> {
         ),
         (
             "zero zone tolerance",
-            t.replacen(
-                "0.0000100000000000 - Brep ZoneTol3d",
-                "0.0 - Brep ZoneTol3d",
-                1,
-            )
-            .into_bytes(),
+            zone_tolerance(&t, "0.0").into_bytes(),
         ),
         (
             "negative zone tolerance",
-            t.replacen(
-                "0.0000100000000000 - Brep ZoneTol3d",
-                "-1.0 - Brep ZoneTol3d",
-                1,
-            )
-            .into_bytes(),
+            zone_tolerance(&t, "-1.0").into_bytes(),
         ),
-        (
-            "NaN zone tolerance",
-            t.replacen(
-                "0.0000100000000000 - Brep ZoneTol3d",
-                "nan - Brep ZoneTol3d",
-                1,
-            )
-            .into_bytes(),
-        ),
+        ("NaN zone tolerance", zone_tolerance(&t, "nan").into_bytes()),
         (
             "face count 4294967295",
             t.replacen("6 Faces In Brep", "4294967295 Faces In Brep", 1)
@@ -199,7 +201,10 @@ fn corrupt_native_files_never_panic_or_hang() {
         min: [0.0; 3],
         max: [10.0; 3],
     };
+    let intact = box_text().into_bytes();
     for (name, bytes) in corpus() {
+        // An edit that no longer matches the writer's text tests nothing.
+        assert!(bytes != intact, "{name}: the edit left the file unchanged");
         let (raw, imp, m) = bounded(name, move || {
             let mut k = SolidcoreKernel::default();
             let raw = read_smb(&mut k, &bytes);
@@ -257,6 +262,27 @@ fn corrupt_native_files_never_panic_or_hang() {
         observed, pinned,
         "reader verdicts changed - re-triage the findings"
     );
+}
+
+/// A NaN or infinite zone tolerance is refused by the seam's reader, by
+/// name, before the port parses the file; the importer gives the same
+/// refusal. A model read at an unknown tolerance is never handed out.
+#[test]
+fn non_finite_zone_tolerance_is_refused_by_name() {
+    for value in ["nan", "inf", "-inf"] {
+        let bytes = zone_tolerance(&box_text(), value).into_bytes();
+        let mut k = SolidcoreKernel::default();
+        let raw = read_smb(&mut k, &bytes).map(|_| "Ok");
+        let imp = import_smb(&mut k, &bytes).map(|_| "Ok");
+        for (what, r) in [("read_smb", raw), ("import_smb", imp)] {
+            let refused = matches!(
+                &r,
+                Err(KernelError::InvalidInput { op: "read_smb", detail })
+                    if detail.ends_with("is not a finite number")
+            );
+            assert!(refused, "{what} at zone tolerance {value}: {r:?}");
+        }
+    }
 }
 
 #[test]

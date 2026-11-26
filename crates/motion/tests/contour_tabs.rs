@@ -45,8 +45,9 @@ fn params(tab_count: u32, tab_width: f64) -> ContourParams {
         tab_height: 1.0,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: Links::PLANAR,
+        picks: Default::default(),
     }
 }
 

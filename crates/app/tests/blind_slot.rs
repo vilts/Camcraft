@@ -137,9 +137,17 @@ fn blind_slot_pocket_family_cuts_from_end_wall_to_stock_edge() {
                 extension,
                 ..Default::default()
             };
-            let (path, warnings) = run(&world, &op(SrcRef::Selection(picks), params(kind), area))
+            let (path, warnings) = operation::generate(&world, &op(SrcRef::Selection(picks), params(kind), area), "")
                 .unwrap_or_else(|e| panic!("{kind:?}, extension {extension}: {e}"));
-            assert_eq!(warnings, 0, "{kind:?}");
+            // #3035: an Adaptive area that rides the Offset rings is one
+            // advisory warning (it does not hold the post); nothing else.
+            let fell = camcraft_app::machining2d::rings_fallbacks(&path.notes);
+            assert_eq!(warnings.len(), usize::from(fell > 0), "{kind:?}: {warnings:?}");
+            assert!(
+                warnings.iter().all(|w| matches!(w, Warning::StrategyFallback { areas, .. } if *areas == fell) && !w.blocks_post()),
+                "{kind:?}: only the advisory fallback: {warnings:?}\nnotes {:?}",
+                path.notes
+            );
             let cuts: Vec<_> = feeds(&path)
                 .into_iter()
                 .filter(|p| p.z < 20.0 - EPS)

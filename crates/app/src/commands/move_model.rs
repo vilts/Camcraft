@@ -133,6 +133,12 @@ impl MoveModel {
                 "'{name}' is a work offset - the Work Offsets page places it"
             )));
         }
+        // #1862: a DXF profile lies on its stock face, not in the world.
+        if crate::sketch::is_sketch(world, &entity) {
+            return Err(CommandError::Invalid(format!(
+                "'{name}' is a DXF profile - the Stock page places it on its stock face"
+            )));
+        }
         let next = check_location(location, &format!("'{name}'"))?;
         let prev = model::transform_of(world, &entity).unwrap_or_default();
         // #571: only a move that turns the part re-fits a square stock; a

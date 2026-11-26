@@ -101,6 +101,7 @@ fn finish(world: &World, history: &mut History) {
         bottom_z: Height::fixed(2.0),
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     let op = CreateOperation::new(world, "F1", INSERT, SrcRef::Entity("step".into()), params).expect("create");
     history.execute(world, op);

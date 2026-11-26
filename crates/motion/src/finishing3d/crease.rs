@@ -8,13 +8,14 @@
 use crate::geometry::{Point3, Triangle};
 
 use super::params::Finish3DParams;
-use super::support::{Sup, dist2_pt_tri};
+use super::grid::SupSet;
+use super::support::{dist2_pt_tri};
 
 /// The model's float skin: welded vertices agree to this. The weld
 /// scale every chain in this module family keys on - lifted from the
 /// crease pair's two private copies (M2.5 D3) so the drape's boundary
 /// chain and the loci's locus chain weld the SAME mesh the same way.
-pub(super) fn vkey_scale(facets: &[Triangle]) -> f64 {
+pub(crate) fn vkey_scale(facets: &[Triangle]) -> f64 {
     let mut m = 1.0f64;
     for f in facets {
         for q in [f.a, f.b, f.c] {
@@ -25,7 +26,7 @@ pub(super) fn vkey_scale(facets: &[Triangle]) -> f64 {
 }
 
 /// The weld key: a vertex's lattice cell at the float-skin scale.
-pub(super) fn vkey(p: Point3, s: f64) -> (i64, i64, i64) {
+pub(crate) fn vkey(p: Point3, s: f64) -> (i64, i64, i64) {
     (
         (p.x / s).round() as i64,
         (p.y / s).round() as i64,
@@ -35,11 +36,11 @@ pub(super) fn vkey(p: Point3, s: f64) -> (i64, i64, i64) {
 
 /// One concave-edge candidate: the kept locus endpoints (ball
 /// centers), their weld keys, and the two unit face normals.
-pub(super) struct Seg {
-    pub(super) c0: Point3,
-    pub(super) c1: Point3,
-    pub(super) k0: (i64, i64, i64),
-    pub(super) k1: (i64, i64, i64),
+pub(crate) struct Seg {
+    pub(crate) c0: Point3,
+    pub(crate) c1: Point3,
+    pub(crate) k0: (i64, i64, i64),
+    pub(crate) k1: (i64, i64, i64),
 }
 
 pub(super) fn sub3(p: Point3, q: Point3) -> Point3 {
@@ -54,7 +55,7 @@ pub(super) fn scale3(p: Point3, k: f64) -> Point3 {
     Point3::new(p.x * k, p.y * k, p.z * k)
 }
 
-pub(super) fn cmp_pt(a: Point3, b: Point3) -> std::cmp::Ordering {
+pub(crate) fn cmp_pt(a: Point3, b: Point3) -> std::cmp::Ordering {
     a.x.total_cmp(&b.x)
         .then(a.y.total_cmp(&b.y))
         .then(a.z.total_cmp(&b.z))
@@ -81,7 +82,7 @@ pub(super) fn near(p: Point3, q: Point3) -> bool {
 /// Is this center a READING of the corner, inside the programmed
 /// window? Clear of every facet, resting on the solid at exactly r,
 /// and both contact feet standing on real facets.
-pub(super) fn rests(c: Point3, na: Point3, nb: Point3, p: &Finish3DParams, r: f64, sups: &[Sup]) -> bool {
+pub(super) fn rests(c: Point3, na: Point3, nb: Point3, p: &Finish3DParams, r: f64, sups: &SupSet) -> bool {
     if !c.is_finite() {
         return false;
     }
@@ -111,7 +112,7 @@ pub(super) fn rests(c: Point3, na: Point3, nb: Point3, p: &Finish3DParams, r: f6
     on_solid(sub3(c, scale3(na, r)), skin, sups) && on_solid(sub3(c, scale3(nb, r)), skin, sups)
 }
 
-fn on_solid(q: Point3, skin: f64, sups: &[Sup]) -> bool {
+fn on_solid(q: Point3, skin: f64, sups: &SupSet) -> bool {
     for s in sups {
         if q.x < s.xmin || q.x > s.xmax || q.y < s.ymin || q.y > s.ymax {
             continue;
@@ -135,7 +136,7 @@ pub(super) fn shrink(
     nb: Point3,
     p: &Finish3DParams,
     r: f64,
-    sups: &[Sup],
+    sups: &SupSet,
 ) -> Option<(Point3, Point3)> {
     let d = sub3(p1, p0);
     let span = d.dot(d).sqrt();
@@ -175,7 +176,7 @@ pub(super) fn shrink(
 /// and continuation picks the smoothest leg - closing a loop always
 /// wins its tie. A run's last point sits back on its first exactly
 /// when the corner closes on itself.
-pub(super) fn chain(segs: &[Seg]) -> Vec<Vec<Point3>> {
+pub(crate) fn chain(segs: &[Seg]) -> Vec<Vec<Point3>> {
     let mut at: std::collections::HashMap<(i64, i64, i64), Vec<(usize, bool)>> =
         std::collections::HashMap::new();
     for (i, sg) in segs.iter().enumerate() {

@@ -34,7 +34,7 @@ pub enum ToolColumn {
 }
 
 /// The editor's profile draft for the tool it is open on.
-#[derive(Clone, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct ToolProfileUi {
     /// The tool the draft belongs to (the editor's `tool_ui.name`).
     pub tool: String,
@@ -57,6 +57,10 @@ pub struct ToolProfileUi {
     pub library: Option<String>,
     pub gauge: f64,
     pub projection: f64,
+    /// #3895 (#808 item 2): the stored tool's stickout the projection was
+    /// last seeded from, and whether a tool length change re-seeded it.
+    pub seeded: Option<f64>,
+    pub reseeded: bool,
 }
 
 /// Is `kind` a milling tool - one a spun profile describes?
@@ -94,6 +98,16 @@ impl State {
                 d.library = self.tool_profile_ui.library.take();
                 d.gauge = self.tool_profile_ui.gauge;
                 d.projection = self.tool_profile_ui.projection;
+                d.seeded = self.tool_profile_ui.seeded;
+            }
+            // #2016: with no pick of the user's, the picker shows the
+            // library holder the tool already sits in.
+            if d.library.is_none()
+                && let Some(r) = landed.as_ref().and_then(|b| b.library.as_ref())
+            {
+                d.library = Some(r.entry.clone());
+                d.gauge = r.gauge_len;
+                d.projection = r.projection;
             }
             if let Some(spun) = landed.and_then(|b| b.spun) {
                 d.custom = true;
@@ -102,6 +116,7 @@ impl State {
             d.seen = facets;
             self.tool_profile_ui = d;
         }
+        self.reseed_holder_projection();
         if !self.tool_profile_ui.custom {
             self.tool_profile_ui.points = parametric_points(&self.tool_ui.to_tool());
         }
@@ -202,6 +217,7 @@ impl State {
                 d.library = Some(name);
                 d.gauge = e.gauge_len;
                 d.projection = stickout.unwrap_or(d.projection);
+                (d.seeded, d.reseeded) = (stickout, false);
             }
             None => d.library = None,
         }
@@ -212,6 +228,18 @@ impl State {
     pub(crate) fn editor_stored_tool(&self) -> Option<Tool> {
         let e = model::find_by_name(&self.world, &self.tool_ui.name)?;
         model::tool_of(&self.world, &e)
+    }
+
+    /// #2016: the library holder the editor's stored tool sits in by
+    /// reference, and the holder cylinder the laws read for it (the
+    /// one enclosing the entry's outline: diameter, length). `None`
+    /// for a custom holder or none, and for a machine's assumed
+    /// default, which is still floored by the tool's own numbers.
+    pub(crate) fn editor_library_holder(&self) -> Option<(String, f64, f64)> {
+        let body = self.editor_tool_body()?;
+        let reference = body.library.as_ref().filter(|_| !body.machine_default)?;
+        let judged = body.profile()?.enclose(&self.editor_stored_tool()?)?;
+        Some((reference.entry.clone(), judged.holder_d, judged.holder_len))
     }
 
     /// "Apply holder": queue the one `SetToolBody::library` for the
@@ -225,7 +253,9 @@ impl State {
     }
 
     /// The command handler: a refusal lands on the Tool pane by name;
-    /// a landed holder re-mirrors as a Custom (editable) profile.
+    /// a landed holder re-mirrors as a Custom (editable) profile. The
+    /// tool keeps the reference to the entry (#2016) until a point of
+    /// that profile is edited and applied.
     pub(crate) fn run_set_tool_holder(&mut self, name: &str, entry: &str, gauge: Option<f64>, projection: Option<f64>) {
         match SetToolBody::library(&self.world, name, entry, gauge, projection) {
             Ok(command) => {

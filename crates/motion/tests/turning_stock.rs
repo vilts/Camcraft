@@ -65,7 +65,7 @@ fn bar(r_out: f64) -> Option<StockEnv> {
 /// [`bar`] running `past` mm on beyond the part's top end (#229).
 fn long_bar(r_out: f64, past: f64) -> Option<StockEnv> {
     let s_top = Frame::about(&part()).expect("the part revolves").station_of(PART_TOP + past);
-    Some(StockEnv { r_out, clearance: CLEAR, s_top })
+    Some(StockEnv { r_out, clearance: CLEAR, s_top, s_bot: f64::NAN })
 }
 
 fn same(a: &Toolpath, b: &Toolpath) -> bool {

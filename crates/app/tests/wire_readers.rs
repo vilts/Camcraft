@@ -66,18 +66,22 @@ fn wire_doc() -> (World, History) {
     h.execute(&world, stock.expect("stock"));
     h.execute(&world, AddTool::new(&world, "EDM-W025", camcraft_app::wire_tools::wire_tool(0.25)).expect("wire"));
     let op = WireContourOp {
+        lead_arc_radius: None,
         top_z: Height::fixed(12.0),
         bottom_z: Height::fixed(0.0),
         condition: "C110".into(),
         side: WireSide::Die,
-        start: Some([0.0, 0.0]),
+        picks: camcraft_app::path_picks::PathPicks { start: vec![camcraft_app::path_picks::PathPick::xy(camcraft_app::geo2d::Point2::new(0.0, 0.0))], exit: Vec::new() },
         tabs: None,
         capture: true,
+        both_pieces_restrained: false,
+        stock_centered_in_xy_travel: false,
         taper_deg: 0.0,
         burnout: None,
         clearance: camcraft_app::operation::DEFAULT_CLEARANCE,
         skims: Vec::new(),
         four_axis: None,
+        sharp_corners: false,
     };
     let create = CreateOperation::new(&world, "Die1", "EDM-W025", SrcRef::Entity("slug".into()), OpParams::WireContour(op));
     h.execute(&world, create.expect("die"));
@@ -97,7 +101,7 @@ fn milling_doc_with_a_lost_tool() -> World {
     let face = OpParams::Face {
         holes: Default::default(),
         tilt: None,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
         cut_z: Height::fixed(19.5),
@@ -106,6 +110,7 @@ fn milling_doc_with_a_lost_tool() -> World {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     h.execute(&world, CreateOperation::new(&world, "Face1", name, SrcRef::Stock, face).expect("face"));
     h.execute(&world, GenerateOperation::new(&world, "Face1").expect("generates"));

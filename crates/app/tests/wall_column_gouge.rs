@@ -99,7 +99,8 @@ fn a_3d_finish_in_the_users_box_stock_reads_no_gouge_at_its_wall() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
+        picks: Default::default(),
     };
     let params = operation::retype_params(&base, kind);
     h.execute(&world, CreateOperation::new(&world, "Finish1", "BN-0600", SrcRef::Entity(name), params).expect("create"));

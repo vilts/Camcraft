@@ -86,6 +86,7 @@ fn bore() -> Region {
 
 fn params(strategy: PocketStrategy) -> Pocket3DParams {
     Pocket3DParams {
+        pass_start: Default::default(),
         links: camcraft_motion::links::Links::ROUGH3D,
         tool_diameter: D,
         stepover: 3.0,

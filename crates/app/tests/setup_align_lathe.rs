@@ -167,23 +167,28 @@ fn lathe_facing_rough_finish_chamfer_and_axial_drill_match_baked() {
         ("FC1", "TN-1600-0R8", OpParams::Facing {
             tolerance: 0.05, clearance_z: Height::fixed(26.0),
             top_z: Height::fixed(22.0), bottom_z: Height::fixed(20.0), stepdown: 1.0, feed: 150.0, plunge_feed: 80.0,
+            picks: Default::default(),
         }),
         ("AX1", "DR-0400", OpParams::Drill {
             break_through: None, break_through_from: Default::default(), clearance_z: Height::fixed(30.0), retract_z: None,
             top_z: Height::fixed(20.05), bottom_z: None, cycle: CycleChoice::Auto,
             peck: 0.0, dwell: 0.0, feed: 120.0, plunge_feed: 80.0, holes: vec![hole], cross: vec![],
+            picks: Default::default(),
         }),
         ("PR1", "TN-1600-0R8", OpParams::ProfileRough {
             tolerance: 0.05, clearance_z: Height::fixed(25.0),
             top_z: Height::fixed(20.0), bottom_z: Height::fixed(-2.0), stepdown: 1.0, stock_to_leave: 0.25, feed: 150.0, plunge_feed: 80.0,
+            picks: Default::default(),
         }),
         ("PF1", "TN-1600-0R8", OpParams::ProfileFinish {
             tolerance: 0.05, clearance_z: Height::fixed(25.0),
             top_z: Height::fixed(18.0), bottom_z: Height::fixed(-2.0), feed: 120.0, plunge_feed: 60.0,
+            picks: Default::default(),
         }),
         ("CH1", "TN-1600-0R8", OpParams::Chamfering {
             tolerance: 0.05, clearance_z: Height::fixed(25.0),
             top_z: Height::fixed(20.0), bottom_z: Height::fixed(18.0), angle_deg: 45.0, feed: 150.0, plunge_feed: 50.0,
+            picks: Default::default(),
         }),
     ];
     run_case(raw, TurnPivot::PartCentre, stock, at, &[("TN-1600-0R8", None), ("DR-0400", None)], ops, true);
@@ -191,7 +196,7 @@ fn lathe_facing_rough_finish_chamfer_and_axial_drill_match_baked() {
 
 #[test]
 fn lathe_groove_part_thread_taper_multipass_and_form_match_baked() {
-    // 1. GrooveRough + GrooveFinish + Part
+    // 1. GrooveRough + GrooveFinish
     let grooved = revolve(&[(0.0, -16.0), (6.0, -16.0), (6.0, -6.8), (4.0, -6.8), (4.0, -3.6), (6.0, -3.6), (6.0, 28.0), (0.0, 28.0)]);
     run_case(
         unturn(&grooved),
@@ -203,16 +208,17 @@ fn lathe_groove_part_thread_taper_multipass_and_form_match_baked() {
             ("GR1", "GT-0200", OpParams::GrooveRough {
                 tolerance: 0.05, clearance_z: Height::fixed(32.0),
                 top_z: Height::fixed(-3.6), bottom_z: Height::fixed(-6.8), stepdown: 0.5, stock_to_leave: 0.2, feed: 150.0, plunge_feed: 60.0,
+                picks: Default::default(),
             }),
             ("GF1", "GT-0200", OpParams::GrooveFinish {
                 tolerance: 0.05, clearance_z: Height::fixed(32.0),
                 top_z: Height::fixed(-3.6), bottom_z: Height::fixed(-6.8), feed: 150.0, plunge_feed: 60.0,
+                picks: Default::default(),
             }),
-            ("PT1", "GT-0300", OpParams::Part {
-                tolerance: 0.05, clearance_z: Height::fixed(32.0),
-                top_z: Height::fixed(28.0), bottom_z: Height::fixed(-10.0), stepdown: 0.5, feed: 150.0, plunge_feed: 60.0,
-                bar_load: true, bar_advance: 30.0, bar_unload: true, bar_transfer: false, inspect_tol: 0.0,
-            }),
+            // #3452: no Part here. This bar is modelled lying down and its
+            // parting plane Z-10 is inside the model, so no setup can say
+            // which piece is the part: the part-off is refused by name
+            // (`lathe_part_off_kerf.rs` pins it both ways).
         ],
         true,
     );
@@ -236,7 +242,7 @@ fn lathe_groove_part_thread_taper_multipass_and_form_match_baked() {
             tolerance: 0.05, clearance_z: Height::fixed(44.0), top_z: Height::fixed(14.3), bottom_z: Height::fixed(7.7),
             pitch: 2.0, depth: 1.2, infeed: 0.4, feed: 120.0, plunge_feed: 40.0,
             infeed_plan: ThreadInfeed { method: InfeedMethod::Flank, schedule: DepthSchedule::ConstantArea, min_depth: 0.1, finish_allowance: 0.05, spring_passes: 1, flank_angle: 27.5, ..ThreadInfeed::default() },
-            hand: camcraft_app::cl::ThreadHand::Right,
+            hand: camcraft_app::cl::ThreadHand::Right, picks: Default::default(),
         })],
         true,
     );
@@ -251,6 +257,7 @@ fn lathe_groove_part_thread_taper_multipass_and_form_match_baked() {
         vec![("TP1", "TN-1600-0R8", OpParams::TaperTurning {
             tolerance: 0.05, clearance_z: Height::fixed(48.0), top_z: Height::fixed(40.0), bottom_z: Height::fixed(-16.0),
             bottom_dia: 20.0, top_dia: 16.0, feed: 200.0, plunge_feed: 50.0,
+            picks: Default::default(),
         })],
         true,
     );
@@ -264,6 +271,7 @@ fn lathe_groove_part_thread_taper_multipass_and_form_match_baked() {
         vec![("MP1", "TN-1600-0R8", OpParams::MultiPassTurning {
             tolerance: 0.05, clearance_z: Height::fixed(24.0), top_z: Height::fixed(16.0), bottom_z: Height::fixed(-16.0),
             stepdown: 0.5, stock_to_leave: 0.25, passes: 3, feed: 200.0, plunge_feed: 50.0,
+            picks: Default::default(),
         })],
         true,
     );
@@ -281,6 +289,7 @@ fn lathe_groove_part_thread_taper_multipass_and_form_match_baked() {
         &[("FG-0600-04", None)],
         vec![("FM1", "FG-0600-04", OpParams::FormTurning {
             tolerance: 0.05, clearance_z: Height::fixed(54.0), top_z: Height::fixed(13.0), bottom_z: Height::fixed(7.0), feed: 40.0, plunge_feed: 20.0,
+            picks: Default::default(),
         })],
         true,
     );
@@ -311,9 +320,11 @@ fn lathe_boring_posts_like_baked() {
                 peck: 0.0, dwell: 0.0, feed: 120.0, plunge_feed: 80.0,
                 holes: vec![Hole { xy: Point2::new(0.0, 0.0), radius: 5.45, entry_z: 50.0, floor_z: -20.0, through: false, stepped: false }],
                 cross: vec![],
+                picks: Default::default(),
             }),
             ("BR1", "BR-1008", OpParams::BoringTurning {
                 tolerance: 0.05, clearance_z: Height::fixed(60.0), top_z: Height::fixed(50.0), bottom_z: Height::fixed(-10.0), feed: 120.0, plunge_feed: 40.0,
+                picks: Default::default(),
             }),
         ],
         true,
@@ -326,9 +337,11 @@ fn lathe_op20_flip_and_cross_drill_detect_holes_in_setup_frame() {
     let rough = OpParams::ProfileRough {
         tolerance: 0.05, clearance_z: Height::fixed(24.0), top_z: Height::fixed(20.0), bottom_z: Height::fixed(0.0),
         stepdown: 1.0, stock_to_leave: 0.25, feed: 150.0, plunge_feed: 80.0,
+        picks: Default::default(),
     };
     let finish = OpParams::ProfileFinish {
         tolerance: 0.05, clearance_z: Height::fixed(24.0), top_z: Height::fixed(20.0), bottom_z: Height::fixed(0.0), feed: 120.0, plunge_feed: 60.0,
+        picks: Default::default(),
     };
     let op20_doc = |mesh: Mesh, do_flip: bool| -> (World, Option<Mesh>) {
         let w = new_world();

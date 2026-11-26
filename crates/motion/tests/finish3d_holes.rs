@@ -6,7 +6,7 @@
 //! Gate map (#2431): covers camcraft_motion::finishing3d (raster_bridge, raster).
 
 use camcraft_motion::cl::{MoveKind, Toolpath};
-use camcraft_motion::finishing3d::{parallel, Finish3DParams, FinishPattern};
+use camcraft_motion::finishing3d::{parallel, Finish3DParams, FinishPattern, GapLink};
 use camcraft_motion::geometry::{Point3, Triangle};
 
 const R: f64 = 1.5; // a 3 mm ball
@@ -92,6 +92,7 @@ fn fp() -> Finish3DParams {
         tolerance: TOL,
         clearance_z: 20.0,
         retract_z: None,
+        gap_link: GapLink::Jump,
         top_z: TOP,
         bottom_z: 0.0,
         feed: 500.0,
@@ -103,6 +104,7 @@ fn fp() -> Finish3DParams {
         entry_ramp: false,
         steep_stepover: None,
         pencil_reference: None,
+        waterlines: true,
     }
 }
 

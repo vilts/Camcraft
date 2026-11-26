@@ -55,6 +55,7 @@ fn od_world() -> (World, History) {
         bottom_z: Height::fixed(2.0),
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     history.execute(&world, CreateOperation::new(&world, "F1", INSERT, SrcRef::Entity("step".into()), finish).expect("create"));
     history.execute(&world, GenerateOperation::new(&world, "F1").expect("generate"));

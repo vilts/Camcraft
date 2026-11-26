@@ -7,9 +7,12 @@ use crate::machining2d::GenError;
 use super::blade::{plunge, rung, PartParams, MAX_RUNGS};
 use super::profile;
 use super::revolve;
+use super::parting_law::{bar_span, no_part_past_plane_for, rule_decides, PartKept, CHUCK_NOTE};
 use super::stock::StockEnv;
 
-/// Parting: one center at the parting plane, a depth ladder down
+/// Parting: one center beside the parting plane (#3452: the plane is
+/// the finished part's end face, the kerf stands wholly on the scrap
+/// side of it), a depth ladder down
 /// through the bar's full column, and the through-axis rung that
 /// severs it. The column is the model's own (its top is the span
 /// over the kerf band, its bottom the axis); `top_z` shapes
@@ -64,19 +67,47 @@ pub fn part_in(facets: &[Triangle], p: &PartParams, stock: Option<StockEnv>) -> 
     let prof = profile::profile_of(facets, &f)?;
     let sg = revolve::segs(&pts);
     let (d_lo, d_hi) = (pts[0].0, pts[pts.len() - 1].0);
-    let s_c = f.station_of(p.parting_z);
-    let half = p.blade_width * 0.5;
-    let (lo, hi) = ((s_c - half).max(d_lo), (s_c + half).min(d_hi));
-    if hi <= lo {
-        return Err(GenError::Empty(
-            "nothing to part - the parting plane stands off the end of the bar".into(),
-        ));
+    // #3452: the plane is the finished part's END FACE, and the whole
+    // kerf stands beside it on the chuck side - never centred on it,
+    // which took half a blade out of the part. The side is the chuck's
+    // (ISO 841: -Z), never a guess from the model or the stock.
+    // #3469: the user names the piece kept (the scrap side is the
+    // other one) and the back stock the kerf stands off the plane.
+    if let Some(why) = p.kerf.problem() {
+        return Err(GenError::Invalid(why));
+    }
+    let s_p = f.station_of(p.parting_z);
+    let side = p.kerf.waste();
+    if side.part_length((d_lo, d_hi), s_p) <= p.tolerance {
+        return Err(GenError::Empty(no_part_past_plane_for(&f, (d_lo, d_hi), p.parting_z, p.kerf.kept)));
+    }
+    let s_k = p.kerf.flank(s_p);
+    let (k_lo, k_hi) = side.kerf(s_k, p.blade_width);
+    let s_c = side.centre(s_k, p.blade_width);
+    let (b_lo, b_hi) = bar_span((d_lo, d_hi), stock);
+    if k_hi.min(b_hi) - k_lo.max(b_lo) <= revolve::HAIR {
+        return Err(GenError::Empty(format!(
+            "nothing to part - the {:.3} mm kerf beside the parting plane (Z{:.3} to Z{:.3}) \
+             does not meet the bar (Z{:.3} to Z{:.3}); set the setup's stock if the bar runs \
+             on past the part",
+            p.blade_width,
+            f.height_of(k_lo),
+            f.height_of(k_hi),
+            f.height_of(b_lo),
+            f.height_of(b_hi),
+        )));
     }
     // The column the kerf must fall through: the model's own top
-    // across the band (its limits ride the chords' clipped ends)
-    // and at the plane itself.
-    let ref_top =
-        revolve::span_max(&sg, s_c - half, s_c + half).max(revolve::material(&sg, s_c));
+    // across the band (its limits ride the chords' clipped ends) and
+    // at the blade's centre, and the bar's OD where the bar stands
+    // in the kerf past the model's end.
+    let mut ref_top = revolve::span_max(&sg, k_lo, k_hi).max(revolve::material(&sg, s_c));
+    if let Some(e) = stock
+        && e.r_out.is_finite()
+        && k_hi.min(b_hi) - k_lo.max(b_lo) > revolve::HAIR
+    {
+        ref_top = ref_top.max(e.r_out);
+    }
     if ref_top <= 0.0 {
         return Err(GenError::Empty(
             "nothing to part - the parting plane stands in the air past the bar's top".into(),
@@ -109,5 +140,11 @@ pub fn part_in(facets: &[Triangle], p: &PartParams, stock: Option<StockEnv>) -> 
         f.point(rho_clear, f.station_of(p.clearance_z)),
         None,
     );
-    Ok(b.finish())
+    let mut path = b.finish();
+    // The note says the default rule decided; a stated chuck piece is
+    // the user's own word and needs no note.
+    if p.kerf.kept == PartKept::CutOff && rule_decides((d_lo, d_hi), s_p, p.tolerance) {
+        path.notes.push(CHUCK_NOTE.into());
+    }
+    Ok(path)
 }

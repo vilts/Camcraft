@@ -46,9 +46,43 @@ fn walled(facets: &[Triangle], tol: f64, b: &EdgeBreak) -> bool {
     let Some(tops) = Tops::near(facets, b) else {
         return false;
     };
+    // The model's top on the two sides of each sample must leave air
+    // down to the tip on at least one side.
+    samples(b, |x, y, z, nx, ny| tops.at(x + nx, y + ny).min(tops.at(x - nx, y - ny)) <= z - b.depth + tol)
+        .unwrap_or(false)
+}
+
+/// #2596: whether the model itself already carries a bevel (a modelled
+/// chamfer or round) at any declared edge of `breaks`: somewhere along a
+/// record, the model's top `WALL_PROBE` off the edge stands lower than
+/// the edge by more than `tol` on BOTH sides. At a sharp edge one side
+/// is the part's top, up at the edge's height. A no-pick 2D chamfer on
+/// such a model has its edges drawn by the model, and the sim judges
+/// its whole ride against the model ([`on_walls`] does not apply).
+#[must_use]
+pub fn models_a_bevel(facets: &[Triangle], tol: f64, breaks: &[EdgeBreak]) -> bool {
+    let tol = if tol.is_finite() { tol.max(0.0) } else { 0.0 };
+    breaks.iter().filter(|b| b.volume.is_none() && b.edge.len() >= 2).any(|b| {
+        let Some(tops) = Tops::near(facets, b) else {
+            return false;
+        };
+        // `samples` stops at the first false: a sample that shows the
+        // bevel answers false there, so the record is "not all sharp".
+        samples(b, |x, y, z, nx, ny| tops.at(x + nx, y + ny).max(tops.at(x - nx, y - ny)) >= z - tol) == Some(false)
+    })
+}
+
+/// Run `ok(x, y, edge z, probe nx, probe ny)` at every sample along the
+/// record's edge (inside each segment, at most `SAMPLE_STEP` apart);
+/// `Some(true)` when every sample holds, `None` when the edge's length
+/// is not finite.
+fn samples(b: &EdgeBreak, ok: impl Fn(f64, f64, f64, f64, f64) -> bool) -> Option<bool> {
     let total: f64 = b.edge.windows(2).map(|s| plan(s[1].x - s[0].x, s[1].y - s[0].y)).sum();
-    let step = if total.is_finite() { SAMPLE_STEP.max(total / MAX_SAMPLES) } else { return false };
-    b.edge.windows(2).all(|seg| {
+    if !total.is_finite() {
+        return None;
+    }
+    let step = SAMPLE_STEP.max(total / MAX_SAMPLES);
+    Some(b.edge.windows(2).all(|seg| {
         let (a, c) = (seg[0], seg[1]);
         let (dx, dy) = (c.x - a.x, c.y - a.y);
         let len = plan(dx, dy);
@@ -61,11 +95,9 @@ fn walled(facets: &[Triangle], tol: f64, b: &EdgeBreak) -> bool {
             // A vertex's segment normal can land on the adjacent wall at
             // an inside corner. Sample the interior of each span instead.
             let t = (i as f64 + 0.5) / n as f64;
-            let (x, y) = (a.x + t * dx, a.y + t * dy);
-            let tip = a.z + t * (c.z - a.z) - b.depth;
-            tops.at(x + nx, y + ny).min(tops.at(x - nx, y - ny)) <= tip + tol
+            ok(a.x + t * dx, a.y + t * dy, a.z + t * (c.z - a.z), nx, ny)
         })
-    })
+    }))
 }
 
 /// The model's top over plan points near one record: its facets that
@@ -188,5 +220,17 @@ mod tests {
         // The edge 1 mm in from the wall: the tip at z 9 under the top.
         let kept = on_walls(&brick(), 0.01, vec![rec(ring(1.0, 10.0))]);
         assert!(kept.is_empty());
+    }
+
+    #[test]
+    fn a_sharp_edge_carries_no_modelled_bevel() {
+        assert!(!models_a_bevel(&brick(), 0.01, &[rec(ring(0.0, 10.0))]));
+    }
+
+    #[test]
+    fn an_edge_with_the_model_below_it_on_both_sides_is_a_modelled_bevel() {
+        // The sharp brick's top edge plus one record 0.5 mm out from the
+        // wall, where the model stands lower on both sides.
+        assert!(models_a_bevel(&brick(), 0.01, &[rec(ring(0.0, 10.0)), rec(ring(-0.5, 10.0))]));
     }
 }

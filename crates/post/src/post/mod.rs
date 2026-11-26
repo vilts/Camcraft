@@ -28,27 +28,37 @@
 
 mod after_op;
 pub mod cnc;
+pub mod cnc_arc_lattice;
 pub mod cnc_thread;
 pub mod cnc_torch;
+pub mod cnc_jet;
 mod coolant;
 pub mod dialect;
 pub mod end_units;
 pub mod engine;
 pub mod explain;
+mod fine_bore;
 pub mod g93;
 pub mod invert;
 pub mod js;
 mod js_host;
+mod line_ending;
 pub mod preview;
 pub mod machine;
 mod machine_rotary;
+mod machine_installation;
+mod machine_travel;
 pub mod nose_tip;
 pub mod options;
 mod options_parse;
 pub mod probe_rec;
+mod program_bounds;
 mod program;
+mod tool_change;
 pub mod rotary_cap;
+pub mod arc_guard;
 pub mod section_mode;
+mod upright_after_tilt;
 pub mod work_offset;
 pub mod units;
 pub mod wcs_flip;
@@ -131,6 +141,8 @@ pub struct Dump<'a> {
     /// Stock bounds in mm: left, right, front, back (XY), plus top Z.
     pub stock: [f64; 4],
     pub stock_top_z: f64,
+    /// Lower face of the stock envelope in world mm, when provided for a Klartext blank.
+    pub stock_bottom_z: Option<f64>,
     /// #1666: the radius the stock sweeps about the spindle axis (the
     /// world Z line through `origin`), in mm - a round bar's radius, a
     /// square bar's half-diagonal. Stated for turning machines only;
@@ -233,6 +245,7 @@ impl<'a> Default for Dump<'a> {
             wcs_flip: [false; 3],
             stock: [0.0; 4],
             stock_top_z: 0.0,
+            stock_bottom_z: None,
             stock_turn_radius: None,
             warnings: Vec::new(),
             part_load: None,
@@ -304,6 +317,9 @@ pub fn dump(t: &Toolpath, d: &Dump) -> Vec<Record> {
     out.push(Record::Param { name: "StockXYFront".into(), value: json!(d.stock[2]) });
     out.push(Record::Param { name: "StockXYBack".into(), value: json!(d.stock[3]) });
     out.push(Record::Param { name: "StockZTop".into(), value: json!(d.stock_top_z) });
+    if let Some(z) = d.stock_bottom_z {
+        out.push(Record::Param { name: "StockZBottom".into(), value: json!(z) });
+    }
     if let Some(r) = d.stock_turn_radius.filter(|r| r.is_finite() && *r > 0.0) {
         out.push(Record::Param { name: "StockTurnRadius".into(), value: json!(r) });
     }
@@ -419,6 +435,12 @@ pub fn dump(t: &Toolpath, d: &Dump) -> Vec<Record> {
     // after a lean must be COMMANDED (explicit zero angles), or the
     // machine runs the "upright" move under the old lean.
     let mut tilted = false;
+    // #3300: the control's rotaries are not known until a move commands
+    // them. In a stream that leans, the first move that STATES the Z
+    // column commands the zero angles too, so the first tilted feed
+    // turns from a known angle. A stream that never leans stays silent.
+    let leans = t.moves.iter().any(|m| m.rotary.is_none() && m.axis.is_some_and(|a| !crate::cl::is_vertical(&a)));
+    let mut commanded = false;
     // Threading cycles (issue #34) bracket their passes: THREAD before
     // the span's first move, THREAD END after its last. A record that
     // does not sit on these moves is not trusted and not written - the
@@ -521,12 +543,13 @@ pub fn dump(t: &Toolpath, d: &Dump) -> Vec<Record> {
                 tilted = true;
                 Some(crate::cl::axis_to_angles(a))
             }
-            (None, Some(_)) if tilted => {
+            (None, Some(_)) if tilted || (leans && !commanded) => {
                 tilted = false;
                 Some([0.0, 0.0, 0.0])
             }
             _ => None,
         };
+        commanded |= abc.is_some();
         out.push(Record::Move(MoveRec {
             kind: m.kind,
             x: m.to.x,
@@ -543,7 +566,9 @@ pub fn dump(t: &Toolpath, d: &Dump) -> Vec<Record> {
             // as the stream always did - EXCEPT the first stated Z
             // column after a lean, which commands the zero angles
             // that take the machine back upright (the letters are
-            // modal; silence would keep the lean). A move stating no
+            // modal; silence would keep the lean) - and the first
+            // stated Z column of a stream that leans, which commands
+            // the zero the control starts from (#3300). A move stating no
             // axis at all keeps the modal pose, as it always did.
             // Generators earn the `Some` side by set_axis; external
             // `.cnc` producers own the letters directly.

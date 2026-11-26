@@ -148,6 +148,7 @@ pub fn bore_params() -> OpParams {
         bottom_z: Height::fixed(-10.0),
         feed: 120.0,
         plunge_feed: 40.0,
+        picks: Default::default(),
     }
 }
 
@@ -190,6 +191,7 @@ pub fn pilot_of(world: &World, history: &mut History, drill: &str, radius: f64) 
         plunge_feed: 80.0,
         holes: vec![hole],
         cross: vec![],
+        picks: Default::default(),
     };
     create_on(world, history, "AX0", drill, "bar", params);
     assert_eq!(status(world, "AX0"), OpStatus::Ok, "the pilot drills");

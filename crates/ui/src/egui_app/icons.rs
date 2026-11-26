@@ -63,6 +63,8 @@ icon_table! {
     Save => "device-floppy", "icon-save";
     /// The project's donation link: Tabler's heart outline (MIT).
     Donate => "heart", "icon-donate";
+    /// The start page (#2384): Tabler's home outline (MIT).
+    Home => "home", "icon-home";
     // The CamCraft actions and tree rows (#661 slice 2): original SVG
     // masters too - `act-*` for the actions, `tree-*` for the browser's
     // setup rows.
@@ -85,8 +87,12 @@ icon_table! {
     TrochoidalSlot => "op-trochoidal-slot", "icon-trochoidal-slot";
     Trace => "op-trace", "icon-trace";
     Engrave => "op-engrave", "icon-engrave";
+    /// A V-bit in the groove it cuts (#1443).
+    VCarve => "op-v-carve", "icon-v-carve";
     Chamfer2D => "op-chamfer2d", "icon-chamfer2d";
     Deburr => "op-deburr", "icon-deburr";
+    /// A tilted cone on a broken corner, with its tilt arc (#1894).
+    MultiAxisDeburr => "op-multiaxis-deburr", "icon-multiaxis-deburr";
     Circular => "op-circular", "icon-circular";
     PlasmaProfile => "op-plasma-profile", "icon-plasma-profile";
     /// The wire between its two guides, through the plate it cuts (#532).
@@ -95,6 +101,11 @@ icon_table! {
     SinkerBurn => "op-sinker-burn", "icon-sinker-burn";
     /// A sinker EDM side burn (#545): the electrode planing one wall.
     SinkerSideBurn => "op-sinker-side-burn", "icon-sinker-side-burn";
+    /// A slot undercut (#1444): a T-slot's section, the cutter in it.
+    SlotUndercut => "op-slot-undercut", "icon-slot-undercut";
+    /// A waterjet profile (#1883): the nozzle and its straight jet
+    /// through the sheet.
+    WaterjetProfile => "op-waterjet-profile", "icon-waterjet-profile";
     // Holes and probing:
     Drill => "op-drill", "icon-drill";
     Bore => "op-bore", "icon-bore";
@@ -114,6 +125,10 @@ icon_table! {
     RotaryContour => "op-rotary-contour", "icon-rotary-contour";
     RotaryParallel => "op-rotary-parallel", "icon-rotary-parallel";
     RotaryOffset => "op-rotary-offset", "icon-rotary-offset";
+    /// The Rotary Flow band (#2826): the bar with its two diagonal
+    /// flow lines crossing it - the helical band the picked chains
+    /// span.
+    RotaryFlow => "op-rotary-flow", "icon-rotary-flow";
     MultiAxisRough => "op-multiaxis-rough", "icon-multiaxis-rough";
     Flow5D => "op-flow5d", "icon-flow5d";
     MultiAxisContour => "op-multiaxis-contour", "icon-multiaxis-contour";
@@ -146,6 +161,8 @@ icon_table! {
     Fixture => "tree-fixture", "icon-fixture";
     /// The status strip's Debug info door (#157).
     DebugInfo => "act-debug-info", "icon-debug-info";
+    /// The status strip's Report door (#1696): the flag on its pole.
+    Report => "act-report", "icon-report";
     /// A setup: the setup sheet with its origin corner.
     Setup => "tree-setup", "icon-setup";
     /// The machine: column, head and spindle over the table.
@@ -181,6 +198,15 @@ icon_table! {
     // or over one form tooth (single-form).
     ToolThreadMill => "tool-thread-mill", "icon-tool-thread-mill";
     ToolThreadMillSingle => "tool-thread-mill-single", "icon-tool-thread-mill-single";
+    // #1444: the undercut cutters - a head wider than its neck: a disc
+    // (T-slot), a thin disc (keyseat), a flared head (dovetail), a ball.
+    ToolTSlot => "tool-t-slot", "icon-tool-t-slot";
+    ToolKeyseat => "tool-keyseat", "icon-tool-keyseat";
+    ToolDovetail => "tool-dovetail", "icon-tool-dovetail";
+    ToolLollipop => "tool-lollipop", "icon-tool-lollipop";
+    // #3369: a router bit - a cutter body with a concave form over a
+    // pilot bearing.
+    ToolFormMill => "tool-form-mill", "icon-tool-form-mill";
     // The operation page's section tabs (M1.4's named sections), one
     // per tab the page shows; drawn from what each section is.
     SecGeometry => "sec-geometry", "icon-sec-geometry";

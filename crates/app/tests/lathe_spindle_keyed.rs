@@ -121,6 +121,7 @@ fn face(part: Vec<Triangle>) -> Result<Vec<String>, String> {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     let cmd = CreateOperation::new(&world, "F1", "TN-1600-0R8", SrcRef::Entity("part".into()), p).expect("create");
     history.execute(&world, cmd);

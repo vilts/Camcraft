@@ -285,7 +285,7 @@ fn the_slow_feed_refusal_is_judged_in_mm_in_both_units() {
         let mm = post_units(cps, &mch, STREAM, "mm");
         let inch = post_units(cps, &mch, STREAM, "inch");
         assert!(mm.warnings.is_empty() && inch.warnings.is_empty(), "{cps}: {:?} {:?}", mm.warnings, inch.warnings);
-        assert!(mm.program.contains("A30. F1\n") || mm.program.contains("A30. F1\r"), "{cps}: {}", mm.program);
+        assert!(mm.program.contains("A30. F1.\n") || mm.program.contains("A30. F1.\r"), "{cps}: {}", mm.program);
         // The inch move posts 0.0039 in (0.09906 mm): 0.9906 mm/min.
         assert!(inch.program.contains("A30. F0.039"), "{cps}: {}", inch.program);
         // 10 deg/min: 0.033 mm/min, refused by name in both units.

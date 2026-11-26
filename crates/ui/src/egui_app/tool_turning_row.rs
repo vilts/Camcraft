@@ -15,7 +15,7 @@ use camcraft_app::units::{MM_PER_INCH, Unit};
 
 use crate::state::State;
 
-use super::fields::field;
+use super::layout::{check_row, consequence, prop_row, row_label_id};
 
 /// m per foot, for the ft/min lens of an inch document.
 const M_PER_FT: f64 = 0.3048;
@@ -26,28 +26,36 @@ pub(super) fn turning_rows(ui: &mut Ui, state: &mut State) {
         return;
     }
     let u = state.units();
-    field(ui, "Constant surface speed");
     let mut on = state.tool_ui.turning.is_some();
-    ui.checkbox(&mut on, "state turning data (G96 + feed per rev)");
+    check_row(ui, "Constant surface speed (G96 + feed per rev)", &mut on);
     if !on {
         state.tool_ui.turning = None;
-        ui.label("unstated: the turning operations post this tool's rpm (G97)");
+        consequence(ui, "unstated: the turning operations post this tool's rpm (G97)");
         return;
     }
     let t = state.tool_ui.turning.get_or_insert(TurningData { vc: 150.0, feed_per_rev: 0.15, max_rpm: None });
     let inch = u == Unit::Inches;
     let (vs, ls) = if inch { (1.0 / M_PER_FT, 1.0 / MM_PER_INCH) } else { (1.0, 1.0) };
-    field(ui, "Surface speed");
     let mut vc = t.vc * vs;
-    ui.add(DragValue::new(&mut vc).range(1.0..=6000.0).speed(1.0).max_decimals(0).suffix(if inch { " ft/min" } else { " m/min" }));
+    prop_row(ui, "Surface speed", |ui| {
+        let mut r = ui.add(DragValue::new(&mut vc).range(1.0..=6000.0).speed(1.0).max_decimals(0).suffix(if inch { " ft/min" } else { " m/min" }));
+        if let Some(l) = row_label_id(ui) {
+            r = r.labelled_by(l);
+        }
+        r
+    });
     t.vc = vc / vs;
-    field(ui, "Feed per rev");
     let mut f = t.feed_per_rev * ls;
-    ui.add(DragValue::new(&mut f).range(0.0001..=3.0).speed(0.001).max_decimals(4).suffix(if inch { " in/rev" } else { " mm/rev" }));
+    prop_row(ui, "Feed per rev", |ui| {
+        let mut r = ui.add(DragValue::new(&mut f).range(0.0001..=3.0).speed(0.001).max_decimals(4).suffix(if inch { " in/rev" } else { " mm/rev" }));
+        if let Some(l) = row_label_id(ui) {
+            r = r.labelled_by(l);
+        }
+        r
+    });
     t.feed_per_rev = f / ls;
-    field(ui, "Max rpm");
     let mut capped = t.max_rpm.is_some();
-    ui.horizontal(|ui| {
+    prop_row(ui, "Max rpm", |ui| {
         ui.checkbox(&mut capped, "");
         if capped {
             let m = t.max_rpm.get_or_insert(3000.0);
@@ -57,7 +65,7 @@ pub(super) fn turning_rows(ui: &mut Ui, state: &mut State) {
             ui.label("the machine's maximum alone");
         }
     });
-    ui.label("G96 needs a clamp: the lower of this and the machine's spindle maximum - with neither stated the post refuses");
+    consequence(ui, "G96 needs a clamp: the lower of this and the machine's spindle maximum - with neither stated the post refuses");
 }
 
 #[cfg(test)]

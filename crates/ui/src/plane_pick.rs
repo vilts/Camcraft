@@ -67,7 +67,7 @@ pub fn take(state: &mut State, pick: GeoSel) {
     let what = camcraft_app::pick::geo_label(&state.world, &pick);
     let Some(draft) = state.plane_pick.as_mut().filter(|d| d.picking) else { return };
     let setup = draft.setup.clone();
-    state.status = match pick.feature {
+    state.status = match &pick.feature {
         FeatureSel::Face(_) => {
             draft.picks = vec![pick];
             format!("{setup}: {what} picked for the plane")
@@ -77,8 +77,11 @@ pub fn take(state: &mut State, pick: GeoSel) {
             "{setup}: {what} is an edge - an edge cannot set a plane; pick a flat face \
              (edges set an axis: Part axes)"
         ),
-        FeatureSel::Patch(_) | FeatureSel::Vertex(_) => {
-            format!("{setup}: {what} is {} - pick a flat face", crate::pick_words::kind(pick.feature))
+        FeatureSel::Patch(_)
+        | FeatureSel::Vertex(_)
+        | FeatureSel::SketchChain(_)
+        | FeatureSel::SketchLayer(_) => {
+            format!("{setup}: {what} is {} - pick a flat face", crate::pick_words::kind(&pick.feature))
         }
     };
 }

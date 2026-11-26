@@ -36,6 +36,7 @@ impl PartialEq for Dexel {
             && self.nx == other.nx
             && self.ny == other.ny
             && self.stock_z == other.stock_z
+            && self.laid == other.laid
             && self.cells() == other.cells()
             && (0..self.cells()).all(|k| self.top_at(k) == other.top_at(k))
     }
@@ -156,6 +157,7 @@ impl Dexel {
     }
 
     fn shift_tiles(&mut self, dz: f64) {
+        if let Some(c) = &mut self.laid { c.origin.z += dz; }
         for t in &mut self.tiles {
             match t {
                 None => {}
@@ -180,6 +182,10 @@ impl Dexel {
     pub fn translate_origin(&mut self, dx: f64, dy: f64, dz: f64) {
         self.x0 += dx;
         self.y0 += dy;
+        if let Some(c) = &mut self.laid {
+            c.origin.x += dx;
+            c.origin.y += dy;
+        }
         self.stock_z += dz;
         self.shift_tiles(dz);
         if let Some(h) = &mut self.history {
@@ -278,6 +284,7 @@ impl Dexel {
             stock_z,
             tiles,
             history: None,
+            laid: None,
         }
     }
 

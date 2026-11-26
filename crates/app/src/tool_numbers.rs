@@ -41,20 +41,36 @@ pub fn next_free_from(taken: &[u32]) -> Option<u32> {
 }
 
 /// Lowest unused tool number in `1..=MAX` across all tools in the document.
+/// `None` also when a tool has no number and none is free for it: then no
+/// number is free for a new one either.
 #[must_use]
 pub fn next_free(world: &World) -> Option<u32> {
-    let taken: Vec<u32> = numbers(world).into_iter().map(|(_, n)| n).collect();
+    let taken: Vec<u32> = numbers(world).ok()?.into_iter().map(|(_, n)| n).collect();
     next_free_from(&taken)
 }
 
 /// Every tool in document order, with the number it posts as.
-#[must_use]
-pub fn numbers(world: &World) -> Vec<(String, u32)> {
+///
+/// # Errors
+/// A tool with no number of its own when none of `1..=MAX` is free for it
+/// (see [`assign`]).
+pub fn numbers(world: &World) -> Result<Vec<(String, u32)>, String> {
     let tools: Vec<(String, Option<u32>)> = model::named_entities(world)
         .into_iter()
         .filter(|(_, e)| model::is_tool(world, e))
         .map(|(name, e)| (name, model::tool_number_of(world, &e)))
         .collect();
+    assign(tools)
+}
+
+/// The number each tool posts as: its own, or - for a tool with none (a
+/// fixture; files and commands always give one, #2442) - the lowest number
+/// no tool has yet, in the given order.
+///
+/// # Errors
+/// An unnumbered tool when every number in `1..=MAX` is taken, by name
+/// (#2517): it has no number to post as, and must never post as a made-up one.
+pub fn assign(tools: Vec<(String, Option<u32>)>) -> Result<Vec<(String, u32)>, String> {
     let mut taken: Vec<u32> = tools.iter().filter_map(|(_, n)| *n).collect();
     tools
         .into_iter()
@@ -62,12 +78,14 @@ pub fn numbers(world: &World) -> Vec<(String, u32)> {
             let number = match explicit {
                 Some(n) => n,
                 None => {
-                    let free = next_free_from(&taken).unwrap_or(u32::MAX);
+                    let free = next_free_from(&taken).ok_or_else(|| {
+                        format!("tool '{name}' has no tool number and none of {RANGE_TEXT} is free - give it its own tool number")
+                    })?;
                     taken.push(free);
                     free
                 }
             };
-            (name, number)
+            Ok((name, number))
         })
         .collect()
 }
@@ -75,15 +93,19 @@ pub fn numbers(world: &World) -> Vec<(String, u32)> {
 /// The number the named tool posts as, if it is a tool.
 #[must_use]
 pub fn number_of(world: &World, tool: &str) -> Option<u32> {
-    numbers(world).into_iter().find(|(n, _)| n == tool).map(|(_, t)| t)
+    numbers(world).ok()?.into_iter().find(|(n, _)| n == tool).map(|(_, t)| t)
 }
 
 /// The clash law for one program: among the tools it uses (`used`, names,
 /// repeats allowed), two different tools posting the same number is a
 /// refusal naming both. `None` when every tool posts a number of its own.
+/// A tool that cannot get a number at all is that refusal too ([`assign`]).
 #[must_use]
 pub fn clash(world: &World, used: &[String]) -> Option<String> {
-    let all = numbers(world);
+    let all = match numbers(world) {
+        Ok(all) => all,
+        Err(why) => return Some(why),
+    };
     let mut seen: Vec<(&str, u32)> = Vec::new();
     for name in used {
         let Some((_, number)) = all.iter().find(|(n, _)| n == name) else {
@@ -111,6 +133,9 @@ pub fn clash(world: &World, used: &[String]) -> Option<String> {
 /// prefixes the mount it found the clash on.
 #[must_use]
 pub fn clash_per_machine(world: &World, ops: &[(String, flecs_ecs::prelude::Entity)]) -> Option<String> {
+    if let Some(why) = crate::tool_reservations::program_refusal(world, ops) {
+        return Some(why);
+    }
     let mounts = crate::setup_mount::program_mounts(world, false);
     let setup_of = |e: &flecs_ecs::prelude::Entity| {
         model::operation_of(world, e).map(|op| {

@@ -104,7 +104,7 @@ impl Pr {
 }
 
 /// The facts git supplies that the file lists cannot: stack edges and shared unmerged history.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct Facts {
     /// Name of the base branch, for messages (`main`).
     pub base_name: String,
@@ -162,6 +162,10 @@ pub struct Plan {
     pub stacked: BTreeMap<u32, Vec<u32>>,
     /// PRs GitHub had not yet computed `mergeable` for: wave 1 may be wrong until they are read again.
     pub unknown: Vec<u32>,
+    /// The final wave passed a trial `cargo check --tests` (not runtime tests).
+    pub checked: bool,
+    /// PRs omitted after a failed check, with diagnostic paths or a conservative exclusion reason.
+    pub excluded: BTreeMap<u32, Vec<String>>,
 }
 
 struct Deferred {
@@ -387,6 +391,6 @@ pub fn plan(facts: &Facts, trial: &mut Trial<'_>) -> Result<Plan, String> {
         })
         .collect();
     let unknown = nums.iter().copied().filter(|n| by.get(n).is_some_and(|p| p.mergeable == Mergeable::Unknown)).collect();
-    Ok(Plan { base_sha: facts.base_sha.clone(), wave1, wave2, titles, heads, stacked, unknown })
+    Ok(Plan { base_sha: facts.base_sha.clone(), wave1, wave2, titles, heads, stacked, unknown, ..Plan::default() })
 }
 

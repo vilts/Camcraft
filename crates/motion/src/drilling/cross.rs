@@ -156,7 +156,7 @@ pub fn cross_drill(p: &CrossParams) -> Result<Toolpath, GenError> {
     if p.stock_z_max.is_some_and(|z| !z.is_finite()) {
         return Err(GenError::Invalid("cross-drill stock Z top not usable".into()));
     }
-    if matches!(p.cycle, CycleChoice::Tap | CycleChoice::FloatingTap | CycleChoice::Bore | CycleChoice::BackBore | CycleChoice::Ream) {
+    if matches!(p.cycle, CycleChoice::Tap | CycleChoice::FloatingTap | CycleChoice::Bore | CycleChoice::BackBore | CycleChoice::Ream | CycleChoice::FineBore { .. }) {
         return Err(GenError::Invalid(
             "radial tapping, boring and reaming are not this cycle's word (M5.2 v1)".into(),
         ));
@@ -239,7 +239,7 @@ pub fn cross_drill(p: &CrossParams) -> Result<Toolpath, GenError> {
             CycleChoice::Peck => CycleKind::Peck,
             _ => unreachable!("rejected by the v1 cycle door above"),
         };
-        if matches!(kind, CycleKind::Tap | CycleKind::FloatingTap | CycleKind::Bore | CycleKind::BackBore | CycleKind::Ream) {
+        if matches!(kind, CycleKind::Tap | CycleKind::FloatingTap | CycleKind::Bore | CycleKind::BackBore | CycleKind::Ream | CycleKind::FineBore) {
             return Err(GenError::Invalid(format!(
                 "a {:?} cycle is not radial-capable (M5.2 v1)",
                 kind

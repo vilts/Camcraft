@@ -224,10 +224,6 @@ pub fn lattice(pts: &[SR], moves: &[BandMove]) -> (Option<(f64, f64)>, Vec<f64>)
         lat.push(sv);
     }
     lat.retain(|s| (d_lo..=d_hi).contains(s));
-    if let Some((w0, w1)) = window {
-        lat.push(w0);
-        lat.push(w1);
-    }
     lat.sort_unstable_by(f64::total_cmp);
     lat.dedup();
     (window, lat)
@@ -408,11 +404,12 @@ fn nearest(moves: &[BandMove], s: f64) -> usize {
 /// true surface by up to its chord error - so a floor that far below
 /// the real skin reads as flush. Past the bound the clause reads `tol`
 /// untouched and the program gate refuses the operation by name
-/// ([`crate::verify::excess_floor`] is the one test both sides read).
+/// ([`crate::verify::strict_floor`] is the one test both sides read:
+/// turning never takes the #2996 widening).
 /// The rest clause and the silhouette's own chord budget keep `tol`.
 #[must_use]
 pub fn gouge_tol_on(tol: f64, excess: f64) -> f64 {
-    crate::verify::excess_floor(tol, excess).unwrap_or(tol)
+    crate::verify::strict_floor(tol, excess).unwrap_or(tol)
 }
 
 /// The shared close: scan what the moves leave and speak it in the

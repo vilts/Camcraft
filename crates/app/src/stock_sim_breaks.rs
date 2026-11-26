@@ -19,7 +19,17 @@ use crate::operation::OpParams;
 #[must_use]
 pub fn declared_width(params: &OpParams) -> Option<f64> {
     match params {
-        OpParams::Chamfer2D { width, .. } | OpParams::Deburr { width, .. } => Some(*width),
+        OpParams::Chamfer2D { width, .. } => Some(*width),
+        // #1890: a Deburr `width` is the chord; its records are held to
+        // the largest setback the size law gives any edge.
+        OpParams::Deburr { width, sizing, .. } => Some(sizing.max_setback(*width)),
+        // #1894: the tilted ride declares framed caps whose width is the
+        // chord - the width itself under Constant Width, and at most
+        // `2 d tan(75 deg)` on the flattest wedge Constant Depth sizes.
+        OpParams::MultiAxisDeburr { width, sizing, .. } => Some(match sizing.mode {
+            crate::finishing3d::BreakMode::ConstantWidth => *width,
+            crate::finishing3d::BreakMode::ConstantDepth => 2.0 * sizing.depth * (75f64).to_radians().tan(),
+        }),
         _ => None,
     }
 }
@@ -38,7 +48,7 @@ pub fn declared_width(params: &OpParams) -> Option<f64> {
 #[must_use]
 pub fn breaks_stock_edge(world: &flecs_ecs::prelude::World, op: &crate::schema::Operation) -> bool {
     let chamfer = matches!(op.params, OpParams::Chamfer2D { .. });
-    if !chamfer && !matches!(op.params, OpParams::Deburr { .. }) {
+    if !chamfer && !matches!(op.params, OpParams::Deburr { .. } | OpParams::MultiAxisDeburr { .. }) {
         return false;
     }
     let stock = crate::setup::stock_entity_name(world, op.setup.as_deref());
@@ -75,6 +85,13 @@ pub fn stock_part_of(world: &flecs_ecs::prelude::World, setup: Option<&str>) -> 
         && ours.len() == theirs.len()
         && ours.iter().zip(&theirs).all(|(s, t)| near(s.a, t.a) && near(s.b, t.b) && near(s.c, t.c));
     same.then_some(source)
+}
+
+/// #2596: whether `op` is a 2D Chamfer with no picks - its source the
+/// whole model, so the generator chose its edges, not the user.
+#[must_use]
+pub fn auto_edges(op: &crate::schema::Operation) -> bool {
+    matches!(op.params, OpParams::Chamfer2D { .. }) && matches!(op.src, crate::operation::SrcRef::Entity(_))
 }
 
 /// The records of op `name` the sim may credit: sane, on a declaring
@@ -129,12 +146,25 @@ pub(crate) fn program_breaks(
             out.extend(p.breaks.iter().cloned());
             continue;
         }
+        // #2596: a no-pick chamfer on a model that carries a modelled
+        // bevel has its edges drawn by the model. Its ride must cut
+        // nothing of the model, so none of its records is credited: a
+        // sharp edge it cut (a pocket rim the model leaves sharp), or a
+        // bevel cut wider than the modelled one, is a gouge.
+        if p.auto_edges && camcraft_sim::stock_sim::models_a_bevel(facets, tol, &p.breaks) {
+            tracing::warn!(
+                op = %p.name,
+                dropped = p.breaks.len(),
+                "2D Chamfer with no picks on a model with modelled chamfers - credit dropped, the ride is judged against the model (#2596)"
+            );
+            continue;
+        }
         let kept = camcraft_sim::stock_sim::on_walls(facets, tol, p.breaks.clone());
         if kept.len() < p.breaks.len() {
             tracing::warn!(
                 op = %p.name,
                 dropped = p.breaks.len() - kept.len(),
-                "2D Chamfer break whose cone tip stands inside the part, not on a wall - credit dropped, judged against the model (#2435)"
+                "2D Chamfer break lies inside the part, not on a wall - credit dropped, judged against the model (#2435)"
             );
         }
         out.extend(kept);

@@ -9,7 +9,7 @@
 use flecs_ecs::prelude::World;
 
 use crate::commands::SetStock;
-use crate::geometry::Aabb;
+use crate::geometry::{Aabb, Point3, quat_conjugate, quat_rotate_point};
 use crate::schema::Location;
 use crate::stock::{self, StockShape};
 use crate::{model, setup_align};
@@ -50,7 +50,59 @@ pub fn part_radius_about_in(world: &World, declared: Option<&str>, c: [f64; 2]) 
 
 /// The fitted stock shape and its position for the setup `declared`, or
 /// why there is none (refused by name).
-pub fn fitted(world: &World, declared: Option<&str>, kind: FitKind) -> Result<(StockShape, crate::geometry::Point3), String> {
+pub fn fitted(world: &World, declared: Option<&str>, kind: FitKind) -> Result<(StockShape, Point3), String> {
+    check_kind(kind)?;
+    let bounds = part_bounds(world, declared).ok_or_else(|| nothing_to_fit(world))?;
+    fit_shape(&bounds, kind, |c| part_radius_about_in(world, declared, c))
+}
+
+/// [`fitted`] for a stock that keeps the turn `rot` (#2576): the parts are
+/// measured in the stock's own frame (each vertex turned back by `rot`),
+/// the fit is made there, and its base point is turned onto the setup's
+/// frame. A stock laid along X or Y (or tilted) thus wraps the parts on
+/// its own axes, never a world-frame size put on a turned solid.
+pub fn fitted_turned(world: &World, declared: Option<&str>, kind: FitKind, rot: [f64; 4]) -> Result<(StockShape, Point3), String> {
+    if is_upright(rot) {
+        return fitted(world, declared, kind);
+    }
+    check_kind(kind)?;
+    let back = quat_conjugate(rot);
+    let points: Vec<Point3> = model::model_entities(world)
+        .into_iter()
+        .filter(|(_, e)| !model::is_fixture(world, e))
+        .filter_map(|(_, e)| setup_align::facets_in(world, &e, declared))
+        .flatten()
+        .flat_map(|t| [t.a, t.b, t.c])
+        .map(|p| quat_rotate_point(back, p))
+        .collect();
+    let bounds = setup_align::bounds(points.iter().copied()).ok_or_else(|| nothing_to_fit(world))?;
+    let radius = |c: [f64; 2]| {
+        points.iter().map(|p| (p.x - c[0]).hypot(p.y - c[1])).filter(|r| r.is_finite()).reduce(f64::max)
+    };
+    let (shape, base) = fit_shape(&bounds, kind, radius)?;
+    Ok((shape, quat_rotate_point(rot, base)))
+}
+
+/// True when `rot` is no turn at all (q or -q of identity).
+fn is_upright(rot: [f64; 4]) -> bool {
+    rot[..3].iter().all(|v| v.abs() < 1e-12)
+}
+
+/// The fit itself, from the parts' bounds and their radius about a centre.
+fn fit_shape(bounds: &Aabb, kind: FitKind, radius: impl Fn([f64; 2]) -> Option<f64>) -> Result<(StockShape, Point3), String> {
+    let fit = match kind {
+        FitKind::Box(margin) => stock::fit_box(bounds, margin),
+        FitKind::Cylinder(margin) => {
+            let c = [(bounds.min.x + bounds.max.x) * 0.5, (bounds.min.y + bounds.max.y) * 0.5];
+            radius(c).and_then(|r| stock::fit_cylinder_about(bounds, r, margin))
+        }
+        FitKind::Sides(sides) => stock::fit_box_sides(bounds, sides),
+    };
+    fit.ok_or_else(|| "stock fit refused: models have no usable extent".into())
+}
+
+/// Refuse a negative or non-finite allowance by name.
+fn check_kind(kind: FitKind) -> Result<(), String> {
     if let FitKind::Sides(sides) = kind
         && !sides.iter().all(|s| s.is_finite() && *s >= 0.0)
     {
@@ -61,16 +113,7 @@ pub fn fitted(world: &World, declared: Option<&str>, kind: FitKind) -> Result<(S
     {
         return Err(format!("stock fit refused: the margin must be zero or more (got {margin} mm)"));
     }
-    let bounds = part_bounds(world, declared).ok_or_else(|| nothing_to_fit(world))?;
-    let fit = match kind {
-        FitKind::Box(margin) => stock::fit_box(&bounds, margin),
-        FitKind::Cylinder(margin) => {
-            let c = [(bounds.min.x + bounds.max.x) * 0.5, (bounds.min.y + bounds.max.y) * 0.5];
-            part_radius_about_in(world, declared, c).and_then(|r| stock::fit_cylinder_about(&bounds, r, margin))
-        }
-        FitKind::Sides(sides) => stock::fit_box_sides(&bounds, sides),
-    };
-    fit.ok_or_else(|| "stock fit refused: models have no usable extent".into())
+    Ok(())
 }
 
 /// Why there is nothing to fit: no models at all, or only fixtures -
@@ -84,15 +127,16 @@ fn nothing_to_fit(world: &World) -> String {
 }
 
 /// The undoable command that fits the ACTIVE setup's stock: the fitted
-/// size and placement, the stock's deliberate rotation kept - with the
-/// fitted shape, for the caller's report.
+/// size and placement, the stock's deliberate rotation kept and the fit
+/// made in that rotation's frame (#2576) - with the fitted shape, for the
+/// caller's report.
 pub fn fit_command(world: &World, kind: FitKind) -> Result<(SetStock, StockShape), String> {
     let active = crate::setup::active(world);
-    let (shape, pos) = fitted(world, active.as_deref(), kind)?;
     let stock_name = crate::setup::stock_entity_name(world, active.as_deref());
     let rot = model::find_by_name(world, &stock_name)
         .and_then(|e| model::transform_of(world, &e))
         .map_or_else(|| Location::default().rot, |loc| loc.rot);
+    let (shape, pos) = fitted_turned(world, active.as_deref(), kind, rot)?;
     SetStock::new(world, shape.clone(), Location { pos, rot })
         .map(|cmd| (cmd, shape))
         .map_err(|e| format!("stock not fitted: {e}"))

@@ -36,6 +36,7 @@ capabilities = 1;          // reference contract: integer feature mask
 wireEdm = true;            // voices PARAM EdmCondition (the engine's door)
 afterModes = true;         // reads PARAM AfterOperation (M01 / M00; home refused)
 programUnits = "mm inch"; // #902: writes the document's unit (postOptions.Units), G21 / G20
+explains = "paren"; // #1389: explain ISO words only; machine EDM codes keep their own meanings
 
 // Determinism law: no timestamps, no randomness.
 
@@ -75,6 +76,13 @@ var taperOk = true;
 var dialect = "";          // "angle": the machine tapers by angle word (#1164)
 var corner = "", plane = null;
 var angleNext = null;      // the next move's angle word (WireAngle)
+// A wire number the stream states but that is no finite number (#3236):
+// the param's name, "" for none. A non-finite f64 reaches the stream as
+// "null" (or "nan" / "inf" in a hand-written one); skipped, it would turn
+// a leaning move into a plain G1. Refused, and no cut of the section is
+// written.
+var WIRE_NUMBERS = ["WireTaper", "WirePlane", "WireAngle", "WireU", "WireV"];
+var notFinite = "";
 var codesOk = false;
 var refused = {};
 
@@ -84,14 +92,26 @@ function trim(s) {
   if (s.indexOf(".") >= 0) s = s.replace(/0+$/, "").replace(/\.$/, "");
   return s === "-0" ? "0" : s;
 }
-function fu(v) { return trim(Number(inch ? v / 25.4 : v).toFixed(inch ? 4 : 3)); }
+// A dimension word always carries its decimal point (#3206): many wire
+// controls read a number without one in their least input unit, so
+// "X5" would be 5 um there, not 5 mm.
+function pt(s) {
+  s = s.replace(/0+$/, "");
+  return (s === "-0." || s === "-.") ? "0." : s;
+}
+function fu(v) { return pt(Number(inch ? v / 25.4 : v).toFixed(inch ? 4 : 3)); }
 function wo(letter, v, o) { return has(v) ? letter + fu(v - o) : ""; }
-function block(words) {
+function arcWord(k, v) { return k === "Z" ? "" : wo(k, v, k === "X" ? orgX : orgY); }  // #3442: a position word as written (no Z), for arcFate
+function block(words, machineCode) {
   var a = [];
   for (var i = 0; i < words.length; i++) {
     if (words[i] !== "" && words[i] !== null && words[i] !== undefined) a.push(words[i]);
   }
-  if (a.length > 0) writeln(a.join(" "));
+  if (a.length > 0) {
+    var line = a.join(" "), c = machineCode ? "" : explain(a);
+    if (c && line.length + 1 + c.length <= 80) line += " " + c;
+    writeln(line);
+  }
 }
 function msg(s) { if (typeof message === "function") message(s); else writeln("(" + s + ")"); }
 function refuse(key, s) {
@@ -106,6 +126,8 @@ function clean(s) {
   return t.length > 48 ? t.substring(0, 48).trim() : t;
 }
 function note(s) { block(["(" + s + ")"]); }
+// Program notes use this dialect without truncating the stated bound.
+function onComment(s) { note(commentText(s)); }
 
 // ------------------------------------------------------------- machine
 function machineName() {
@@ -164,10 +186,16 @@ function onOpen() {
   var e = (typeof machine !== "undefined" && machine && machine.edm) || {};
   if (e.tank) note("TANK " + clean(e.tank).toUpperCase() + " IS STATED BUT NOT PROGRAMMED - SET IT AT THE CONTROL");
   if (e.flushing) note("FLUSHING " + clean(e.flushing).toUpperCase() + " IS STATED BUT NOT PROGRAMMED - SET IT AT THE CONTROL");
+  if (e.skim_flushing) note("SKIM FLUSHING " + clean(e.skim_flushing).toUpperCase() + " IS STATED BUT NOT PROGRAMMED - SET IT AT THE CONTROL"); // #2686
   block([inch ? "G20" : "G21", "G90", "G17"]);
 }
 
 function onParameter(name, value) {
+  if (WIRE_NUMBERS.indexOf(name) >= 0 && !has(value)) {
+    notFinite = name;
+    refuse("nf" + name + opName, who() + "PARAM " + name + " is not a finite number (" + (value === null || value === undefined ? "null" : clean(value)) + ") - refused, the wire post writes no cut from it");
+    return;
+  }
   if (name === "WorkOffset" && value) wcsWord = String(value);
   else if (name === "OriginX" && has(value)) orgX = Number(value);
   else if (name === "OriginY" && has(value)) orgY = Number(value);
@@ -232,7 +260,7 @@ function onSection() {
       refuse("angtpl" + opName, "machine " + machineName() + ": edm.codes.taper_angle states no {angle} place for the taper angle");
       taperOk = false;
     }
-    note("TAPER " + trim(Number(taper).toFixed(3)) + " DEG BY ANGLE WORD - XY ON THE PROGRAMMED PLANE Z" + (has(plane) ? fu(plane) : "?") + ", CORNERS " + corner.toUpperCase());
+    note("TAPER " + trim(Number(taper).toFixed(3)) + " DEG BY ANGLE WORD - XY ON THE PROGRAMMED PLANE Z" + (has(plane) ? trim(fu(plane)) : "?") + ", CORNERS " + corner.toUpperCase());
   } else if (taper !== 0 || fourAxis !== "") {
     for (var i = 0; i < TAPER_REQUIRED.length; i++) {
       if (code(TAPER_REQUIRED[i]) === null) {
@@ -267,13 +295,13 @@ function startCut(p) {
     return false;
   }
   block(["G0", wo("X", p.StartX, orgX), wo("Y", p.StartY, orgY)]);
-  if (awt) block([code("thread")]);
+  if (awt) block([code("thread")], true);
   else {
     note(openRun() ? "THREAD THE WIRE AT THE RUN-IN POINT OUTSIDE THE STOCK" : "THREAD THE WIRE AT THE START HOLE");
     block(["M00"]);
   }
-  block([code("condition").split("{id}").join(condition)]);
-  block([code("comp_off")]);
+  block([code("condition").split("{id}").join(condition)], true);
+  block([code("comp_off")], true);
   threaded = true;
   cutZ = has(p.StartZ) ? p.StartZ : null;
   return true;
@@ -290,8 +318,8 @@ function startSkim() {
   }
   skim++;
   note("SKIM " + skim);
-  block([code("condition").split("{id}").join(condition)]);
-  block([code("comp_off")]);
+  block([code("condition").split("{id}").join(condition)], true);
+  block([code("comp_off")], true);
   return true;
 }
 
@@ -305,6 +333,7 @@ function cutOk(p) {
     refuse("tilt" + opName, who() + "a posed move - this post writes a 2-axis (vertical wire) cut only");
     return false;
   }
+  if (notFinite !== "") return false; // refused by name in onParameter (#3236)
   if (!startCut(p)) return false;
   if (has(p.Z) && cutZ !== null && Math.abs(p.Z - cutZ) > 0.0005) {
     refuse("z" + opName, who() + "a move changes Z - a 2-axis wire cut rides one programmed plane");
@@ -338,11 +367,11 @@ function onLinear() {
       return;
     }
     if (ang !== 0 && !tapering) {
-      block([code("taper_on")]);
-      block([code("taper_angle").split("{angle}").join(trim(Number(ang).toFixed(3)))]);
+      block([code("taper_on")], true);
+      block([code("taper_angle").split("{angle}").join(pt(Number(ang).toFixed(3)))], true);
       tapering = true;
     } else if (ang === 0 && tapering) {
-      block([code("taper_off")]);
+      block([code("taper_off")], true);
       tapering = false;
     }
     block(["G1", wo("X", p.X, orgX), wo("Y", p.Y, orgY)]);
@@ -354,10 +383,10 @@ function onLinear() {
       return;
     }
     if (!tapering) {
-      block([code("taper_on")]);
+      block([code("taper_on")], true);
       tapering = true;
     }
-    block(["G1", wo("X", p.X, orgX), wo("Y", p.Y, orgY), code("uv").split("{u}").join(fu(w[0])).split("{v}").join(fu(w[1]))]);
+    block(["G1", wo("X", p.X, orgX), wo("Y", p.Y, orgY), code("uv").split("{u}").join(fu(w[0])).split("{v}").join(fu(w[1]))], true);
     return;
   }
   // No F word: the condition's generator sets the cutting rate.
@@ -375,6 +404,9 @@ function onCircular() {
     refuse("uvarc" + opName, who() + "a tapered arc - this post writes straight tapered moves only");
     return;
   }
+  // #3442: an arc whose written ends coincide is no arc block (arcFate, PRELUDE).
+  var fate = arcFate(arcWord, arcIncOf(fu));  // #3474: I J K are increments from the start
+  if (fate !== "arc") { if (fate === "linear") onLinear(); return; }
   var c = p.IJKIncrement || {};
   block([
     p.CircularDirection === "CW" ? "G2" : "G3",
@@ -393,11 +425,11 @@ function onCycle() {
 function onSectionEnd() {
   // The wire stands upright again (the lead-out's U0 V0) before the
   // taper is switched off.
-  if (tapering) block([code("taper_off")]);
+  if (tapering) block([code("taper_off")], true);
   if (threaded) {
     if (awt) {
-      block([code("cut")]);
-      block([code("tip_disposal")]);
+      block([code("cut")], true);
+      block([code("tip_disposal")], true);
     } else {
       note(openRun() ? "CUT THE WIRE AT THE RUN-OUT POINT" : "CUT THE WIRE");
       block(["M00"]);
@@ -423,6 +455,7 @@ function onSectionEnd() {
   corner = "";
   plane = null;
   angleNext = null;
+  notFinite = "";
 }
 
 // ------------------------------------------------------------ footer

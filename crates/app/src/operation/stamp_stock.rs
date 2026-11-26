@@ -74,6 +74,7 @@ pub(super) fn write_stock_source(world: &World, entity: &Entity, h: &mut impl Ha
             // deleted stays honestly Ok, because the material it
             // describes never changed. (M5.3 A: via the per-entity memo.)
             h.write_u64(model::geometry_signature(world, entity)?);
+            crate::model_fidelity::write_stamp(world, entity, h);
         }
     }
     Some(())
@@ -95,6 +96,7 @@ pub(crate) fn write_setup_stock(world: &World, setup: Option<&str>, h: &mut impl
             h.write_u8(1);
             write_placement(world, &e, h);
             h.write_u64(model::geometry_signature(world, &e)?);
+            crate::model_fidelity::write_stamp(world, &e, h);
             match model::stock_def_of(world, &e) {
                 None => h.write_u8(0xff),
                 Some(StockShape::Box { dx, dy, dz }) => {

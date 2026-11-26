@@ -42,10 +42,16 @@ pub(super) struct Blend<'a> {
 type Corner = (usize, u64, u64);
 
 /// The corners the law keeps sharp.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct Bans {
     corners: HashSet<Corner>,
     all: bool,
+}
+
+impl Bans {
+    pub(super) fn ban(&mut self, pass: usize, at: Point2) {
+        self.corners.insert((pass, at.x.to_bits(), at.y.to_bits()));
+    }
 }
 
 /// The walks rounded: the walks, the fillet books, and each added or
@@ -89,6 +95,7 @@ pub(super) fn post_blended_crossing_free(
     passes: &[Vec<Point2>],
     mut base: Vec<Vec<Seg>>,
     blend: &Blend,
+    seed_bans: &Bans,
     tally: &mut ProofTally,
     post: impl Fn(&mut PathBuilder, Option<&[Vec<Seg>]>),
 ) -> Toolpath {
@@ -99,7 +106,7 @@ pub(super) fn post_blended_crossing_free(
         }
         bb
     };
-    let mut bans = Bans::default();
+    let mut bans = seed_bans.clone();
     for round in 0..=CROSS_ROUNDS {
         let rounded = round_walks(passes, &base, blend, &bans);
         let mut bb = noted(&rounded);

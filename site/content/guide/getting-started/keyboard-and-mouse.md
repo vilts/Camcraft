@@ -55,6 +55,21 @@ A plain click on empty space in model mode clears the selection. A
 right-click in the viewport does not open a menu; it starts a pan, so a
 right-click with no movement does nothing.
 
+## Move and rotate in the viewport bar
+
+With Move or Rotate handles active, hold **Shift** while dragging a
+handle to snap to the bar's **Snap** step. The initial move step is
+1 mm; the initial rotation step is 90 degrees. Change Snap to suit the
+job. Move distances follow the document's displayed units; angles use
+degrees.
+
+For a typed value, choose X, Y or Z in the viewport bar, enter a signed
+distance or angle, then press **Enter** or choose **Set**. With both
+handle sets visible, choose **Move value** or **Rotate value** first.
+The value is a relative move or turn, not an absolute coordinate. A valid
+entry uses the same undoable command as a handle drag. Invalid or
+non-finite input is refused without moving the part.
+
 ## Picking modifiers
 
 Picks in the viewport add to the open operation's geometry in Face, Edge and

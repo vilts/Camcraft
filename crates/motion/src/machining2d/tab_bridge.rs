@@ -12,7 +12,7 @@ use super::arcs::{Seg, fit_arcs_sided};
 use super::contour_entry::{flatten, seam_leads};
 use super::contour_params::ContourParams;
 use super::fillet::{Legal, fillet_corners};
-use super::fillet_tally::FilletTally;
+use super::fillet_tally::{FilletTally, corner_arc_radius};
 use super::lead_ext::extend_leads;
 use super::ring::{Ring, dist, tab_window};
 
@@ -38,7 +38,10 @@ pub(super) fn keep_cut(
     }
     let mut walk = fit_arcs_sided(&poly, p.tolerance, legal.air_left);
     if p.blend_turns {
-        let (w, t) = fillet_corners(&walk, poly[0], p.tool_diameter * 0.5, p.tolerance, legal);
+        // #1759: the radius asked for; `validate` held it to the door,
+        // and a radius the door refuses rounds nothing here.
+        let rho = corner_arc_radius(p.blend_radius, p.tool_diameter).unwrap_or(0.0);
+        let (w, t) = fillet_corners(&walk, poly[0], rho, p.tolerance, legal);
         walk = w;
         tally.add(t);
     }
@@ -47,15 +50,16 @@ pub(super) fn keep_cut(
     Some((poly, walk, entry, lead, lead_off))
 }
 
-/// The keeps of a tabbed ring, and the note when no keep is left.
+/// The keeps of a tabbed ring, and its notes: why no keep is left, or
+/// what a kept tab does not do as asked.
 #[derive(Clone)]
 pub(super) struct TabFit {
     pub keeps: Vec<(f64, f64)>,
-    pub note: Option<String>,
+    pub notes: Vec<String>,
 }
 
 /// The fitted keeps of ring `li` (computed once per ring: every tabbed
-/// level walks the same ring), with its note said.
+/// level walks the same ring), with its notes said.
 pub(super) fn cached(
     fits: &mut HashMap<usize, TabFit>,
     li: usize,
@@ -63,10 +67,10 @@ pub(super) fn cached(
     notes: &mut Vec<String>,
 ) -> Vec<(f64, f64)> {
     let f = fits.entry(li).or_insert_with(fit);
-    if let Some(n) = &f.note
-        && !notes.contains(n)
-    {
-        notes.push(n.clone());
+    for n in &f.notes {
+        if !notes.contains(n) {
+            notes.push(n.clone());
+        }
     }
     f.keeps.clone()
 }
@@ -74,7 +78,7 @@ pub(super) fn cached(
 /// Rounds of growth before a tab is named as not fitting.
 const ROUNDS: usize = 64;
 /// Numeric slack on the bridge (mm): far under any tab width.
-const SLACK: f64 = 1e-6;
+pub(super) const SLACK: f64 = 1e-6;
 
 /// The keeps of a tabbed level. The `tab_count` windows start at
 /// `tab_width + D` on the ring (centred at equal spacing, or ending on the
@@ -91,7 +95,7 @@ pub(super) fn fit_tabs(ring: &Ring, p: &ContourParams, picked: bool, legal: &Leg
     let n = p.tab_count as usize;
     let need = tab_window(p.tab_width, p.tool_diameter);
     if n == 0 || !(l > 0.0 && l.is_finite()) {
-        return TabFit { keeps: vec![(0.0, l.max(0.0))], note: None };
+        return TabFit { keeps: vec![(0.0, l.max(0.0))], notes: Vec::new() };
     }
     if !(need > 0.0 && need.is_finite()) {
         return held(p, "the tab width is not a length".into());
@@ -121,7 +125,8 @@ pub(super) fn fit_tabs(ring: &Ring, p: &ContourParams, picked: bool, legal: &Leg
             return fill(p);
         };
         if gaps.is_empty() {
-            return TabFit { keeps, note: None };
+            let notes = moved_start(ring, &keeps, p, picked).into_iter().collect();
+            return TabFit { keeps, notes };
         }
         for (from, to, deficit) in gaps {
             let gap = (to - from).rem_euclid(l);
@@ -178,15 +183,15 @@ fn short_gaps(ring: &Ring, keeps: &[(f64, f64)], p: &ContourParams, legal: &Lega
 }
 
 /// One keep's cut flattened: lead-in, walk, lead-out.
-struct Cut {
-    lead_in: Vec<Point2>,
-    walk: Vec<Point2>,
-    lead_out: Vec<Point2>,
-    len: f64,
+pub(super) struct Cut {
+    pub lead_in: Vec<Point2>,
+    pub walk: Vec<Point2>,
+    pub lead_out: Vec<Point2>,
+    pub len: f64,
 }
 
 impl Cut {
-    fn of((poly, walk, entry, lead, lead_off): &KeepCut) -> Cut {
+    pub(super) fn of((poly, walk, entry, lead, lead_off): &KeepCut) -> Cut {
         let start = poly.first().copied().unwrap_or(*entry);
         let walk = flatten(start, walk);
         let end = walk.last().copied().unwrap_or(start);
@@ -250,14 +255,14 @@ fn orient(a: Point2, b: Point2, c: Point2) -> f64 {
     (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x)
 }
 
-fn pt_seg(p: Point2, a: Point2, b: Point2) -> f64 {
+pub(super) fn pt_seg(p: Point2, a: Point2, b: Point2) -> f64 {
     let (dx, dy) = (b.x - a.x, b.y - a.y);
     let ll = dx * dx + dy * dy;
     let t = if ll > 0.0 { (((p.x - a.x) * dx + (p.y - a.y) * dy) / ll).clamp(0.0, 1.0) } else { 0.0 };
     dist(p, Point2::new(a.x + t * dx, a.y + t * dy))
 }
 
-fn seg_seg(p0: Point2, p1: Point2, q0: Point2, q1: Point2) -> f64 {
+pub(super) fn seg_seg(p0: Point2, p1: Point2, q0: Point2, q1: Point2) -> f64 {
     let crossing = orient(p0, p1, q0) * orient(p0, p1, q1) < 0.0 && orient(q0, q1, p0) * orient(q0, q1, p1) < 0.0;
     if crossing {
         return 0.0;
@@ -265,11 +270,28 @@ fn seg_seg(p0: Point2, p1: Point2, q0: Point2, q1: Point2) -> f64 {
     pt_seg(p0, q0, q1).min(pt_seg(p1, q0, q1)).min(pt_seg(q0, p0, p1)).min(pt_seg(q1, p0, p1))
 }
 
-fn held(p: &ContourParams, why: String) -> TabFit {
+pub(super) fn held(p: &ContourParams, why: String) -> TabFit {
     TabFit {
         keeps: Vec::new(),
-        note: Some(format!("tabs: {} tabs of {:.3} mm - {why}; the tabbed levels cut nothing on this loop", p.tab_count, p.tab_width)),
+        notes: vec![format!("tabs: {} tabs of {:.3} mm - {why}; the tabbed levels cut nothing on this loop", p.tab_count, p.tab_width)],
     }
+}
+
+/// #2561: from a picked start the windows grow backward only, so the
+/// first cut of each tabbed level stays at the pick. A window that grows
+/// over the whole first cut takes the pick into a tab: the level then
+/// starts after that tab, and this note says so.
+fn moved_start(ring: &Ring, keeps: &[(f64, f64)], p: &ContourParams, picked: bool) -> Option<String> {
+    let first = keeps.first()?.0.rem_euclid(ring.len);
+    if !picked || first.min(ring.len - first) <= ring.len * 1e-9 {
+        return None;
+    }
+    let (pick, at) = (ring.at(0.0), ring.at(first));
+    Some(format!(
+        "tabs: the first {:.3} mm tab after the start point ({:.3}, {:.3}) grew back over it to keep its width; \
+         the tabbed levels start at ({:.3}, {:.3}) instead",
+        p.tab_width, pick.x, pick.y, at.x, at.y
+    ))
 }
 
 /// The windows (tab width, tool diameter, and the room the leads take)

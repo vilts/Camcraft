@@ -58,6 +58,7 @@ fn bar() -> Vec<Triangle> {
 
 fn finish(top_z: f64, bottom_z: f64) -> Finish3DParams {
     Finish3DParams {
+        gap_link: camcraft_motion::finishing3d::GapLink::Jump,
         pattern: FinishPattern::Waterline,
         stepover: None,
         tool_diameter: 2.0 * R,
@@ -75,6 +76,7 @@ fn finish(top_z: f64, bottom_z: f64) -> Finish3DParams {
         entry_ramp: false,
         steep_stepover: None,
         pencil_reference: None,
+        waterlines: true,
     }
 }
 

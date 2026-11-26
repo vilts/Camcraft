@@ -13,6 +13,9 @@ winresource = { version = "0.1", default-features = false }
 
 [dependencies]
 camcraft-app = { workspace = true }
+# #2620: the headless device policy (`headless_gpu`) lives in the compute
+# seam crate, so the renderer and the GPU kernels share one adapter choice.
+camcraft-gpu = { workspace = true }
 flecs_ecs = { workspace = true }
 winit = { workspace = true }
 image = { workspace = true }
@@ -26,6 +29,9 @@ egui_dock = { workspace = true }
 # Values directly - every refusal names the key it tripped on, which a
 # derived deserializer's error soup cannot promise.
 serde_json = { workspace = true }
+# #2339: the dock tab names the saved panel arrangement in its own JSON, so
+# egui_dock's serde form (behind its "serde" feature) has a Tab to read.
+serde = { workspace = true }
 # #163: native diagnostics are `tracing` events (the diag seam), printed by
 # the subscriber `camcraft_app::logging::init` installs in main.
 tracing = { workspace = true }

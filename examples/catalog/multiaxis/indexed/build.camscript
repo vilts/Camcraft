@@ -1,0 +1,32 @@
+// Provenance: original indexed-pocket example using CamCraft's public commands.
+cam.import("model/indexed.obj", "indexed");
+cam.call("set_model_link", { model: "indexed", path: null });
+cam.call("fit_stock", { shape: "box", margin: 0.0 });
+cam.call("load_machine", { builtin: "Tilt-head 5-axis" });
+cam.call("add_tool", { catalog: "EM-0600-4FL", holder: "none" });
+
+function pocket(name, a, b, bottom) {
+  cam.call("add_operation", {
+    kind: "2D Pocket", name: name, tool: "EM-0600-4FL", source: "indexed",
+    params: {
+      stepover: 2.0, stock_to_leave: 0.0,
+      clearance_z: { reference: "top_of_stock", offset: 25.0 },
+      top_z: { reference: "top_of_stock", offset: 0.0 },
+      bottom_z: bottom, stepdown: 2.0,
+      feed: 800.0, plunge_feed: 200.0, climb: true,
+      strategy: "offset_rings", entry: "plunge", helix_radius: 1.0,
+      tilt: { a_deg: a, b_deg: b, origin: [0.0, 0.0, 0.0], basis_version: 1 }
+    }
+  });
+}
+pocket("Front pocket", 90.0, 0.0, 13.0);
+pocket("Back pocket", -90.0, 0.0, 13.0);
+pocket("Tilted pocket", 30.0, 30.0, 13.0);
+cam.generate();
+var verdict = cam.verify();
+if (!verdict.ok) {
+  throw new Error("indexed catalog verify failed: " + JSON.stringify(verdict));
+}
+cam.save("indexed.camproj");
+cam.post({ to: "indexed.nc" });
+cam.report();

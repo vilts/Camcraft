@@ -1,7 +1,8 @@
 //! `cargo xtask merge-plan`: the git and gh side of the merge planner (#1221). Lists the open PRs, simulates their
-//! merges with `git merge-tree --write-tree` and `git commit-tree` (nothing is checked out, built or pushed), and
+//! merges with `git merge-tree --write-tree` and `git commit-tree` (no real branch moves), and
 //! prints the wave plan (merge_plan.rs) or the delta class of one PR since a reviewed head (merge_delta.rs).
 //! Provenance: port of the maintainer's merge-ready planner (plan_merge_order.py), #1221.
+//! `--check` validates the proposed wave in a temporary worktree (merge_trial.rs, #3459).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -16,7 +17,7 @@ use crate::merge_plan::{self, Facts, Mergeable, Pr};
 const UNKNOWN_RETRIES: usize = 6;
 const UNKNOWN_WAIT: Duration = Duration::from_secs(5);
 
-const USAGE: &str = "usage: cargo xtask merge-plan <PR>... | --label <name> [--json] | --delta <PR> --reviewed <sha>
+const USAGE: &str = "usage: cargo xtask merge-plan <PR>... | --label <name> [--json] [--check] | --delta <PR> --reviewed <sha>
       [--repo owner/name] [--remote origin] [--base main]";
 
 /// Commit identity for the simulated merges (they are never pushed).
@@ -42,6 +43,7 @@ pub struct Args {
     pub base: String,
     /// `--json`: print the plan as JSON (merge_plan_out.rs).
     pub json: bool,
+    pub check: bool,
 }
 
 fn take(it: &mut std::slice::Iter<'_, String>, flag: &str) -> Result<String, String> {
@@ -54,6 +56,7 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--json" => a.json = true,
+            "--check" => a.check = true,
             "--label" => a.label = Some(take(&mut it, arg)?),
             "--repo" => a.repo = Some(take(&mut it, arg)?),
             "--remote" => a.remote = take(&mut it, arg)?,
@@ -66,6 +69,9 @@ pub fn parse(args: &[String]) -> Result<Args, String> {
             s if s.starts_with('-') => return Err(format!("unknown merge-plan option '{s}'\n{USAGE}")),
             s => a.prs.push(s.parse().map_err(|_| format!("'{s}' is not a PR number\n{USAGE}"))?),
         }
+    }
+    if a.check && a.delta.is_some() {
+        return Err(format!("--check cannot be used with --delta\n{USAGE}"));
     }
     if a.delta.is_some() && a.reviewed.is_none() {
         return Err(format!("--delta needs --reviewed <sha of the reviewed head>\n{USAGE}"));
@@ -91,7 +97,7 @@ pub fn run(root: &Path, args: &[String]) -> Result<i32, String> {
     cleanup_refs(root, &numbers);
     let plan = result?;
     print!("{}", if a.json { merge_plan::to_json(&plan) } else { merge_plan::render(&plan) });
-    Ok(0)
+    Ok(if plan.excluded.is_empty() { 0 } else { 1 })
 }
 
 /// Deletes the `refs/merge-plan/<N>` refs this run fetched (they are scratch refs; the simulated commits stay as loose
@@ -333,7 +339,15 @@ fn plan_for(root: &Path, a: &Args, mut listed: Vec<Listed>) -> Result<merge_plan
     crate::merge_review::warn(a.repo.as_deref(), &heads, |args| gh(root, args))?;
     let facts = Facts { base_name: base.to_string(), base_sha: base_sha.clone(), prs, before, shared };
     let mut sim = Sim { root, base_sha, heads, commits: BTreeMap::new() };
-    merge_plan::plan(&facts, &mut |onto: &[u32], pr: u32| sim.trial(onto, pr))
+    if a.check {
+        crate::merge_trial::validate(root, &facts, |f| {
+            let plan = merge_plan::plan(f, &mut |onto: &[u32], pr: u32| sim.trial(onto, pr))?;
+            let tree = sim.commit_of(&plan.wave1)?;
+            Ok((plan, tree))
+        })
+    } else {
+        merge_plan::plan(&facts, &mut |onto: &[u32], pr: u32| sim.trial(onto, pr))
+    }
 }
 
 /// The delta class of PR `pr` since `reviewed`: fetched head, the commits after the review, each merge checked.

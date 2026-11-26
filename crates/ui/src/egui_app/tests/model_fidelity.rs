@@ -24,6 +24,12 @@ fn a_reduced_fidelity_model_says_so_on_its_page_and_a_normal_one_does_not() {
         h.query_by_label("Reduced fidelity: surfaces are approximated to within 0.012 mm").is_some(),
         "the flag and the achieved error are on the model page"
     );
+    // #2976: the hint names both causes; the document does not record which.
+    assert!(
+        h.query_by_label_contains("or the file's own edges lie off their surfaces").is_some()
+            && h.query_by_label_contains("or export the file again with a tighter tolerance, to clear this").is_some(),
+        "the hint names both causes and both remedies"
+    );
     h.state_mut().state.ui_target = UiTarget::Model("Block".into());
     h.run();
     assert!(h.query_by_label("Model: Block").is_some(), "the block's page is open");

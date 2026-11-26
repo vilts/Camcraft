@@ -115,6 +115,7 @@ fn a_groove_in_a_wider_bar_approaches_from_the_bar_and_posts_clean() {
         stock_to_leave: 0.0,
         feed: 150.0,
         plunge_feed: 60.0,
+        picks: Default::default(),
     };
     let (world, warns, moves, _) = run(grooved(), Some((20.0, 44.0)), "GT-0200", params);
     // The ladder steps from the bar's skin: the first rung one stepdown
@@ -139,7 +140,8 @@ fn a_parting_cut_in_a_wider_bar_approaches_from_the_bar_and_posts_clean() {
         bar_advance: 0.0,
         bar_unload: false,
         bar_transfer: false,
-        inspect_tol: 0.0,
+        inspect_tol: 0.0, kerf: Default::default(),
+        picks: Default::default(),
     };
     let (world, warns, moves, _) = run(grooved(), Some((20.0, 44.0)), "GT-0200", params);
     let tips: Vec<f64> = moves.iter().filter(|m| m.kind == MoveKind::Feed).map(|m| rho(m.to)).collect();
@@ -159,6 +161,7 @@ fn with_no_stock_the_rough_is_the_part_based_path_and_says_so() {
         stock_to_leave: 0.25,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     let (_, _, moves, notes) = run(flanged(), None, "TN-1600-0R8", params);
     // The kernel's stock-blind entry point is the pre-#130 path.

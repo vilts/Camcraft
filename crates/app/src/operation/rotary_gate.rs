@@ -15,6 +15,7 @@
 //! law; axis lettering per RS-274 / ISO 6983 convention. No vendor
 //! material consulted.
 
+use crate::geometry::Triangle;
 use crate::machine::AxisLimits;
 use crate::machining2d::GenError;
 
@@ -63,6 +64,46 @@ pub(super) fn rotary_letter(
     Ok(ax.name.chars().next().map(|c| c.to_ascii_uppercase()))
 }
 
+/// The rotary kinds' letter door (M13.5 B): the line the kernel will
+/// turn the part about, held against the mounted machine's rotary
+/// inventory. A STATED axis (#2772 parts 1-2) answers the letter
+/// directly - the machine states its own rotaries, and the op's own
+/// statement is held to the same inventory below - so no fit is
+/// asked; nothing stated keeps the fit the kernel will read, and a
+/// fit that fails there is left to the kernel, which refuses it by
+/// its own name. The spindle's C answers the line (issue #33): the
+/// caller then stamps the path with the axis's C.
+pub(super) fn letter_gate(
+    machine: Option<&(String, Vec<AxisLimits>)>,
+    stated: Option<&crate::multiaxis::axis::Axis>,
+    facets: &[Triangle],
+    kind: &str,
+) -> Result<Option<crate::multiaxis::axis::Axis>, GenError> {
+    let ax = match stated {
+        Some(ax) => *ax,
+        None => match crate::multiaxis::axis::fit(facets) {
+            Ok(ax) => ax,
+            Err(_) => return Ok(None),
+        },
+    };
+    let letter = rotary_letter(machine, [ax.dir.x, ax.dir.y, ax.dir.z], kind)?;
+    Ok((letter == Some('C')).then_some(ax))
+}
+
+/// The kind's own link clearance the C unwind law is proven on end
+/// to end (#2828): each proven kind names the plane or cylinder its
+/// links rest on, [`Unwind::NoProof`] for the rest. A kind with no
+/// proof posts only what fits the travel as stamped.
+pub(super) enum Unwind {
+    /// No end-to-end proof yet: never rewound, refused by name where
+    /// its C leaves the travel.
+    NoProof,
+    /// Links over the axial clearance plane (Rotary Contour).
+    Axial,
+    /// Links on the retract cylinder (Rotary Flow, #2828).
+    Radial,
+}
+
 /// Stamp a rotary kind's part-frame path with the spindle C (issue
 /// #33) when the gate answered the machine's C for the fitted line
 /// `c_axis`; any other letter returns the path untouched. The line
@@ -75,12 +116,13 @@ pub(super) fn rotary_letter(
 /// whole turns at its clear links (`cl::unwind_c`, slice 2): the
 /// rewinds ride as orbit rapids every later law judges, and a cut
 /// that no rewind can fit is refused here by name. Only a kind whose
-/// unwind is proven end to end asks for it (`unwinds`: Rotary Contour);
+/// unwind is proven end to end asks for it - over the axial plane
+/// (Rotary Contour) or on the retract cylinder (Rotary Flow, #2828);
 /// any other kind is refused by name where its C leaves the travel.
 pub(super) fn stamp_spindle_c(
     path: crate::cl::Toolpath,
     c_axis: Option<crate::multiaxis::axis::Axis>,
-    (machine, unwinds): (Option<&(String, Vec<AxisLimits>)>, bool),
+    (machine, unwind): (Option<&(String, Vec<AxisLimits>)>, Unwind),
     tol: f64,
     kind: &str,
 ) -> Result<crate::cl::Toolpath, GenError> {
@@ -88,18 +130,13 @@ pub(super) fn stamp_spindle_c(
         return Ok(path);
     };
     // #1015: the kernel's world path is in hand at every refusal below.
-    stamp_c_about(&path, ax, machine, unwinds, tol, kind).map_err(|e| e.with_ghost(&path))
+    stamp_c_about(&path, ax, machine, unwind, tol, kind).map_err(|e| e.with_ghost(&path))
 }
 
-/// [`stamp_spindle_c`]'s body, over the path it may refuse.
-fn stamp_c_about(
-    path: &crate::cl::Toolpath,
-    ax: crate::multiaxis::axis::Axis,
-    machine: Option<&(String, Vec<AxisLimits>)>,
-    unwinds: bool,
-    tol: f64,
-    kind: &str,
-) -> Result<crate::cl::Toolpath, GenError> {
+/// The spindle line that C turns the part about: the fitted line `ax`'s
+/// X/Y where it crosses z = 0. Refused by name when the line does not
+/// stand along world Z (#3096: the live-tool traverse reads it too).
+pub(super) fn c_center(ax: &crate::multiaxis::axis::Axis, kind: &str) -> Result<[f64; 2], GenError> {
     let d = ax.dir;
     let len = (d.x * d.x + d.y * d.y + d.z * d.z).sqrt();
     if !(len > 1e-12 && (d.z / len).abs() >= SAME_LINE) {
@@ -108,10 +145,21 @@ fn stamp_c_about(
             d.x, d.y, d.z
         )));
     }
-    // The line's XY where it crosses z = 0 (it stands within SAME_LINE
-    // of vertical, so the crossing is finite).
+    // It stands within SAME_LINE of vertical, so the crossing is finite.
     let t = -ax.origin.z / d.z;
-    let center = [ax.origin.x + d.x * t, ax.origin.y + d.y * t];
+    Ok([ax.origin.x + d.x * t, ax.origin.y + d.y * t])
+}
+
+/// [`stamp_spindle_c`]'s body, over the path it may refuse.
+fn stamp_c_about(
+    path: &crate::cl::Toolpath,
+    ax: crate::multiaxis::axis::Axis,
+    machine: Option<&(String, Vec<AxisLimits>)>,
+    unwind: Unwind,
+    tol: f64,
+    kind: &str,
+) -> Result<crate::cl::Toolpath, GenError> {
+    let center = c_center(&ax, kind)?;
     let tol = if tol.is_finite() && tol > 0.0 { tol } else { crate::machining2d::ARC_FIT_TOL };
     let stamped = crate::cl::stamp_c(path, center, tol).map_err(|e| GenError::Invalid(format!("{kind}: {e}")))?;
     let Some(c_ax) = c_axis(machine) else {
@@ -125,8 +173,13 @@ fn stamp_c_about(
         return Ok(stamped);
     };
     let (lo, hi) = if sign < 0.0 { (-mach_hi, -mach_lo) } else { (mach_lo, mach_hi) };
-    if unwinds {
-        let unwound = crate::cl::unwind_c(&stamped, center, (lo, hi), tol, false).map_err(|e| GenError::Invalid(format!("{kind}: {e}")))?;
+    if !matches!(unwind, Unwind::NoProof) {
+        // #2828: Rotary Flow links on the retract cylinder, so its
+        // rewinds orbit there; Rotary Contour links over the axial
+        // plane, and a path whose only clear point is radial is
+        // refused by name through the law's own words.
+        let unwound = crate::cl::unwind_c(&stamped, center, (lo, hi), tol, matches!(unwind, Unwind::Radial))
+            .map_err(|e| GenError::Invalid(format!("{kind}: {e}")))?;
         // #906: a rewind orbit is C-turning rapids, capped only by the
         // C rate the machine states. None stated: refuse the rewind by
         // name rather than post it at an uncapped feed. (Shifting the
@@ -151,7 +204,7 @@ fn stamp_c_about(
     if c_lo < lo - 1e-9 || c_hi > hi + 1e-9 {
         let (word_lo, word_hi) = if sign < 0.0 { (-c_hi, -c_lo) } else { (c_lo, c_hi) };
         return Err(GenError::Invalid(format!(
-            "{kind}: the path turns C over {word_lo:.3}..{word_hi:.3} deg, past the machine's C travel {mach_lo:.3}..{mach_hi:.3}; unwinding C at links is proven for Rotary Contour only, so {kind} is refused where it would need a rewind"
+            "{kind}: the path turns C over {word_lo:.3}..{word_hi:.3} deg, past the machine's C travel {mach_lo:.3}..{mach_hi:.3}; unwinding C at links is proven for Rotary Contour over the axial plane and for Rotary Flow on the retract cylinder only, so {kind} is refused where it would need a rewind"
         )));
     }
     Ok(stamped)
@@ -171,177 +224,5 @@ fn c_rated(machine: Option<&(String, Vec<AxisLimits>)>) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn rot(name: &str, axis: [f64; 3]) -> AxisLimits {
-        AxisLimits {
-            name: name.into(),
-            rotary: true,
-            axis: Some(axis),
-            ..Default::default()
-        }
-    }
-
-    /// One and a half turns of a radial helix at r 10: C reads -540.
-    fn helix() -> crate::cl::Toolpath {
-        use crate::cl::{Move, MoveKind};
-        use crate::geometry::Point3;
-        let at = |k: usize| {
-            let th = (k as f64 * 30.0).to_radians();
-            Point3::new(10.0 * th.cos(), 10.0 * th.sin(), -(k as f64) / 6.0)
-        };
-        let moves = (0..18)
-            .map(|k| Move::new(MoveKind::Feed, at(k), at(k + 1), Some(400.0)).with_axis([at(k + 1).x / 10.0, at(k + 1).y / 10.0, 0.0]))
-            .collect();
-        crate::cl::Toolpath::new(moves)
-    }
-
-    fn spindle() -> Option<crate::multiaxis::axis::Axis> {
-        use crate::geometry::Point3;
-        Some(crate::multiaxis::axis::Axis { origin: Point3::new(0.0, 0.0, 0.0), dir: Point3::new(0.0, 0.0, 1.0) })
-    }
-
-    fn c_travel_machine(lo: f64, hi: f64) -> (String, Vec<AxisLimits>) {
-        let mut c = rot("C", [0.0, 0.0, 1.0]);
-        c.travel = Some((lo, hi));
-        ("MT".to_owned(), vec![c])
-    }
-
-    #[test]
-    fn parallel_and_offset_are_refused_by_name_where_c_would_need_a_rewind() {
-        let m = c_travel_machine(-360.0, 360.0);
-        for kind in ["Rotary Parallel", "Rotary Offset"] {
-            let e = stamp_spindle_c(helix(), spindle(), (Some(&m), false), 0.01, kind).err().map(|e| e.to_string()).unwrap_or_default();
-            assert!(e.contains(kind) && e.contains("proven for Rotary Contour only"), "{e}");
-            // Inside the travel as stamped: posts exactly as before slice 2.
-            let wide = c_travel_machine(-720.0, 720.0);
-            let t = stamp_spindle_c(helix(), spindle(), (Some(&wide), false), 0.01, kind);
-            assert!(t.is_ok_and(|t| t.moves.iter().all(|m| m.rotary.is_some_and(|c| (-720.0..=0.0).contains(&c)))), "{kind}");
-        }
-        // The contour unwinds: its 540 deg opening stretch is shifted a
-        // whole turn into the travel (the section opens there).
-        let t = stamp_spindle_c(helix(), spindle(), (Some(&m), true), 0.01, "Rotary Contour");
-        assert!(t.is_ok_and(|t| t.moves.iter().all(|m| m.rotary.is_some_and(|c| (-360.0..=360.0).contains(&c)))));
-    }
-
-    #[test]
-    fn a_gate_refusal_hands_back_the_world_path_it_judged() {
-        // #1015: the rotary kernel's path is world (the frame the post
-        // reads), so the refused path rides as the ghost, move for move.
-        let m = c_travel_machine(-360.0, 360.0);
-        let e = stamp_spindle_c(helix(), spindle(), (Some(&m), false), 0.01, "Rotary Parallel").err();
-        let ghost = e.as_ref().and_then(|e| e.ghost()).map(|g| g.moves().to_vec());
-        assert_eq!(ghost, Some(helix().moves), "{e:?}");
-        // A tilted line refused before any stamp: the same path rides.
-        let leaning = crate::multiaxis::axis::Axis { dir: crate::geometry::Point3::new(1.0, 0.0, 0.0), ..spindle().expect("axis") };
-        let e = stamp_spindle_c(helix(), Some(leaning), (Some(&m), false), 0.01, "Rotary Offset").err();
-        assert_eq!(e.as_ref().and_then(|e| e.ghost()).map(|g| g.len()), Some(helix().moves.len()), "{e:?}");
-    }
-
-    /// Rotary Contour unwinds over the axial plane only: a path whose
-    /// only clearance is a retract cylinder is refused by name through
-    /// the gate, never rewound at a radius no shipped kind has proven.
-    #[test]
-    fn the_contour_takes_no_radial_link() {
-        use crate::cl::{Move, MoveKind};
-        use crate::geometry::Point3;
-        let at = |k: usize, z: f64| {
-            let th = (k as f64 * 30.0).to_radians();
-            Point3::new(10.0 * th.cos(), 10.0 * th.sin(), z)
-        };
-        let radial = |p: Point3| {
-            let r = p.x.hypot(p.y);
-            [p.x / r, p.y / r, 0.0]
-        };
-        let mut moves: Vec<Move> = Vec::new();
-        for ring in 0..3 {
-            let z = -(ring as f64);
-            if let Some(end) = moves.last().map(|m| m.to) {
-                let (a, b) = (Point3::new(20.0, 0.0, end.z), Point3::new(20.0, 0.0, z));
-                for (p, q) in [(end, a), (a, b), (b, at(0, z))] {
-                    moves.push(Move::new(MoveKind::Rapid, p, q, None).with_axis(radial(q)));
-                }
-            }
-            for k in 0..12 {
-                let to = if k == 11 { at(0, z) } else { at(k + 1, z) };
-                moves.push(Move::new(MoveKind::Feed, at(k, z), to, Some(400.0)).with_axis(radial(to)));
-            }
-        }
-        let m = c_travel_machine(-360.0, 360.0);
-        let path = crate::cl::Toolpath::new(moves);
-        let e = stamp_spindle_c(path, spindle(), (Some(&m), true), 0.01, "Rotary Contour").err().map(|e| e.to_string()).unwrap_or_default();
-        assert!(e.contains("Rotary Contour") && e.contains("radial links are not taken for this kind"), "{e}");
-    }
-
-    /// #906: two helices linked over the top need an orbit; with no C
-    /// rate stated the rewind is refused by name, with one it unwinds.
-    #[test]
-    fn a_rewind_without_a_stated_c_rate_is_refused_by_name() {
-        use crate::cl::{Move, MoveKind};
-        use crate::geometry::Point3;
-        let mut path = helix().moves;
-        let lower = |mut m: Move| {
-            m.from.z -= 4.0;
-            m.to.z -= 4.0;
-            m
-        };
-        let more: Vec<Move> = helix().moves.into_iter().map(lower).collect();
-        let (Some(end), Some(start)) = (path.last().map(|m| m.to), more.first().map(|m| m.from)) else {
-            panic!("the helix has moves")
-        };
-        // Up, round the spindle line through (0, 15) - never across it - and down.
-        let (up, via, over) = (Point3::new(end.x, end.y, 5.0), Point3::new(0.0, 15.0, 5.0), Point3::new(start.x, start.y, 5.0));
-        for (p, q) in [(end, up), (up, via), (via, over), (over, start)] {
-            path.push(Move::new(MoveKind::Rapid, p, q, None).with_axis([q.x / q.x.hypot(q.y), q.y / q.x.hypot(q.y), 0.0]));
-        }
-        path.extend(more);
-        let path = crate::cl::Toolpath::new(path);
-        let m = c_travel_machine(-360.0, 360.0);
-        let e = stamp_spindle_c(path.clone(), spindle(), (Some(&m), true), 0.01, "Rotary Contour").err().map(|e| e.to_string()).unwrap_or_default();
-        assert!(e.contains("Rotary Contour") && e.contains("states a C travel but no C rate"), "{e}");
-        let mut rated = m.clone();
-        for a in &mut rated.1 {
-            a.feed = Some(6000.0);
-        }
-        let t = stamp_spindle_c(path, spindle(), (Some(&rated), true), 0.01, "Rotary Contour");
-        assert!(t.is_ok_and(|t| t.moves.iter().all(|m| m.rotary.is_some_and(|c| (-360.0..=360.0).contains(&c)))));
-    }
-
-    #[test]
-    fn no_machine_checks_nothing() {
-        assert_eq!(rotary_letter(None, [1.0, 0.0, 0.0], "Rotary Contour").ok(), Some(None));
-    }
-
-    #[test]
-    fn a_table_trunnion_names_its_letter_either_way_round() {
-        let m = ("Bench".to_owned(), vec![rot("A", [1.0, 0.0, 0.0])]);
-        assert_eq!(rotary_letter(Some(&m), [1.0, 0.0, 0.0], "k").ok(), Some(Some('A')));
-        assert_eq!(rotary_letter(Some(&m), [-1.0, 0.0, 0.0], "k").ok(), Some(Some('A')));
-    }
-
-    #[test]
-    fn minus_z_c_rotary_flips_asymmetric_travel_in_gate() {
-        use crate::cl::{Move, MoveKind};
-        use crate::geometry::Point3;
-        let q0 = Point3::new(10.0, 0.0, 0.0);
-        let q1 = Point3::new(0.0, 10.0, 0.0);
-        // Canonical azimuth at +Y is +90 -> C = -90 deg.
-        let path = crate::cl::Toolpath::new(vec![Move::new(MoveKind::Feed, q0, q1, Some(300.0)).with_axis([0.0, 1.0, 0.0])]);
-        let m_plus = ("PlusZ".to_owned(), vec![AxisLimits { name: "C".into(), rotary: true, axis: Some([0.0, 0.0, 1.0]), travel: Some((0.0, 95.0)), ..Default::default() }]);
-        let e = stamp_spindle_c(path.clone(), spindle(), (Some(&m_plus), false), 0.01, "Rotary Parallel").err().map(|e| e.to_string()).unwrap_or_default();
-        assert!(e.contains("past the machine's C travel"), "{e}");
-        let m_minus = ("MinusZ".to_owned(), vec![AxisLimits { name: "C".into(), rotary: true, axis: Some([0.0, 0.0, -1.0]), travel: Some((0.0, 95.0)), ..Default::default() }]);
-        let ok = stamp_spindle_c(path, spindle(), (Some(&m_minus), false), 0.01, "Rotary Parallel").expect("-Z flips 0..95 to -95..0");
-        assert!(ok.moves.last().and_then(|m| m.rotary).is_some_and(|c| (c + 90.0).abs() < 1e-9));
-    }
-
-    #[test]
-    fn a_missing_line_refuses_by_name_and_the_spindle_answers_c() {
-        let b = ("Bench".to_owned(), vec![rot("B", [0.0, 1.0, 0.0])]);
-        let e = rotary_letter(Some(&b), [1.0, 0.0, 0.0], "Rotary Offset").err();
-        assert!(e.is_some_and(|e| e.to_string().contains("states no rotary on that line")));
-        let c = ("MT".to_owned(), vec![rot("C", [0.0, 0.0, 1.0])]);
-        assert_eq!(rotary_letter(Some(&c), [0.0, 0.0, 1.0], "Rotary Contour").ok(), Some(Some('C')));
-    }
-}
+#[path = "rotary_gate_tests.rs"]
+mod tests;

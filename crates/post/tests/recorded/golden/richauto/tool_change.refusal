@@ -1,0 +1,3 @@
+; richauto.cps refused tool_change: 2 warning(s), the program is never released
+warning: operation Thread: cuts a thread that needs the spindle reversed (M04) for its hand, but this post script does not declare threadHands - it would cut the other hand; use a lathe post that states the thread's hand
+warning: single-tool RichAuto DSP A11 refuses mid-program tool change from T1 to T2

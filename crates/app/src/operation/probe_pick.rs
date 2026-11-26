@@ -78,8 +78,11 @@ impl ProbeSeed {
 }
 
 /// The picked entity's topology, facets and placement: every query
-/// below answers in WORLD coordinates, the frame the probe's target and
-/// its stylus law (`probe_op`, over world facets) both live in.
+/// below answers in the frame of the setup `setup` (#2285: the pose is
+/// `setup_align::pose_in`, so a setup that holds the part turned seeds
+/// the touch against the part AS IT SITS ON THE TABLE, the frame the
+/// probe's target and its stylus law (`probe_op`, over setup-frame
+/// facets) both live in).
 pub(super) struct PickCtx {
     pub features: Arc<Features>,
     pub tris: Arc<[Triangle]>,
@@ -87,13 +90,13 @@ pub(super) struct PickCtx {
 }
 
 impl PickCtx {
-    pub(super) fn of(world: &World, entity: &str) -> Result<PickCtx, String> {
+    pub(super) fn of(world: &World, entity: &str, setup: Option<&str>) -> Result<PickCtx, String> {
         let e = model::find_by_name(world, entity)
             .ok_or_else(|| format!("'{entity}' is gone - re-pick the feature"))?;
         let none = || format!("'{entity}' carries no geometry to probe");
         let features = model::features_of(world, &e).ok_or_else(none)?;
         let tris = model::facets_of(world, &e).ok_or_else(none)?;
-        let loc = model::transform_of(world, &e).unwrap_or_default();
+        let loc = crate::setup_align::pose_in(world, &e, setup).unwrap_or_default();
         Ok(PickCtx { features, tris, loc })
     }
 
@@ -177,13 +180,14 @@ fn off_axis(n: Point3) -> String {
     format!("{:.1} deg", worst.acos().to_degrees())
 }
 
-/// The seed one pick makes, or the named reason it cannot make one.
-pub fn probe_seed(world: &World, sel: &GeoSel) -> Result<ProbeSeed, String> {
-    let cx = PickCtx::of(world, &sel.entity)?;
-    match sel.feature {
-        FeatureSel::Face(id) => face_seed(&cx, id),
+/// The seed one pick makes in the frame of the setup `setup` (#2285),
+/// or the named reason it cannot make one.
+pub fn probe_seed(world: &World, setup: Option<&str>, sel: &GeoSel) -> Result<ProbeSeed, String> {
+    let cx = PickCtx::of(world, &sel.entity, setup)?;
+    match &sel.feature {
+        FeatureSel::Face(id) => face_seed(&cx, *id),
         FeatureSel::Chain(id) => {
-            let chain = crate::model::resolve_chain(&cx.features, id)
+            let chain = crate::model::resolve_chain(&cx.features, *id)
                 .ok_or("the picked edge is no longer in the model - re-pick it")?;
             if chain.closed {
                 super::probe_pick_round::rim_seed(&cx, &chain)
@@ -191,8 +195,12 @@ pub fn probe_seed(world: &World, sel: &GeoSel) -> Result<ProbeSeed, String> {
                 edge_seed(&cx, &chain)
             }
         }
-        FeatureSel::Patch(id) => super::probe_pick_round::wall_seed(&cx, id),
-        FeatureSel::Vertex(id) => corner_seed(&cx, id),
+        FeatureSel::Patch(id) => super::probe_pick_round::wall_seed(&cx, *id),
+        FeatureSel::Vertex(id) => corner_seed(&cx, *id),
+        FeatureSel::SketchChain(_) | FeatureSel::SketchLayer(_) => Err(format!(
+            "{} is a DXF sketch pick, which carries no 3D surface to probe",
+            crate::pick::geo_label(world, sel)
+        )),
     }
 }
 
@@ -353,11 +361,12 @@ pub fn seeded_params(params: &OpParams, seed: &ProbeSeed) -> Option<OpParams> {
     Some(out)
 }
 
-/// A Probe op's params re-seeded from its pick list - what the pick
-/// command writes. `None` when `params` is not a probe (every other
-/// kind's picks bound a region instead). One pick only.
+/// A Probe op's params re-seeded from its pick list, in the frame of
+/// its setup `setup` (#2285) - what the pick command writes. `None`
+/// when `params` is not a probe (every other kind's picks bound a
+/// region instead). One pick only.
 #[must_use]
-pub fn probe_from_picks(world: &World, params: &OpParams, items: &[GeoSel]) -> Option<Result<OpParams, String>> {
+pub fn probe_from_picks(world: &World, setup: Option<&str>, params: &OpParams, items: &[GeoSel]) -> Option<Result<OpParams, String>> {
     if !matches!(params, OpParams::Probe { .. }) {
         return None;
     }
@@ -367,18 +376,18 @@ pub fn probe_from_picks(world: &World, params: &OpParams, items: &[GeoSel]) -> O
             items.len()
         )));
     };
-    Some(probe_seed(world, sel).and_then(|s| seeded_params(params, &s).ok_or_else(|| "not a probe".to_owned())))
+    Some(probe_seed(world, setup, sel).and_then(|s| seeded_params(params, &s).ok_or_else(|| "not a probe".to_owned())))
 }
 
 /// The op page's account of a probe's pick: the seed it made, or why
 /// it makes none. `None` for other kinds.
 #[must_use]
-pub fn probe_account(world: &World, items: &[GeoSel], params: &OpParams) -> Option<(Vec<String>, Option<String>)> {
+pub fn probe_account(world: &World, setup: Option<&str>, items: &[GeoSel], params: &OpParams) -> Option<(Vec<String>, Option<String>)> {
     if !matches!(params, OpParams::Probe { .. }) || items.is_empty() {
         return None;
     }
     Some(match items {
-        [sel] => match probe_seed(world, sel) {
+        [sel] => match probe_seed(world, setup, sel) {
             Ok(s) => (vec![format!("Probe from the pick: {}", s.describe())], None),
             Err(e) => (Vec::new(), Some(e)),
         },

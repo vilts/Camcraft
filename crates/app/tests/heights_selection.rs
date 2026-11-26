@@ -86,7 +86,7 @@ fn bottom_of(src: &SrcRef, world: &World, off: f64) -> Option<f64> {
 
 /// A pocket whose four heights all read the selection.
 fn pocket_from_selection() -> OpParams {
-    OpParams::Pocket { rest: None,
+    OpParams::Pocket { pass_start: Default::default(), rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
@@ -105,6 +105,8 @@ fn pocket_from_selection() -> OpParams {
         helix_radius: 1.0,
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         blend_turns: false,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     }
 }
 
@@ -120,7 +122,8 @@ fn face_on_selection() -> OpParams {
         feed: 1000.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
+        picks: Default::default(),
     }
 }
 
@@ -149,14 +152,14 @@ fn each_source_type_resolves_its_own_span() {
     assert_eq!(bottom_of(&ent, &world, -1.0), Some(4.0), "the offset rides on top");
     // One picked flat face: its own Z at both ends.
     let faces = flat_faces(&world, "block");
-    let (lo_z, lo) = faces[0];
-    let (hi_z, hi) = faces[faces.len() - 1];
+    let (lo_z, ref lo) = faces[0];
+    let (hi_z, ref hi) = faces[faces.len() - 1];
     assert!((hi_z - 9.0).abs() < 1e-9 && (lo_z - 5.0).abs() < 1e-9);
-    let top_face = SrcRef::Selection(vec![pick("block", hi)]);
+    let top_face = SrcRef::Selection(vec![pick("block", hi.clone())]);
     assert_eq!(top_of(&top_face, &world, 0.0), Some(9.0));
     assert_eq!(bottom_of(&top_face, &world, 0.0), Some(9.0), "a flat face's span is its Z");
     // Several picks: the union.
-    let both = SrcRef::Selection(vec![pick("block", hi), pick("block", lo)]);
+    let both = SrcRef::Selection(vec![pick("block", hi.clone()), pick("block", lo.clone())]);
     assert_eq!(top_of(&both, &world, 0.0), Some(9.0));
     assert_eq!(bottom_of(&both, &world, 0.0), Some(5.0));
     // An edge chain: its points' span.
@@ -202,7 +205,7 @@ fn every_height_slot_reads_through_the_one_resolver() {
     assert!(err.contains("Clearance Z") && err.contains("selection top"), "{err}");
     // A one-face selection collapses top onto bottom: cut-downward refuses.
     let faces = flat_faces(&world, "block");
-    let flat = SrcRef::Selection(vec![pick("block", faces[faces.len() - 1].1)]);
+    let flat = SrcRef::Selection(vec![pick("block", faces[faces.len() - 1].1.clone())]);
     assert!(!operation::depth_sane(&world, None, Some(&flat), &pocket_from_selection()));
 }
 
@@ -230,13 +233,13 @@ fn creation_and_edits_refuse_a_selection_that_yields_no_height() {
     assert!(err.contains("From: Selection"), "{err}");
     // Re-picking one flat face collapses top onto bottom: refused too.
     let faces = flat_faces(&world, "block");
-    let err = SetOperationGeometry::new(&world, "P1", vec![pick("block", faces[faces.len() - 1].1)])
+    let err = SetOperationGeometry::new(&world, "P1", vec![pick("block", faces[faces.len() - 1].1.clone())])
         .err()
         .expect("a pick that makes the op cut upward")
         .to_string();
     assert!(err.contains("cut downward"), "{err}");
     // Params that never read the selection pass the pick exactly as before.
-    let fixed = OpParams::Pocket { rest: None,
+    let fixed = OpParams::Pocket { pass_start: Default::default(), rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
@@ -255,12 +258,14 @@ fn creation_and_edits_refuse_a_selection_that_yields_no_height() {
         helix_radius: 1.0,
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         blend_turns: false,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     };
     history.execute(
         &world,
         CreateOperation::new(&world, "P2", TOOL, SrcRef::Entity("block".into()), fixed).expect("create"),
     );
-    assert!(SetOperationGeometry::new(&world, "P2", vec![pick("block", faces[0].1)]).is_ok());
+    assert!(SetOperationGeometry::new(&world, "P2", vec![pick("block", faces[0].1.clone())]).is_ok());
 }
 
 #[test]
@@ -293,7 +298,7 @@ fn generation_refuses_a_vanished_selection_by_name() {
 #[test]
 fn an_edit_to_selection_rides_edit_params_and_undoes() {
     let (world, mut history) = fixture();
-    let before = OpParams::Pocket { rest: None,
+    let before = OpParams::Pocket { pass_start: Default::default(), rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
@@ -312,6 +317,8 @@ fn an_edit_to_selection_rides_edit_params_and_undoes() {
         helix_radius: 1.0,
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         blend_turns: false,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     };
     history.execute(
         &world,
@@ -333,15 +340,15 @@ fn an_edit_to_selection_rides_edit_params_and_undoes() {
 fn a_selection_change_turns_the_op_stale() {
     let (world, mut history) = fixture();
     let faces = flat_faces(&world, "block");
-    let (_, top) = faces[faces.len() - 1];
-    let (_, bottom) = faces[0];
+    let (_, ref top) = faces[faces.len() - 1];
+    let (_, ref bottom) = faces[0];
     history.execute(
         &world,
         CreateOperation::new(
             &world,
             "F1",
             TOOL,
-            SrcRef::Selection(vec![pick("block", top)]),
+            SrcRef::Selection(vec![pick("block", top.clone())]),
             face_on_selection(),
         )
         .expect("create"),
@@ -356,7 +363,7 @@ fn a_selection_change_turns_the_op_stale() {
     // A re-pick moves the resolved heights: Stale, like any input change.
     history.execute(
         &world,
-        SetOperationGeometry::new(&world, "F1", vec![pick("block", bottom)]).expect("re-pick"),
+        SetOperationGeometry::new(&world, "F1", vec![pick("block", bottom.clone())]).expect("re-pick"),
     );
     assert_eq!(operation::status_of(&world, &e), OpStatus::Stale);
     assert!(history.undo(&world));
@@ -383,12 +390,12 @@ fn a_picked_face_of_the_users_part_sets_the_heights() {
     add_tool(&world, &mut history, "EM-1000-4FL");
     let faces = flat_faces(&world, &name);
     assert!(faces.len() >= 2, "the part carries several flat faces");
-    let (top_z, top) = faces[faces.len() - 1];
-    let (floor_z, floor) = faces[0];
-    let src = SrcRef::Selection(vec![pick(&name, top)]);
+    let (top_z, ref top) = faces[faces.len() - 1];
+    let (floor_z, ref floor) = faces[0];
+    let src = SrcRef::Selection(vec![pick(&name, top.clone())]);
     assert_eq!(top_of(&src, &world, 0.0).map(|z| (z - top_z).abs() < 1e-9), Some(true));
     assert_eq!(bottom_of(&src, &world, 0.0).map(|z| (z - top_z).abs() < 1e-9), Some(true));
-    let span = SrcRef::Selection(vec![pick(&name, top), pick(&name, floor)]);
+    let span = SrcRef::Selection(vec![pick(&name, top.clone()), pick(&name, floor.clone())]);
     assert_eq!(bottom_of(&span, &world, 0.0).map(|z| (z - floor_z).abs() < 1e-9), Some(true));
     history.execute(
         &world,

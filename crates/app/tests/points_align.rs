@@ -220,7 +220,7 @@ fn coincident_too_few_and_wrong_kind_picks_are_refused_by_name() {
     says(&w, &corners(&w, &TOP[..2]), "pick three points - 2 picked");
     says(&w, &corners(&w, &TOP), "pick three points - 4 picked");
     says(&w, &[face(&w, [10.0, 10.0, 10.0]), p.clone(), corner(&w, TOP[1])], "is a face");
-    says(&w, &[GeoSel { entity: "nothing".into(), feature: p.feature }], "no longer in the model");
+    says(&w, &[GeoSel { entity: "nothing".into(), feature: p.feature.clone() }], "no longer in the model");
     let at = Location { pos: Point3::new(10.0, 10.0, -1.0), ..Default::default() };
     h.execute(&w, SetStock::new(&w, StockShape::Box { dx: 30.0, dy: 30.0, dz: 12.0 }, at).expect("stock"));
     let stock = camcraft_app::setup::stock_entity_name(&w, Some("Setup1"));

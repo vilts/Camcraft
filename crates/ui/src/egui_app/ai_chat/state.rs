@@ -11,7 +11,7 @@ use flecs_ecs::prelude::World;
 use serde_json::Value;
 
 use super::transport::{
-    ChatTransport, DefaultTransport, ProviderPreset, ScreenshotAttachment, SelectionSnapshot,
+    ChatTransport, ProviderPreset, ScreenshotAttachment, SelectionSnapshot,
     check_offline_policy, default_presets, encode_base64,
 };
 use super::turn::{ChatTurn, TurnStatus, build_turn_messages};
@@ -21,6 +21,7 @@ use super::worker::{
 
 /// UI-side state for the AI Chat dock tab, isolated from the CAM document.
 pub struct AiChatState {
+    pub(crate) settings: super::settings::Settings,
     presets: Vec<ProviderPreset>,
     selected_preset: usize,
     pub(crate) model_input: String,
@@ -38,6 +39,19 @@ pub struct AiChatState {
     transport: Arc<dyn ChatTransport>,
 }
 
+/// The live HTTP transport natively (#1945); the browser build keeps the
+/// offline-safe default, which reaches no endpoint.
+fn default_transport() -> Arc<dyn ChatTransport> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Arc::new(super::transport_http::HttpTransport)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        Arc::new(super::transport::DefaultTransport)
+    }
+}
+
 impl Default for AiChatState {
     fn default() -> Self {
         Self::new()
@@ -53,6 +67,7 @@ impl AiChatState {
             .first()
             .map_or_else(String::new, |p| p.default_model.clone());
         Self {
+            settings: super::settings::Settings::default(),
             presets,
             selected_preset: 0,
             model_input,
@@ -67,7 +82,7 @@ impl AiChatState {
             last_error: None,
             worker: None,
             wake: None,
-            transport: Arc::new(DefaultTransport),
+            transport: default_transport(),
         }
     }
 

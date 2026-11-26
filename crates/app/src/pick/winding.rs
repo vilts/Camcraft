@@ -4,7 +4,8 @@
 //! common STL export fault) would lay the part upside down silently. This
 //! checks each body - a connected set of facets - once per mesh content:
 //! closed (every edge shared by exactly two facets, wound opposite ways)
-//! and its signed volume positive. Anything else refuses the pick by name;
+//! and its signed volume positive. #917: an edge where closed solids touch
+//! along a wall (`shared_edge`) is no fault; each solid is its own body. Anything else refuses the pick by name;
 //! nothing here mutates the user's geometry.
 //!
 //! Provenance: the signed volume of a closed triangulated surface by the
@@ -17,16 +18,15 @@
 //! spatial hashing (Teschner et al., VMV 2003), as the mesh repair pass does.
 //! Our own code, no vendor material.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
-use crate::geometry::Triangle;
+use crate::geometry::{Point3, Triangle, shared_edge};
 
-/// Corners closer than this (mm) are one vertex: well under any machined
-/// feature, well over the seam drift of a tessellated STEP face pair (a
-/// shipped sample's seams differ by one 1 nm lattice step).
-const WELD_TOL_MM: f64 = 1e-4;
+mod weld;
+use weld::{Welder, root, union};
+
 /// A closed body whose |volume| is at most this fraction of its bounding
 /// box's volume (diagonal cubed) has no outside worth trusting.
 const FLAT_REL: f64 = 1e-12;
@@ -150,84 +150,81 @@ fn content_key(tris: &[Triangle]) -> u64 {
     h.finish()
 }
 
-type Cell = (i64, i64, i64);
-
-/// Welded vertex ids by spatial hashing: a corner joins the first earlier
-/// corner within [`WELD_TOL_MM`] found in its own or a neighbouring cell
-/// (cell size = the tolerance), so two copies of one seam vertex a
-/// rounding step apart weld whichever side of a cell wall they land on.
-#[derive(Default)]
-struct Welder {
-    cells: HashMap<Cell, Vec<u32>>,
-    pts: Vec<[f64; 3]>,
-}
-
-impl Welder {
-    /// The id of `p`, `None` for a non-finite or absurd coordinate (never
-    /// saturated onto a neighbour) or when the id space is spent.
-    fn id(&mut self, p: [f64; 3]) -> Option<u32> {
-        let cell = |v: f64| {
-            let q = (v / WELD_TOL_MM).floor();
-            (q.is_finite() && (-9.0e18..=9.0e18).contains(&q)).then_some(q as i64)
-        };
-        let c = (cell(p[0])?, cell(p[1])?, cell(p[2])?);
-        let tol2 = WELD_TOL_MM * WELD_TOL_MM;
-        for dx in -1..=1_i64 {
-            for dy in -1..=1_i64 {
-                for dz in -1..=1_i64 {
-                    let k = (c.0.saturating_add(dx), c.1.saturating_add(dy), c.2.saturating_add(dz));
-                    let Some(ids) = self.cells.get(&k) else { continue };
-                    for &id in ids {
-                        let Some(q) = self.pts.get(id as usize) else { continue };
-                        let d = [q[0] - p[0], q[1] - p[1], q[2] - p[2]];
-                        if d[0] * d[0] + d[1] * d[1] + d[2] * d[2] <= tol2 {
-                            return Some(id);
-                        }
-                    }
-                }
-            }
-        }
-        let id = u32::try_from(self.pts.len()).ok()?;
-        self.pts.push(p);
-        self.cells.entry(c).or_default().push(id);
-        Some(id)
-    }
-
-    fn corners(&mut self, t: &Triangle) -> Option<[u32; 3]> {
-        Some([self.id([t.a.x, t.a.y, t.a.z])?, self.id([t.b.x, t.b.y, t.b.z])?, self.id([t.c.x, t.c.y, t.c.z])?])
-    }
-}
-
-/// Union-find root with path halving; indices are always in range.
-fn root(parent: &mut [u32], mut i: u32) -> u32 {
-    while let Some(&p) = parent.get(i as usize) {
-        if p == i {
-            break;
-        }
-        let gp = parent.get(p as usize).copied().unwrap_or(p);
-        if let Some(slot) = parent.get_mut(i as usize) {
-            *slot = gp;
-        }
-        i = gp;
-    }
-    i
-}
-
-fn union(parent: &mut [u32], a: u32, b: u32) {
-    let (ra, rb) = (root(parent, a), root(parent, b));
-    if ra != rb
-        && let Some(slot) = parent.get_mut(ra as usize)
-    {
-        *slot = rb;
-    }
-}
-
 /// Edge use across the mesh: facets running low->high and high->low, and
 /// one facet on it (to find its body).
 struct EdgeUse {
     fwd: u32,
     bwd: u32,
     facet: u32,
+}
+
+/// One facet on an edge used more than twice: its index, its direction
+/// (low -> high corner) and its third corner.
+type OnEdge = (u32, bool, u32);
+
+/// #917: the edges used more than twice where closed solids touch along a
+/// wall (`shared_edge::solids_touch`, as the slicer's bodies), judged on the
+/// bodies linked over the other edges: they link and flag nothing. Any other
+/// such edge links its facets and flags non-manifold, as before #917.
+fn touching_solids(
+    keys: &[Option<[u32; 3]>],
+    welder: &Welder,
+    edges: &HashMap<(u32, u32), EdgeUse>,
+    parent: &mut [u32],
+) -> HashSet<(u32, u32)> {
+    let mut on: HashMap<(u32, u32), Vec<OnEdge>> = HashMap::new();
+    for (i, k) in keys.iter().enumerate() {
+        let Some([a, b, c]) = k else { continue };
+        for (p, q, r) in [(*a, *b, *c), (*b, *c, *a), (*c, *a, *b)] {
+            let key = if p < q { (p, q) } else { (q, p) };
+            if edges.get(&key).is_some_and(|e| e.fwd.saturating_add(e.bwd) > 2) {
+                on.entry(key).or_default().push((i as u32, p < q, r));
+            }
+        }
+    }
+    let at = |v: u32| welder.pts.get(v as usize).map(|v| Point3::new(v[0], v[1], v[2]));
+    let mut contacts: Vec<_> = on.iter().collect();
+    contacts.sort_by_key(|(key, _)| **key);
+    for (key, uses) in contacts {
+        let _ = (|| {
+            let eu: Option<Vec<_>> = uses.iter().map(|&(i, forward, r)| {
+                Some(shared_edge::EdgeUse { body: root(parent, i) as usize, forward, apex: at(r)? })
+            }).collect();
+            let eu = eu?;
+            if !shared_edge::solids_touch(at(key.0)?, at(key.1)?, &eu)
+                && let Some(pairs) = shared_edge::fragment_pairs(at(key.0)?, at(key.1)?, &eu)
+            {
+                for (i, j) in pairs {
+                    union(parent, uses[i].0, uses[j].0);
+                }
+            }
+            Some(())
+        })();
+    }
+    let mut shared = HashSet::new();
+    let mut faults = Vec::new();
+    for (key, uses) in on {
+        let touch = (|| {
+            let mut eu = Vec::with_capacity(uses.len());
+            for &(i, forward, r) in &uses {
+                eu.push(shared_edge::EdgeUse { body: root(parent, i) as usize, forward, apex: at(r)? });
+            }
+            Some(shared_edge::solids_touch(at(key.0)?, at(key.1)?, &eu))
+        })();
+        if touch == Some(true) {
+            shared.insert(key);
+        } else {
+            faults.push(uses);
+        }
+    }
+    for uses in faults {
+        if let Some(&(first, _, _)) = uses.first() {
+            for &(i, _, _) in &uses {
+                union(parent, first, i);
+            }
+        }
+    }
+    shared
 }
 
 /// The full pass: weld, link facets into bodies over shared edges, read
@@ -255,10 +252,20 @@ fn classify(tris: &[Triangle]) -> Winding {
             } else {
                 e.bwd = e.bwd.saturating_add(1);
             }
-            let first = e.facet;
-            union(&mut parent, first, i);
         }
     }
+    // Link over the edges used at most twice. An edge used more than twice
+    // is linked after, once it is known if solids touch there (#917).
+    for (i, k) in keys.iter().enumerate() {
+        let Some([a, b, c]) = *k else { continue };
+        for (p, q) in [(a, b), (b, c), (c, a)] {
+            let Some(e) = edges.get(&if p < q { (p, q) } else { (q, p) }) else { continue };
+            if e.fwd.saturating_add(e.bwd) <= 2 {
+                union(&mut parent, e.facet, i as u32);
+            }
+        }
+    }
+    let shared = touching_solids(&keys, &welder, &edges, &mut parent);
     // Number the bodies by root.
     let mut body_of_root: HashMap<u32, u32> = HashMap::new();
     let mut facet_body: Vec<Option<u32>> = vec![None; tris.len()];
@@ -275,7 +282,10 @@ fn classify(tris: &[Triangle]) -> Winding {
     }
     // Topology flags per body: (open, non-manifold, mixed).
     let mut flags = vec![(false, false, false); body_of_root.len()];
-    for e in edges.values() {
+    for (key, e) in &edges {
+        if shared.contains(key) {
+            continue;
+        }
         let Some(Some(b)) = facet_body.get(e.facet as usize) else { continue };
         let Some(f) = flags.get_mut(*b as usize) else { continue };
         match e.fwd.saturating_add(e.bwd) {

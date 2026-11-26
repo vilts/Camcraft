@@ -123,6 +123,7 @@ fn a_bar_whose_shank_outgrows_its_head_is_judged_by_its_full_shank() {
         plunge_feed: 80.0,
         holes: vec![hole],
         cross: vec![],
+        picks: Default::default(),
     };
     create_on(&world, &mut history, "AX0", "DR-1300-L", "wide", drill_params);
     assert_eq!(status(&world, "AX0"), OpStatus::Ok, "the pilot drills");
@@ -259,6 +260,7 @@ fn an_upward_window_refuses_at_the_create_door() {
         bottom_z: Height::fixed(40.0),
         feed: 120.0,
         plunge_feed: 40.0,
+        picks: Default::default(),
     };
     let Err(err) =
         CreateOperation::new(&world, "BB1", "BR-1000", SrcRef::Entity("bar".into()), params)

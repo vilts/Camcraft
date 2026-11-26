@@ -20,13 +20,20 @@ use crate::geo2d::{GeoError, Point2, Region};
 /// Below this (mm^2) a hole-caused leftover is nothing.
 const AREA_EPS: f64 = 1e-3;
 
+/// How far (mm) a hole may stand off the material at the cut plane and
+/// still be bounded by it (#2437): past the silhouettes' chord error,
+/// far inside any strip a row could cut.
+const BESIDE: f64 = 0.05;
+
 /// How a facing row meets a hole in its region.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FaceHoles {
     /// Every hole is bridged in the air: the row stops a tool radius
     /// short of it, lifts to the clearance plane, crosses, and plunges
     /// back in. Safe whether the hole is a bore (air) or a boss
-    /// (solid) - the default.
+    /// (solid) - the default. With the outline of the material at the
+    /// cut plane in hand (#2437), a hole that no such material stands
+    /// in or beside is wholly below the plane and plays no part.
     #[default]
     Lift,
     /// Holes that are air (nothing of the material stands in them) are
@@ -70,9 +77,11 @@ pub(super) fn voids(region: &Region) -> Result<Region, GeoError> {
 /// The holes a row bridges under `law`, and where the tool centre may
 /// NOT stand for them: those holes grown by the tool radius `r`.
 /// `solid` is the outline of material standing above the face (what
-/// makes a hole an island); the note is for the path when the law had
-/// to fall back. Both regions are empty under `Through`, and for a
-/// region without holes.
+/// makes a hole an island) under `CutAir`, and of the material standing
+/// at or above it under `Lift` (what a hole must touch to count,
+/// [`beside`]); the note is for the path when the law had to fall back.
+/// Both regions are empty under `Through`, and for a region without
+/// holes.
 pub(super) struct Bridged {
     /// The holes bridged, as the region holds them.
     pub holes: Region,
@@ -101,6 +110,7 @@ pub(super) fn forbidden(
             v,
             Some("no material outline to tell air from an island: every hole is lifted over".to_string()),
         ),
+        (FaceHoles::Lift, Some(s)) => (beside(&v, s)?, None),
         _ => (v, None),
     };
     if holes.is_empty() {
@@ -108,6 +118,27 @@ pub(super) fn forbidden(
     }
     let grown = holes.offset(r)?;
     Ok(Bridged { holes, grown, note })
+}
+
+/// The holes of `voids` that `present` - the material standing at or
+/// above the cut plane - stands in or within [`BESIDE`] of (#2437). A
+/// hole it does not touch opens wholly below the plane: the row above
+/// it cuts stock or air, never the hole's rim, so it is no hole of the
+/// face. A boss (material in the hole) and a bore whose rim the plane
+/// reaches are both kept, whole.
+fn beside(voids: &Region, present: &Region) -> Result<Region, GeoError> {
+    if present.is_empty() {
+        return Ok(Region::empty());
+    }
+    let near = present.offset(BESIDE)?;
+    let mut kept = Region::empty();
+    for l in voids.loops().iter().filter(|l| l.is_ccw()) {
+        let whole = Region::new(vec![l.clone()])?;
+        if !whole.intersect(&near)?.is_empty() {
+            kept = kept.union(&whole)?;
+        }
+    }
+    voids.intersect(&kept)
 }
 
 /// Where the horizontal line `y` crosses the edges of `region`, sorted:
@@ -243,6 +274,28 @@ mod law {
         assert!(!v.contains(Point2::new(0.0, 0.0)), "the island in it is material");
         assert!(!v.contains(Point2::new(15.0, 0.0)), "the outer's material");
         assert!((v.area().abs() - (256.0 - 16.0)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn lift_bridges_only_the_holes_that_material_at_the_plane_touches() {
+        // #2437: two holes; the material at the cut plane rings the left
+        // one only - the right one opens wholly below the plane.
+        let (a, b) = (Point2::new(-10.0, 0.0), Point2::new(10.0, 0.0));
+        let r = Region::new(vec![sq((0.0, 0.0), 20.0), sq((a.x, a.y), 2.0), sq((b.x, b.y), 2.0)]).expect("region");
+        let ring = Region::new(vec![sq((a.x, a.y), 6.0), sq((a.x, a.y), 2.0)]).expect("ring");
+        let got = forbidden(&r, FaceHoles::Lift, Some(&ring), 1.0).expect("bridged");
+        assert!(got.holes.contains(a) && !got.holes.contains(b), "only the hole the material bounds");
+        assert!(got.grown.contains(Point2::new(a.x + 2.5, 0.0)) && !got.grown.contains(b));
+        // With no outline in hand every hole is bridged, as before.
+        let all = forbidden(&r, FaceHoles::Lift, None, 1.0).expect("bridged");
+        assert!(all.holes.contains(a) && all.holes.contains(b));
+        // A boss standing in the right hole keeps that hole, whole.
+        let boss = Region::new(vec![sq((b.x, b.y), 1.0)]).expect("boss");
+        let got = forbidden(&r, FaceHoles::Lift, Some(&boss), 1.0).expect("bridged");
+        assert!(got.holes.contains(Point2::new(b.x + 1.5, 0.0)) && !got.holes.contains(a));
+        // Nothing at the plane: no hole of the face.
+        let none = forbidden(&r, FaceHoles::Lift, Some(&Region::empty()), 1.0).expect("bridged");
+        assert!(none.holes.is_empty() && none.grown.is_empty());
     }
 
     #[test]

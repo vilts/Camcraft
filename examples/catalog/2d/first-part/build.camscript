@@ -61,8 +61,8 @@ cam.call("add_operation", {
     cycle: "auto",
     peck: 0.0,
     dwell: 0.0,
-    feed: 1200.0,
-    plunge_feed: 300.0,
+    feed: 115.0,
+    plunge_feed: 115.0,
     holes: [
       { xy: [38.0, 23.0], radius: 3.0, entry_z: 10.0, floor_z: 0.0, through: true, stepped: false },
       { xy: [-38.0, 23.0], radius: 3.0, entry_z: 10.0, floor_z: 0.0, through: true, stepped: false },

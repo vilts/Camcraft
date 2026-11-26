@@ -46,6 +46,7 @@ fn world() -> World {
 
 fn bore(radius: f64) -> OpParams {
     OpParams::Bore {
+        pass_start: camcraft_app::machining2d::PassStart::Auto,
         break_through: None,
         links: camcraft_app::links::Links::PLANAR,
         clearance_z: Height::fixed(25.0),
@@ -59,6 +60,7 @@ fn bore(radius: f64) -> OpParams {
         climb: true,
         tolerance: 0.01,
         holes: vec![Hole { xy: Point2::new(15.0, 15.0), radius, entry_z: 20.0, floor_z: 5.0, through: false, stepped: false }],
+        picks: Default::default(),
     }
 }
 

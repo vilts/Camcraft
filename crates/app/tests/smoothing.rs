@@ -14,6 +14,8 @@ use camcraft_app::cl::{Move, MoveKind, Toolpath};
 use camcraft_app::geometry::Point3;
 use camcraft_app::operation::{self, Height, OpParams, OpType};
 use camcraft_app::post::{self, cnc, Dump, Smoothing};
+use camcraft_app::posting;
+use camcraft_app::schema::PostRef;
 use camcraft_app::smoothing::{self, FINISH_SHARE, ROUGH_MAX_MM};
 
 fn script(name: &str) -> &'static str {
@@ -28,7 +30,7 @@ fn program(name: &str, ask: Option<Smoothing>) -> String {
         Move::new(MoveKind::Feed, p(0.0, 5.0), p(20.0, -1.0), Some(600.0)),
         Move::new(MoveKind::Rapid, p(20.0, -1.0), p(20.0, 25.0), None),
     ]);
-    let d = Dump {
+    let mut d = Dump {
         op_name: "Contour1",
         tool_number: 1,
         tool_name: "EM",
@@ -39,8 +41,17 @@ fn program(name: &str, ask: Option<Smoothing>) -> String {
         smoothing: ask,
         ..Dump::default()
     };
+    let machine = if name == "Heidenhain Klartext" {
+        d.tool_kind = "Flat end mill";
+        d.stock = [-10.0, 30.0, -10.0, 10.0];
+        d.stock_bottom_z = Some(-2.0);
+        let mch = camcraft_app::posting::builtin_machine_text("Fehlmann Picomax 55 (iTNC 530)").unwrap();
+        post::machine::mirror(&camcraft_app::machine::parse_mch(mch).unwrap())
+    } else {
+        serde_json::Value::Null
+    };
     let text = cnc::serialize(&post::dump(&t, &d));
-    match post::post(script(name), &serde_json::Value::Null, &text) {
+    match post::post(script(name), &machine, &text) {
         Ok(out) => out.program,
         Err(e) => panic!("{name}: {e}"),
     }
@@ -58,6 +69,10 @@ fn off_is_byte_identical_and_writes_no_smoothing_word() {
     // #542: a sinker post serves sinker EDMs only (no smoothing words).
     let sinker = camcraft_app::posting::SINKER_POSTS;
     for (name, _) in camcraft_app::posting::shipped_posts().expect("the shipped posts read").iter().filter(|(n, _)| *n != "Fanuc Lathe" && !sinker.contains(n)) {
+        // agie_native checks the three native files with smoothing off and the refusal with it on.
+        if posting::agie::is_native(&PostRef::Named((*name).to_owned())) {
+            continue;
+        }
         let off = program(name, None);
         for w in ["G5.1", "G187", "CYCLE832", "G62 ", "SMOOTHING"] {
             assert!(!off.contains(w), "{name} wrote {w} with smoothing off:\n{off}");
@@ -157,7 +172,7 @@ fn finish_ops_ask_their_tolerance_and_rough_ops_ask_from_their_stock() {
     // A contour that finishes asks its own tolerance; leaving stock, it roughs.
     let base = OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -167,6 +182,7 @@ fn finish_ops_ask_their_tolerance_and_rough_ops_ask_from_their_stock() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     let seed = |ty: OpType| operation::retype_params(&base, ty.ordinal());
     let mut contour = seed(OpType::Contour);

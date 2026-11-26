@@ -77,7 +77,7 @@ fn block() -> (World, History) {
 fn face(cut: Height, clearance: f64) -> OpParams {
     OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(clearance),
@@ -87,6 +87,7 @@ fn face(cut: Height, clearance: f64) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 

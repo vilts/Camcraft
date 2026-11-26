@@ -85,6 +85,7 @@ fn facing(clearance: f64) -> OpParams {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     }
 }
 

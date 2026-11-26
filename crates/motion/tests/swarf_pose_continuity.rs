@@ -73,6 +73,7 @@ fn blade() -> Vec<Triangle> {
 /// The app test's swarf parameters, the debug band (11 down to 1).
 fn params(bottom_z: f64) -> Finish3DParams {
     Finish3DParams {
+        gap_link: camcraft_motion::finishing3d::GapLink::Jump,
         pattern: FinishPattern::Parallel,
         stepover: Some(2.0),
         tool_diameter: 6.0,
@@ -90,6 +91,7 @@ fn params(bottom_z: f64) -> Finish3DParams {
         entry_ramp: false,
         steep_stepover: None,
         pencil_reference: None,
+        waterlines: true,
     }
 }
 
@@ -148,7 +150,11 @@ fn air_links(path: &Toolpath) -> usize {
     let mut n = 0usize;
     for m in &path.moves {
         let p = held.unwrap_or([0.0, 0.0, 1.0]);
+        // #3414: a zero-travel rapid is the standstill rotary index,
+        // not a link - it swings in place to the pose the next descend
+        // cuts under, and travels no air.
         if m.kind == MoveKind::Rapid
+            && m.from != m.to
             && let Some(a) = m.axis
             && deg_between(p, a) > GUARD_DEG
         {

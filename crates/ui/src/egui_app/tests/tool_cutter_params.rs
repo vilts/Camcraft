@@ -7,16 +7,20 @@
 //! Provenance: our own page law; the outlines are our own.
 
 use super::*;
-use egui_kittest::kittest::NodeT;
 use camcraft_app::cutter_fit::{self, Neck};
 
 const TOOL: &str = "EM-0600-4FL";
 
 /// The editor on the Profile tab, switched to Draw cutter.
 fn cutter_tab() -> Harness<'static, ShellUi> {
-    let mut harness = shell_harness();
+    // A tall shell: the shape window and the tool library window are on
+    // screen at once, so the test does not fight a scroll.
+    let mut harness = Harness::builder()
+        .with_size(egui::vec2(1280.0, 1400.0))
+        .build_ui_state(super::frame, ShellUi::seeded());
     harness.run();
-    crate::actions::open_tool_editor(&mut harness.state_mut().state, TOOL);
+    harness.state_mut().state.ui_target = UiTarget::Tool(TOOL.into());
+    crate::actions::open_tool_shape_editor(&mut harness.state_mut().state, TOOL);
     harness.run();
     harness.run();
     harness.get_by_label("Profile").click();
@@ -44,15 +48,20 @@ fn each_milling_kind_shows_the_parameters_its_outline_is_drawn_from() {
     for label in ["cutter Ø", "flutes", "shank Ø", "shank length", "Neck"] {
         assert!(harness.query_by_label(label).is_some(), "{label} stands in the cutter view");
     }
-    let tips = ["ball R", "corner R", "point angle °", "cone angle °"];
+    let tips = ["ball R", "corner R", "point angle °", "cone angle °", "flank angle °"];
     assert!(tips.iter().all(|l| harness.query_by_label(l).is_none()), "a flat end mill has no tip parameter");
-    for (kind, tip) in [(1, "ball R"), (2, "corner R"), (3, "point angle °"), (10, "cone angle °")] {
+    for (kind, tip) in [(1, "ball R"), (2, "corner R"), (3, "point angle °"), (10, "cone angle °"), (20, "flank angle °")] {
         harness.state_mut().state.tool_ui.kind = kind;
         if kind == 3 {
             harness.state_mut().state.tool_ui.tip_angle = 118.0;
         }
         if kind == 10 {
             harness.state_mut().state.tool_ui.tip_angle = 90.0;
+        }
+        if kind == 20 {
+            harness.state_mut().state.tool_ui.tip_angle = 60.0;
+            harness.state_mut().state.tool_ui.flute_len = 2.0;
+            harness.state_mut().state.tool_ui.shank_d = 2.0;
         }
         harness.run();
         harness.run();
@@ -124,18 +133,12 @@ fn the_editors_apply_carries_a_landed_cutter_onto_new_numbers() {
     harness.run();
     assert_eq!(landed(&harness.state().state), (6.0, Some(NECK), true));
     // A diameter edit under a drawn cutter used to be refused; now the
-    // drawn outline rides along.
-    harness.state_mut().state.tool_ui.diameter = 7.0;
+    // drawn outline rides along. #3930: the settings Apply is the tool
+    // library window's; the shape window has no Apply of its own.
+    super::tool_library_editor::open_in_window(&mut harness, TOOL);
+    super::tool_library_editor::draft(&mut harness).diameter = 7.0;
     harness.run();
-    // The editor window's own Apply (the dock has another).
-    harness
-        .query_all_by_role(egui::accesskit::Role::Window)
-        .find(|n| n.accesskit_node().label().as_deref() == Some("Tool: EM-0600-4FL"))
-        .expect("the editor window")
-        .get_by_label("Apply")
-        .click();
-    harness.run();
-    harness.run();
+    super::tool_library_editor::click_window_button(&mut harness, "Apply");
     let st = &harness.state().state;
     assert_eq!(landed(st), (7.0, Some(NECK), true), "error: {:?}", st.error_for(crate::state::ErrorScope::Tool));
     harness.state_mut().state.pending.push_back(CommandKind::Undo);

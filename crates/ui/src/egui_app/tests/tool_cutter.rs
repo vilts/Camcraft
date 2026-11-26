@@ -15,7 +15,8 @@ const TOOL: &str = "EM-0600-4FL";
 fn cutter_tab() -> Harness<'static, ShellUi> {
     let mut harness = shell_harness();
     harness.run();
-    crate::actions::open_tool_editor(&mut harness.state_mut().state, TOOL);
+    harness.state_mut().state.ui_target = UiTarget::Tool(TOOL.into());
+    crate::actions::open_tool_shape_editor(&mut harness.state_mut().state, TOOL);
     harness.run();
     harness.run();
     harness.get_by_label("Profile").click();
@@ -36,7 +37,8 @@ fn drawn(state: &State) -> Option<Vec<SpunPoint>> {
 fn the_profile_tab_offers_the_cutter_beside_the_holder() {
     let mut harness = shell_harness();
     harness.run();
-    crate::actions::open_tool_editor(&mut harness.state_mut().state, TOOL);
+    harness.state_mut().state.ui_target = UiTarget::Tool(TOOL.into());
+    crate::actions::open_tool_shape_editor(&mut harness.state_mut().state, TOOL);
     harness.run();
     harness.run();
     harness.get_by_label("Profile").click();
@@ -144,7 +146,7 @@ fn assert_editor_width_stays_put(subject: &str, title: &str, unit: Unit, feed: O
     let mut harness = shell_harness();
     harness.state_mut().state.pending.push_back(CommandKind::SetUnits(unit));
     harness.state_mut().state.drain_actions();
-    crate::actions::open_tool_editor(&mut harness.state_mut().state, subject);
+    crate::actions::open_tool_shape_editor(&mut harness.state_mut().state, subject);
     if let Some(feed) = feed {
         harness.state_mut().state.tool_ui.feed = feed;
     }
@@ -174,20 +176,20 @@ fn assert_editor_width_stays_put(subject: &str, title: &str, unit: Unit, feed: O
 
 #[test]
 fn existing_tool_editor_width_stays_put_after_100_pointer_frames() {
-    assert_editor_width_stays_put(TOOL, "Tool: EM-0600-4FL", Unit::Millimeters, None);
+    assert_editor_width_stays_put(TOOL, "Tool shape: EM-0600-4FL", Unit::Millimeters, None);
 }
 
 #[test]
-fn new_tool_editor_width_stays_put_after_100_pointer_frames() {
-    assert_editor_width_stays_put("", "New tool", Unit::Millimeters, None);
+fn blank_tool_shape_width_stays_put_after_100_pointer_frames() {
+    assert_editor_width_stays_put("", "Tool shape", Unit::Millimeters, None);
 }
 
 #[test]
 fn wide_metric_feed_tool_editor_width_stays_put_after_100_pointer_frames() {
-    assert_editor_width_stays_put(TOOL, "Tool: EM-0600-4FL", Unit::Millimeters, Some(1.0e12));
+    assert_editor_width_stays_put(TOOL, "Tool shape: EM-0600-4FL", Unit::Millimeters, Some(1.0e12));
 }
 
 #[test]
 fn wide_inch_feed_tool_editor_width_stays_put_after_100_pointer_frames() {
-    assert_editor_width_stays_put(TOOL, "Tool: EM-0600-4FL", Unit::Inches, Some(1.0e12));
+    assert_editor_width_stays_put(TOOL, "Tool shape: EM-0600-4FL", Unit::Inches, Some(1.0e12));
 }

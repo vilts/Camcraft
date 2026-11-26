@@ -6,6 +6,7 @@
 //! design; no vendor source.
 
 use camcraft_tools::holder_profile::HolderStack;
+use camcraft_tools::undercut::{Head, Undercut};
 
 use super::body_bands::{BodyBands, NeckBands};
 use crate::geometry::{Point3, Triangle};
@@ -34,6 +35,11 @@ pub struct Cutter {
     /// shank band where they are narrower. `None` reads the stated shank
     /// cylinder, as always.
     pub neck: Option<NeckBands>,
+    /// An undercut cutter's head (#1444): a dovetail's frustum or a
+    /// lollipop's ball stands in for the square flute atom, and the
+    /// undercut law reads the head and neck from it. `None` is every
+    /// other tool, as always.
+    pub undercut: Option<Undercut>,
 }
 
 impl Cutter {
@@ -52,6 +58,7 @@ impl Cutter {
             holder_len: g.holder_len,
             body: None,
             neck: None,
+            undercut: None,
         }
     }
 
@@ -96,6 +103,7 @@ impl Cutter {
             ToolKind::Drill | ToolKind::Taper => c.tip_angle = t.tip_angle,
             _ => {}
         }
+        c.undercut = Undercut::of(t);
         c
     }
 
@@ -111,7 +119,12 @@ impl Cutter {
     pub fn judged(g: &ToolGeom, real: Option<Self>) -> Self {
         let flat = Self::flat(g);
         match real {
-            Some(c) if Self { corner_r: 0.0, tip_angle: 0.0, body: None, neck: None, ..c } == flat => {
+            Some(c) if Self { corner_r: 0.0, tip_angle: 0.0, body: None, neck: None, undercut: None, ..c } == flat => {
+                // #1444: a head rides only while it is this geometry's.
+                let fits = |u: &Undercut| {
+                    (u.r - g.radius).abs() <= 1e-9 && (u.height - g.flute_len).abs() <= 1e-9 && (u.neck_r - g.shank_radius).abs() <= 1e-9
+                };
+                let c = Self { undercut: c.undercut.filter(fits), ..c };
                 let fits = c.body.is_some_and(|b| {
                     let top = g.flute_len + g.shank_len + g.holder_len;
                     let stack = HolderStack { bands: b.bands().to_vec(), top, neck: Vec::new() };
@@ -152,6 +165,9 @@ impl Cutter {
                 if e <= 0.0 { 0.0 } else if e >= cr { a.z1 } else { cr - (cr * cr - e * e).max(0.0).sqrt() }
             }
             Prof::Cone { k, .. } => rho / k,
+            // A dovetail's bottom is flat; a ball rises as a sphere.
+            Prof::Dove { .. } => 0.0,
+            Prof::Ball(r) => if rho >= r { r } else { r - (r * r - rho * rho).max(0.0).sqrt() },
         };
         if s.is_finite() { s.clamp(0.0, a.z1.max(0.0)) } else { 0.0 }
     }
@@ -169,25 +185,40 @@ impl Cutter {
         let mut z = 0.0;
         let tan_half = (self.tip_angle.to_radians() * 0.5).tan();
         let cr = if self.corner_r.is_finite() { self.corner_r.clamp(0.0, r) } else { 0.0 };
-        if self.tip_angle > 0.0 && tan_half.is_finite() && tan_half > 0.0 {
+        // #1444: an undercut head is its own atom. The disc is the
+        // square flute atom below; the frustum and the ball replace it
+        // (the ball whole, over the neck's start: the atoms are a
+        // union, and the neck leaves the ball inside it).
+        let head = self.undercut.and_then(|u| match u.head {
+            Head::Disc => None,
+            Head::Dove { cot } => Some(Atom { z0: 0.0, z1: fl, prof: Prof::Dove { r, k: cot }, cap: true }),
+            Head::Ball => Some(Atom { z0: 0.0, z1: 2.0 * r, prof: Prof::Ball(r), cap: false }),
+        });
+        if let Some(a) = head {
+            if a.z1 > 0.0 {
+                v.push(a);
+            }
+            z = fl;
+        } else if self.tip_angle > 0.0 && tan_half.is_finite() && tan_half > 0.0 {
             let top = (r / tan_half).min(fl);
             if top > 0.0 {
-                v.push(Atom { z0: 0.0, z1: top, prof: Prof::Cone { k: tan_half, r } });
+                v.push(Atom { z0: 0.0, z1: top, prof: Prof::Cone { k: tan_half, r }, cap: false });
                 z = top;
             }
         } else if cr > 0.0 {
             let top = cr.min(fl);
             if top > 0.0 {
-                v.push(Atom { z0: 0.0, z1: top, prof: Prof::Bull { flat: r - cr, cr } });
+                v.push(Atom { z0: 0.0, z1: top, prof: Prof::Bull { flat: r - cr, cr }, cap: false });
                 z = top;
             }
         }
         if fl > z {
-            v.push(Atom { z0: z, z1: fl, prof: Prof::Flat(r) });
+            // #1444: a disc head's top face cuts the roof it stands under.
+            v.push(Atom { z0: z, z1: fl, prof: Prof::Flat(r), cap: self.undercut.is_some() });
         }
         let mut band = |z0: f64, len: f64, br: f64| {
             if len > 0.0 && br.is_finite() && br > 0.0 {
-                v.push(Atom { z0, z1: z0 + len, prof: Prof::Flat(br) });
+                v.push(Atom { z0, z1: z0 + len, prof: Prof::Flat(br), cap: false });
             }
         };
         for (above, r, len) in self.shank_bands() {
@@ -214,15 +245,27 @@ pub(super) enum Prof {
     Bull { flat: f64, cr: f64 },
     /// Point cone, capped at the flute radius.
     Cone { k: f64, r: f64 },
+    /// Dovetail head (#1444): rho = r - k s, widest at its bottom.
+    Dove { r: f64, k: f64 },
+    /// Lollipop head (#1444): the whole ball of radius r over [0, 2r].
+    Ball(f64),
 }
 
 /// One convex solid of revolution about the tool axis over local
-/// heights `[z0, z1]`; its profile is concave and non-decreasing in z.
+/// heights `[z0, z1]`; its profile is concave in z. It is also
+/// non-decreasing, but for the undercut heads (#1444): a dovetail falls
+/// and a ball rises then falls, so [`Atom::rho_peak`] reads the largest
+/// radius of a span, never the span's top.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Atom {
     pub z0: f64,
     pub z1: f64,
     pub prof: Prof,
+    /// The atom's top is a cutting face that may stand ON the part - an
+    /// undercut head under its roof (#1444): the solid law grants it the
+    /// allowance the tip gets, so contact is not a gouge. False for
+    /// every other atom, whose top is read to its full height.
+    pub cap: bool,
 }
 
 impl Atom {
@@ -235,12 +278,28 @@ impl Atom {
                 flat + (cr * cr - t * t).max(0.0).sqrt()
             }
             Prof::Cone { k, r } => (k * s).min(r),
+            Prof::Dove { r, k } => (r - k * s).max(0.0),
+            Prof::Ball(r) => (2.0 * r * s - s * s).max(0.0).sqrt(),
+        }
+    }
+
+    /// The largest radius over heights `[lo, hi]`: the top's for the
+    /// non-decreasing profiles, the bottom's for a dovetail, the
+    /// equator's for a ball whose span holds it.
+    pub(super) fn rho_peak(&self, lo: f64, hi: f64) -> f64 {
+        match self.prof {
+            Prof::Flat(_) | Prof::Bull { .. } | Prof::Cone { .. } => self.rho(hi),
+            Prof::Dove { .. } => self.rho(lo),
+            Prof::Ball(r) => {
+                let eq = self.z0 + r;
+                if lo <= eq && eq <= hi { r } else { self.rho(lo).max(self.rho(hi)) }
+            }
         }
     }
 
     pub(super) fn rho_max(&self) -> f64 {
         match self.prof {
-            Prof::Flat(r) | Prof::Cone { r, .. } => r,
+            Prof::Flat(r) | Prof::Cone { r, .. } | Prof::Dove { r, .. } | Prof::Ball(r) => r,
             Prof::Bull { flat, cr } => flat + cr,
         }
     }
@@ -278,6 +337,10 @@ impl Frame {
 
     pub(super) fn tri(&self, t: &Triangle) -> [[f64; 3]; 3] {
         [self.local(t.a), self.local(t.b), self.local(t.c)]
+    }
+
+    pub(super) fn seg(&self, a: Point3, b: Point3) -> [[f64; 3]; 2] {
+        [self.local(a), self.local(b)]
     }
 
     /// The world point `h` up the axis from the tip.

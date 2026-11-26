@@ -231,11 +231,11 @@ pub fn parse_off(words: &str) -> Result<u32, String> {
     id.parse::<u32>().map_err(|_| format!("contour id {id:?}"))
 }
 
-fn split_word(w: &str) -> (&str, &str) {
+pub(super) fn split_word(w: &str) -> (&str, &str) {
     let at = w.find(|c: char| c == '-' || c.is_ascii_digit()).unwrap_or(w.len());
     w.split_at(at)
 }
 
-fn milli(v: &str) -> Result<f64, String> {
+pub(super) fn milli(v: &str) -> Result<f64, String> {
     v.parse::<i64>().map(|n| n as f64 / 1000.0).map_err(|_| format!("not an integer: {v:?}"))
 }

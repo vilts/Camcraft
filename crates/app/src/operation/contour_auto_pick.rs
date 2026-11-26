@@ -22,25 +22,27 @@ fn pick_span(
         let Some(entity) = model::find_by_name(world, &g.entity) else { continue };
         let Some(features) = model::features_of(world, &entity) else { continue };
         let loc = opframe.pose_in_setup(world, &entity).unwrap_or_default();
-        let verts: Vec<[f64; 3]> = match g.feature {
-            FeatureSel::Chain(cid) => match crate::model::resolve_chain(&features, cid) {
+        let verts: Vec<[f64; 3]> = match &g.feature {
+            FeatureSel::Chain(cid) => match crate::model::resolve_chain(&features, *cid) {
                 Some(c) if c.closed || stitched.contains_key(&gi) => feature::chain_points(&features, &c),
                 _ => Vec::new(),
             },
             FeatureSel::Face(fid) => features
                 .faces
                 .iter()
-                .filter(|f| f.id == fid)
+                .filter(|f| f.id == *fid)
                 .flat_map(|f| f.loops.iter().filter(|l| !matches!(l.kind, LoopKind::Open)))
                 .flat_map(|l| l.verts.iter().filter_map(|&vi| features.verts.get(vi as usize).copied()))
                 .collect(),
-            FeatureSel::Patch(pid) => feature::patch_rings(&features, pid)
+            FeatureSel::Patch(pid) => feature::patch_rings(&features, *pid)
                 .unwrap_or_default()
                 .iter()
                 .filter(|r| r.closed)
                 .flat_map(|r| r.verts.iter().filter_map(|&vi| features.verts.get(vi as usize).copied()))
                 .collect(),
-            FeatureSel::Vertex(_) => Vec::new(),
+            FeatureSel::Vertex(_)
+            | FeatureSel::SketchChain(_)
+            | FeatureSel::SketchLayer(_) => Vec::new(),
         };
         for p in verts {
             let w = transform_point(Point3::new(p[0], p[1], p[2]), loc.pos, loc.rot);

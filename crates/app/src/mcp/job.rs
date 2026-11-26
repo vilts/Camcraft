@@ -67,8 +67,17 @@ fn setups_view(env: &Env) -> Vec<Value> {
                 // #1233: the setup's own post (null: follows the document's) and what it posts with.
                 "post": crate::setup_mount::own_post(w, d).as_ref().map(crate::posting::post_ref_label),
                 "posts_with": crate::posting::post_ref_label(&crate::setup_mount::post_of(w, d)),
+                // #2374: the post its machine asks for, until the agent takes it.
+                "post_offer": super::post_offer_view::offer_view(w, d),
                 // #1031: the chuck's or collet's rated maximum rpm.
                 "workholding_max_rpm": s.as_deref().and_then(|n| crate::setup_workholding::of(w, Some(n))).map(fnum),
+                // #3070: the guided sheet job (allowance always shown).
+                "sheet_job": s.as_deref().and_then(|n| crate::sheet_job::of(w, n)).as_ref().map(super::sheet_job_tools::job_view),
+                // #2410: the router options the setup's machine offers (the UI reads the same list).
+                "router_options": crate::router_offer::router_options(w, d).iter().map(|o| o.word()).collect::<Vec<_>>(),
+                // #1862: what stands for the setup's model - a part, or the
+                // virtual reference of its placed DXF profiles (no solid).
+                "model_reference": super::sketch_tools::model_reference(env, d),
             })
         })
         .collect()
@@ -93,6 +102,8 @@ fn op_full(env: &Env, key: &str, e: &flecs_ecs::prelude::Entity, status: operati
         "warnings": warnings,
         "needs_review": needs_review,
         "params": op.as_ref().map(|o| project::params_to_json(&o.params)),
+        // #1862: an operation on a DXF profile says what it is checked against.
+        "checks_against": op.as_ref().and_then(|o| crate::sketch_model::checked_against(w, o)),
     })
 }
 
@@ -102,11 +113,13 @@ fn machine_view(w: &flecs_ecs::prelude::World) -> Value {
     let (path, m) = crate::machine::document_of(w);
     json!({
         "path": (!path.is_empty()).then_some(path),
-        "definition": m.as_ref().and_then(|m| serde_json::to_value(m).ok()),
+        "definition": m.as_ref().and_then(|m| super::machine_tools::definition(m).ok()),
     })
 }
 
-pub(super) fn get_job(env: &mut Env, _a: &Map<String, Value>) -> Result<Value, String> {
+pub(super) fn get_job(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
+    // #1944: the short form for a model's context window.
+    let summary = super::compact::flag(a, "summary")?;
     let w = &env.world;
     let models: Vec<Value> = model::model_entities(w)
         .iter()
@@ -122,9 +135,17 @@ pub(super) fn get_job(env: &mut Env, _a: &Map<String, Value>) -> Result<Value, S
             if let Some(chord) = crate::model_fidelity::chord_of(w, e) {
                 m["reduced_fidelity"] = crate::mesh_open::facts(w, e, chord);
             }
+            // #1339: a mesh a person vouched for says who.
+            if let Some(by) = crate::model_vouch::by_of(w, e) {
+                m["fidelity_vouched"] = crate::model_vouch::facts(&by);
+            }
             // #1054: and one imported under a non-default STEP facet budget.
             if let Some(b) = crate::model_fidelity::budget_of(w, e) {
                 m["facet_budget"] = json!(b);
+            }
+            // #2463: a linked model names its source file and digest.
+            if let Some(s) = crate::model_source::of(w, e) {
+                m["source"] = json!({ "path": s.path, "sha256": s.sha256 });
             }
             m
         })
@@ -143,7 +164,7 @@ pub(super) fn get_job(env: &mut Env, _a: &Map<String, Value>) -> Result<Value, S
         }))
         .collect();
     let ops: Vec<Value> = inventory(env).iter().map(|(k, e, s)| op_full(env, k, e, *s)).collect();
-    Ok(json!({
+    let mut job = json!({
         "document": env.doc_path.as_ref().map(|p| p.display().to_string()),
         // #902: the document's unit - display and posted program.
         "units": super::units_tools::word(w),
@@ -151,12 +172,18 @@ pub(super) fn get_job(env: &mut Env, _a: &Map<String, Value>) -> Result<Value, S
         "work_material": super::cutting_tools::material_view(env),
         "setups": setups_view(env),
         "models": models,
+        // #1862: DXF profiles placed on a setup's stock - not models.
+        "profiles": super::sketch_tools::profiles_view(env),
         "tools": tools,
         "operations": ops,
         "machine": machine_view(w),
         "can_undo": env.history.can_undo(),
         "can_redo": env.history.can_redo(),
-    }))
+    });
+    if summary {
+        super::compact::summarize_job(&mut job);
+    }
+    Ok(job)
 }
 
 /// The kind's file key (`"face"`, `"pocket3d"` ...) and its default
@@ -180,7 +207,20 @@ fn json_type(v: &Value) -> &'static str {
     }
 }
 
-pub(super) fn list_operation_types(_env: &mut Env, _a: &Map<String, Value>) -> Result<Value, String> {
+fn push_missing_fields(fields: &mut Vec<Value>, extra: &[(&str, &str, Value)]) {
+    let mut added = false;
+    for (name, ty, default) in extra {
+        if !fields.iter().any(|f| f["name"] == *name) {
+            fields.push(json!({ "name": name, "type": ty, "default": default }));
+            added = true;
+        }
+    }
+    if added {
+        fields.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+    }
+}
+
+pub(super) fn list_operation_types(_env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
     let kinds: Vec<Value> = KindInfo::ALL
         .iter()
         .enumerate()
@@ -192,12 +232,50 @@ pub(super) fn list_operation_types(_env: &mut Env, _a: &Map<String, Value>) -> R
                 .unwrap_or_default();
             // `break_through` is skipped when `None` in ParamsDto serialization,
             // so inject it into `list_operation_types` for every through-hole kind (#2441).
-            if matches!(key.as_str(), "drill" | "bore" | "thread")
-                && !fields.iter().any(|f| f["name"] == "break_through")
-            {
-                fields.push(json!({ "name": "break_through", "type": "number", "default": Value::Null }));
+            if matches!(key.as_str(), "drill" | "bore" | "thread") {
+                push_missing_fields(&mut fields, &[("break_through", "number", Value::Null)]);
+            }
+            // `WireContourDto` skips empty/default optional fields in project
+            // serialization, so inject them into `list_operation_types` (#3217).
+            if key == "wire_contour" {
+                push_missing_fields(
+                    &mut fields,
+                    &[
+                        ("condition", "string", json!("")),
+                        ("picks", "object", json!({})),
+                        ("tabs", "object", Value::Null),
+                        ("capture", "boolean", json!(false)),
+                        ("both_pieces_restrained", "boolean", json!(false)),
+                        ("stock_centered_in_xy_travel", "boolean", json!(false)),
+                        ("taper_deg", "number", json!(0.0)),
+                        ("burnout_clearance", "number", Value::Null),
+                        ("clearance", "number", json!(crate::operation::DEFAULT_CLEARANCE)),
+                        ("skims", "array", json!([])),
+                        ("four_axis", "object", Value::Null),
+                        ("sharp_corners", "boolean", json!(false)),
+                        ("lead_arc_radius", "number", Value::Null),
+                    ],
+                );
+            }
+            if matches!(key.as_str(), "sinker_burn" | "sinker_side_burn") {
+                fields.push(json!({ "name": "cavity_outline", "type": "array", "default": Value::Null }));
                 fields.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
             }
+            // The zero default is omitted by ParamsDto to preserve old
+            // project bytes, but it is still an authored operation
+            // parameter on the MCP surface (#3153).
+            if key == "chamfer2_d"
+                && !fields.iter().any(|f| f["name"] == "minimum_cone_radius")
+            {
+                fields.push(json!({
+                    "name": "minimum_cone_radius",
+                    "type": "number",
+                    "default": 0.0
+                }));
+                fields.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
+            }
+            // #3449: every accepted field, optional ones and enum values too.
+            let traced = super::kind_fields::complete(&key, &defaults, &mut fields);
             let mut kind = json!({
                 "label": k.label,
                 "key": key,
@@ -205,17 +283,40 @@ pub(super) fn list_operation_types(_env: &mut Env, _a: &Map<String, Value>) -> R
                 "tool_kinds": k.tool_kinds.iter().map(|t| format!("{t:?}")).collect::<Vec<_>>(),
                 "mounts_tool": k.mounts_tool(),
                 "fields": fields,
+                "start_exit": start_exit(k),
             });
+            if !traced {
+                kind["fields_incomplete"] = json!(true);
+            }
             if !k.mounts_tool() {
                 kind["note"] = json!("mounts no library tool: add_operation takes no \"tool\" for this kind");
             }
             kind
         })
         .collect();
+    // #1944: one kind, or one section, for a small context window.
+    let kinds = super::compact::filter_kinds(kinds, a)?;
     Ok(json!({
         "kinds": kinds,
-        "note": "Fields absent from the defaults are optional and off; set them in a params patch to turn them on.",
+        "note": "Each kind lists every field it accepts. \"optional\": true marks a field absent from the defaults: it is off until a params patch sets it. \"values\" lists the words of an enum field; \"shape\" spells an object or array field (key? is optional). Type \"any\" is a value that reads itself, such as a height: a number or {reference, offset}.",
     }))
+}
+
+/// #3324: does the kind take a start / exit pick, and where; or why not.
+fn start_exit(k: &KindInfo) -> Value {
+    use crate::path_picks::PickRole;
+    let cap = k.pick();
+    let mut out = json!({ "start": cap.takes(PickRole::Start), "exit": cap.takes(PickRole::Exit) });
+    match cap {
+        operation::PickCapability::NotTaken(why) => out["why_not"] = json!(why),
+        // #3331: a turning pick is [x, y, z] - the lathe (Z, X) plane needs the z.
+        operation::PickCapability::Meridian => {
+            out["field"] = json!("picks");
+            out["plane"] = json!("lathe (Z, X): each pick states its z; the radius is read about the turning axis");
+        }
+        _ => out["field"] = json!("picks"),
+    }
+    out
 }
 
 pub(super) fn list_tool_catalog(_env: &mut Env, _a: &Map<String, Value>) -> Result<Value, String> {
@@ -236,7 +337,11 @@ pub(super) fn finding(op: &str, w: &Warning) -> Value {
         Warning::HolderHit { at, .. } => ("holder_hit", *at),
         Warning::SweepHit { at, .. } => ("sweep_hit", *at),
         Warning::RapidInStock { at } => ("rapid_in_stock", *at),
+        Warning::RapidInPart { at } => ("rapid_in_part", *at),
+        Warning::FirstTraverseLow { at, .. } => ("first_traverse_low", *at),
+        Warning::FirstTraverseUnderTable { at, .. } => ("first_traverse_under_table", *at),
         Warning::FixtureHit { at, .. } => ("fixture_hit", *at),
+        Warning::AvoidHit { at, .. } => ("avoid_hit", *at),
         Warning::NonFinite { at } => ("non_finite", *at),
         Warning::Envelope { at, .. } => ("envelope", *at),
         Warning::RestUnjudged { at, .. } => ("rest_unjudged", *at),
@@ -244,6 +349,13 @@ pub(super) fn finding(op: &str, w: &Warning) -> Value {
         Warning::ProbeSearch { at, .. } => ("probe_search", *at),
         Warning::SinkerFinishOrder { at, .. } => ("sinker_finish_order", *at),
         Warning::DrillUndersize { at, .. } => ("drill_undersize", *at),
+        Warning::UndercutLift { at } => ("undercut_lift", *at),
+        Warning::StrategyFallback { at, .. } => ("strategy_fallback", *at),
+        Warning::FluteShort { at, .. } => ("flute_short", *at),
+        Warning::PlungeTooDeep { at, .. } => ("plunge_too_deep", *at),
+        Warning::EntryNotRecommended { at, .. } => ("entry_not_recommended", *at),
+        Warning::EntryStandIn { at, .. } => ("entry_stand_in", *at),
+        Warning::PlungeIntoStock { at } => ("plunge_into_stock", *at),
     };
     json!({
         "op": op,
@@ -270,6 +382,13 @@ pub(super) fn verify(env: &mut Env, a: &Map<String, Value>) -> Result<Value, Str
             findings.extend(t.warnings.iter().map(|w| finding(&label, w)));
         }
     }
+    // #3456: a program law's warning (a plasma tip-up, a kerf crossing)
+    // names its op but no move; the law decides it holds nothing.
+    if let Some(warnings) = report["gate"]["warnings"].as_array() {
+        for w in warnings {
+            findings.push(json!({ "op": w["op"], "move": null, "kind": w["kind"], "message": w["message"], "blocks_post": false }));
+        }
+    }
     // The program gate's problems speak of the whole program, not one
     // move: they ride as findings with no op and no move index.
     if let Some(problems) = report["gate"]["problems"].as_array() {
@@ -279,4 +398,36 @@ pub(super) fn verify(env: &mut Env, a: &Map<String, Value>) -> Result<Value, Str
     }
     report["findings"] = Value::Array(findings);
     Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Warning, finding};
+    use crate::verify::FallbackCause;
+
+    #[test]
+    fn part_and_stock_rapids_keep_their_kind_message_and_blocking_state() {
+        for (warning, kind, message) in [
+            (Warning::RapidInPart { at: 7 }, "rapid_in_part", "tool meets the part on rapid move 7"),
+            (Warning::RapidInStock { at: 7 }, "rapid_in_stock", "rapid move 7 travels through stock (below the clearance plane, or at it below the stock top)"),
+        ] {
+            let f = finding("op", &warning);
+            assert_eq!(f["kind"], kind, "{f}");
+            assert_eq!(f["message"], message, "{f}");
+            assert_eq!(f["move"], 7, "{f}");
+            assert_eq!(f["blocks_post"], true, "{f}");
+        }
+    }
+
+    /// #3542: the pass-start cause keeps the MCP kind `strategy_fallback`
+    /// and stays advisory; only its message names the other cause.
+    #[test]
+    fn a_pass_start_fallback_keeps_the_strategy_fallback_kind() {
+        for cause in [FallbackCause::Adaptive, FallbackCause::PassStart] {
+            let f = finding("op", &Warning::StrategyFallback { at: 3, areas: 1, cause });
+            assert_eq!(f["kind"], "strategy_fallback", "{f}");
+            assert_eq!(f["move"], 3, "{f}");
+            assert_eq!(f["blocks_post"], false, "{f}");
+        }
+    }
 }

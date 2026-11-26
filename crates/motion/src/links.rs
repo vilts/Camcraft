@@ -138,10 +138,15 @@ impl Links {
 
 /// Why a keep-down link lifted, tallied per ladder so a pocket with a
 /// hundred passes says it once, with the first place it happened.
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(crate) struct LinkTally {
-    lifted: Vec<(&'static str, usize, Point2, f64)>,
+    lifted: Vec<(&'static str, &'static str, usize, Point2, f64)>,
 }
+
+/// The plane a lift goes to by default: the retract plane.
+pub(crate) const RETRACT_PLANE: &str = "retract plane";
+/// #3822: the plane a failed link lifts to when the user chose Clearance.
+pub(crate) const CLEARANCE_PLANE: &str = "clearance height";
 
 /// The keep-down link was not proved clear.
 pub(crate) const NOT_PROVED: &str = "not proved clear of the part and the planned cuts";
@@ -151,23 +156,28 @@ pub(crate) const TOO_LONG: &str = "longer than the maximum stay-down distance";
 impl LinkTally {
     /// A keep-down link from `at` (on plane `z`) lifted for `why`.
     pub(crate) fn lift(&mut self, why: &'static str, at: Point2, z: f64) {
-        match self.lifted.iter_mut().find(|(w, ..)| *w == why) {
-            Some(slot) => slot.1 += 1,
-            None => self.lifted.push((why, 1, at, z)),
+        self.lift_to(why, RETRACT_PLANE, at, z);
+    }
+
+    /// The same, for a lift to the named `plane` (#3822).
+    pub(crate) fn lift_to(&mut self, why: &'static str, plane: &'static str, at: Point2, z: f64) {
+        match self.lifted.iter_mut().find(|(w, p, ..)| *w == why && *p == plane) {
+            Some(slot) => slot.2 += 1,
+            None => self.lifted.push((why, plane, 1, at, z)),
         }
     }
 
     /// One note per reason, onto the builder - in words a user reads
     /// on the status line (M11.3: what happened, why, and where).
     pub(crate) fn say(&self, b: &mut PathBuilder, what: &str) {
-        for (why, n, at, z) in &self.lifted {
+        for (why, plane, n, at, z) in &self.lifted {
             let plain = match *why {
                 NOT_PROVED => "staying down would have crossed passes on that plane or left the area proved safe",
                 TOO_LONG => "the link was longer than the maximum stay-down distance",
                 other => other,
             };
             b.note(format!(
-                "link: the tool lifted to the retract plane {n} time(s) instead of the keep-down {what} link - {plain}; it went back down at the next entry (first lift at ({:.3}, {:.3}), Z {z:.3})",
+                "link: the tool lifted to the {plane} {n} time(s) instead of the keep-down {what} link - {plain}; it went back down at the next entry (first lift at ({:.3}, {:.3}), Z {z:.3})",
                 at.x, at.y
             ));
         }

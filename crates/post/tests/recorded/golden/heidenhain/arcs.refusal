@@ -1,0 +1,2 @@
+; heidenhain.cps refused arcs: 1 warning(s), the program is never released
+warning: operation Arcs: Heidenhain helix requires polar interpolation - Cartesian G02/G03 with changing Z is not supported

@@ -93,9 +93,11 @@ fn contour_op(stepdown: f64, leave: f64) -> OpParams {
         tab_height: 1.0,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -183,8 +185,9 @@ fn direct_params(stepdown: f64, leave: f64) -> ContourParams {
         tab_height: 1.0,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
+        picks: Default::default(),
     }
 }
 
@@ -350,6 +353,7 @@ fn drill_op(bottom: Option<f64>) -> OpParams {
             stepped: false,
         }],
         cross: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -393,7 +397,7 @@ fn the_gouge_clause_speaks_the_document_s_units() {
 #[test]
 fn a_face_cut_into_the_part_is_a_gouge() {
     let face = |cut: f64| OpParams::Face { holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 4.0,
         clearance_z: Height::fixed(30.0),
@@ -403,6 +407,7 @@ fn a_face_cut_into_the_part_is_a_gouge() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     let (world, mut h) = world_with(block_with_hole(Some(10.0)), "EM-0800-4FL");
     let (_, w) = run(&world, &mut h, "F1", "EM-0800-4FL", face(20.0));

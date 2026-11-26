@@ -201,7 +201,7 @@ fn bent_corner_blends_end_cleanly_and_bounded() {
         let data = text.replace(needle, bent).into_bytes();
         let started = std::time::Instant::now();
         let r = within(Duration::from_secs(90), move || {
-            step::with_face_eval_cap(200_000, || import::parse_model(&data, Format::Step))
+            import::parse_model(&data, Format::Step)
         });
         if let Ok(m) = &r {
             assert!(m.facets.iter().all(|t| [t.a, t.b, t.c].iter().all(|p: &Point3| p.is_finite())), "{bent}");

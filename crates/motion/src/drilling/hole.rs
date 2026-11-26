@@ -47,27 +47,26 @@ impl Hole {
     }
 }
 
-/// A cross-drilled hole: the same round closed wall, standing on a
-/// RADIAL axis. Live tooling (M5.2 F2) points a drill from the +X
-/// or +Y turret position in toward the spindle axis, so the plunge
-/// runs along `dir` (the inward unit of that axis) and depth
-/// DECREASES the axis coordinate. `origin` is the MOUTH's center -
-/// the wall's highest coordinate along the axis, where the tool
-/// first meets steel - and the scalars ride `dir` from there:
-/// `entry_d = 0.0` at the mouth (kept for a future angled entry),
-/// `floor_d = -depth` at the floor. Recognition fits the circle in
-/// the plane the wall's vertices actually live in (YZ for an X
-/// hole, XZ for a Y one); the cycle plunges along `dir` with the
-/// move's tool pose stated, not down Z.
+/// A directed hole with its own mouth and inward unit plunge `dir`.
+/// Recognition reports radial X/Y holes from either side and reverse-Z
+/// holes that enter from below. `origin` is the mouth's center, at the
+/// wall end opposite the blind floor; it can be the low or high end.
+/// The travel scalars decrease into the hole: `entry_d = 0.0` at the
+/// mouth and `floor_d = -depth` at the floor. A point at scalar `d`
+/// is `origin - dir * d`.
+///
+/// The live-tooling generator accepts radial X/Y plunges with pose
+/// tags. It still refuses Z plunges. A reverse-Z recognition record
+/// preserves the actual mouth without promising an indexed cycle.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CrossHole {
     pub origin: Point3,
     pub dir: Point3,
     pub radius: f64,
-    /// Distance from `origin` along `dir` to the material's entry;
+    /// Negative travel from `origin` along `dir` to the material's entry;
     /// 0.0 for a mouth-on-the-face hole.
     pub entry_d: f64,
-    /// Distance from `origin` along `dir` to the floor: negative,
+    /// Negative travel from `origin` along `dir` to the floor:
     /// the drill's travel end. A through hole's floor is the far
     /// wall plus the exit allowance the cycle adds.
     pub floor_d: f64,
@@ -111,6 +110,12 @@ pub enum CycleChoice {
     /// Reaming (#1445): feed in, feed out ([`CycleKind::Ream`]). Never
     /// automatic - a reamer is the user's word, like Spot.
     Ream,
+    /// Fine boring (#1445, #1479): feed in, oriented spindle stop, shift
+    /// off the wall, rapid out ([`CycleKind::FineBore`]). The shift is a
+    /// required part of the choice, in micrometres along the X and Y of
+    /// the hole list - there is no default. Make it with
+    /// [`CycleChoice::fine_bore`]; never automatic.
+    FineBore { shift_x_um: i32, shift_y_um: i32 },
 }
 
 /// Which reference point on a twist drill the through-hole `break_through`

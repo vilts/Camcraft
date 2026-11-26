@@ -5,6 +5,8 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
     // before any entity touches the world. Anything newer than this build
     // remains refused. The chain must run its steps sequentially - a v1
     // file passes through v2's effects before v3's are applied.
+    // #3368: a tip-form file reads as the v78 file it is (file.rs).
+    file.version = super::tip_form_read_version(file.version);
     let from = file.version;
     if file.version == 1 {
         // v1 -> v2: entities gained `rotation`; v1 had translation-only
@@ -529,10 +531,43 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
         // keep legacy `tip` so their saved depth and cached toolpath do not drift.
         // v68 -> v69 (#1517): pre-v69 Pocket Adaptive ops migrate to 2D
         // Adaptive (Spiral); un-carriable params record `needs_review`.
+        // v69 -> v70 (#2016): absent `holder` settles to the drawn body
+        // or the holder cylinder as stated (no behaviour change).
+        // v70 -> v71 (#1862): a DXF profile row arrives; a v70 file has
+        // none, so it steps up unchanged. Stated trunnion fields, tilt bases
+        // and break-through values remain unchanged in their DTOs.
+        // v71 -> v72 (#2463): a model may record its source file; absent
+        // is not linked.
+        // v72 -> v73 (#2055): absent `do_not_touch` protection defaults to
+        // empty picks and zero clearance. v72 readers must refuse v73
+        // rather than discard protected selections as unknown area fields.
+        // v73 -> v74 (#1864): sketch chain/layer picks and per-chain contour
+        // overrides arrive; a v73 file has none and steps up unchanged.
+        // v74 -> v75 (#3181): a machine's controller identity and tool-change
+        // procedure are optional. An older machine keeps both unstated.
+        // v75 -> v76 (#1890): a Deburr width becomes the chamfer chord; the
+        // old setback steps up by sqrt(2), its chord on a 90-degree edge.
+        // v76 -> v77 (#3447): a setup may state its creation `order`;
+        // absent stays absent and sorts by name, as every v76 file posted.
+        // v77 -> v78 (#2604): absent machine `reserved_tools` reserves
+        // nothing; a v77 file steps up unchanged.
+        // v79 -> v80 (#3153): absent `minimum_cone_radius` is zero, the
+        // ideal-tip Chamfer path that every v78/v79 file already stated. A
+        // v79 reader must refuse v80 rather than drop a positive band radius.
+        // v80 -> v81 (#2772): a rotary op may state its own rotation
+        // axis (`stated_axis`); absent stays absent and follows the
+        // machine, else the fit, as every v80 file read its axis. No
+        // rung between v80 and v81 rewrites an entity, so the step-up
+        // is the stamp itself.
+        // v81 -> v82 (#2826): the Rotary Flow arm arrives; no v81
+        // file names it, so nothing seats or moves - pure step-up.
         notes = super::wcs_one::settle(&mut file, from)?;
         notes.extend(super::fidelity_migrate::settle(&mut file.entities, from));
         if from < 68 {
             super::params_impl::settle_drill_break_through(&mut file.entities);
+        }
+        if from < 76 {
+            super::deburr_break_dto::settle_chord_width(&mut file.entities);
         }
         notes.extend(super::pocket_adaptive_migrate::settle(&mut file.entities, from));
         // v59 -> v60 (#902): the document's unit is its programs' unit;
@@ -627,6 +662,8 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
         }
     }
     super::setup_links::check(&file)?;
+    // #1862: every DXF profile is read and chained before any world write.
+    let mut sketches = super::sketch_dto::read_all(&file.entities)?;
     let keys: std::collections::HashSet<&str> = file.entities.iter()
         .filter(|e| e.kind == Some(EntityKind::Operation))
         .map(|e| e.name.as_str()).collect();
@@ -691,7 +728,8 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
     crate::posting::post_set(
         world,
         &match file.post {
-            Some(PostDto::Named(name)) => crate::schema::PostRef::Named(name),
+            // #3537: a hidden alias name reads as the registry name it selects.
+            Some(PostDto::Named(name)) => crate::posting::agie::current_ref(crate::schema::PostRef::Named(name)),
             Some(PostDto::File(path)) => crate::schema::PostRef::File(path),
             None => crate::schema::PostRef::Builtin,
         },
@@ -736,14 +774,22 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                 // not the file's whole history. Staleness never reads
                 // it; the stamp's signature does the work.
                 model::set_rev(world, &entity, dto.rev);
+                // #917: ranges that do not tile the facets are dropped.
+                let len = model::facets_of(world, &entity).map_or(0, |f| f.len());
+                let solids = crate::mesh_solids::from_wire(dto.solids.as_deref(), len, &dto.name);
+                crate::mesh_solids::set(world, &entity, &solids);
                 // #864: the flag lands with the facets it describes; an
                 // absent key, or a value that is no coarse chord, is none.
-                crate::model_fidelity::set(world, &entity, crate::model_fidelity::loaded(dto.coarse_mm, dto.fidelity_unknown));
+                crate::model_fidelity::set_with_cause(world, &entity, crate::model_fidelity::loaded(dto.coarse_mm, dto.fidelity_unknown), dto.file_tolerance);
                 // #1610: validate_kind refused a hole without the mark.
                 crate::mesh_open::set(world, &entity, dto.mesh_open.as_deref());
+                // #1339: validate_kind refused a vouch beside a flag.
+                crate::model_vouch::set(world, &entity, dto.fidelity_vouched.as_ref().map(super::VouchDto::to_record));
                 // #1054: validate_kind refused a budget out of bounds.
                 crate::model_fidelity::set_budget(world, &entity, dto.facet_budget);
                 crate::step_source::set(world, &entity, dto.step_source.as_deref());
+                // #2463: validate_kind refused a malformed source.
+                crate::model_source::set(world, &entity, dto.source.as_ref().map(super::SourceDto::to_source).as_ref());
             }
             EntityKind::Stock => {
                 // validate_kind already refused these; Result, never unwrap.
@@ -769,7 +815,10 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                 // #1056: a model copy carries its source's flag itself;
                 // a parametric block is meshed here, never coarse.
                 if matches!(shape, StockShape::FromModel { .. }) {
-                    crate::model_fidelity::set(world, &entity, crate::model_fidelity::loaded(dto.coarse_mm, dto.fidelity_unknown));
+                    crate::model_fidelity::set_with_cause(world, &entity, crate::model_fidelity::loaded(dto.coarse_mm, dto.fidelity_unknown), dto.file_tolerance);
+                    // #1700: and its source's hole; validate_kind refused
+                    // a hole without the mark.
+                    crate::mesh_open::set(world, &entity, dto.mesh_open.as_deref());
                 }
                 entity.entity_view(world).set(StockDef {
                     shape: shape.clone(),
@@ -799,6 +848,12 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                 }
             }
             EntityKind::Entry => super::program_entry_dto::apply(world, &entity, dto.entry)?,
+            EntityKind::Sketch => match sketches.remove(&dto.name) {
+                Some(sketch) => {
+                    entity.entity_view(world).set(sketch);
+                }
+                None => return Err(corrupt(format!("'{}' is a DXF profile without its drawing", dto.name))),
+            },
             EntityKind::Tool => {
                 // validate_kind already refused a missing or insane one.
                 let tdto = dto
@@ -809,8 +864,9 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                     number: tdto.number,
                 });
                 // #368: validate_kind already refused a body that is no body.
-                if let Some(b) = &tdto.body {
-                    let body = b.to_body(&dto.name).map_err(corrupt)?;
+                if let Some(body) =
+                    super::tool_body_wire::stated_body(tdto.holder.as_ref(), tdto.body.as_ref(), &dto.name).map_err(corrupt)?
+                {
                     crate::tool_body::set_body(world, &entity, Some(&body));
                 }
                 // #93: validate_kind already refused a cutter that disagrees.
@@ -827,18 +883,7 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                     SrcDto::Stock => SrcRef::Stock,
                     SrcDto::Entity { name } => SrcRef::Entity(name.clone()),
                     SrcDto::Selection { items } => SrcRef::Selection(
-                        items
-                            .iter()
-                            .map(|g| GeoSel {
-                                entity: g.entity.clone(),
-                                feature: match g.feature {
-                                    FeatureSelDto::Face { id } => FeatureSel::Face(id),
-                                    FeatureSelDto::Chain { id } => FeatureSel::Chain(id),
-                                    FeatureSelDto::Patch { id } => FeatureSel::Patch(id),
-                                    FeatureSelDto::Vertex { id } => FeatureSel::Vertex(id),
-                                },
-                            })
-                            .collect(),
+                        items.iter().map(geo_sel_of).collect(),
                     ),
                 };
                 entity.entity_view(world).set(Operation {
@@ -919,6 +964,10 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                 if let Some(why) = sdto.workholding_max_rpm.and_then(crate::setup_workholding::invalid) {
                     return Err(corrupt(format!("setup '{}': {why}", dto.name)));
                 }
+                // #3070: likewise a sheet job no command would accept.
+                if let Some(why) = sdto.sheet_job.as_ref().and_then(crate::sheet_job::invalid) {
+                    return Err(corrupt(format!("setup '{}': {why}", dto.name)));
+                }
                 entity.entity_view(world).set(SetupDef {
                     stock: sdto.stock,
                     // `wcs_one` left exactly one name on every setup.
@@ -940,6 +989,9 @@ pub(super) fn check_and_apply(world: &World, mut file: ProjectFile) -> Result<Ve
                     // #821: absent in every earlier file - states none.
                     nose_to_axis: sdto.nose_to_axis,
                     workholding_max_rpm: sdto.workholding_max_rpm,
+                    sheet_job: sdto.sheet_job,
+                    // #3447: absent in every earlier file - name order.
+                    order: sdto.order,
                 });
             }
         }

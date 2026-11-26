@@ -33,6 +33,8 @@ use crate::geometry::Point3;
 use crate::machining2d::GenError;
 
 use super::ring::{dist, pt_ring};
+use crate::sheet::open::offset;
+use crate::sheet::Voice;
 use super::{laws, WireParams, WireSide, MIN_LEAD};
 
 /// How far (mm) inside the stock's edge a run's end may stand and still
@@ -101,7 +103,7 @@ pub(super) fn wire_open(loops: &[Loop], chains: &[Vec<Point2>], p: &WireParams) 
     crossing(&run, z)?;
     reaches_edge(stock, &run, z)?;
     let k = p.kerf_offset();
-    let ride = offset(&run, sign * k, z)?;
+    let ride = offset(&run, sign * k, z, Voice::WIRE)?;
     let (Some(&first), Some(&last)) = (ride.first(), ride.last()) else {
         return Err(invalid("the open run lays down no cut".into()));
     };
@@ -123,9 +125,10 @@ pub(super) fn wire_open(loops: &[Loop], chains: &[Vec<Point2>], p: &WireParams) 
         return Err(invalid("the open run lays down no cut".into()));
     }
     let wire: Vec<Point2> = std::iter::once(t0).chain(ride.iter().copied()).chain(std::iter::once(t1)).collect();
-    laws::cover_run(&run, false, &wire, false, p)?;
+    let corner_rest = laws::cover_run(&run, false, &wire, false, p)?;
     laws::kerf(&path, &run, false, k, z)?;
     path.notes.extend(notes(p, t0, t1));
+    path.notes.extend(corner_rest.map(|r| laws::sharp_note(r, k)));
     Ok(path)
 }
 
@@ -234,54 +237,6 @@ fn reaches_edge(stock: &Region, run: &[Point2], z: f64) -> Result<(), GenError> 
         return Err(invalid("the open run never enters the stock - it cuts nothing".into()));
     }
     Ok(())
-}
-
-/// The run's one-sided parallel at signed offset `s` (positive: left of
-/// travel), its joins mitred. A run that doubles back, or a turn the
-/// wire's side folds over, is refused by name.
-fn offset(run: &[Point2], s: f64, z: f64) -> Result<Vec<Point2>, GenError> {
-    let n = run.len();
-    let normal = |i: usize| {
-        let u = unit(run[i], run[i + 1]);
-        Point2::new(-u.y, u.x)
-    };
-    let mut out = Vec::with_capacity(n);
-    let n0 = normal(0);
-    out.push(Point2::new(run[0].x + s * n0.x, run[0].y + s * n0.y));
-    for (i, &q) in run.iter().enumerate().take(n - 1).skip(1) {
-        let (a, b) = (normal(i - 1), normal(i));
-        let c = 1.0 + a.x * b.x + a.y * b.y;
-        if !(c.is_finite() && c > 1e-3) {
-            return Err(at(
-                format!("the open run doubles back on itself at X{:.3} Y{:.3} - the wire cannot turn back along its own kerf", q.x, q.y),
-                q,
-                z,
-            ));
-        }
-        out.push(Point2::new(q.x + s * (a.x + b.x) / c, q.y + s * (a.y + b.y) / c));
-    }
-    let nl = normal(n - 2);
-    out.push(Point2::new(run[n - 1].x + s * nl.x, run[n - 1].y + s * nl.y));
-    // The wire's side of a turn folds over itself when the turn is
-    // tighter than the offset: the parallel then runs backwards.
-    for i in 0..n - 1 {
-        let (u, w) = (unit(run[i], run[i + 1]), (out[i + 1].x - out[i].x, out[i + 1].y - out[i].y));
-        if u.x * w.0 + u.y * w.1 <= 0.0 {
-            let q = run[i + 1];
-            return Err(at(
-                format!(
-                    "a corner of the open run near X{:.3} Y{:.3} is tighter than the wire can follow on its {} side - the minimum inside radius is the kerf offset ({:.4} mm)",
-                    q.x,
-                    q.y,
-                    if s > 0.0 { "left" } else { "right" },
-                    s.abs()
-                ),
-                q,
-                z,
-            ));
-        }
-    }
-    Ok(out)
 }
 
 /// Where the wire is threaded (or leaves): from the path's end `from`

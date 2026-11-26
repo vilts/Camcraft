@@ -70,8 +70,9 @@ fn the_sinker_section_shows_keys_orbits_conditions_and_codes_with_not_stated() {
     for (role, _) in camcraft_app::machine::SINKER_CODES {
         assert!(h.query_by_label(&format!("Code {role}")).is_some(), "the role {role} stands");
     }
-    // Absent values say so: radius, pickup, the undersize and 7 code roles.
-    assert!(h.query_all_by_label("not stated").count() >= 10);
+    assert!(h.query_by_label("Code side").is_some(), "the optional lateral burn code is editable");
+    // Absent values say so: radius, pickup, the undersize and 8 code roles.
+    assert!(h.query_all_by_label("not stated").count() >= 11);
 }
 
 #[test]

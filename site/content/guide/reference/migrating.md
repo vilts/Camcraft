@@ -11,6 +11,26 @@ nothing here asks it to. You bring a part and a tool list across in plain
 formats, and you re-create the rest. This page walks through that, tools
 first.
 
+## Upgrade to 0.26.0
+
+CamCraft 0.26.0 saves project format **78**. It opens supported older
+projects and converts them on load. Older builds, including 0.25.0, refuse a project
+saved by 0.26.0. Keep an older copy if another person still needs an older
+build. This format change includes the Deburr chord-width meaning,
+setup creation order and stored tool reservations.
+
+Generate each **part-off** operation again before posting an older
+project. The kerf now lies entirely on the bar side of the parting plane;
+an earlier cached path cannot post until it is regenerated
+([#3452](https://github.com/NeoTech/Camcraft/issues/3452)).
+
+For a **STEP** file with no length unit, the desktop app asks whether the
+model was drawn in **millimetres** or **inches**. Choose the intended
+unit; Cancel imports nothing. CamCraft no longer assumes millimetres.
+MCP and script imports must state `units` (`"mm"` or `"in"`). See
+[Units and coordinates](@/guide/reference/units-and-coordinates.md#imported-models)
+for the existing unit rules and the limits for holders and fixtures.
+
 ## Tools
 
 The route is: export your tool list from your current CAM system in a neutral
@@ -212,7 +232,8 @@ model page before importing, or pass it from a script,
 
 Pick the built-in machine and post closest to your machine in **Setup**; see
 [Setups](@/guide/set-up/setups.md) and [Posting](@/guide/check-and-post/posting.md). CamCraft ships
-machine files (`.mch`) for generic mills, a lathe and a mill-turn, and for
+machine files (`.mch`) for generic mills, a lathe and a mill-turn (a lathe with
+live tooling), and for
 several Tormach and other machines, and posts (`.cps` scripts) for Fanuc, Haas,
 Siemens 840D, Heidenhain, Mazak, Tormach PathPilot, Makera Carvera and Fanuc
 Lathe. For a machine that has none, the contributor guide

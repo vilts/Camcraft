@@ -187,7 +187,7 @@ fn patch(world: &World, entity: &str) -> GeoSel {
 }
 
 fn seed(world: &World, sel: &GeoSel) -> ProbeSeed {
-    operation::probe_seed(world, sel).expect("a seed")
+    operation::probe_seed(world, None, sel).expect("a seed")
 }
 
 fn near(a: [f64; 3], b: [f64; 3], tol: f64) -> bool {
@@ -250,7 +250,7 @@ fn a_round_wall_or_rim_seeds_a_bore_or_boss_centre() {
 #[test]
 fn picks_the_probe_cannot_touch_are_refused_by_name() {
     let (world, _) = world_with("part", box_mesh(0.0));
-    let why = |sel: GeoSel| operation::probe_seed(&world, &sel).expect_err("refused");
+    let why = |sel: GeoSel| operation::probe_seed(&world, None, &sel).expect_err("refused");
     let w = why(face(&world, "part", |v| v[2] == 0.0));
     assert!(w.contains("looks down"), "{w}");
     let w = why(chain(&world, "part", |v| v[0] == 0.0 && v[1] == 0.0));
@@ -260,11 +260,11 @@ fn picks_the_probe_cannot_touch_are_refused_by_name() {
 
     let (world, _) = world_with("ramp", box_mesh(5.0));
     let slope = face(&world, "ramp", |v| (v[2] - (10.0 - v[0] / 8.0)).abs() < 1e-9);
-    let w = operation::probe_seed(&world, &slope).expect_err("a sloped face");
+    let w = operation::probe_seed(&world, None, &slope).expect_err("a sloped face");
     assert!(w.contains("off X, Y and Z"), "{w}");
-    let w = operation::probe_seed(&world, &vertex(&world, "ramp", [0.0, 0.0, 10.0])).expect_err("a sloped corner");
+    let w = operation::probe_seed(&world, None, &vertex(&world, "ramp", [0.0, 0.0, 10.0])).expect_err("a sloped corner");
     assert!(w.contains("off the axes"), "{w}");
-    let w = operation::probe_seed(&world, &chain(&world, "ramp", |v| v[1] == 0.0 && v[2] > 0.0)).expect_err("a sloped edge");
+    let w = operation::probe_seed(&world, None, &chain(&world, "ramp", |v| v[1] == 0.0 && v[2] > 0.0)).expect_err("a sloped edge");
     assert!(w.contains("not level"), "{w}");
 }
 
@@ -316,7 +316,7 @@ fn a_probe_created_from_a_pick_generates_clean() {
     ] {
         let (world, mut h) = world_with(name, mesh);
         let sel = sel_of(&world);
-        let params = operation::probe_from_picks(&world, &probe_params(), std::slice::from_ref(&sel))
+        let params = operation::probe_from_picks(&world, None, &probe_params(), std::slice::from_ref(&sel))
             .expect("a probe")
             .expect("seeded");
         let src = SrcRef::Selection(vec![sel]);
@@ -336,8 +336,8 @@ fn other_kinds_are_not_seeded() {
     let (world, _) = world_with("part", box_mesh(0.0));
     let face_params = operation::retype_params(&probe_params(), OpType::Face as usize);
     let top = face(&world, "part", |v| v[2] == 10.0);
-    assert!(operation::probe_from_picks(&world, &face_params, std::slice::from_ref(&top)).is_none());
-    assert!(operation::probe_account(&world, &[top], &face_params).is_none());
+    assert!(operation::probe_from_picks(&world, None, &face_params, std::slice::from_ref(&top)).is_none());
+    assert!(operation::probe_account(&world, None, &[top], &face_params).is_none());
 }
 
 /// An L-shaped block, Z 0..10: the notch's corner at (10, 10) is inside.
@@ -364,7 +364,7 @@ fn l_block() -> Mesh {
 #[test]
 fn an_inside_corner_is_refused_and_an_outside_one_on_the_l_seeds() {
     let (world, _) = world_with("l", l_block());
-    let w = operation::probe_seed(&world, &vertex(&world, "l", [10.0, 10.0, 10.0])).expect_err("inside");
+    let w = operation::probe_seed(&world, None, &vertex(&world, "l", [10.0, 10.0, 10.0])).expect_err("inside");
     assert!(w.contains("inside corner"), "{w}");
     let s = seed(&world, &vertex(&world, "l", [40.0, 0.0, 10.0]));
     assert_eq!((s.mode, s.dir, s.dir_y), (ProbeMode::Corner, ProbeDir::XNeg, ProbeDir::YPos));

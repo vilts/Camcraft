@@ -1,14 +1,15 @@
 //! The Wire Contour's 4-axis cut (#537, part of #290): the selection
-//! read as two profiles at two heights - each pick a face (its one
-//! outer ring) or an edge chain lying flat on a horizontal plane - the
-//! higher one the upper profile, the lower one the lower; and
-//! `wire_edm::wire_contour_ruled` run over them with the op's stated
+//! read as two profiles at two heights - each a face (its one ring, or
+//! on the die side its one opening), an edge chain, or the open runs of
+//! one plane stitched into one ring (#3209), lying flat on a horizontal
+//! plane - the higher one the upper profile, the lower one the lower;
+//! and `wire_edm::wire_contour_ruled` run over them with the op's stated
 //! pairing rule.
 //!
 //! Nothing is inferred: the profiles' heights must be the op's top and
-//! bottom planes, a pick that is not flat, a face with holes, a third
-//! profile or two at one height are refused by name. A profile stitched
-//! from several open runs is not read here - pick a face or one chain.
+//! bottom planes, a pick that is not flat, a face whose ring is not one,
+//! runs that do not close into one ring, a third profile or two at one
+//! height are refused by name.
 //!
 //! Provenance: our own glue over the motion crate's ruled generator
 //! (whose modules cite the public sources) and the feature picks; the
@@ -25,7 +26,7 @@ use crate::geometry::{transform_point, Point3};
 use crate::machining2d::GenError;
 use crate::model;
 use crate::schema::Operation;
-use crate::wire_edm::{wire_contour_ruled, WirePairing, WireParams, WireProfile, WireRuled, WireSync};
+use crate::wire_edm::{wire_contour_ruled, WirePairing, WireParams, WireProfile, WireRuled, WireSide, WireSync};
 
 use super::types::{FeatureSel, GeoSel, OpParams, WireContourOp, WireFourAxis, WirePairingRule};
 use super::wire_op::WireCondition;
@@ -57,11 +58,11 @@ fn invalid(why: String) -> GenError {
 /// The op's two profiles, read from the world: `None` for any op that
 /// is not a 4-axis wire cut.
 pub(super) fn picks_of(world: &World, op: &Operation) -> Option<Result<RuledPicks, GenError>> {
-    let OpParams::WireContour(WireContourOp { four_axis: Some(_), .. }) = &op.params else {
+    let OpParams::WireContour(WireContourOp { four_axis: Some(_), side, .. }) = &op.params else {
         return None;
     };
     Some(match &op.src {
-        SrcRef::Selection(items) => read(world, op.setup.as_deref(), items),
+        SrcRef::Selection(items) => read(world, op.setup.as_deref(), *side, items),
         _ => Err(invalid(
             "a 4-axis cut pairs two picked profiles - pick the upper profile on the top plane and the lower profile on the bottom plane (a face or a closed edge chain each)".into(),
         )),
@@ -69,7 +70,7 @@ pub(super) fn picks_of(world: &World, op: &Operation) -> Option<Result<RuledPick
 }
 
 /// One pick as a flat profile.
-fn profile(world: &World, setup: Option<&str>, g: &GeoSel) -> Result<Picked, GenError> {
+fn profile(world: &World, setup: Option<&str>, side: WireSide, g: &GeoSel) -> Result<Picked, GenError> {
     let label = crate::pick::geo_label(world, g);
     let Some(entity) = model::find_by_name(world, &g.entity) else {
         return Err(GenError::Invalid(format!("the selection names '{}', which is gone", g.entity)));
@@ -84,11 +85,19 @@ fn profile(world: &World, setup: Option<&str>, g: &GeoSel) -> Result<Picked, Gen
         FeatureSel::Face(fid) => {
             let f = features.faces.iter().find(|f| f.id == fid).ok_or_else(gone)?;
             let rings: Vec<_> = f.loops.iter().filter(|l| !matches!(l.kind, LoopKind::Open)).collect();
-            let [ring] = rings.as_slice() else {
-                return Err(invalid(format!(
-                    "{label} has {} closed rings - a profile is one ring; pick the edge chain of the ring to cut",
-                    rings.len()
-                )));
+            let holes: Vec<_> = rings.iter().copied().filter(|l| matches!(l.kind, LoopKind::Hole)).collect();
+            // #3209: a die's face carries the block's outer ring and the
+            // opening; the die side cuts the opening. Any other count
+            // names no one ring, and is refused.
+            let ring = match (rings.as_slice(), holes.as_slice(), side) {
+                ([one], _, _) | (_, [one], WireSide::Die) => *one,
+                _ => {
+                    return Err(invalid(format!(
+                        "{label} has {} closed rings ({} openings) - a profile is one ring: a die face reads its one opening; pick the edge chains of the ring to cut (the chains of one ring are stitched)",
+                        rings.len(),
+                        holes.len()
+                    )));
+                }
             };
             (ring.verts.iter().filter_map(|&vi| features.verts.get(vi as usize)).map(place).collect(), true)
         }
@@ -97,7 +106,9 @@ fn profile(world: &World, setup: Option<&str>, g: &GeoSel) -> Result<Picked, Gen
             (feature::chain_points(&features, &c).iter().map(place).collect(), c.closed)
         }
         _ => {
-            return Err(invalid(format!("{label} is not a profile - a 4-axis cut pairs two faces or edge chains")));
+            return Err(invalid(format!(
+                "{label} is not a profile - a 4-axis cut pairs two flat profiles; pick the top and bottom faces, or the edge chains of each outline"
+            )));
         }
     };
     let (lo, hi) = pts.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(a, b), p| (a.min(p.z), b.max(p.z)));
@@ -118,16 +129,42 @@ fn profile(world: &World, setup: Option<&str>, g: &GeoSel) -> Result<Picked, Gen
     })
 }
 
-fn read(world: &World, setup: Option<&str>, items: &[GeoSel]) -> Result<RuledPicks, GenError> {
-    let mut found = items.iter().map(|g| profile(world, setup, g)).collect::<Result<Vec<_>, _>>()?;
-    for pick in found.iter().filter(|p| !p.chains.is_empty()) {
-        let runs = found.iter().filter(|p| !p.chains.is_empty() && (p.z - pick.z).abs() <= FLAT).count();
-        if runs > 1 {
-            return Err(invalid(format!(
-                "a profile stitched from {runs} open runs at Z{:.3} is not supported - pick one face or closed edge chain on that plane",
-                pick.z
-            )));
-        }
+/// The open runs picked on one plane (`here`, by item index) as the one
+/// ring they spell (#3209), by the same stitcher the 2-axis cuts use.
+/// One run alone stays open: the generator refuses an open profile by
+/// name. Runs that do not close, or close into several rings, are
+/// refused here.
+fn plane_ring(world: &World, setup: Option<&str>, items: &[GeoSel], here: Vec<(usize, Picked)>, z: f64) -> Result<Picked, GenError> {
+    if let [(_, one)] = here.as_slice() {
+        return Ok(one.clone());
+    }
+    let subset: Vec<GeoSel> = here.iter().filter_map(|(i, _)| items.get(*i).cloned()).collect();
+    let n = subset.len();
+    let (rings, consumed) = super::stitch_open_runs(world, setup, &subset, None)?;
+    match rings.as_slice() {
+        [(_, ring, _)] if consumed.len() == n => Ok(Picked {
+            z,
+            loops: vec![Loop::new(ring.clone()).map_err(|e| invalid(format!("the ring stitched at Z{z:.3} is not usable: {e}")))?],
+            chains: Vec::new(),
+        }),
+        [] | [_] => Err(invalid(format!(
+            "the {n} open runs at Z{z:.3} do not close into one ring - pick every edge of the outline on that plane, or one face or closed edge chain"
+        ))),
+        many => Err(invalid(format!(
+            "the {n} open runs at Z{z:.3} close into {} rings - a 4-axis profile is one ring on each plane; pick the runs of one outline",
+            many.len()
+        ))),
+    }
+}
+
+fn read(world: &World, setup: Option<&str>, side: WireSide, items: &[GeoSel]) -> Result<RuledPicks, GenError> {
+    let picked = items.iter().map(|g| profile(world, setup, side, g)).collect::<Result<Vec<_>, _>>()?;
+    let (mut open, closed): (Vec<_>, Vec<_>) = picked.into_iter().enumerate().partition(|(_, p)| !p.chains.is_empty());
+    let mut found: Vec<Picked> = closed.into_iter().map(|(_, p)| p).collect();
+    while let Some(z) = open.first().map(|(_, p)| p.z) {
+        let (here, rest) = open.into_iter().partition(|(_, p)| (p.z - z).abs() <= FLAT);
+        open = rest;
+        found.push(plane_ring(world, setup, items, here, z)?);
     }
     if found.len() != 2 {
         return Err(invalid(format!(
@@ -206,6 +243,7 @@ pub(super) fn generate(
         top_z: top,
         pairing,
         tolerance: four.tolerance,
+        heal_tolerance: 0.0,
         widening: four.widening,
         max_deg: cond.max_taper_deg,
         machine: cond.machine.clone(),

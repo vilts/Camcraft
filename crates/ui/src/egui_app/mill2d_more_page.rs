@@ -8,6 +8,8 @@
 //! kind's own module names its sources); no vendor material or text.
 
 use super::fields::*;
+use super::pass_start_row::{SLOT_NO_PASS_ORDER, no_pass_order_row};
+use camcraft_app::finishing3d::UnreachableEdges;
 
 pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut Cx<'_>) {
     let (u, tab, op_ctx) = (cx.u, cx.tab, cx.op_ctx);
@@ -31,13 +33,15 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             plunge_feed,
             climb,
             entry,
-            helix_radius,
+            helix_radius, blend_turns, blend_radius,
             tilt,
             extend_start,
-            extend_end,
+            extend_end, picks,
         } => {
             if tab == SEC_LEADS {
                 lead_page::leads_tab(ui, u, "s", Some((entry, helix_radius)), links);
+                // #3325: the slot end where the pass starts, and where it stops.
+                super::start_exit_rows::end_groups(ui, u, picks);
             }
             if tab == SEC_GEO {
                 // #1504: picks seed the slot and bound it - echoed here,
@@ -77,6 +81,10 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             if tab == SEC_PASSES {
                 prop_row(ui, "Stock to leave", |ui| num(ui, u, stock_to_leave));
                 prop_row(ui, "Stepover", |ui| num(ui, u, stepover));
+                no_pass_order_row(ui, "slot", SLOT_NO_PASS_ORDER);
+                // #1759: the row-end corners on one arc each, inside
+                // the slot; the status line states the corner rest.
+                super::kind_editors::arc_turn_rows(ui, u, "Arc turns at row ends", blend_turns, blend_radius);
             }
             if tab == SEC_FEEDS {
                 prop_row(ui, "Feed", |ui| num_feed(ui, u, feed));
@@ -96,7 +104,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             feed,
             plunge_feed,
             climb,
-            tilt,
+            tilt, picks: _,
         }
         | OpParams::Engrave {
             clearance_z,
@@ -107,7 +115,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             feed,
             plunge_feed,
             climb,
-            tilt,
+            tilt, picks: _,
         } => {
             let tg = if engrave { "engrave" } else { "trace" };
             if tab == SEC_HEIGHTS {
@@ -144,11 +152,12 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
         // chains, the two authored numbers state the cone's line, and
         // the floor is DERIVED from them - so there is no bottom_z or
         // stepdown to edit (Passes is out by has_section) and the pane
-        // reads the corner Z back so the derived number is visible,
+        // reads the virtual cone-tip Z back so the derived number is visible,
         // never merely implied.
         OpParams::Chamfer2D {
             width,
             angle_deg,
+            minimum_cone_radius,
             clearance_z,
             retract_z,
             top_z,
@@ -157,12 +166,14 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             climb,
             side,
             tolerance,
-            tilt,
+            tilt, picks: _,
         } => {
             if tab == SEC_GEO {
                 prop_row(ui, "Chamfer width", |ui| num(ui, u, width));
                 prop_row(ui, "Chamfer angle", |ui| num_unit(ui, angle_deg, "°"));
                 hint(ui, "the face's slope off the top plane; the depth follows as width x tan(angle) - authored here, never second-guessed by a depth field");
+                prop_row(ui, "Tip offset", |ui| num(ui, u, minimum_cone_radius));
+                hint(ui, "moves the tool away from the selected edge and lowers it to keep the requested chamfer width; the cone uses the band from this radius to this radius plus the chamfer width; 0 makes the virtual tip follow the edge");
                 let mut s_idx = match side {
                     Side::Auto => 0,
                     Side::Inside => 1,
@@ -190,7 +201,13 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                     "chamfer.clearance",
                 );
                 height_editor(ui, "Top Z", world, op_ctx.as_deref(), top_z, "chamfer.top");
-                corner_note(ui, world, op_ctx.as_deref(), top_z, *width * angle_deg.to_radians().tan());
+                corner_note(
+                    ui,
+                    world,
+                    op_ctx.as_deref(),
+                    top_z,
+                    (*minimum_cone_radius + *width) * angle_deg.to_radians().tan(),
+                );
                 group(ui, LEVELS, None, |ui| {
                     retract_hop(ui, world, op_ctx.as_deref(), retract_z, top_z, clearance_z, "chamfer.retract");
                 });
@@ -214,10 +231,35 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             bottom_z,
             feed,
             plunge_feed,
+            exclude_edges,
+            min_edge_angle_deg,
+            exclude_holes,
+            hole_min_diameter,
+            hole_max_diameter,
+            unreachable,
+            sizing, picks: _,
         } => {
             if tab == SEC_GEO {
-                prop_row(ui, "Break width", |ui| num(ui, u, width));
-                hint(ui, "measured in the edge's own plane; the tip stands width / tan(half-angle) below it - the cone is the tool's, so its angle authors the depth, never a field here");
+                // #1890: the break mode, its width or depth, the profile
+                // and the passes.
+                super::deburr_page::sizing(ui, u, width, sizing);
+                // #1888: which exposed edges the ride keeps.
+                super::deburr_page::filters(
+                    ui,
+                    world,
+                    u,
+                    cx.picks,
+                    exclude_edges,
+                    min_edge_angle_deg,
+                    exclude_holes,
+                    hole_min_diameter,
+                    hole_max_diameter,
+                );
+                // #1889: what an edge out of the cone's reach does.
+                let mut i = usize::from(*unreachable == UnreachableEdges::Refuse);
+                prop_row(ui, "Unreachable edges", |ui| combo(ui, "deburr.unreachable", &mut i, &["Skip with note", "Refuse"]));
+                *unreachable = if i == 1 { UnreachableEdges::Refuse } else { UnreachableEdges::SkipWithNote };
+                hint(ui, "an edge steeper than the cone's flank is out of reach: Skip with note leaves it and breaks the others, Refuse stops the operation");
             }
             if tab == SEC_HEIGHTS {
                 height_editor(
@@ -254,6 +296,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             center,
             radius,
             vault,
+            pass_start,
             stepover,
             stock_to_leave,
             clearance_z,
@@ -266,7 +309,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             climb,
             entry,
             helix_radius,
-            tilt,
+            tilt, picks: _,
         } => {
             if tab == SEC_LEADS {
                 lead_page::leads_tab(ui, u, "circ", Some((entry, helix_radius)), links);
@@ -306,6 +349,8 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                 });
             }
             if tab == SEC_PASSES {
+                super::pass_start_row::pass_start_row(ui, "circ", pass_start);
+                hint(ui, "Inside starts at the innermost ring. Auto and Outside start at the outermost ring. The first ring can cut the full tool width in solid stock.");
                 prop_row(ui, "Stock to leave", |ui| num(ui, u, stock_to_leave));
                 prop_row(ui, "Stepover", |ui| num(ui, u, stepover));
             }

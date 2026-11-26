@@ -5,17 +5,21 @@
 use crate::cl::{PathBuilder, Toolpath};
 use crate::entry::Entry3D;
 use crate::load::{load_in_door, load_step};
-use crate::geo2d::{Point2, Region};
+use crate::geo2d::Region;
 use crate::geometry::Point3;
 use crate::links::Links;
 
+use super::corner_relief::{CornerRelief, ResolvedRelief, plan_corner_reliefs};
 use super::face::GenError;
 use super::arcs::ARC_FIT_TOL;
 use super::fillet_tally::corner_arc_radius;
-use super::waterscan::waterline_passes;
+use super::level_rings::ring_plan;
+use super::pass_start::{PassStart, StartSide};
 use super::pocket_emit::{PocketWalks, emit_pocket_passes};
-use super::pocket_hsm::adaptive_passes;
-use super::pocket_zigzag::{rest_passes, zigzag_passes};
+use super::pocket_hsm_start::adaptive_passes_from;
+use super::pocket_zigzag::rest_passes;
+pub(crate) use super::pocket_plan::plan_passes;
+pub(super) use super::pocket_plan::non_sliver_center;
 use super::predrilled::PreHole;
 pub use super::pocket_strategy::PocketStrategy;
 
@@ -82,7 +86,7 @@ pub struct PocketParams {
 }
 
 impl PocketParams {
-    pub(super) fn validate(&self) -> Result<(), GenError> {
+    pub fn validate(&self) -> Result<(), GenError> {
         let mut finite = [
             self.tool_diameter,
             self.stock_to_leave,
@@ -210,47 +214,56 @@ pub fn pocket(region: &Region, p: &PocketParams) -> Result<Toolpath, GenError> {
 /// [`pocket`] with the holes the caller proved open (#1449): read only
 /// when `p.links.approach.predrilled` asks (`predrilled.rs`).
 pub fn pocket_entered(region: &Region, p: &PocketParams, holes: &[PreHole]) -> Result<Toolpath, GenError> {
+    pocket_entered_with_relief(region, p, holes, &CornerRelief::default())
+}
+
+/// [`pocket_entered`] with optional inside-corner reliefs (#2400) for closed
+/// 2D pocket and square-ended slot boundaries.
+pub fn pocket_entered_with_relief(
+    region: &Region,
+    p: &PocketParams,
+    holes: &[PreHole],
+    relief: &CornerRelief,
+) -> Result<Toolpath, GenError> {
+    pocket_started(region, p, holes, relief, PassStart::Auto)
+}
+
+/// [`pocket_entered_with_relief`] with the side each level starts on
+/// (#3316); [`PassStart::Auto`] is that function, byte for byte.
+pub fn pocket_started(
+    region: &Region,
+    p: &PocketParams,
+    holes: &[PreHole],
+    relief: &CornerRelief,
+    start: PassStart,
+) -> Result<Toolpath, GenError> {
+    pocket_started_on(region, p, holes, relief, &StartSide::from(start))
+}
+
+/// [`pocket_started`] with the stock known: Inside and Outside walk the
+/// level curves of one side (`level_rings`), each full-width cut named.
+/// The Adaptive plan reads `side.stock` and `side.start` through
+/// `pocket_hsm_start::adaptive_passes_from` (#3355).
+pub fn pocket_started_on(
+    region: &Region,
+    p: &PocketParams,
+    holes: &[PreHole],
+    relief: &CornerRelief,
+    side: &StartSide,
+) -> Result<Toolpath, GenError> {
     p.validate()?;
+    relief.validate()?;
     if region.is_empty() {
         return Err(GenError::Empty("empty pocket region".into()));
     }
-    let center = non_sliver_center(region, p.tool_diameter * 0.5 + p.stock_to_leave)?;
+    let off = p.tool_diameter * 0.5 + p.stock_to_leave;
+    let center = non_sliver_center(region, off)?;
     if center.is_empty() {
         // Material exists that no legal tool position can reach.
         return Err(GenError::Invalid("pocket is narrower than the tool".into()));
     }
-    pocket_over(region, &center, p, Vec::new(), false, holes)
-}
-
-/// Erode `region` by `erode` and drop sub-tolerance Clipper arc-chord
-/// slivers (`<= 0.01 mm^2` area and `<= 0.008 mm` half-width) that hold
-/// no cuttable pass and would spin on empty bores (#2232).
-pub(super) fn non_sliver_center(region: &Region, erode: f64) -> Result<Region, GenError> {
-    let center = region.offset(-erode)?;
-    if center.is_empty() {
-        return Ok(center);
-    }
-    let outers = center.loops().iter().filter(|l| l.is_ccw()).count();
-    if outers <= 1 && center.area().abs() > 1e-2 {
-        return Ok(center);
-    }
-    let clean = Region::from_slices(center.loops().to_vec())?;
-    let mut kept = Vec::new();
-    let mut dropped = false;
-    for c in super::pocket_hsm::components(&clean)? {
-        if c.area().abs() > 1e-2 || crate::entry::dive_room(&c, 0.008).is_some() {
-            kept.extend(c.loops().iter().cloned());
-        } else {
-            dropped = true;
-        }
-    }
-    // Nothing dropped: keep the eroded area exactly as offset gave it. The
-    // rebuild through `from_slices` re-starts each loop at another vertex,
-    // which moved a multi-piece pocket's pass starts (#2426).
-    if !dropped {
-        return Ok(center);
-    }
-    Ok(Region::from_slices(kept)?)
+    let plan = plan_corner_reliefs(region, &center, off, relief)?;
+    pocket_over_with_relief(region, &center, p, Vec::new(), false, holes, &plan.reliefs, side)
 }
 
 /// The pocket passes over a given cutter-center area: [`pocket`]'s body
@@ -262,13 +275,16 @@ pub(super) fn non_sliver_center(region: &Region, erode: f64) -> Result<Region, G
 /// posted path (`arc_cross`): rest areas have thin horns where two
 /// fitted arcs can cross within tolerance. `holes` are the proved
 /// pre-drilled entries (#1449; rest machining passes none).
-pub(super) fn pocket_over(
+#[allow(clippy::too_many_arguments)] // the body of every planar pocket: area, plan inputs and the #3316 pass start, with its #3355 stock outline, threaded once
+pub(super) fn pocket_over_with_relief(
     region: &Region,
     center: &Region,
     p: &PocketParams,
     notes: Vec<String>,
     hold_crossings: bool,
     holes: &[PreHole],
+    corner_reliefs: &[ResolvedRelief],
+    side: &StartSide,
 ) -> Result<Toolpath, GenError> {
     // Auto commits to a shape here, from the region's own outline - the
     // outermost loop (largest area; holes and islands never decide the
@@ -288,17 +304,52 @@ pub(super) fn pocket_over(
     };
     let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
     notes.into_iter().for_each(|n| b.note(n));
+    // #3744: Auto round a part picks Inside or Outside of the one ring
+    // set here, so the rings, the links and the entry read one side.
+    let asked = side.start;
+    let side = &super::ring_side::resolve(center, strategy, p.tool_diameter * 0.5, side)?;
     // The HSM plan may choose where its entry stands (`pocket_hsm`).
     let (mut passes, strategy, room, joins) = match strategy {
         PocketStrategy::Adaptive => {
-            let (passes, notes, s, room, joins) = adaptive_passes(center, p, "this pocket", true, None)?;
+            let (passes, notes, s, room, joins) = adaptive_passes_from(region, center, p, "this pocket", side)?;
             notes.into_iter().for_each(|n| b.note(n));
             (passes, s, room, joins)
         }
-        s => (plan_passes(center, p.tiling_step(), p.climb, s)?, s, None, Vec::new()),
+        s => {
+            let (passes, notes) = ring_plan(region, center, p, s, side)?;
+            notes.into_iter().for_each(|n| b.note(n));
+            (passes, s, None, Vec::new())
+        }
     };
-    if hold_crossings && strategy == PocketStrategy::Zigzag {
+    // #3021: rows alone leave a cusp between row ends on every wall and
+    // island; each Zigzag pocket closes with the area's boundary rings.
+    // A blended row turn can cross a ring, so the blends obey the
+    // crossing law as the rest pocket's do.
+    let zigzag = strategy == PocketStrategy::Zigzag;
+    if zigzag {
         passes = rest_passes(center, p.tiling_step(), p.climb)?;
+        // #3354: rows have no inside or outside; say so by name.
+        if side.start != PassStart::Auto {
+            b.note(super::pass_start::PASS_START_ZIGZAG_NOTE.to_owned());
+        }
+    }
+    let hold_crossings = hold_crossings || zigzag;
+    // #3746: a start-side ring plan round a part enters from the air
+    // outside the stock box.
+    let air = super::air_entry::AirRoom::for_side(side, strategy, center, p.tool_diameter * 0.5, p.links.approach.approach_distance);
+    // #3884: a selected Arc on an Outside ring pass with no air room is
+    // refused by name (no automatic ramp or helix).
+    // An Adaptive op on its ring fallback too (#3884 review).
+    let rings = matches!(strategy, PocketStrategy::Waterline | PocketStrategy::OffsetRings);
+    super::entry_warn::refuse_outside_arc(asked, p.entry, rings, air.is_some())?;
+    // #3748: the user's Inside or Outside with a lead-in other than Arc:
+    // used as selected, named. #3884: the air room is not the gate.
+    // Not for an Adaptive op on its ring fallback: its page has no advice.
+    if rings
+        && p.strategy != PocketStrategy::Adaptive
+        && let Some(n) = super::pass_start::entry_advice_note(asked, p.entry)
+    {
+        b.note_once(&n);
     }
     emit_pocket_passes(
         b,
@@ -312,60 +363,13 @@ pub(super) fn pocket_over(
             joins,
             hold_crossings,
             holes,
+            corner_reliefs,
+            cleared_links: side.start != PassStart::Auto,
+            ring_links: match side.start {
+                PassStart::Auto => None,
+                _ => super::ring_links::for_side(side, strategy, p.tool_diameter * 0.5, None)?,
+            },
+            air,
         },
     )
-}
-
-/// Concentric rings marching inward: ring k is the cutter-center area
-/// eroded by `k * stepover`, travelled closed. Offsets are taken from
-/// `center` at absolute distances (never buffer-of-buffer), so micron
-/// quantization cannot compound across rings.
-/// The cutter-center passes for one planar area: the shape law both the
-/// 2-D pocket and the 3-D pocket's per-level plan share (the strategies
-/// band/erode `center` identically; only the numbers come from the
-/// operation's params either way).
-pub(crate) fn plan_passes(
-    center: &Region,
-    stepover: f64,
-    climb: bool,
-    strategy: PocketStrategy,
-) -> Result<Vec<Vec<Point2>>, GenError> {
-    match strategy {
-        PocketStrategy::Zigzag | PocketStrategy::Auto => zigzag_passes(center, stepover, climb),
-        // Offset rings are ring tiling at the caller's step; the HSM
-        // plan is `pocket_hsm.rs`'s (the planar pocket's own, and the
-        // 3-D ladder's per level through `machining3d::hsm`), which
-        // hands a refused area back here as rings.
-        PocketStrategy::Waterline | PocketStrategy::Adaptive | PocketStrategy::OffsetRings => {
-            waterline_passes(center, stepover, climb)
-        }
-    }
-}
-
-#[cfg(test)]
-mod non_sliver_tests {
-    use super::non_sliver_center;
-    use crate::geo2d::{Loop, Point2, Region};
-
-    fn rect(x0: f64, y0: f64, x1: f64, y1: f64) -> Loop {
-        let pts = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)];
-        let Ok(l) = Loop::new(pts.iter().map(|&(x, y)| Point2::new(x, y)).collect()) else {
-            panic!("fixture loop")
-        };
-        l
-    }
-
-    /// #2426: a two-piece area with no sliver comes back exactly as the
-    /// offset gave it - same loops, same start vertices - so the pass
-    /// starts of a multi-piece pocket do not move.
-    #[test]
-    fn a_multi_piece_center_without_slivers_is_the_plain_offset() {
-        let Ok(reg) = Region::new(vec![rect(0.0, 0.0, 30.0, 30.0), rect(50.0, 0.0, 61.0, 11.0)]) else {
-            panic!("fixture region")
-        };
-        let Ok(plain) = reg.offset(-5.0) else { panic!("offset") };
-        let Ok(kept) = non_sliver_center(&reg, 5.0) else { panic!("non_sliver_center") };
-        assert_eq!(plain.loops().iter().filter(|l| l.is_ccw()).count(), 2, "fixture must have two pieces");
-        assert_eq!(kept, plain);
-    }
 }

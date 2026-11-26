@@ -178,3 +178,38 @@ fn the_face_wall_law_refuses_a_thin_wall_across_the_slot() {
     let e = refused(&SlotBound::from_face(reg).expect("bound"), p(15.0, 0.0), p(15.0, 20.0), 6.0);
     assert!(e.contains("runs 3.000 mm outside the picked face"), "{e}");
 }
+
+/// #1868: a picked centerline gives the two ends and no width; a slot
+/// with other ends is refused, at any width, in either end order.
+#[test]
+fn a_centerline_room_holds_its_two_ends_and_refuses_other_ends() {
+    let b = SlotBound::from_centerline(&[p(20.0, 10.0), p(60.0, 10.005), p(100.0, 10.0)]).expect("straight within 0.01");
+    let (a, c) = b.centerline().expect("a centerline room");
+    assert!((a.x - 20.0).abs() < 1e-9 && (c.x - 100.0).abs() < 1e-9, "{a:?} {c:?}");
+    b.confine(a, c, 4.0).expect("the chain's ends fit");
+    b.judge(c, a, 30.0).expect("either order, any width");
+    let e = refused(&b, p(20.0, 10.0), p(100.0, 10.02), 4.0);
+    assert!(e.contains("are not the ends of the picked centerline"), "{e}");
+    let e = b.fit().expect_err("no width").to_string();
+    assert!(e.contains("not its width"), "{e}");
+    assert!(edges().centerline().is_none() && face().centerline().is_none(), "the other rooms are no centerline");
+    // A turned room keeps its ends on the turned chain.
+    let t = b.rotated_xy(p(0.0, 0.0), std::f64::consts::FRAC_PI_2).expect("turned");
+    t.confine(p(-10.0, 20.0), p(-10.0, 100.0), 4.0).expect("the turned ends fit");
+}
+
+/// #1868: a chain that is not one straight run is no centerline.
+#[test]
+fn a_bent_short_or_doubled_centerline_is_refused_by_name() {
+    let why = |pts: &[Point2]| SlotBound::from_centerline(pts).expect_err("refused").to_string();
+    let e = why(&[p(0.0, 0.0), p(5.0, 0.02), p(10.0, 0.0)]);
+    assert!(e.contains("is not straight (it bows 0.020 mm off its chord)"), "{e}");
+    let e = why(&[p(0.0, 0.0), p(30.0, 0.0), p(10.0, 0.0)]);
+    assert!(e.contains("turns back on itself"), "{e}");
+    let e = why(&[p(0.0, 0.0), p(0.005, 0.0)]);
+    assert!(e.contains("has no length in XY"), "{e}");
+    let e = why(&[p(0.0, 0.0)]);
+    assert!(e.contains("needs two points"), "{e}");
+    let e = why(&[p(0.0, 0.0), p(f64::NAN, 1.0)]);
+    assert!(e.contains("needs two points"), "{e}");
+}

@@ -70,6 +70,7 @@ fn drill_ahead(world: &flecs_ecs::prelude::World, h: &mut History, radius: f64) 
         plunge_feed: 80.0,
         holes: vec![hole],
         cross: Vec::new(),
+        picks: Default::default(),
     };
     h.execute(world, CreateOperation::new(world, "TAP", "TAP-DRILL", SrcRef::Entity("part".into()), params).expect("create drill"));
     h.execute(world, GenerateOperation::new(world, "TAP").expect("generate drill"));
@@ -152,8 +153,10 @@ fn verdict(model_hole: &[P2], kind: Kind, radius: f64) -> Vec<Warning> {
             hand: camcraft_app::cl::ThreadHand::Right,
             external: false,
             passes: camcraft_app::machining2d::ThreadPasses::default(),
+            picks: Default::default(),
         },
         Kind::Bore => OpParams::Bore {
+            pass_start: camcraft_app::machining2d::PassStart::Auto,
             break_through: None,
             links: camcraft_app::links::Links::PLANAR,
             clearance_z: Height::fixed(25.0),
@@ -167,6 +170,7 @@ fn verdict(model_hole: &[P2], kind: Kind, radius: f64) -> Vec<Warning> {
             climb: true,
             tolerance: 0.01,
             holes,
+            picks: Default::default(),
         },
         Kind::Drill => OpParams::Drill {
             break_through: None,
@@ -182,6 +186,7 @@ fn verdict(model_hole: &[P2], kind: Kind, radius: f64) -> Vec<Warning> {
             plunge_feed: 100.0,
             holes,
             cross: Vec::new(),
+            picks: Default::default(),
         },
     };
     h.execute(&world, CreateOperation::new(&world, "OP", tool_name, SrcRef::Entity("part".into()), params).expect("create"));

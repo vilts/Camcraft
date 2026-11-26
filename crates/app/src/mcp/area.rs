@@ -29,6 +29,7 @@ pub(super) fn area_view(w: &World, a: &AreaControls) -> Value {
             Containment::Outside => "outside",
         }),
         "offset": fnum(a.offset),
+        "outer_offset": fnum(a.outer_offset),
         "corner": match a.corner { CornerStyle::Round => "round", CornerStyle::Sharp => "sharp" },
         "extension": fnum(a.extension),
         "extra": a.extra.iter().map(|b| {
@@ -96,7 +97,7 @@ fn controls_of(env: &Env, v: &Value) -> Result<AreaControls, String> {
     let Value::Object(m) = v else {
         return Err(format!("\"area\" must be an object, got {v}"));
     };
-    only_keys(m, &["containment", "offset", "corner", "extension", "extra", "open"], "\"area\"")?;
+    only_keys(m, &["containment", "offset", "outer_offset", "corner", "extension", "extra", "open"], "\"area\"")?;
     let containment = word(m, "containment", &["inside", "on", "outside"])?.map(|c| match c {
         "inside" => Containment::Inside,
         "on" => Containment::On,
@@ -127,10 +128,12 @@ fn controls_of(env: &Env, v: &Value) -> Result<AreaControls, String> {
     Ok(AreaControls {
         containment,
         offset: number(m, "offset")?,
+        outer_offset: number(m, "outer_offset")?,
         corner,
         extension: number(m, "extension")?,
         extra,
         open,
+        do_not_touch: Default::default(),
     })
 }
 
@@ -140,12 +143,16 @@ fn controls_of(env: &Env, v: &Value) -> Result<AreaControls, String> {
 /// closed boundary) with its text.
 pub(super) fn set_operation_area(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
     let key = find_op(env, req_str(a, "operation")?)?;
-    let area = controls_of(env, a.get("area").ok_or("\"area\" is required")?)?;
+    let mut area = controls_of(env, a.get("area").ok_or("\"area\" is required")?)?;
     let e = model::find_by_name(&env.world, &key).ok_or_else(|| format!("no operation named '{key}'"))?;
     let op = model::operation_of(&env.world, &e).ok_or_else(|| format!("'{key}' is not an operation"))?;
+    area.do_not_touch = op.area.do_not_touch;
     let cmd = EditOperationParams::with_area(&env.world, &key, op.params, area).map_err(|e| e.to_string())?;
     env.history.execute(&env.world, cmd);
-    super::pick::geometry_view(env, &key)
+    let mut out = super::pick::geometry_view(env, &key)?;
+    // #3631: the containment moves the pocket's region: its fit is said again.
+    super::edit::clearance_warning(env, &key, &mut out);
+    Ok(out)
 }
 
 pub(super) fn s_set_area() -> Value {
@@ -158,7 +165,8 @@ pub(super) fn s_set_area() -> Value {
                 "description": "The whole area controls; omitted fields take their defaults ({} turns every control off).",
                 "properties": {
                     "containment": { "type": "string", "enum": ["inside", "on", "outside"], "description": "Tool against the boundary; omit for the kind's own rule." },
-                    "offset": { "type": "number", "description": "Grow (+) or shrink (-) the boundary, mm." },
+                    "offset": { "type": "number", "description": "Grow (+) or shrink (-) the boundary, mm: the selection's area, or only the picked line of an open boundary." },
+                    "outer_offset": { "type": "number", "description": "Grow (+) or shrink (-) only the outer boundary of an open boundary (its stock side), mm; a closed area ignores it." },
                     "corner": { "type": "string", "enum": ["round", "sharp"] },
                     "extension": { "type": "number", "minimum": 0, "description": "Extend past exterior edges, mm; 0 is off." },
                     "extra": { "type": "array", "description": "Extra include / exclude boundaries.", "items": {

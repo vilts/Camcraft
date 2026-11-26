@@ -95,8 +95,9 @@ fn contour_path(region: &Region, material_top: Option<f64>) -> Toolpath {
             tab_height: 0.0,
             entry: Entry3D::Plunge,
             helix_radius: 1.0,
-            blend_turns: false,
+            blend_turns: false, blend_radius: None,
             links,
+            picks: Default::default(),
         },
     )
     .expect("contour")

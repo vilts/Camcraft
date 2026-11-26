@@ -4,7 +4,8 @@
 //! edge) moved half a width along Z. A 3 mm groove centred at Z-10
 //! posts Z-11.5 on the default left corner, Z-8.5 on the right one, and
 //! Z-10 only on a blade touched off at its width centre; a part-off
-//! leaves the part the verified kerf leaves; a code that is no OD blade
+//! leaves the part the verified kerf leaves (#3452: the whole kerf
+//! behind the parting plane); a code that is no OD blade
 //! is refused by name; the corner edit is one undoable command; the
 //! cached toolpath the verifier and the stock sim judge stays the
 //! middle of the edge.
@@ -99,6 +100,7 @@ fn groove() -> OpParams {
         bottom_z: Height::fixed(-11.5),
         feed: 120.0,
         plunge_feed: 60.0,
+        picks: Default::default(),
     }
 }
 
@@ -115,7 +117,8 @@ fn part() -> OpParams {
         bar_advance: 0.0,
         bar_unload: false,
         bar_transfer: false,
-        inspect_tol: 0.0,
+        inspect_tol: 0.0, kerf: Default::default(),
+        picks: Default::default(),
     }
 }
 
@@ -178,18 +181,20 @@ fn a_3mm_groove_at_z_minus_10_posts_the_touched_off_corner() {
 
 #[test]
 fn a_part_off_leaves_the_part_the_verified_kerf_leaves() {
-    // Parting plane Z-20, a 3 mm kerf centred on it: the part keeps
-    // Z-18.5..0. Whichever corner the blade was touched off on, the
-    // posted plunge puts the kerf's free-end face at Z-18.5 - before
-    // #641 the left-corner blade posted Z-20 and left 17 mm.
+    // Parting plane Z-20 is the part's end face (#3452): the 3 mm kerf
+    // stands wholly on the chuck side, Z-23..-20, its CL at Z-21.5, and
+    // the part keeps Z-20..0. Whichever corner the blade was touched
+    // off on, the posted plunge puts the kerf's free-end face at Z-20 -
+    // before #641 the left-corner blade posted Z-20 and left 17 mm, and
+    // before #3452 the kerf was centred on the plane and left 18.5 mm.
     for (q, side) in [(None, -1.0), (Some(2), -1.0), (Some(1), 1.0), (Some(6), 0.0)] {
         let (world, mut history) = bar_world();
         create(&world, &mut history, "P1", part());
         set_corner(&world, &mut history, q);
         let zs = posted_plunge_z(&world);
-        all_at(&zs, -20.0 + side * W * 0.5, &format!("corner {q:?}"));
+        all_at(&zs, -20.0 - W * 0.5 + side * W * 0.5, &format!("corner {q:?}"));
         let face = zs[0] - side * W * 0.5 + W * 0.5;
-        assert!((face + 18.5).abs() < 1e-6, "corner {q:?}: the part's back face at {face}, wanted -18.5");
+        assert!((face + 20.0).abs() < 1e-6, "corner {q:?}: the part's back face at {face}, wanted -20");
     }
 }
 

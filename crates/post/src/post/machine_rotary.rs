@@ -75,7 +75,8 @@ pub(super) fn mirror_controller(m: &Machine, out: &mut Map<String, Value>) {
     }
 }
 
-fn is_rotary_letter(letter: Option<&str>) -> bool {
+/// RS-274 rotary addresses. The raw machine grammar treats other letters as linear.
+pub(super) fn is_rotary_letter(letter: Option<&str>) -> bool {
     matches!(letter, Some("A") | Some("B") | Some("C"))
 }
 

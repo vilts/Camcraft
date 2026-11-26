@@ -89,21 +89,48 @@ fn move_an_operation_delete_the_emptied_setup_and_undo_redo_both() {
     assert!(moved["status"].is_string(), "the stamp is kept and read back: {moved}");
     assert_eq!(c.shape().1[0].1, json!("Back"));
 
+    // Setups list in creation order (#3447): Front was added first.
+    let before = c.shape().0;
+    assert_eq!(before, vec!["Front".to_owned(), "Back".to_owned()], "creation order");
+
     // Front is empty now: delete it, one undo step.
     let del = c.ok("delete_setup", json!({ "name": "Front" }));
     assert_eq!(del["setups"], json!(["Back"]), "{del}");
     assert_eq!(c.shape().0, vec!["Back".to_owned()]);
     c.ok("undo", json!({}));
-    // Setups list in name order, so undo puts Front back where it was (#1362).
-    assert_eq!(c.shape().0, vec!["Back".to_owned(), "Front".to_owned()], "undo restores the setup in place");
+    // Undo puts Front back at its old place, first (#1362, #3447).
+    assert_eq!(c.shape().0, before, "undo restores the setup in place");
     c.ok("redo", json!({}));
     assert_eq!(c.shape().0, vec!["Back".to_owned()]);
     c.ok("undo", json!({}));
+    assert_eq!(c.shape().0, before, "a second undo restores the setup in place too");
     // One more undo reverts the move itself.
     c.ok("undo", json!({}));
     assert_eq!(c.shape().1[0].1, json!("Front"));
     c.ok("redo", json!({}));
     assert_eq!(c.shape().1[0].1, json!("Back"));
+}
+
+/// #3022: operations made with no setup and moved one by one into a new
+/// named setup keep the program order. Before the fix they re-sorted by
+/// name (a tap before its tap drill).
+#[test]
+fn moving_operations_into_a_named_setup_keeps_the_program_order() {
+    let mut c = Client::new();
+    c.ok("set_stock", json!({ "box": { "dx": 60.0, "dy": 60.0, "dz": 20.0 } }));
+    c.ok("add_tool", json!({ "catalog": "EM-0400-2FL" }));
+    let program = ["Zeta", "Alpha", "Mid"];
+    for name in program {
+        c.ok("add_operation", json!({ "kind": "Face", "tool": "EM-0400-2FL", "name": name }));
+    }
+    let order = |c: &mut Client| c.shape().1.into_iter().map(|(n, _)| n).collect::<Vec<_>>();
+    assert_eq!(order(&mut c), program);
+    c.ok("add_setup", json!({ "name": "PlateSetup" }));
+    for name in program {
+        c.ok("set_operation_setup", json!({ "operation": name, "setup": "PlateSetup" }));
+        assert_eq!(order(&mut c), program, "after the move of {name}");
+    }
+    assert!(c.shape().1.iter().all(|(_, s)| *s == json!("PlateSetup")));
 }
 
 #[test]

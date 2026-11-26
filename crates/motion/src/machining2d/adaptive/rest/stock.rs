@@ -120,6 +120,13 @@ impl RestStock {
         self.floors.iter().map(|f| f.z).fold(f64::INFINITY, f64::min)
     }
 
+    /// [`Self::material_at`] with every guard on, for the 2D rest pocket
+    /// that reads the previous operations (#2033): uncertain stock
+    /// stands, and an unproved depth is refused by name.
+    pub fn standing_at(&self, z: f64) -> Result<Region, GenError> {
+        self.material_at(z, Guards::ALL)
+    }
+
     /// A bound on the material standing at or above the cut depth `z`:
     /// the intersection of what every floor proved at least that deep
     /// allows (each is a bound, so their intersection is one). A depth

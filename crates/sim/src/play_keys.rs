@@ -20,6 +20,11 @@
 //!   past the budget every other keyframe goes and the stride doubles,
 //!   so the store never holds more than the budget (at worst only the
 //!   uncut stock, which is key 0 and is never thinned).
+//! - **A keyframe pays for what it does not share** (#2194). The cut
+//!   bricks are copy-on-write, so a keyframe holds of its own only the
+//!   bricks that a move changed since the keyframe before it, and its
+//!   map entries. The count compares each keyframe with the one before
+//!   it; it can read high (equal bricks in two allocations), never low.
 //! - **Incomplete is said, never shown as done.** A cancelled or failed
 //!   calculation is `Precalc::Incomplete` by name; the keyframes it made
 //!   stay valid (each is an exact prefix) and the moves past them are
@@ -50,14 +55,29 @@ pub enum Precalc {
 
 /// What one kept keyframe costs, in bytes.
 pub trait KeyCost {
-    /// The bytes a clone of this value holds of its own.
+    /// The bytes this value holds as a whole copy.
     fn key_bytes(&self) -> usize;
+
+    /// The bytes this value holds that `prev`, the keyframe before it,
+    /// does not hold: never under the truth. A value that shares
+    /// nothing costs its whole copy.
+    fn key_bytes_after(&self, _prev: &Self) -> usize {
+        self.key_bytes()
+    }
 }
 
 impl KeyCost for Stock {
-    /// A clone copies the cut layers only (the mesh layer is shared).
+    /// The cut layers' bricks (the mesh layer is shared).
     fn key_bytes(&self) -> usize {
         self.field().map_or(0, SdfField::cut_layer_bytes)
+    }
+
+    /// The cut bricks that `prev` does not share, and the map entries.
+    fn key_bytes_after(&self, prev: &Self) -> usize {
+        match (self.field(), prev.field()) {
+            (Some(f), Some(p)) => f.cut_bytes_after(p),
+            _ => self.key_bytes(),
+        }
     }
 }
 
@@ -119,7 +139,8 @@ impl<T: KeyCost + Clone> Keyframes<T> {
     /// audit of `bytes` (a walk over the keys; not for a frame loop).
     #[must_use]
     pub fn held_bytes(&self) -> usize {
-        self.keys.iter().map(|(_, s)| s.key_bytes()).fold(0, usize::saturating_add)
+        let first = self.keys.first().map_or(0, |c| c.1.key_bytes());
+        self.keys.windows(2).map(|w| w[1].1.key_bytes_after(&w[0].1)).fold(first, usize::saturating_add)
     }
 
     /// The byte budget, once a calculation set one.
@@ -162,7 +183,8 @@ impl<T: KeyCost + Clone> Keyframes<T> {
         if at <= last || self.keys.len() > self.cap {
             return false;
         }
-        self.bytes = self.bytes.saturating_add(value.key_bytes());
+        let cost = self.keys.last().map_or_else(|| value.key_bytes(), |c| value.key_bytes_after(&c.1));
+        self.bytes = self.bytes.saturating_add(cost);
         self.keys.push((at, value.clone()));
         if let Some(budget) = self.budget {
             while self.bytes > budget && self.keys.len() > 1 {

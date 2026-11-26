@@ -176,6 +176,19 @@ fn the_judge_sees_the_plunges_a_centre_cutting_tool_takes_between_passes() {
     assert!(bad.len() > 3, "the level entries and some row restarts dive into solid: {bad:?}");
 }
 
+/// The finishing ring's helix would cross the rows' level-transition
+/// ramp. Keep this legal pocket by ramping along the ring instead.
+#[test]
+fn a_closing_ring_restart_does_not_cross_the_rows_transition_ramp() {
+    let r = round(15.0);
+    let links = not_cc(Links { transition: Some(Entry3D::Ramp), ..Links::PLANAR });
+    let t = pocket(&r, &pp(Entry3D::Plunge, PocketStrategy::Zigzag, links))
+        .expect("a safe entry onto the closing ring");
+    assert!(t.notes.iter().any(|n| n.contains("at a pass start inside a level - ramp along the pass instead")),
+        "the crossing helix must stand down to a ring ramp: {:?}", t.notes);
+    check(&t, &r);
+}
+
 #[test]
 fn a_tool_that_is_not_centre_cutting_never_plunges_into_a_pocket_between_passes() {
     let mut restarted = 0;
@@ -191,6 +204,8 @@ fn a_tool_that_is_not_centre_cutting_never_plunges_into_a_pocket_between_passes(
                     assert!(!second_dive(&cc), "{what}: {:?}", cc.notes);
                     if let Some(t) = judge(&what, pocket(&r, &pp(entry, strategy, not_cc(links))), 3.0, TOP) {
                         assert!(!second_dive(&t), "{what}: {:?}", t.notes);
+                        let crossed = camcraft_motion::verify::crossed_pairs(&t, camcraft_motion::machining2d::ARC_FIT_TOL);
+                        assert!(crossed.is_empty(), "{what}: crossing feed pairs {crossed:?}");
                         check(&t, &r);
                         kept += 1;
                         restarted += usize::from(t.notes.iter().any(|n| n.contains("pass start inside a level")));
@@ -223,7 +238,7 @@ fn a_tool_that_is_not_centre_cutting_never_plunges_into_a_slot() {
                     plunge_feed: 100.0,
                     climb: true,
                     entry,
-                    helix_radius: 1.5,
+                    helix_radius: 1.5, blend_turns: false, blend_radius: None,
                 };
                 let what = format!("slot w{w} d{d} {entry:?} {ln}");
                 let (a, b) = (Point2::new(0.0, 0.0), Point2::new(40.0, 10.0));
@@ -265,6 +280,7 @@ fn a_tool_that_is_not_centre_cutting_never_plunges_into_a_bore_or_circular() {
             judge(&format!("bore {entry:?} {ln}"), bore(&bp), 3.0, TOP);
             for stepover in [2.0, 3.5] {
                 let cp = CircularParams {
+                    pass_start: Default::default(),
                     links: not_cc(links),
                     center: Point2::new(0.0, 0.0),
                     radius: 15.0,
@@ -345,6 +361,7 @@ fn a_tool_that_is_not_centre_cutting_never_plunges_on_the_3d_ladder() {
                 ("clearance", Links { pass: Link::Clearance, level: Link::Clearance, ..Links::ROUGH3D }),
             ] {
                 let p = Pocket3DParams {
+                    pass_start: Default::default(),
                     links,
                     tool_diameter: 8.0,
                     stepover: 3.0,

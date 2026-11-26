@@ -70,9 +70,9 @@ pub fn face_origin(world: &World, entity: &str, sel: FeatureSel) -> Result<FaceO
     let tris = model::facets_of(world, &e).ok_or("the picked entity carries no geometry")?;
     // #326: the face where the active setup holds the part.
     let loc = crate::setup_align::view_pose(world, &e).unwrap_or_default();
-    let (facets, normal): (Vec<usize>, Option<[f64; 3]>) = match sel {
+    let (facets, normal): (Vec<usize>, Option<[f64; 3]>) = match &sel {
         FeatureSel::Face(fid) => {
-            let f = features.faces.iter().find(|f| f.id == fid).ok_or(gone)?;
+            let f = features.faces.iter().find(|f| f.id == *fid).ok_or(gone)?;
             if f.kind != feature::FaceKind::Planar {
                 return Err("the picked face has no usable plane");
             }
@@ -81,7 +81,7 @@ pub fn face_origin(world: &World, entity: &str, sel: FeatureSel) -> Result<FaceO
         FeatureSel::Patch(pid) => {
             // #2247: memoized per feature set - the chips ask on each frame.
             let all = model::patches(&features);
-            let p = all.iter().find(|p| p.id == pid).ok_or(gone)?;
+            let p = all.iter().find(|p| p.id == *pid).ok_or(gone)?;
             let facets = features
                 .faces
                 .iter()
@@ -91,7 +91,10 @@ pub fn face_origin(world: &World, entity: &str, sel: FeatureSel) -> Result<FaceO
                 .collect();
             (facets, None)
         }
-        FeatureSel::Vertex(_) | FeatureSel::Chain(_) => return Err("only a face has a centroid"),
+        FeatureSel::Vertex(_)
+        | FeatureSel::Chain(_)
+        | FeatureSel::SketchChain(_)
+        | FeatureSel::SketchLayer(_) => return Err("only a face has a centroid"),
     };
     let c = facets_centroid(&tris, facets).ok_or("the picked face has no area")?;
     let w = transform_point(Point3::new(c[0], c[1], c[2]), loc.pos, loc.rot);

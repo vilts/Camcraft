@@ -17,7 +17,7 @@ use crate::interact::push_line;
 use crate::state::State;
 
 /// Outline colour: a faint steel blue that stays behind the toolpaths.
-const ENVELOPE_RGB: [f32; 3] = [0.35, 0.55, 0.70];
+pub(crate) const ENVELOPE_RGB: [f32; 3] = [0.35, 0.55, 0.70];
 /// Segments of a lathe envelope's end circles.
 const RING_SEGMENTS: usize = 48;
 
@@ -45,24 +45,45 @@ pub(crate) fn tooltip(state: &State) -> String {
 
 /// The overlay segments of the envelope; empty when the box is off or the
 /// machine states no envelope.
+#[cfg(test)]
 #[must_use]
 pub(crate) fn envelope_lines(state: &State) -> Vec<[f32; 6]> {
+    placed(state).map(shape_lines).unwrap_or_default()
+}
+
+/// The envelope with its operator-side arrow (#2632), from one placement:
+/// what the scene draws.
+#[must_use]
+pub(crate) fn overlay_lines(state: &State) -> Vec<[f32; 6]> {
+    let shape = placed(state);
+    let mut out = shape.map(shape_lines).unwrap_or_default();
+    out.extend(crate::operator_side::lines(state, shape));
+    out
+}
+
+/// The envelope where the viewport draws it; `None` when the box is off or
+/// the machine states no envelope.
+fn placed(state: &State) -> Option<EnvelopeShape> {
     if !state.show_work_envelope {
-        return Vec::new();
+        return None;
     }
-    let Ok(shape) = machine::work_envelope(&state.world) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    match shape {
+    match machine::work_envelope(&state.world).ok()? {
         EnvelopeShape::Box { mut min, mut max } => {
             // #1963: the box stands on the table, not on program Z (travel
             // can straddle the origin). #2172: the table is the floor.
             let floor = crate::floor::floor_z(state);
             max[2] = floor + (max[2] - min[2]);
             min[2] = floor;
-            box_lines(&mut out, min, max);
+            Some(EnvelopeShape::Box { min, max })
         },
+        cylinder => Some(cylinder),
+    }
+}
+
+fn shape_lines(shape: EnvelopeShape) -> Vec<[f32; 6]> {
+    let mut out = Vec::new();
+    match shape {
+        EnvelopeShape::Box { min, max } => box_lines(&mut out, min, max),
         EnvelopeShape::Cylinder { cx, cy, radius, z0, z1 } => cylinder_lines(&mut out, cx, cy, radius, z0, z1),
     }
     out

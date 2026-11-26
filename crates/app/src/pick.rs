@@ -24,6 +24,7 @@ pub mod names;
 pub mod plane;
 pub mod points;
 pub mod roles;
+pub mod sketch_pick;
 pub mod wall_fit;
 pub mod winding;
 

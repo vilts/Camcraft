@@ -34,7 +34,7 @@ pub(super) struct SavedS {
     pub neighbour_parts: Vec<Triangle>,
 }
 
-struct Rot2 {
+pub(super) struct Rot2 {
     ox: f64,
     oy: f64,
     s: f64,
@@ -47,7 +47,7 @@ impl Rot2 {
         Self { ox: origin[0], oy: origin[1], s, c }
     }
 
-    fn p2(&self, p: Point2) -> Point2 {
+    pub(super) fn p2(&self, p: Point2) -> Point2 {
         let (dx, dy) = (p.x - self.ox, p.y - self.oy);
         Point2::new(self.ox + dx * self.c - dy * self.s, self.oy + dx * self.s + dy * self.c)
     }
@@ -76,7 +76,7 @@ impl Rot2 {
         (out_lo, out_hi)
     }
 
-    fn loop2(&self, l: &Loop) -> Result<Loop, GenError> {
+    pub(super) fn loop2(&self, l: &Loop) -> Result<Loop, GenError> {
         Ok(Loop::new(l.points().iter().copied().map(|p| self.p2(p)).collect())?)
     }
 
@@ -178,6 +178,7 @@ pub(crate) fn op_applies(kind: crate::machine::Kind, params: &OpParams) -> bool 
         | OpParams::Pocket { .. }
         | OpParams::Adaptive2D { .. }
         | OpParams::Offset2D { .. }
+        | OpParams::VCarve { .. }
         | OpParams::Engrave { .. }
         | OpParams::Chamfer2D { .. }
         | OpParams::Circular { .. }
@@ -215,6 +216,8 @@ impl WcsYaw {
         stock_aabb: &mut Option<(Point3, Point3)>,
         picked_region: &mut Option<Result<Region, GenError>>,
         contour_sel: &mut Option<Result<SelectionGeometry, GenError>>,
+        sketch_contour: &mut Option<Result<super::contour_sketch::SketchContourPlan, GenError>>,
+        sketch_mark: &mut Option<machining2d::TraceStrokes>,
         drive_chains: &mut Option<Result<Vec<Vec<Point3>>, GenError>>,
         slot_bound: &mut Option<Result<SlotBound, GenError>>,
         prior: &mut Option<Result<Arc<crate::rest::PriorState>, GenError>>,
@@ -252,6 +255,12 @@ impl WcsYaw {
                     *p = r.p2(*p);
                 }
             }
+        }
+        if let Some(Ok(plan)) = sketch_contour {
+            plan.rotate_xy(&r)?;
+        }
+        if let Some(strokes) = sketch_mark {
+            strokes.transform(|p| r.p2(p));
         }
         if let Some(Ok(chains)) = drive_chains {
             for ch in chains {
@@ -314,6 +323,15 @@ impl WcsYaw {
         Rot2::new(self.origin, self.yaw_rad).toolpath(path, chord_tol)
     }
 
+    /// Map a generated corner-relief zone back into Setup `S` (`+yaw` about `origin`).
+    pub(crate) fn exit_zone(self, mut z: crate::verify::CornerReliefZone) -> crate::verify::CornerReliefZone {
+        let r = Rot2::new(self.origin, self.yaw_rad);
+        z.corner = r.p2(z.corner);
+        z.start = r.p2(z.start);
+        z.end = r.p2(z.end);
+        z
+    }
+
     /// Map a located refusal or ghost back into Setup `S` (`+yaw` about `origin`).
     pub(super) fn exit_err(self, e: GenError) -> GenError {
         let r = Rot2::new(self.origin, self.yaw_rad);
@@ -324,6 +342,13 @@ impl WcsYaw {
 fn rotate_params(r: &Rot2, params: &mut OpParams) {
     match params {
         OpParams::Circular { center, .. } => *center = r.p2(*center),
+        OpParams::Pocket { corner_relief, .. }
+        | OpParams::Adaptive2D { corner_relief, .. }
+        | OpParams::Offset2D { corner_relief, .. } => {
+            for ov in &mut corner_relief.overrides {
+                ov.at = r.p2(ov.at);
+            }
+        }
         OpParams::Slot { a, b, .. } | OpParams::TrochoidalSlot { a, b, .. } => {
             *a = r.p2(*a);
             *b = r.p2(*b);
@@ -334,6 +359,16 @@ fn rotate_params(r: &Rot2, params: &mut OpParams) {
             }
         }
         _ => {}
+    }
+    // #3326 review: each start and exit pick is stated in Setup `S` and
+    // enters `W_gen` with the geometry that it names, for every kind. This is
+    // the one place that turns a pick (the Slot of #3325 included): a second
+    // loop in a kind's arm turns its picks two times. The stored picks stay in
+    // model coordinates; these are the temporary generation-frame points.
+    if let Some(picks) = params.path_picks_mut() {
+        for k in picks.start.iter_mut().chain(&mut picks.exit) {
+            k.xy = r.p2(k.xy);
+        }
     }
 }
 

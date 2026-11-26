@@ -16,6 +16,11 @@ pub struct StockEnv {
     /// along the part's axis - the end every ride climbs toward. A
     /// non-finite reading says nothing about where the bar ends.
     pub s_top: f64,
+    /// The bar's near end (#3452): the lowest station the stock
+    /// reaches along the part's axis - where a part-off kerf past the
+    /// part's end still finds bar. A non-finite reading says nothing
+    /// about where the bar starts.
+    pub s_bot: f64,
 }
 
 /// How far the bar must stand past the part's widest radius to count

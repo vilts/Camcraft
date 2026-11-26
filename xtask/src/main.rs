@@ -82,6 +82,7 @@ mod merge_plan_out;
 #[cfg(test)]
 mod merge_plan_tests;
 mod merge_review;
+mod merge_trial;
 mod package;
 mod path_mods;
 mod plan;
@@ -152,7 +153,7 @@ usage:
   cargo xtask decisions --version X.Y.Z            gather docs/decisions/*.md into RECOMMENDED.md
   cargo xtask release --version X.Y.Z --no-tag [--title T] [--skip-gate] [--skip-build] [--installer] [--dry-run]
                                                    the release cut on release/vX.Y.Z (scripts/release.ps1's phases)
-  cargo xtask merge-plan <PR>... | --label <name> [--json] | --delta <PR> --reviewed <sha>
+  cargo xtask merge-plan <PR>... | --label <name> [--json] [--check] | --delta <PR> --reviewed <sha>
                                                    the merge order of open PRs (waves, refresh only at merge time)
                                                    or the delta class of a PR since a reviewed head (#1221)
   cargo xtask process-bump                         PROCESS_VERSION + 1, the one writer of that file (#1153)

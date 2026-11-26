@@ -1,7 +1,7 @@
 //! #2011: EDM tool visibility matches selectable machine kinds (Wire EDM has a
 //! wire tool; Sinker Electrode stays hidden when Sinker EDM is not selectable).
 //! Provenance: our own structural UI tests over the tool library and tool editor.
-//! Gate map (#2011): covers ui::machine_modes, ui::egui_app::tool_library, ui::egui_app::tool_settings.
+//! Gate map (#2011): covers ui::machine_modes, ui::egui_app::tool_library_dialog, ui::egui_app::tool_settings.
 
 use camcraft_app::machine::{Kind as MachineKind, parse_mch};
 use camcraft_app::model;
@@ -82,7 +82,7 @@ fn sinker_electrode_is_hidden_when_sinker_edm_is_not_selectable_and_wire_is_offe
     h.get_by_label("EDM wire").click_accesskit();
     h.run_steps(3);
     assert_eq!(h.state().state.tool_ui.tool_kind(), ToolKind::Wire);
-    assert!(h.query_by_label("Wire diameter").is_some(), "Wire diameter label shown");
+    assert!(h.query_all_by_label("Wire diameter").next().is_some(), "Wire diameter label shown");
     assert!(h.query_by_label("Spindle rpm").is_none(), "wire has no spindle rpm");
     assert!(h.query_by_label("Corner radius").is_none(), "wire has no corner radius");
     h.state_mut().state.tool_ui.name = "ShopWire025".into();

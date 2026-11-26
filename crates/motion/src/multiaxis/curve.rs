@@ -653,7 +653,20 @@ pub fn contour_curve(
             let at = b.at();
             b.push(MoveKind::Rapid, Point3::new(at.x, at.y, hop_z), None);
             b.push(MoveKind::Rapid, Point3::new(t0.x, t0.y, hop_z), None);
+            // #3414: the rotaries swing FIRST, at a standstill on the
+            // hop plane over the first station - a zero-travel rapid
+            // whose pose is the only change - and the plunge descends
+            // under the pose already held. The builder keeps a
+            // zero-travel move whose pose changed (it drops one only
+            // when the tip AND the pose both stand), and the post
+            // solves it as a pure rotary reorientation, so the swing
+            // always commands; when the pose already matches, the
+            // builder drops it and the plunge carries the pose as
+            // before. Turning the rotaries while the tool descends to
+            // first contact sweeps the ball through unknown air - and
+            // through the rim it approaches - never again.
             b.set_axis(Some(*pose0));
+            b.push(MoveKind::Rapid, Point3::new(t0.x, t0.y, hop_z), None);
             b.push(MoveKind::Plunge, t0, Some(p.plunge_feed));
         }
         // A ring's walk already ends where it began (home at the seam).
@@ -804,11 +817,14 @@ mod tests {
             (l - 1.0).abs() < 1e-9
         })));
         // The first hop states nothing (nothing is posed yet); every
-        // later rapid travels under the pose the machine already
-        // holds - the post keeps it modal, the stream says so.
+        // later rapid that travels goes under the pose the machine
+        // already holds - the post keeps it modal, the stream says so.
+        // The exception is the zero-travel rotary index (#3414): the
+        // machine swings at a standstill, in air, to the pose the
+        // first descend cuts under.
         let mut held: Option<[f64; 3]> = None;
         for m in &path.moves {
-            if m.kind == MoveKind::Rapid {
+            if m.kind == MoveKind::Rapid && m.from != m.to {
                 assert_eq!(m.axis, held, "a rapid changed the pose it inherited: {m:?}");
             }
             held = m.axis.or(held);

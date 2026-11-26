@@ -16,8 +16,10 @@
 use super::{lock, publish, PlayWorker, Shared};
 use crate::clock::Instant;
 use crate::stock_play::{FieldPlay, PlaySeed, Precalc, MAX_KEYFRAMES, MIN_STRIDE};
+use crate::stock_sim::LayerCutter;
 use camcraft_sim::play_precalc::{drive, Calc, PrecalcEnd};
 use camcraft_sim::play_precalc_mailbox::MailboxOwner;
+use std::sync::Arc;
 
 impl PlayWorker {
     /// Where the calculation before playback stands (`Off` when the
@@ -37,7 +39,15 @@ impl PlayWorker {
     /// `spawn`, but the worker first calculates the whole removal with
     /// keyframes held to `budget` bytes (the sim crate's law).
     pub fn spawn_precalc(seed: PlaySeed, budget: usize) -> Result<Self, String> {
-        Self::start(seed, Some(budget))
+        Self::start(seed, Some(budget), None)
+    }
+
+    /// `spawn_precalc` in the layer mode (`spawn_layered`; #3336, GPU
+    /// stock sim S3c): the calculation before playback cuts the field's
+    /// own ops, and `cutter` cuts the layer ops for each picture. For an
+    /// eye that reads the packed frame alone.
+    pub fn spawn_layered_precalc(seed: PlaySeed, budget: usize, cutter: Arc<LayerCutter>) -> Result<Self, String> {
+        Self::start(seed, Some(budget), Some(cutter))
     }
 }
 

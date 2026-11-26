@@ -45,6 +45,13 @@ impl DeleteSetup {
         }
         // #316: a setup placed relative to this one would lose the setup
         // its edits follow - refused by name, like an operation.
+        // #1862: a DXF profile lies on this setup's stock - it is not
+        // deleted with the setup behind the user's back.
+        if let Some(profile) = crate::sketch::placed_in(world, Some(name)).first() {
+            return Err(CommandError::Invalid(format!(
+                "the DXF profile '{profile}' is placed in '{name}' - delete it first"
+            )));
+        }
         if let Some(child) = crate::setup_relative::dependents(world, name).first() {
             return Err(CommandError::Invalid(format!(
                 "'{child}' is placed relative to '{name}' - unlink it first"
@@ -63,6 +70,8 @@ impl DeleteSetup {
                     location: model::transform_of(world, &e).unwrap_or_default(),
                     facets: model::facets_of(world, &e).unwrap_or_default(),
                     coarse_mm: crate::model_fidelity::chord_of(world, &e),
+                    file_tolerance: crate::model_fidelity::file_tolerance_of(world, &e),
+                    hole: crate::mesh_open::hole_of(world, &e),
                     material: crate::stock_material::of_entity(world, &e),
                 })
             })
@@ -116,7 +125,8 @@ impl Command for DeleteSetup {
             let e = model::spawn(world, &s.name);
             model::set_transform(world, &e, s.location);
             model::set_facets(world, &e, s.facets.clone());
-            crate::model_fidelity::set(world, &e, s.coarse_mm);
+            crate::model_fidelity::set_with_cause(world, &e, s.coarse_mm, s.file_tolerance);
+            crate::mesh_open::set(world, &e, s.hole.as_deref());
             e.entity_view(world).set(StockDef {
                 shape: s.shape.clone(),
             });

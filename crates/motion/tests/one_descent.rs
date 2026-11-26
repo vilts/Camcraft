@@ -121,6 +121,7 @@ fn descents_per_level(t: &Toolpath, region: &Region, d: f64) -> Vec<(f64, usize,
 
 fn p3(entry: Entry3D, strategy: PocketStrategy, links: Links) -> Pocket3DParams {
     Pocket3DParams {
+        pass_start: Default::default(),
         links,
         tool_diameter: 8.0,
         stepover: 3.0,
@@ -192,8 +193,9 @@ fn bore(entry: Entry3D, lead: Lead, links: Links) -> ContourParams {
         tab_height: 0.0,
         entry,
         helix_radius: 1.5,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links,
+        picks: Default::default(),
     }
 }
 

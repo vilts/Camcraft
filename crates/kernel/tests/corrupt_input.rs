@@ -127,7 +127,10 @@ fn boolean_case(name: &str, k: &mut solidcore::Kernel) -> solidcore::Result<Brep
 /// port bump that changes any verdict - fix or regression - fails here and
 /// gets looked at, instead of drifting silently.
 const KNOWN_PORT_VERDICTS: &[(&str, &str)] = &[
-    ("box at NaN origin", "Ok non-solid"),
+    // Re-triaged at solidcore 2016386 (#917): 55d0e76 built a non-solid box
+    // at a NaN origin ("Ok non-solid"); 2016386 refuses it. The refusal is
+    // the stricter verdict, so the finding is closed upstream.
+    ("box at NaN origin", "Err"),
     ("empty - box", "Err"),
     ("box - empty", "Ok solid V=1000.000"),
     ("box - sheet", "Ok non-solid"),

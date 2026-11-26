@@ -5,7 +5,8 @@
 //! numbers stay sticky until programmed again).
 //! Gate map: covers assets/posts/fanuc.cps, assets/posts/mazak.cps,
 //! assets/posts/doosan-dnm.cps, assets/posts/grblhal.cps,
-//! assets/posts/tormach.cps, camcraft_post::post::engine and
+//! assets/posts/tormach.cps, assets/posts/linuxcnc.cps, assets/posts/mach3.cps,
+//! camcraft_post::post::engine and
 //! camcraft_post::post::cnc.
 
 use camcraft_post::cl::{CycleKind, MoveKind};
@@ -17,12 +18,14 @@ use serde_json::json;
 use std::path::Path;
 
 /// The posts, with the P word each writes for 0.5 s and 0.75 s.
-const POSTS: [(&str, &str, &str); 5] = [
+const POSTS: [(&str, &str, &str); 7] = [
     ("fanuc", "P500", "P750"),
     ("mazak", "P500", "P750"),
     ("doosan-dnm", "P500", "P750"),
     ("grblhal", "P0.5", "P0.75"),
     ("tormach", "P0.5", "P0.75"),
+    ("linuxcnc", "P0.5", "P0.75"),
+    ("mach3", "P0.5", "P0.75"),
 ];
 
 fn read(rel: &str) -> String {

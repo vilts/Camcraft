@@ -104,10 +104,12 @@ fn burn(pass: SinkerPass, condition: &str) -> OpParams {
         pass,
         cavity_x: CAV.0,
         cavity_y: CAV.1,
+        cavity_outline: Vec::new(),
         layer: None,
         wear_lost: None,
         wear_over: None,
         orbit: None,
+        picks: Default::default(),
     })
 }
 

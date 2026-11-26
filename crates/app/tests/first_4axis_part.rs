@@ -102,11 +102,12 @@ fn slot(a: (f64, f64), b: (f64, f64), width: f64, depth: f64, stepdown: f64, fee
         plunge_feed: plunge * IN,
         climb: true,
         entry: Entry3D::Plunge,
-        helix_radius: 1.0,
+        helix_radius: 1.0, blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt,
         extend_start: 0.0,
         extend_end: 0.0,
+        picks: Default::default(),
     }
 }
 

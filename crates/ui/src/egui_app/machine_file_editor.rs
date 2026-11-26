@@ -174,6 +174,30 @@ fn prompt(ui: &mut Ui, ed: &mut MachineFileEditor, dir: Option<&Path>, out: &mut
     });
 }
 
+/// The pick that leaves a dropdown field's key unstated.
+const NONE: &str = "(none)";
+
+/// #2374: a field with a fixed list (the machine's post) is a dropdown;
+/// "(none)" is the empty text, so the key goes out of the file.
+fn choice(ui: &mut Ui, buf: &mut String, choices: &[String], id: &str) -> egui::Response {
+    let shown = if buf.is_empty() { NONE.to_owned() } else { buf.clone() };
+    let mut changed = false;
+    let mut r = egui::ComboBox::from_id_salt(id)
+        .selected_text(shown)
+        .width(140.0)
+        .show_ui(ui, |ui| {
+            changed |= ui.selectable_value(buf, String::new(), NONE).changed();
+            for c in choices {
+                changed |= ui.selectable_value(buf, c.clone(), c.as_str()).changed();
+            }
+        })
+        .response;
+    if changed {
+        r.mark_changed();
+    }
+    r
+}
+
 /// Draw the editor. `dir` is the user machines folder Save As writes to.
 pub(crate) fn draw(ui: &mut Ui, ed: &mut MachineFileEditor, dir: Option<&Path>, pal: &Tokens, error: egui::Color32) -> EditorOut {
     let mut out = EditorOut::default();
@@ -242,10 +266,12 @@ pub(crate) fn draw(ui: &mut Ui, ed: &mut MachineFileEditor, dir: Option<&Path>, 
                     let tip = format!("Key: {}", f.key);
                     let l = ui.label(&f.label).on_hover_text(&tip);
                     let buf = ed.buffers.entry(f.pointer.clone()).or_insert_with(|| f.value.clone());
-                    let r = ui
-                        .add(TextEdit::singleline(buf).desired_width(140.0).hint_text("not stated"))
-                        .labelled_by(l.id)
-                        .on_hover_text(&tip);
+                    let r = if f.choices.is_empty() {
+                        ui.add(TextEdit::singleline(buf).desired_width(140.0).hint_text("not stated"))
+                    } else {
+                        choice(ui, buf, &f.choices, &f.pointer)
+                    };
+                    let r = r.labelled_by(l.id).on_hover_text(&tip);
                     if r.changed() {
                         edits.push((f.pointer.clone(), f.kind, buf.clone()));
                     }

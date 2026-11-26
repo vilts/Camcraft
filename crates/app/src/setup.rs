@@ -16,11 +16,13 @@
 //!   at those same existing entities - nothing is renamed, so every
 //!   path, stamp and saved file predating setups keeps working
 //!   untouched. `None` anywhere a setup is expected means "the first
-//!   setup by name", which collapses to that same legacy behavior.
+//!   setup" in program order ([`setups`]), which collapses to that same
+//!   legacy behavior.
 //! - **One order law, shared by call.** [`operation_order`] is THE
-//!   program sequence: setup rank first, explicit operation position
-//!   within a setup (name order for legacy operations without a position)
-//!   (`Setup1` before `Setup2`, always). The post, re-machining, the
+//!   program sequence: setup rank first (a setup created earlier before
+//!   one created later, #3447), then the explicit operation position
+//!   within a setup (name order for legacy operations without a
+//!   position). The post, re-machining, the
 //!   document sim and batch regenerate all call this one function,
 //!   upgrading M3.1 D's "shared by reference" to "shared by call" -
 //!   re-machining and the machine can still not disagree, now including
@@ -53,13 +55,30 @@ use flecs_ecs::prelude::World;
 use crate::model;
 use crate::schema::{SetupDef, STOCK_NAME, LEGACY_WCS_NAMES};
 
-/// Every setup entity, name-sorted: the program's setup order.
+/// Every setup entity in the program's setup order (#3447): setups
+/// without a stored `order` (every earlier file) first, by name; then
+/// by `order`, the creation order. A setup added later never posts
+/// before one added earlier, whatever its name.
 #[must_use]
 pub fn setups(world: &World) -> Vec<(String, flecs_ecs::prelude::Entity)> {
-    model::named_entities(world)
+    let mut all: Vec<(Option<u32>, String, flecs_ecs::prelude::Entity)> = model::named_entities(world)
         .into_iter()
         .filter(|(_, e)| model::is_setup(world, e))
-        .collect()
+        .map(|(n, e)| (e.entity_view(world).try_get::<&SetupDef>(|d| d.order).flatten(), n, e))
+        .collect();
+    all.sort_by_key(|(order, _, _)| *order); // stable: name order breaks ties; None sorts first
+    all.into_iter().map(|(_, n, e)| (n, e)).collect()
+}
+
+/// The `order` a new setup takes (#3447): one past the highest stored,
+/// 0 when none is stored. Returns `None` when the stored order is exhausted.
+#[must_use]
+pub fn next_order(world: &World) -> Option<u32> {
+    setups(world)
+        .into_iter()
+        .filter_map(|(n, _)| def_of(world, &n).and_then(|d| d.order))
+        .max()
+        .map_or(Some(0), |o| o.checked_add(1))
 }
 
 /// The setup names in order.
@@ -68,7 +87,7 @@ pub fn names(world: &World) -> Vec<String> {
     setups(world).into_iter().map(|(n, _)| n).collect()
 }
 
-/// The first setup by name - what `None` means.
+/// The first setup in program order - what `None` means.
 #[must_use]
 pub fn first(world: &World) -> Option<String> {
     names(world).into_iter().next()
@@ -152,7 +171,7 @@ pub fn set_active(world: &World, name: Option<String>) {
 
 /// Program-order rank of a declared setup: 0 for `None` and for the
 /// first setup (they mean the same thing), 1+ for each later one in
-/// name order. A name that no longer wears a setup ranks 0 - the same
+/// `order` (the [`setups`] order). A name that no longer wears a setup ranks 0 - the same
 /// fallback [`stock_entity_name`] applies, so order and resolution
 /// cannot disagree about a corrupt reference.
 #[must_use]

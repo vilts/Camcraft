@@ -2,43 +2,32 @@
 //! same newline-delimited JSON-RPC `camcraft-cli mcp` speaks on stdio,
 //! handing each line to the owning (UI) thread over a channel and
 //! writing that thread's answer back to the client.
+//! The same loop serves the UI link (#3751, [`Inbox::link`]): a local
+//! socket whose first line must carry the token of its discovery file.
+//! Provenance: our own std::net + std::sync::mpsc code; framing is the
+//! MCP stdio transport (modelcontextprotocol.io, 2025-06-18). Clean-room.
+//! The thread moves text: one client at a time; dropped clients or closed
+//! channels never panic. Dropping [`Inbox`] stops and joins the thread.
 //!
-//! Provenance: our own std::net + std::sync::mpsc code; the framing is
-//! the MCP stdio transport's (modelcontextprotocol.io, revision
-//! 2025-06-18: one JSON-RPC message per line), carried over a socket.
-//! Clean-room, public sources only.
-//!
-//! The thread never touches a world: it only moves text. One client at
-//! a time; a dropped client, a closed channel or an unreadable line is
-//! logged and the listener goes on (or ends with the app), never a panic.
-//! Dropping the [`Inbox`] stops and joins the thread.
-//!
-//! **Only JSON-RPC speaks** (review of #474): loopback is not a trust
-//! boundary - any web page in the user's browser can POST to
-//! 127.0.0.1. Every non-blank line must open a JSON object or array;
-//! anything else (an HTTP request line, a header) closes the
-//! connection before a single line of it reaches the app, so a page can
-//! never smuggle a JSON-RPC body past its own HTTP headers. Reads are
-//! bounded to [`MAX_LINE`] as they happen, and writes time out, so a
-//! client can neither grow memory nor stall the listener.
-//!
-//! **An idle client lets go** (#567): one client holds the session, so
-//! a client that sends no complete line for [`IDLE_TIMEOUT`] (time the
-//! app spends answering does not count) is told why in an MCP
-//! `notifications/message`, closed, logged by its peer address, and the
-//! next client is served. A newcomer never pre-empts a connected client
-//! before that: an agent pausing between calls keeps its session. The
-//! deadline holds inside the read too: a client trickling bytes with no
-//! newline is dropped on the same schedule as a silent one.
+//! **Only JSON-RPC speaks** (#474): any non-JSON line closes the
+//! connection before reaching the app. Reads are bounded to [`MAX_LINE`]
+//! ([`MAX_HELLO_LINE`] before hello, #3873) and writes time out.
+//! **An idle client lets go** (#567, #3873): a client idle for
+//! [`IDLE_TIMEOUT`] ([`HELLO_TIMEOUT`] before hello) is dropped so the
+//! next client can be served.
 
 use std::io::{Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
 use crate::clock::Instant;
 use std::time::Duration;
+
+use super::link::{self, Registration};
+use super::wire::{Listener, Stream};
 
 /// How often a blocked wait looks at the stop flag: the bound on how
 /// long dropping an [`Inbox`] can take.
@@ -47,6 +36,9 @@ const POLL: Duration = Duration::from_millis(50);
 /// A line longer than this is refused and its client dropped - a client
 /// that never sends a newline must not grow the app's memory forever.
 const MAX_LINE: usize = 16 * 1024 * 1024;
+
+/// A line longer than this before the UI link hello is refused (#3873).
+const MAX_HELLO_LINE: usize = 4 * 1024;
 
 /// How long a write to a client may block before the client is dropped -
 /// a client that stops reading must not hold the listener.
@@ -60,12 +52,18 @@ const CHUNK: usize = 8 * 1024;
 /// is dropped so the next one can be served (#567).
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
+/// How long an unauthenticated client may hold the UI link before
+/// sending a valid hello line (#3873).
+pub const HELLO_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// How a served client's session ended, for the listener's log line.
 enum End {
     /// It hung up, was refused, or the app is stopping.
     Closed,
     /// It sent no complete line for the idle window.
     Idle(Duration),
+    /// Its first line was not the UI link's hello with the token (#3751).
+    Refused,
 }
 
 /// Whether a wire line may be handed to the app: JSON-RPC is always an
@@ -119,6 +117,8 @@ pub struct Inbox {
     addr: Option<SocketAddr>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
+    /// The UI link's discovery file (#3751); removed after the thread ends.
+    link: Option<Registration>,
 }
 
 impl Inbox {
@@ -148,9 +148,47 @@ impl Inbox {
         let flag = Arc::clone(&stop);
         let thread = std::thread::Builder::new()
             .name("camcraft-mcp".into())
-            .spawn(move || accept_loop(&listener, &tx, &flag, &wake, idle))?;
+            .spawn(move || accept_loop(&Listener::Tcp(listener), &tx, &flag, &wake, idle, None, HELLO_TIMEOUT))?;
         tracing::info!("mcp: listening on {addr} (an idle client is dropped after {}s)", idle.as_secs());
-        Ok(Self { rx, addr: Some(addr), stop, thread: Some(thread) })
+        Ok(Self { rx, addr: Some(addr), stop, thread: Some(thread), link: None })
+    }
+
+    /// Open the UI link (#3751) in the link folder `dir`: a local socket
+    /// for `camcraft-cli --ui`, found through a discovery file and gated
+    /// by its token. The file goes when the inbox drops.
+    ///
+    /// # Errors
+    /// The folder, the bind, the file or the thread spawn failed.
+    pub fn link(dir: &Path, wake: Wake) -> std::io::Result<Self> {
+        Self::link_with_timeouts(dir, wake, IDLE_TIMEOUT, HELLO_TIMEOUT)
+    }
+
+    /// [`Inbox::link`] with custom deadlines (#3873: tests use a short one).
+    pub fn link_with_timeouts(dir: &Path, wake: Wake, idle: Duration, hello_timeout: Duration) -> std::io::Result<Self> {
+        let (listener, registration, token) = link::open(dir)?;
+        listener.set_nonblocking(true)?;
+        let (tx, rx) = mpsc::channel();
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        let thread = std::thread::Builder::new()
+            .name("camcraft-ui-link".into())
+            .spawn(move || accept_loop(&listener, &tx, &flag, &wake, idle, Some(&token), hello_timeout))?;
+        tracing::info!("ui link: {} {} (camcraft-cli --ui)", registration.entry().transport, registration.entry().address);
+        Ok(Self { rx, addr: None, stop, thread: Some(thread), link: Some(registration) })
+    }
+
+    /// The UI link's discovery entry, when this inbox is one.
+    #[must_use]
+    pub fn link_entry(&self) -> Option<&link::Entry> {
+        self.link.as_ref().map(Registration::entry)
+    }
+
+    /// Keep the discovery file's project current (`--window <project>`);
+    /// a no-op unless this inbox is a UI link and the project changed.
+    pub fn note_project(&mut self, project: Option<&Path>) {
+        if let Some(registration) = self.link.as_mut() {
+            registration.note_project(project);
+        }
     }
 
     /// An inbox with no socket: requests arrive through the returned
@@ -158,7 +196,7 @@ impl Inbox {
     #[must_use]
     pub fn channel() -> (Sender<Request>, Self) {
         let (tx, rx) = mpsc::channel();
-        (tx, Self { rx, addr: None, stop: Arc::new(AtomicBool::new(false)), thread: None })
+        (tx, Self { rx, addr: None, stop: Arc::new(AtomicBool::new(false)), thread: None, link: None })
     }
 
     /// The next waiting request, never blocking.
@@ -186,47 +224,15 @@ impl Drop for Inbox {
     }
 }
 
-/// `--mcp-port <n>` / `--mcp-port=<n>` over `CAMCRAFT_MCP_PORT`: `None`
-/// when neither asks for the server (it is off by default).
-///
-/// # Errors
-/// The flag without a value, or a value that is not a port number.
-pub fn port_from(args: &[String], env: Option<&str>) -> Result<Option<u16>, String> {
-    let flag = args.iter().enumerate().find_map(|(i, a)| {
-        if a == "--mcp-port" {
-            Some(args.get(i + 1).cloned())
-        } else {
-            a.strip_prefix("--mcp-port=").map(|v| Some(v.to_owned()))
-        }
-    });
-    let text = match flag {
-        Some(None) => return Err("--mcp-port needs a port number".into()),
-        Some(Some(v)) => v,
-        None => match env.map(str::trim).filter(|v| !v.is_empty()) {
-            Some(v) => v.to_owned(),
-            None => return Ok(None),
-        },
-    };
-    text.trim()
-        .parse::<u16>()
-        .map(Some)
-        .map_err(|_| format!("MCP port must be a number from 0 to 65535, got '{text}'"))
-}
-
-fn accept_loop(listener: &TcpListener, tx: &Sender<Request>, stop: &AtomicBool, wake: &Wake, idle: Duration) {
+fn accept_loop(listener: &Listener, tx: &Sender<Request>, stop: &AtomicBool, wake: &Wake, idle: Duration, token: Option<&str>, hello: Duration) {
     while !stop.load(Ordering::Relaxed) {
         match listener.accept() {
-            Ok((stream, peer)) => {
-                tracing::info!("mcp: client {peer} connected");
-                match serve_client(stream, tx, stop, wake, idle) {
-                    Ok(End::Closed) => tracing::info!("mcp: client {peer} left"),
-                    Ok(End::Idle(after)) => tracing::warn!(
-                        "mcp: client {peer} dropped: idle - no complete line for {:.1}s; serving the next client",
-                        after.as_secs_f64()
-                    ),
-                    Err(e) => tracing::warn!("mcp: client {peer} dropped: {e}"),
-                }
-            }
+            Ok((stream, peer)) => match serve_client(stream, tx, stop, wake, idle, token, hello) {
+                Ok(End::Closed) => tracing::info!("mcp: client {peer} left"),
+                Ok(End::Idle(after)) => tracing::warn!("mcp: client {peer} dropped: idle ({:.1}s)", after.as_secs_f64()),
+                Ok(End::Refused) => tracing::warn!("mcp: client {peer} refused: no valid UI link token"),
+                Err(e) => tracing::warn!("mcp: client {peer} dropped: {e}"),
+            },
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => std::thread::sleep(POLL),
             Err(e) => {
                 tracing::warn!("mcp: accept failed: {e}");
@@ -236,34 +242,35 @@ fn accept_loop(listener: &TcpListener, tx: &Sender<Request>, stop: &AtomicBool, 
     }
 }
 
-/// One client until it hangs up, the app stops, the app's end of the
-/// channel is gone, or it sends no complete line for `idle`.
-///
-/// The idle deadline is enforced inside the read (#567 review): each
-/// read waits at most the poll step or the time left in the window,
-/// whichever is shorter, and takes at most [`CHUNK`] bytes, and the
-/// deadline is checked after every chunk - so a client trickling bytes
-/// with no newline cannot keep a read alive past its window.
-fn serve_client(mut stream: TcpStream, tx: &Sender<Request>, stop: &AtomicBool, wake: &Wake, idle: Duration) -> std::io::Result<End> {
-    // An accepted socket may inherit the listener's non-blocking mode
-    // (BSD does); reads wait, but only a POLL at a time.
+/// One client until it hangs up, the app stops, or idle/hello expires (#567, #3873).
+fn serve_client(
+    mut stream: Stream,
+    tx: &Sender<Request>,
+    stop: &AtomicBool,
+    wake: &Wake,
+    idle: Duration,
+    token: Option<&str>,
+    hello: Duration,
+) -> std::io::Result<End> {
+    let mut gate = token;
     stream.set_nonblocking(false)?;
     stream.set_write_timeout(Some(WRITE_TIMEOUT))?;
     let mut writer = stream.try_clone()?;
-    // Bytes read but not yet a complete line. Between reads it never
-    // holds a newline and never more than MAX_LINE bytes.
     let mut buf = Vec::new();
     let mut chunk = [0_u8; CHUNK];
-    // The idle clock: reset by each complete line once it is answered,
-    // so the app's own answering time never counts against the client.
-    // A partial line never resets it.
     let mut active = Instant::now();
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(End::Closed);
         }
+        let cap = if gate.is_some() { MAX_HELLO_LINE } else { MAX_LINE };
+        let deadline = if gate.is_some() { hello } else { idle };
         let quiet = active.elapsed();
-        let Some(left) = idle.checked_sub(quiet).filter(|d| !d.is_zero()) else {
+        let Some(left) = deadline.checked_sub(quiet).filter(|d| !d.is_zero()) else {
+            if gate.is_some() {
+                let _ = writeln!(writer, "{}", link::HELLO_REFUSED).and_then(|()| writer.flush());
+                return Ok(End::Refused);
+            }
             let note = format!(
                 r#"{{"jsonrpc":"2.0","method":"notifications/message","params":{{"level":"warning","logger":"camcraft","data":"idle for {}s with no complete message - the connection is closed"}}}}"#,
                 quiet.as_secs()
@@ -277,7 +284,7 @@ fn serve_client(mut stream: TcpStream, tx: &Sender<Request>, stop: &AtomicBool, 
         // is non-zero, and a sub-millisecond rest rounds up to 1 ms.
         stream.set_read_timeout(Some(left.min(POLL).max(Duration::from_millis(1))))?;
         // Bounded as it reads: never more than one byte past the cap.
-        let room = (MAX_LINE + 1).saturating_sub(buf.len()).clamp(1, CHUNK);
+        let room = (cap + 1).saturating_sub(buf.len()).clamp(1, CHUNK);
         let got = match chunk.get_mut(..room).map(|c| stream.read(c)) {
             Some(Ok(n)) => n,
             Some(Err(e))
@@ -294,7 +301,7 @@ fn serve_client(mut stream: TcpStream, tx: &Sender<Request>, stop: &AtomicBool, 
         if got == 0 {
             // End of input: a last unterminated line still counts, as
             // it does on stdio.
-            if !buf.is_empty() {
+            if !buf.is_empty() && gate.is_none() {
                 let line = std::mem::take(&mut buf);
                 forward(&line, tx, &mut writer, stop, wake)?;
             }
@@ -305,12 +312,26 @@ fn serve_client(mut stream: TcpStream, tx: &Sender<Request>, stop: &AtomicBool, 
         while let Some(nl) = buf.iter().position(|b| *b == b'\n') {
             let rest = buf.split_off(nl.saturating_add(1));
             let line = std::mem::replace(&mut buf, rest);
+            if let Some(want) = gate.take() {
+                let Some(proof) = link::hello_matches(&line, want) else {
+                    let _ = writeln!(writer, "{}", link::HELLO_REFUSED).and_then(|()| writer.flush());
+                    return Ok(End::Refused);
+                };
+                writeln!(writer, "{}", link::hello_ok(&proof))?;
+                writer.flush()?;
+                active = Instant::now();
+                continue;
+            }
             if !forward(&line, tx, &mut writer, stop, wake)? {
                 return Ok(End::Closed);
             }
             active = Instant::now();
         }
-        if buf.len() > MAX_LINE {
+        if buf.len() > cap {
+            if gate.is_some() {
+                let _ = writeln!(writer, "{}", link::HELLO_REFUSED).and_then(|()| writer.flush());
+                return Ok(End::Refused);
+            }
             let refusal = r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"message too long - the connection is closed"}}"#;
             writeln!(writer, "{refusal}")?;
             writer.flush()?;
@@ -322,7 +343,7 @@ fn serve_client(mut stream: TcpStream, tx: &Sender<Request>, stop: &AtomicBool, 
 /// Hand one line to the owning thread and write its answer. `Ok(false)`
 /// when the session cannot go on (the app is stopping or gone, or the
 /// client is not speaking JSON-RPC).
-fn forward(bytes: &[u8], tx: &Sender<Request>, writer: &mut TcpStream, stop: &AtomicBool, wake: &Wake) -> std::io::Result<bool> {
+fn forward(bytes: &[u8], tx: &Sender<Request>, writer: &mut Stream, stop: &AtomicBool, wake: &Wake) -> std::io::Result<bool> {
     if !is_json_rpc_line(bytes) {
         tracing::warn!("mcp: a client sent a line that is not JSON-RPC (an HTTP request?) - connection closed");
         let refusal = r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"not a JSON-RPC message - the connection is closed"}}"#;
@@ -347,11 +368,8 @@ fn forward(bytes: &[u8], tx: &Sender<Request>, writer: &mut TcpStream, stop: &At
                 return Ok(true);
             }
             Ok(None) => return Ok(true),
-            Err(RecvTimeoutError::Timeout) => {
-                if stop.load(Ordering::Relaxed) {
-                    return Ok(false);
-                }
-            }
+            Err(RecvTimeoutError::Timeout) if stop.load(Ordering::Relaxed) => return Ok(false),
+            Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => {
                 tracing::warn!("mcp: a request was dropped unanswered");
                 return Ok(true);

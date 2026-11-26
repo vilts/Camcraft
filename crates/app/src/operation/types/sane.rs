@@ -3,7 +3,7 @@
 use crate::machining2d::PocketStrategy;
 
 use crate::operation::types::params::OpParams;
-use crate::operation::types::sel::lead_sane;
+use crate::operation::types::sel::{lead_sane, FeatureSel};
 
 /// The refusal of pre-drilled entry on a kind that does not read it (#1449).
 pub const PREDRILLED_POCKET_ONLY: &str =
@@ -27,7 +27,11 @@ impl OpParams {
     /// The corner-arc option's door (#1733), for the kinds that carry it.
     fn arc_turn_refusal(&self) -> Option<&'static str> {
         let (on, radius, trochoidal) = match self {
+            // #1759: Face, 2D Contour and Slot carry the option too.
             OpParams::Pocket { blend_turns, blend_radius, .. }
+            | OpParams::Face { blend_turns, blend_radius, .. }
+            | OpParams::Contour { blend_turns, blend_radius, .. }
+            | OpParams::Slot { blend_turns, blend_radius, .. }
             | OpParams::Offset2D { blend_turns, blend_radius, .. } => (*blend_turns, *blend_radius, false),
             OpParams::Adaptive2D { blend_turns, blend_radius, method, .. } => {
                 (*blend_turns, *blend_radius, *method == crate::machining2d::AdaptiveMethod::Trochoidal)
@@ -68,28 +72,40 @@ impl OpParams {
         if let Some(why) = crate::operation::rest_op::rest_refusal(self) {
             return Some(why);
         }
-        // #1448: only the untilted 2D contour takes a picked start so far;
-        // every other kind refuses it here rather than ignore it.
-        // #1473: the exit point likewise.
-        for (what, set) in [
-            ("start", self.links().is_some_and(|l| l.approach.start_point.is_some())),
-            ("exit", self.links().is_some_and(|l| l.approach.exit_point.is_some())),
-        ] {
-            if !set {
-                continue;
-            }
-            match self {
-                OpParams::Contour { tilt: None, .. } => {}
-                OpParams::Contour { .. } => {
-                    return Some(format!("a {what} point is not taken on a tilted (3+2) contour yet - clear it or the tilt"));
-                }
-                _ => return Some(format!("a {what} point is taken only by the 2D contour so far - clear it on this operation")),
-            }
+        // #1448 / #3324: a start or exit pick on a kind whose capability
+        // does not take it is refused here, by the kind's name, rather
+        // than ignored (`operation::pick_kinds`).
+        if let Some(why) = self.pick_refusal() {
+            return Some(why);
+        }
+        // #3745: the approach distance outside the stock, by name.
+        if let Some(why) = self.links().and_then(|l| l.approach.approach_distance_refusal()) {
+            return Some(why.into());
         }
         match self {
+            OpParams::Finish3D { direction_angle, .. } => {
+                crate::finishing3d::parallel_angle_refusal(*direction_angle).map(str::to_owned)
+            }
             OpParams::SinkerBurn(p) => p.compensation_refusal(),
             OpParams::SinkerSideBurn(p) => p.refusal(),
-            OpParams::Adaptive2D { troch, .. } => troch.refusal(),
+            OpParams::SlotUndercut(p) => p.refusal(),
+            OpParams::Pocket { corner_relief, .. }
+            | OpParams::Offset2D { corner_relief, .. } => corner_relief.validate().err().map(|e| e.to_string()),
+            OpParams::Adaptive2D { method, troch, corner_relief, pass_start, .. } => troch.refusal().or_else(|| {
+                if let Some(why) = crate::machining2d::trochoidal_pass_start_refusal(*method, *pass_start) {
+                    Some(why)
+                } else if *method == crate::machining2d::AdaptiveMethod::Trochoidal && !corner_relief.is_off() {
+                    Some("corner relief is not available with the Trochoidal method - turn corner relief off or use Spiral".into())
+                } else {
+                    corner_relief.validate().err().map(|e| e.to_string())
+                }
+            }),
+            OpParams::Chamfer2D {
+                minimum_cone_radius,
+                ..
+            } if !(minimum_cone_radius.is_finite() && *minimum_cone_radius >= 0.0) => {
+                Some("tip offset must be finite and non-negative".into())
+            }
             _ => None,
         }
     }
@@ -125,11 +141,15 @@ impl OpParams {
         let links_ok = links_ok && self.arc_turn_refusal().is_none();
         // #1489: a rest group the generator would refuse.
         let links_ok = links_ok && crate::operation::rest_op::rest_refusal(self).is_none();
+        // #1448 / #3339: every pick coordinate finite, in bounds, and within the cap.
+        let links_ok = links_ok && self.path_picks().refusal().is_none();
         tilt_ok
             && links_ok
             && match self {
             // The plasma door (#670): the parameter set's own sanity.
             OpParams::PlasmaProfile(p) => p.is_sane(),
+            // The waterjet door (#1883).
+            OpParams::WaterjetProfile(p) => p.is_sane(),
             // The wire door (#532): the parameter set's own sanity; the
             // condition is the command door's world question.
             OpParams::WireContour(p) => p.is_sane(),
@@ -137,6 +157,8 @@ impl OpParams {
             OpParams::SinkerBurn(p) => p.is_sane(),
             // #545: the side burn's own door.
             OpParams::SinkerSideBurn(p) => p.is_sane(),
+            // #1444: the undercut's own door.
+            OpParams::SlotUndercut(p) => p.is_sane(),
             // The probe's door (#108): every distance and feed a real
             // number, the measure no faster than the seek, the back-off
             // inside the approach, a slot G54..G59 when one is named.
@@ -202,6 +224,7 @@ impl OpParams {
                 tab_width,
                 tab_height,
                 helix_radius,
+                chain_overrides,
                 ..
             } => {
                 // Structural only, the pocket doors' word (M8.2 A): a
@@ -209,7 +232,14 @@ impl OpParams {
                 // Helix does, the generator certifies it against the
                 // bore's wall per level - dive room is the refusal of
                 // record there, said in the path's notes.
-                nneg(*stock_to_leave)
+                let overrides_ok = chain_overrides.iter().enumerate().all(|(i, o)| {
+                    !o.entity.is_empty()
+                        && !chain_overrides[..i]
+                            .iter()
+                            .any(|prev| prev.entity == o.entity && prev.chain == o.chain)
+                });
+                overrides_ok
+                    && nneg(*stock_to_leave)
                     && clearance_z.is_sane()
                     && retract_z.is_sane()
                     && top_z.is_sane()
@@ -236,6 +266,7 @@ impl OpParams {
                 helix_radius,
                 strategy,
                 optimal_load,
+                corner_relief,
                 ..
             } => {
                 // The entry family joined the planar pocket at M5.1 H,
@@ -258,6 +289,7 @@ impl OpParams {
                     && (optimal_load.is_finite()
                         && (!matches!(strategy, PocketStrategy::OffsetRings)
                             || crate::load::load_in_door(*optimal_load)))
+                    && corner_relief.validate().is_ok()
             }
             // The twins' doors are the pocket's, read with the
             // strategy already decided (M2.4 A): Adaptive's engagement
@@ -276,7 +308,9 @@ impl OpParams {
                 plunge_feed,
                 helix_radius,
                 optimal_load,
+                method,
                 troch,
+                corner_relief,
                 ..
             } => {
                 pos(*stepover)
@@ -291,6 +325,8 @@ impl OpParams {
                     && pos(*helix_radius)
                     && crate::load::load_in_door(*optimal_load)
                     && troch.is_sane()
+                    && corner_relief.validate().is_ok()
+                    && !(*method == crate::machining2d::AdaptiveMethod::Trochoidal && !corner_relief.is_off())
             }
             OpParams::Offset2D {
                 stepover,
@@ -303,6 +339,7 @@ impl OpParams {
                 feed,
                 plunge_feed,
                 helix_radius,
+                corner_relief,
                 ..
             } => {
                 pos(*stepover)
@@ -315,6 +352,7 @@ impl OpParams {
                     && pos(*feed)
                     && pos(*plunge_feed)
                     && pos(*helix_radius)
+                    && corner_relief.validate().is_ok()
             }
             // The engrave door (M2.4 B) is the trace's verbatim -
             // the twin law says the numbers are asked the same
@@ -337,6 +375,28 @@ impl OpParams {
                     && pos(*feed)
                     && pos(*plunge_feed)
             }
+            // The V-carve's door (#1443): the engrave's numbers, and a
+            // floor stepover the generator can ring with.
+            OpParams::VCarve {
+                clearance_z,
+                retract_z,
+                top_z,
+                bottom_z,
+                stepdown,
+                feed,
+                plunge_feed,
+                flat_stepover,
+                ..
+            } => {
+                clearance_z.is_sane()
+                    && retract_z.is_none_or(|r| r.is_sane())
+                    && top_z.is_sane()
+                    && bottom_z.is_sane()
+                    && pos(*stepdown)
+                    && pos(*feed)
+                    && pos(*plunge_feed)
+                    && pos(*flat_stepover)
+            }
             // The 2-D chamfer's door (M2.4 B): the authored promise -
             // a land wider than nothing, cut at an angle that is a
             // chamfer and not a flat (0) or a wall (90): the ride
@@ -346,6 +406,7 @@ impl OpParams {
             OpParams::Chamfer2D {
                 width,
                 angle_deg,
+                minimum_cone_radius,
                 clearance_z,
                 retract_z,
                 top_z,
@@ -356,6 +417,7 @@ impl OpParams {
             } => {
                 pos(*width)
                     && (0.0..90.0).contains(angle_deg)
+                    && nneg(*minimum_cone_radius)
                     && pos(*tolerance)
                     && clearance_z.is_sane()
                     && retract_z.is_none_or(|r| r.is_sane())
@@ -436,6 +498,7 @@ impl OpParams {
                             || crate::load::load_in_door(*optimal_load)))
             }
             OpParams::Finish3D {
+                direction_angle,
                 stepover,
                 tolerance,
                 clearance_z,
@@ -456,6 +519,7 @@ impl OpParams {
                 // level cap refuses a tolerance that would need more
                 // rings than the machine of record may hold.
                 pos(*tolerance)
+                    && crate::finishing3d::parallel_angle_refusal(*direction_angle).is_none()
                     && stepover.is_none_or(pos)
                     // M2.5 A: the flank's own number is a spacing
                     // like the raster's - finite and positive, or absent.
@@ -495,13 +559,78 @@ impl OpParams {
                 bottom_z,
                 feed,
                 plunge_feed,
+                exclude_edges,
+                min_edge_angle_deg,
+                exclude_holes: _,
+                hole_min_diameter,
+                hole_max_diameter,
+                // #1889: the policy is an enum; each value is legal.
+                unreachable: _,
+                sizing,
+                picks: _,
             } => {
                 pos(*width)
+                    // #1890: a positive depth and 1..=100 passes.
+                    && sizing.is_sane()
                     && clearance_z.is_sane()
                     && top_z.is_sane()
                     && bottom_z.is_sane()
                     && pos(*feed)
                     && pos(*plunge_feed)
+                    // #1888: an exclusion is an edge chain; the angle
+                    // is a bend, 0 up to (not) 180; the hole range is
+                    // ordered and never negative, read or not.
+                    && exclude_edges.iter().all(|g| matches!(g.feature, FeatureSel::Chain(_)))
+                    && min_edge_angle_deg.is_finite()
+                    && (0.0..180.0).contains(min_edge_angle_deg)
+                    && hole_min_diameter.is_finite()
+                    && hole_max_diameter.is_finite()
+                    && *hole_min_diameter >= 0.0
+                    && hole_max_diameter >= hole_min_diameter
+            }
+            // #1894: the Deburr's numbers, and the lean inside its cap -
+            // the kernel's door at command creation.
+            OpParams::MultiAxisDeburr {
+                width,
+                clearance_z,
+                top_z,
+                bottom_z,
+                feed,
+                plunge_feed,
+                exclude_edges,
+                min_edge_angle_deg,
+                exclude_holes: _,
+                hole_min_diameter,
+                hole_max_diameter,
+                unreachable: _,
+                sizing,
+                axis_mode: _,
+                lead_deg,
+                lag_deg,
+                max_tilt_deg,
+                shank_avoid: _,
+                picks: _,
+            } => {
+                let cap = crate::multiaxis::MAX_TILT_CAP_DEG;
+                let deg = |v: f64| v.is_finite() && (0.0..=cap).contains(&v);
+                pos(*width)
+                    && sizing.is_sane()
+                    && clearance_z.is_sane()
+                    && top_z.is_sane()
+                    && bottom_z.is_sane()
+                    && pos(*feed)
+                    && pos(*plunge_feed)
+                    && exclude_edges.iter().all(|g| matches!(g.feature, FeatureSel::Chain(_)))
+                    && min_edge_angle_deg.is_finite()
+                    && (0.0..180.0).contains(min_edge_angle_deg)
+                    && hole_min_diameter.is_finite()
+                    && hole_max_diameter.is_finite()
+                    && *hole_min_diameter >= 0.0
+                    && hole_max_diameter >= hole_min_diameter
+                    && deg(*lead_deg)
+                    && deg(*lag_deg)
+                    && deg(*max_tilt_deg)
+                    && (lead_deg - lag_deg).abs() <= *max_tilt_deg
             }
             OpParams::Contour5D {
                 tolerance,
@@ -626,6 +755,13 @@ impl OpParams {
                 // stepover rides the same Some-or-derived law as the
                 // finish's.
                 let angle = |v: &f64| v.is_finite() && v.abs() <= 90.0;
+                // #2772: a stated rotation axis is a direction - three
+                // finite numbers, not all zero. A leaning line is a
+                // statement the resolver and the letter door judge by
+                // name, not a sanity matter here.
+                let direction = |v: &Option<[f64; 3]>| {
+                    v.is_none_or(|d| d.iter().all(|x| x.is_finite()) && d.iter().map(|x| x * x).sum::<f64>() > 0.0)
+                };
                 pos(*tolerance)
                     && clearance_z.is_sane()
                     && retract_z.is_none_or(|r| r.is_sane())
@@ -637,6 +773,15 @@ impl OpParams {
                     && angle(lag_deg)
                     && *max_tilt_deg > 0.0
                     && *max_tilt_deg <= 180.0
+                    // #2772: the twins' read-back (the or-pattern shares
+                    // Flow and the drive-curve contour, which state no
+                    // axis of their own).
+                    && (match self {
+                        OpParams::RotaryContour { stated_axis, .. } | OpParams::RotaryParallel { stated_axis, .. } => {
+                            direction(stated_axis)
+                        }
+                        _ => true,
+                    })
                     && (match self {
                         OpParams::Parallel5D { stepover, .. }
                         | OpParams::Swarf { stepover, .. }
@@ -644,6 +789,40 @@ impl OpParams {
                         | OpParams::Flow5D { stepover, .. } => stepover.is_none_or(pos),
                         _ => true,
                     })
+            }
+            // The flow band's door (#2826): the twins' shape minus the
+            // station window the picks replace - the same pose door,
+            // the same stated-direction law, the raster's derived
+            // stepover, and heights read as radii (their own guard
+            // lives in the kernel, against the work's true radius).
+            OpParams::RotaryFlow {
+                tolerance,
+                stepover,
+                clearance_z,
+                retract_z,
+                feed,
+                plunge_feed,
+                climb: _,
+                lead_deg,
+                lag_deg,
+                max_tilt_deg,
+                stated_axis,
+            } => {
+                let angle = |v: &f64| v.is_finite() && v.abs() <= 90.0;
+                let direction = |v: &Option<[f64; 3]>| {
+                    v.is_none_or(|d| d.iter().all(|x| x.is_finite()) && d.iter().map(|x| x * x).sum::<f64>() > 0.0)
+                };
+                pos(*tolerance)
+                    && stepover.is_none_or(pos)
+                    && clearance_z.is_sane()
+                    && retract_z.is_none_or(|r| r.is_sane())
+                    && pos(*feed)
+                    && pos(*plunge_feed)
+                    && angle(lead_deg)
+                    && angle(lag_deg)
+                    && *max_tilt_deg > 0.0
+                    && *max_tilt_deg <= 180.0
+                    && direction(stated_axis)
             }
             // The wrap ladder's door (M5.1 stage E2): the Pocket3D
             // door's numbers - plain stepover, radial stepdown, the
@@ -669,9 +848,15 @@ impl OpParams {
                 lead_deg,
                 lag_deg,
                 max_tilt_deg,
+                stated_axis,
                 ..
             } => {
                 let angle = |v: &f64| v.is_finite() && v.abs() <= 90.0;
+                // #2772: the twins' own direction law for the op's
+                // stated axis.
+                let direction = |v: &Option<[f64; 3]>| {
+                    v.is_none_or(|d| d.iter().all(|x| x.is_finite()) && d.iter().map(|x| x * x).sum::<f64>() > 0.0)
+                };
                 pos(*tolerance)
                     && pos(*stepover)
                     && nneg(*stock_to_leave)
@@ -689,6 +874,7 @@ impl OpParams {
                     && angle(lag_deg)
                     && *max_tilt_deg > 0.0
                     && *max_tilt_deg <= 180.0
+                    && direction(stated_axis)
             }
             // The stamped ladder's door (M5.1 stage E3): the Pocket3D
             // door verbatim - the hop plane included, which the plain
@@ -913,6 +1099,7 @@ impl OpParams {
                 stepdown,
                 feed,
                 plunge_feed,
+                picks: _,
             } => {
                 pos(*tolerance)
                     && clearance_z.is_sane()
@@ -938,6 +1125,7 @@ impl OpParams {
                 stock_to_leave,
                 feed,
                 plunge_feed,
+                picks: _,
             } => {
                 pos(*tolerance)
                     && clearance_z.is_sane()
@@ -956,6 +1144,7 @@ impl OpParams {
                 bottom_z,
                 feed,
                 plunge_feed,
+                picks: _,
             } => {
                 pos(*tolerance)
                     && clearance_z.is_sane()
@@ -979,6 +1168,7 @@ impl OpParams {
                 stock_to_leave,
                 feed,
                 plunge_feed,
+                picks: _,
             } => {
                 pos(*tolerance)
                     && clearance_z.is_sane()
@@ -997,6 +1187,7 @@ impl OpParams {
                 bottom_z,
                 feed,
                 plunge_feed,
+                picks: _,
             } => {
                 pos(*tolerance)
                     && clearance_z.is_sane()
@@ -1015,6 +1206,7 @@ impl OpParams {
                 plunge_feed,
                 bar_advance,
                 inspect_tol,
+                kerf,
                 ..
             } => {
                 pos(*tolerance)
@@ -1039,6 +1231,8 @@ impl OpParams {
                     // generator's level-cap precedent, at the door.
                     && inspect_tol.is_finite()
                     && (*inspect_tol == 0.0 || *inspect_tol >= 1e-4)
+                    // #3469: the back stock is a length, 0 or more.
+                    && kerf.problem().is_none()
             }
             // The threading door (M5.2 stage D): three positive helix
             // numbers - pitch, depth, infeed - beside the twins'
@@ -1058,6 +1252,7 @@ impl OpParams {
                 plunge_feed,
                 infeed_plan,
                 hand: _,
+                picks: _,
             } => {
                 pos(*tolerance)
                     && clearance_z.is_sane()
@@ -1088,6 +1283,7 @@ impl OpParams {
                 angle_deg,
                 feed,
                 plunge_feed,
+                picks: _,
             } => {
                 pos(*tolerance)
                     && clearance_z.is_sane()
@@ -1109,6 +1305,7 @@ impl OpParams {
                 top_dia,
                 feed,
                 plunge_feed,
+                picks: _,
             } => {
                 pos(*tolerance)
                     && clearance_z.is_sane()
@@ -1134,6 +1331,7 @@ impl OpParams {
                 passes,
                 feed,
                 plunge_feed,
+                picks: _,
             } => {
                 pos(*tolerance)
                     && clearance_z.is_sane()
@@ -1158,6 +1356,7 @@ impl OpParams {
                 bottom_z,
                 feed,
                 plunge_feed,
+                picks: _,
             } => {
                 pos(*tolerance)
                     && clearance_z.is_sane()
@@ -1178,6 +1377,7 @@ impl OpParams {
                 bottom_z,
                 feed,
                 plunge_feed,
+                picks: _,
             } => {
                 pos(*tolerance)
                     && clearance_z.is_sane()

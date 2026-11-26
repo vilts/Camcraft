@@ -79,10 +79,12 @@ pub fn burn(datum: SinkerDatum, depth: f64, floor: f64) -> OpParams {
         pass: camcraft_app::operation::SinkerPass::Single,
         cavity_x: 0.0,
         cavity_y: 0.0,
+        cavity_outline: Vec::new(),
         orbit: None,
         layer: None,
         wear_lost: None,
         wear_over: None,
+        picks: Default::default(),
     })
 }
 

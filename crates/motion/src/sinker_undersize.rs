@@ -10,7 +10,8 @@
 //! finish takes off what the rough left. The refusals and the warning
 //! are our own design (#290 D1-D10). No vendor material.
 //!
-//! The law, per axis, for an electrode `e` wide burning a cavity `c`
+//! The legacy law, when no cavity outline is stated, is per axis for
+//! an electrode `e` wide burning a cavity `c`
 //! wide under a condition of undersize `u`, spark gap `g` and XY orbit radius `r`:
 //! - the electrode is the one the condition calls for: `e = c - 2u`;
 //! - it burns `e + 2(g + r)`, which never exceeds `c` (more would burn past
@@ -20,16 +21,22 @@
 //! - the orbit moves only in XY: the tip stops `u - r` above the finished
 //!   floor, so a rough leaves `u - r - g` on the floor as on the walls.
 //!
-//! A body electrode (#1152) is judged on its outline's X and Y extents:
+//! Without a cavity outline, a body electrode (#1152) is judged on its
+//! outline's X and Y extents:
 //! a section grown by `g + r` on every side is exactly that much wider
 //! per side on each axis, so the two burn clauses hold as they stand.
 //! The first clause holds one way only: an inward offset moves a sharp
 //! corner that is not square to the axes MORE than `u`, so the outline's
 //! extent may be under `c - 2u` - never over it. The shape inside those
 //! extents is the stock sim's to judge (the outline atom).
+//! With a cavity outline, `judge_outline` compares inward wall offsets
+//! (#1810); the stock verdict still judges the actual round spark gap.
 
 use crate::machining2d::GenError;
 use crate::sinker_orbit::{Orbit, OrbitKind};
+
+mod outline;
+pub use outline::{cavity_outline_refusal, cavity_outline_size_refusal, judge_outline};
 
 /// Which pass of a cavity a burn is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

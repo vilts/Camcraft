@@ -64,5 +64,17 @@ pub(super) fn scan() -> FolderScan {
     if let Some(s) = SCAN_FOR_TEST.with(|s| s.borrow().clone()) {
         return s;
     }
-    posting::post_scan()
+    with_session(posting::post_scan())
+}
+
+/// #2950: the session's own posts (the browser's picks and drops) join
+/// the folder's other files, by file name.
+fn with_session(mut scan: FolderScan) -> FolderScan {
+    for name in camcraft_app::session_files::post_names() {
+        let path = PathBuf::from(&name);
+        if !scan.extra.iter().any(|(_, p)| *p == path) {
+            scan.extra.push((name, path));
+        }
+    }
+    scan
 }

@@ -61,12 +61,12 @@ pub fn partial_move(m: &Move, f: f64) -> Option<Move> {
 pub type PartialCut = (Stock, HashSet<[i32; 3]>);
 
 impl Stock {
-    /// This stock plus the travelled part of `m` (fraction `f`), cut
-    /// with `op`'s tool by the display law (`simulate_display`), on a
-    /// copy: `Ok(None)` when nothing has been travelled. The bricks the
-    /// partial cut changed come back with it - what a playback picture
-    /// must re-send beyond the completed-move stock's own ledger.
-    pub fn with_partial(&self, op: &SimOp, m: &Move, f: f64) -> Result<Option<PartialCut>, StockError> {
+    fn partial_cut_with(
+        &self,
+        m: &Move,
+        f: f64,
+        cut: impl FnOnce(&mut Stock, Move) -> Result<(), StockError>,
+    ) -> Result<Option<PartialCut>, StockError> {
         let Some(sub) = partial_move(m, f) else {
             return Ok(None);
         };
@@ -74,10 +74,33 @@ impl Stock {
         // The copy's ledger is this stock's own pending set; drop it so
         // what is left after the cut is the partial's bricks alone.
         let _ = shown.take_dirty_bricks();
-        let moves = [sub];
-        shown.simulate_display(&[SimOp { moves: &moves, ..*op }])?;
+        cut(&mut shown, sub)?;
         let bricks = shown.take_dirty_bricks().unwrap_or_default();
         Ok(Some((shown, bricks)))
+    }
+
+    /// This stock plus the travelled part of `m` (fraction `f`), cut
+    /// with `op`'s tool by the display law (`simulate_display`), on a
+    /// copy: `Ok(None)` when nothing has been travelled. The bricks the
+    /// partial cut changed come back with it - what a playback picture
+    /// must re-send beyond the completed-move stock's own ledger.
+    pub fn with_partial(&self, op: &SimOp, m: &Move, f: f64) -> Result<Option<PartialCut>, StockError> {
+        self.partial_cut_with(m, f, |shown, sub| {
+            let moves = [sub];
+            shown.simulate_display(&[SimOp { moves: &moves, ..*op }])
+        })
+    }
+
+    /// This stock plus the travelled part of an undercut move `m`
+    /// (fraction `f`), removing both head and neck on a copy (#1444).
+    pub fn with_partial_undercut(
+        &self,
+        cutter: &camcraft_tools::undercut::Undercut,
+        neck_len: f64,
+        m: &Move,
+        f: f64,
+    ) -> Result<Option<PartialCut>, StockError> {
+        self.partial_cut_with(m, f, |shown, sub| shown.simulate_undercut(&[sub], cutter, neck_len))
     }
 }
 

@@ -19,7 +19,7 @@ use camcraft_app::tools::catalog;
 use crate::state::{CommandKind, State};
 
 fn pocket(clearance_z: Height, top_z: Height, bottom_z: Height) -> OpParams {
-    OpParams::Pocket { rest: None,
+    OpParams::Pocket { pass_start: Default::default(), rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
@@ -38,6 +38,8 @@ fn pocket(clearance_z: Height, top_z: Height, bottom_z: Height) -> OpParams {
         helix_radius: 1.0,
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         blend_turns: false,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     }
 }
 
@@ -199,9 +201,9 @@ fn an_unresolved_relation_says_why_never_a_number() {
         note.as_deref(),
         Some("retract vs clearance unresolved: no operation selection in this context")
     );
-    let corner =
+    let tip =
         crate::operations::corner_note(&state.world, None, None, None, &Height::of(R::TopOfSelection, 0.0), 1.0);
-    assert_eq!(corner, "the corner is unresolved: no operation selection in this context");
+    assert_eq!(tip, "the cone tip is unresolved: no operation selection in this context");
 }
 
 
@@ -336,3 +338,6 @@ fn tilted_height_labels_show_local_axis_distance() {
 
 #[path = "heights_note_tests.rs"]
 mod notes;
+
+#[path = "retract_link_tests.rs"]
+mod retract_links;

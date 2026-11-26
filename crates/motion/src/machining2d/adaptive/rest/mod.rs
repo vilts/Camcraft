@@ -68,6 +68,17 @@ pub fn rest_adaptive(region: &Region, p: &PocketParams, stock: &RestStock) -> Re
     guarded(region, p, stock, Guards::ALL)
 }
 
+/// The cut depths of a rest Adaptive pass with the planes of `p`. The
+/// rest stock stands over the rest Top Z (the earlier operations left it
+/// there), so Top Z is a cut level, not an air level (#2004): with no
+/// material top stated, the ladder keeps the plane at Top Z. Whoever
+/// builds the [`RestStock`] reads it at these depths (#1446).
+pub fn rest_levels(p: &PocketParams) -> Result<Vec<f64>, GenError> {
+    let stock_top = p.links.approach.stock_top.or(Some(f64::INFINITY));
+    let step = crate::machining2d::ladder_stepdown(&p.links.approach, p.top_z, p.bottom_z, p.stepdown);
+    cut_levels_under(p.top_z, stock_top, p.bottom_z, step)
+}
+
 /// [`rest_adaptive`] under `guards` (all on outside the unit tests).
 fn guarded(region: &Region, p: &PocketParams, stock: &RestStock, guards: Guards) -> Result<Toolpath, GenError> {
     PocketParams { strategy: PocketStrategy::Adaptive, ..*p }.validate()?;
@@ -84,11 +95,7 @@ fn guarded(region: &Region, p: &PocketParams, stock: &RestStock, guards: Guards)
     // the same region share it.
     let mut plans: Vec<(Region, LevelPlan)> = Vec::new();
     let mut levels: Vec<(f64, usize)> = Vec::new();
-    // The rest stock stands over the rest Top Z (the earlier operations
-    // left it there), so Top Z is a cut level, not an air level (#2004):
-    // with no material top stated, the ladder keeps the plane at Top Z.
-    let stock_top = p.links.approach.stock_top.or(Some(f64::INFINITY));
-    let zs = cut_levels_under(p.top_z, stock_top, p.bottom_z, p.stepdown)?;
+    let zs = rest_levels(p)?;
     // The depth guard speaks first, for every depth, before anything is
     // planned (`stock`).
     let materials = zs.iter().map(|&z| stock.material_at(z, guards)).collect::<Result<Vec<Region>, GenError>>()?;

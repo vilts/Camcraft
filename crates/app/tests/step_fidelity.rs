@@ -24,6 +24,20 @@ fn a_model_that_fits_the_budget_reaches_the_cap_and_keeps_its_mesh() {
     assert!(mesh.facets.iter().zip(plain.facets.iter()).all(|(a, b)| a == b), "same mesh as before #864");
 }
 
+/// #2754: fig8's faces curved two ways (cone, sphere, torus) report their
+/// whole kept height, boundary edges included, times the inside bound
+/// (#2718). Their boundary edges are divided finer before the pass, so the
+/// honest report still meets the cap: the model is full fidelity. Before
+/// the fix it read 0.00749 mm (a boundary edge at the tolerance x 1.5).
+#[test]
+fn a_model_with_faces_curved_two_ways_reports_full_fidelity() {
+    let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models/fig8.step");
+    let data = std::fs::read(p).expect("the fig8 fixture is in testdata");
+    let (mesh, chord) = step::parse_with_chord(&data).expect("imports");
+    eprintln!("fig8: chord {chord} mm, {} facets", mesh.facets.len());
+    assert!(chord > 0.0 && step::coarse(chord).is_none(), "full fidelity: {chord}");
+}
+
 #[test]
 fn a_model_forced_over_budget_reports_the_coarser_chord_it_kept() {
     let data = milling_test();

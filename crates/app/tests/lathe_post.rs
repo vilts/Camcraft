@@ -187,6 +187,7 @@ fn facing_posts_to_the_lathe_golden() {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     create(&world, &mut history, "F1", "TN-1600-0R8", params);
     let text = program_of(&world);
@@ -221,6 +222,7 @@ fn rough_finish(rough_bottom: f64) -> (OpParams, OpParams) {
         stock_to_leave: 0.25,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     let finish = OpParams::ProfileFinish {
         tolerance: 0.05,
@@ -229,6 +231,7 @@ fn rough_finish(rough_bottom: f64) -> (OpParams, OpParams) {
         bottom_z: Height::fixed(2.0),
         feed: 120.0,
         plunge_feed: 60.0,
+        picks: Default::default(),
     };
     (rough, finish)
 }
@@ -329,6 +332,7 @@ fn groove_and_part_post_to_the_lathe_golden() {
         bottom_z: Height::fixed(-6.8),
         feed: 150.0,
         plunge_feed: 60.0,
+        picks: Default::default(),
     };
     let part = OpParams::Part {
         tolerance: 0.05,
@@ -342,16 +346,18 @@ fn groove_and_part_post_to_the_lathe_golden() {
         bar_advance: 30.0,
         bar_unload: true,
         bar_transfer: false,
-        inspect_tol: 0.0,
+        inspect_tol: 0.0, kerf: Default::default(),
+        picks: Default::default(),
     };
     create(&world, &mut history, "G1", "GT-0200", groove);
     create(&world, &mut history, "P1", "GT-0300", part);
     let text = program_of(&world);
     assert!(text.contains("T0101") && text.contains("T0202"), "two stations: {text}");
     assert!(text.contains("(PART LOAD ADVANCE 30)") && text.contains("(PART UNLOAD)"), "{text}");
-    // #641: the parting plane Z-10 is the kerf's centre; the 3 mm blade
-    // posts its default left (-Z) corner, half a width below it.
-    assert!(text.contains("Z-11.5 ") && !text.contains("Z-10. "), "the kerf's left corner: {text}");
+    // #3452: the parting plane Z-10 is the part's end face, the 3 mm
+    // kerf stands below it (Z-13..-10, CL Z-11.5); #641: the blade
+    // posts its default left (-Z) corner, Z-13.
+    assert!(text.contains("Z-13. ") && !text.contains("Z-11.5 "), "the kerf's left corner: {text}");
     common::write_golden("nc/fanuc-lathe/groove_part.nc", &text);
 }
 
@@ -381,6 +387,7 @@ fn an_axial_drill_posts_through_the_document_with_the_lathe_post_chosen() {
         plunge_feed: 80.0,
         holes: vec![hole],
         cross: vec![],
+        picks: Default::default(),
     };
     create(&world, &mut history, "AX1", "DR-0400", params);
     history.execute(

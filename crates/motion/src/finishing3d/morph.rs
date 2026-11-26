@@ -171,6 +171,11 @@ fn resample(pts: &[Point2], n: usize) -> Vec<Point2> {
 /// byte for byte.
 pub fn morph(facets: &[Triangle], p: &Finish3DParams) -> Result<Toolpath, GenError> {
     validate(p, facets)?;
+    if !p.waterlines {
+        return Err(GenError::Invalid(
+            "Morph 3D finish lofts between waterline rings - enable waterlines or pick a shallow-first pattern".into(),
+        ));
+    }
     let r = p.tool_diameter * 0.5;
     let sups = build_sups(facets, r);
     let zs = levels(p, r, facets)?;

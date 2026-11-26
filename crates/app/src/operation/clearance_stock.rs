@@ -95,7 +95,7 @@ pub(super) fn note(path: &Toolpath, clearance: f64, stock_top: f64, tilted: bool
     Some(format!(
         "{CLEARANCE_STOCK_WARNING} rapid move {at} travels through stock at Z{low:.3}{more} - the clearance plane \
          Z{clearance:.3} is inside the stock (top Z{stock_top:.3}) and nothing ahead has cut it there{frame}; \
-         raise Clearance above the stock top or face first"
+         raise Clearance above the stock top"
     ))
 }
 
@@ -197,7 +197,7 @@ pub fn creation_advice(
     Some(format!(
         "Clearance Z {} is inside the stock (its top is Z {}) and no operation ahead cuts it down: rapids at the \
          clearance plane over the stock would travel through uncut stock, and the post is held for them - raise \
-         Clearance to the stock top or above, or face the stock first",
+         Clearance to the stock top or above",
         len(clearance),
         len(top),
     ))

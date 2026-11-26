@@ -22,14 +22,24 @@ pub(crate) fn op_icon(kind: OpType) -> Icon {
         OpType::TrochoidalSlot => Icon::TrochoidalSlot,
         OpType::Trace => Icon::Trace,
         OpType::Engrave => Icon::Engrave,
+        OpType::VCarve => Icon::VCarve,
+        // #2826: the band's own drawing - the bar with its two
+        // diagonal flow lines crossing it.
+        OpType::RotaryFlow => Icon::RotaryFlow,
         OpType::Chamfer2D => Icon::Chamfer2D,
         OpType::Deburr => Icon::Deburr,
+        // #1894: the break with the axis tilted onto it - its own glyph.
+        OpType::MultiAxisDeburr => Icon::MultiAxisDeburr,
         OpType::Circular => Icon::Circular,
         OpType::PlasmaProfile => Icon::PlasmaProfile,
         OpType::WireContour => Icon::WireContour,
         OpType::SinkerBurn => Icon::SinkerBurn,
         // #545: a lateral burn of one wall - its own glyph.
         OpType::SinkerSideBurn => Icon::SinkerSideBurn,
+        // #1444: a T-slot's section with the cutter in it.
+        OpType::SlotUndercut => Icon::SlotUndercut,
+        // #1883: the nozzle and its jet - its own glyph.
+        OpType::WaterjetProfile => Icon::WaterjetProfile,
         OpType::Drill => Icon::Drill,
         OpType::Bore => Icon::Bore,
         OpType::Thread => Icon::Thread,

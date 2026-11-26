@@ -180,7 +180,7 @@ fn datum_of(world: &World, picks: &[GeoSel]) -> Result<Datum, String> {
         if !setup_align::is_part(world, &e) {
             return Err(format!("'{}' is not the part - pick a face of the model", g.entity));
         }
-        match g.feature {
+        match &g.feature {
             FeatureSel::Face(_) => faces.push(g),
             FeatureSel::Chain(_) => {
                 return Err(format!(
@@ -194,6 +194,9 @@ fn datum_of(world: &World, picks: &[GeoSel]) -> Result<Datum, String> {
             }
             FeatureSel::Vertex(_) => {
                 return Err(format!("{} is a vertex - pick a flat face", super::geo_label(world, g)));
+            }
+            FeatureSel::SketchChain(_) | FeatureSel::SketchLayer(_) => {
+                return Err(format!("{} is a DXF sketch pick - pick a flat face", super::geo_label(world, g)));
             }
         }
     }

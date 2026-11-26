@@ -47,11 +47,12 @@ fn refused() -> State {
         plunge_feed: 100.0,
         climb: true,
         entry: Entry3D::Plunge,
-        helix_radius: 1.5,
+        helix_radius: 1.5, blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: None,
         extend_start: 0.0,
         extend_end: 0.0,
+        picks: Default::default(),
     };
     state.history.execute(&state.world, CreateOperation::new(&state.world, "SLT", "EM", SrcRef::Stock, params).expect("create"));
     state.ui_target = UiTarget::Operation("SLT".into());

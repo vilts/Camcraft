@@ -140,7 +140,7 @@ pub fn apply(records: Vec<Record>, mch: &Value, script: &Script) -> Result<Vec<R
     if !script.translates_inverted_axes() {
         return Err(PostError::Refused(format!(
             "{what}, and this post script is not verified for an inverted axis (it does not declare \
-             axisInversion = true) - post with a script that does (Fanuc, Haas)"
+             axisInversion = true) - post with a script that does (each built-in mill post does)"
         )));
     }
     let flip = Flip { x: refs.contains(&"X"), y: refs.contains(&"Y"), z: refs.contains(&"Z") };

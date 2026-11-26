@@ -92,8 +92,10 @@ pub(crate) fn min_width() -> f32 {
 pub(crate) struct Hud {
     pub cube: egui::Rect,
     /// The bottom control ribbon (`viewport_bar`), grey background.
-    bar: egui::Rect,
+    pub bar: egui::Rect,
     nav: Vec<(Nav, egui::Rect)>,
+    /// The upper Move / Rotate strip inside `bar`, when a handle mode is on.
+    pub controls: Option<egui::Rect>,
 }
 
 impl Hud {
@@ -101,8 +103,15 @@ impl Hud {
     /// cube top-right and the control ribbon along the bottom. Pure
     /// arithmetic on the rect - the pointer layer calls it before routing
     /// presses, the draw pass after, and both get the same rects.
+    #[cfg(test)]
     #[must_use]
     pub fn new(pane: egui::Rect) -> Option<Hud> {
+        Self::with_controls(pane, false)
+    }
+
+    /// Corner furniture with optional expanded Move / Rotate strip in `bar`.
+    #[must_use]
+    pub fn with_controls(pane: egui::Rect, expanded: bool) -> Option<Hud> {
         if pane.width() < min_width() || pane.height() < 260.0 {
             return None;
         }
@@ -110,9 +119,11 @@ impl Hud {
             egui::pos2(pane.max.x - MARGIN - CUBE_PX, pane.min.y + MARGIN),
             egui::vec2(CUBE_PX, CUBE_PX),
         );
-        let bar = viewport_bar::bar_rect(pane);
-        let nav = viewport_bar::buttons(bar);
-        Some(Hud { cube, bar, nav })
+        let base = viewport_bar::bar_rect(pane);
+        let bar = viewport_bar::panel_rect(pane, expanded);
+        let nav = viewport_bar::buttons(base);
+        let controls = expanded.then(|| viewport_bar::controls_rect(bar));
+        Some(Hud { cube, bar, nav, controls })
     }
 
     #[must_use]
@@ -120,10 +131,15 @@ impl Hud {
         self.cube.contains(p) || self.bar.contains(p)
     }
 
+    /// True over the cube or the painted nav buttons (for the hand cursor).
+    #[must_use]
+    pub fn nav_or_cube_contains(&self, p: egui::Pos2) -> bool {
+        self.cube.contains(p) || self.nav.iter().any(|(_, r)| r.contains(p))
+    }
+
     /// Where a nav button lives in this layout - the probes the
     /// gesture tests use to aim a click at one without recomputing the
-    /// arithmetic (nothing in the live frame asks).
-    #[cfg(test)]
+    /// arithmetic, and the anchor of the Display menu (#2818).
     #[must_use]
     pub fn nav_rect(&self, kind: Nav) -> egui::Rect {
         self.nav

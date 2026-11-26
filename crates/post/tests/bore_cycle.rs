@@ -17,8 +17,8 @@
 //! `WRITE_GOLDEN=1 cargo test -p camcraft-post --test bore_cycle`
 //!
 //! Gate map (M4.4): covers assets/posts/fanuc.cps, haas.cps, mazak.cps,
-//! doosan-dnm.cps, sinumerik.cps, tormach.cps, grblhal.cps, heidenhain.cps,
-//! tinyg.cps, carvera.cps (their BORE cycle maps and the G86 dwell door),
+//! doosan-dnm.cps, sinumerik.cps, tormach.cps, grblhal.cps, linuxcnc.cps, heidenhain.cps,
+//! tinyg.cps, carvera.cps, mach3.cps (their BORE cycle maps and the G86 dwell door),
 //! camcraft_post::post::cnc (the BORE cycle word), camcraft_post::post::engine.
 
 mod recorded;
@@ -32,11 +32,11 @@ use std::path::{Path, PathBuf};
 /// Posts that write G86 and have no dwell word on it.
 const NO_DWELL: [&str; 5] = ["fanuc", "haas", "mazak", "doosan-dnm", "sinumerik"];
 /// Posts that write G86 with a dwell P in seconds.
-const SECONDS: [&str; 2] = ["tormach", "grblhal"];
+const SECONDS: [&str; 4] = ["tormach", "grblhal", "linuxcnc", "mach3"];
 /// Posts that require a non-negative P on every G86 cycle block (#2362).
-const ZERO_DWELL_P0: [&str; 2] = ["tormach", "grblhal"];
+const ZERO_DWELL_P0: [&str; 3] = ["tormach", "grblhal", "linuxcnc"];
 /// Posts that refuse a bore: they cannot stop the spindle before the rapid retract.
-const EXPANDED: [&str; 3] = ["heidenhain", "tinyg", "carvera"];
+const EXPANDED: [&str; 4] = ["heidenhain", "tinyg", "grbl", "carvera"];
 /// Posts that write no drilling at all.
 const REFUSING: [&str; 3] = ["sinker-iso", "wire-iso", "tormach-plasma"];
 /// The posts #1445 names, each with a golden.

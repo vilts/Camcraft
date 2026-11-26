@@ -169,6 +169,33 @@ fn bodies_are_judged_one_by_one() {
     assert_named(&e, "inside-out");
 }
 
+/// #917: two closed blocks stacked face to face share the edges of the
+/// contact face with four facets each; that is two solids that touch, each
+/// its own outward body, and a face of each lays. #2845: the contact face
+/// links to no plain edge of its block, so the shared-edge rule sees four
+/// bodies there and refuses (non-manifold, by name - never a wrong lay).
+#[test]
+fn solids_that_touch_face_to_face_are_two_outward_bodies() {
+    let upper = cube(Point3::new(0.0, 0.0, 10.0), Point3::new(20.0, 20.0, 20.0));
+    let stack: Vec<Triangle> = block().facets.iter().chain(upper.facets.iter()).copied().collect();
+    let wind = winding_of(&stack);
+    assert_eq!(wind.bodies, vec![BodyWinding::Outward; 2], "two outward bodies");
+    let w = world_of(Mesh::from_facets(stack));
+    lay_on_plane(&w, &[face(&w, [10.0, 10.0, 20.0])], G17).expect("the upper block's top lays");
+}
+
+/// #917: two blocks that meet only along one vertical edge are not solids
+/// touching along a wall: one non-manifold body, refused by name.
+#[test]
+fn blocks_that_meet_only_along_an_edge_stay_non_manifold() {
+    let corner = cube(Point3::new(20.0, 20.0, 0.0), Point3::new(40.0, 40.0, 10.0));
+    let on_a_line: Vec<Triangle> = block().facets.iter().chain(corner.facets.iter()).copied().collect();
+    let bodies = winding_of(&on_a_line).bodies.clone();
+    assert!(bodies.contains(&BodyWinding::NonManifold), "{bodies:?}");
+    let w = world_of(Mesh::from_facets(on_a_line));
+    assert_named(&lay_on_plane(&w, &[face(&w, TOP)], G17).expect_err("refused"), "non-manifold");
+}
+
 #[test]
 fn the_shipped_test_models_read_as_outward() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models");

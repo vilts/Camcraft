@@ -5,7 +5,8 @@ use crate::geometry::{Point3, Triangle};
 use crate::stock_sim::dist_seg_tri;
 
 use super::super::params::SPLIT_MZ;
-use super::super::support::{Sup, dist2_pt_tri};
+use super::super::grid::SupSet;
+use super::super::support::{dist2_pt_tri};
 use super::split_true_runs;
 
 /// Parameters for vertical column clearance along one ring level.
@@ -15,7 +16,7 @@ pub(super) struct ColumnLaw<'a> {
     pub(super) wall_lim: f64,
     pub(super) strict_lim: f64,
     pub(super) r: f64,
-    pub(super) sups: &'a [Sup],
+    pub(super) sups: &'a SupSet,
 }
 
 /// Column clearance that enforces `wall_lim = r - tol` along the existing

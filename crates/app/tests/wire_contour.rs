@@ -90,18 +90,28 @@ fn prism(pts: &[(f64, f64)]) -> Mesh {
 
 fn wire_op(side: WireSide, start: Option<[f64; 2]>) -> WireContourOp {
     WireContourOp {
+        lead_arc_radius: None,
         top_z: Height::fixed(12.0),
         bottom_z: Height::fixed(0.0),
         condition: "C110".into(),
         side,
-        start,
+        picks: camcraft_app::path_picks::PathPicks {
+            start: start
+                .map(|[x, y]| camcraft_app::path_picks::PathPick::xy(camcraft_app::geo2d::Point2::new(x, y)))
+                .into_iter()
+                .collect(),
+            exit: Vec::new(),
+        },
         tabs: None,
         capture: false,
+        both_pieces_restrained: false,
+        stock_centered_in_xy_travel: false,
         taper_deg: 0.0,
         four_axis: None,
         burnout: None,
         clearance: operation::DEFAULT_CLEARANCE,
         skims: Vec::new(),
+        sharp_corners: false,
     }
 }
 
@@ -233,7 +243,8 @@ fn a_missing_condition_gap_or_wire_mismatch_is_refused_at_command_creation() {
     h.execute(&world, create(&world, "W", "slug", with("C110")).expect("a complete condition"));
     let err = EditOperationParams::new(&world, "W", OpParams::WireContour(with("330"))).err().expect("edit refused").to_string();
     assert!(err.contains("states no gap"), "{err}");
-    let nan = WireContourOp { start: Some([f64::NAN, 0.0]), ..with("C110") };
+    let mut nan = with("C110");
+    nan.picks.start = vec![camcraft_app::path_picks::PathPick::xy(camcraft_app::geo2d::Point2::new(f64::NAN, 0.0))];
     assert!(EditOperationParams::new(&world, "W", OpParams::WireContour(nan)).is_err());
 }
 
@@ -369,11 +380,11 @@ fn the_op_round_trips_and_its_side_is_never_defaulted() {
     let err = project::params_from_json(&sideless).expect_err("the side is stated, never defaulted");
     assert!(err.contains("side"), "{err}");
     let mut startless = json;
-    startless["wire_contour"].as_object_mut().expect("fields").remove("start");
+    startless["wire_contour"].as_object_mut().expect("fields").remove("picks");
     let OpParams::WireContour(w) = project::params_from_json(&startless).expect("an unstated start hole reads") else {
         panic!("not a wire contour");
     };
-    assert_eq!(w.start, None);
+    assert!(w.picks.is_empty());
 }
 
 /// #1109: the open run's fields - the kerf side left / right of travel

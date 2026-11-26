@@ -39,6 +39,8 @@ pub struct PlasmaDto {
     pub cut_height: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pierce_delay: Option<f64>,
+    #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+    pub picks: PathPicksDto,
 }
 
 impl PlasmaDto {
@@ -62,6 +64,7 @@ impl PlasmaDto {
             pierce_height: p.pierce_height,
             cut_height: p.cut_height,
             pierce_delay: p.pierce_delay,
+            picks: PathPicksDto::from_picks(&p.picks),
         }
     }
 
@@ -85,6 +88,7 @@ impl PlasmaDto {
             pierce_height: self.pierce_height,
             cut_height: self.cut_height,
             pierce_delay: self.pierce_delay,
+            picks: self.picks.to_picks(),
         })
     }
 }

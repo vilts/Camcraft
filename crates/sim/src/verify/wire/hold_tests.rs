@@ -38,6 +38,7 @@ fn job(tp: &Toolpath, cutoff_from: Option<usize>, capture: bool) -> WireVerdict 
         taper: false,
         burnout: false,
         verify_tol: 0.0,
+        taper_chord: false,
     })
 }
 

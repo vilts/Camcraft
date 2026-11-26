@@ -22,7 +22,7 @@ fn run(state: &mut State, k: CommandKind) {
 fn face() -> OpParams {
     OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::of(HeightReference::WorkOffset, 25.0),
@@ -32,6 +32,7 @@ fn face() -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 

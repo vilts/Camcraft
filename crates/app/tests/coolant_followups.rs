@@ -30,7 +30,7 @@ const LATHE_CPS: &str = include_str!("../../../assets/posts/fanuc-lathe.cps");
 fn face_params(cut_z: f64) -> OpParams {
     OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -40,6 +40,7 @@ fn face_params(cut_z: f64) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -206,6 +207,11 @@ fn m88_posts_on_the_shipped_mill_turn_machine() {
     let m = camcraft_app::machine::parse_mch(&text).expect("the shipped mill-turn parses");
     let (world, mut history) = two_faces(CoolantMode::ThroughTool, CoolantMode::Flood);
     history.execute(&world, LoadMachine::new(&world, "millturn.mch".into(), Some(m)).expect("sane"));
+    // #3083: a mill-turn judges a face's first traverse, so the faces
+    // cut before the mount read Stale once and regenerate.
+    for name in ["Face1", "Face2"] {
+        history.execute(&world, GenerateOperation::new(&world, name).expect("regenerate"));
+    }
     let out = post_with(&world, script("Fanuc"));
     // The face fixture's 12000 rpm tops the mill-turn's 10000 (its own
     // refusal); the coolant words are what this pins.

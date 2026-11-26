@@ -117,6 +117,7 @@ fn a_generated_threading_op_refuses_the_field_by_name() {
         plunge_feed: 40.0,
         infeed_plan: Default::default(),
         hand: camcraft_app::cl::ThreadHand::Right,
+        picks: Default::default(),
     };
     generate(&world, &mut history, "TH1", "TD-1732-60", p);
     let e = model::find_by_name(&world, "TH1").expect("op exists");
@@ -157,6 +158,7 @@ fn a_generated_form_op_cuts_its_crown_on_the_field() {
         bottom_z: Height::fixed(7.0),
         feed: 40.0,
         plunge_feed: 20.0,
+        picks: Default::default(),
     };
     generate(&world, &mut history, "FM1", "FG-0600-04", p);
     let view = camcraft_app::stock_view::field_view_with(&world, TEXELS).expect("the field eye cuts the form program");

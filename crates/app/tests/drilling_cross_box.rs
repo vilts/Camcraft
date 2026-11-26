@@ -90,6 +90,7 @@ fn op(cross: Vec<CrossHole>) -> Operation {
             plunge_feed: 80.0,
             holes: vec![],
             cross,
+            picks: Default::default(),
         },
         stamp: None,
         setup: None,

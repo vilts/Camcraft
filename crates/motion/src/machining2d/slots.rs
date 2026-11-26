@@ -7,7 +7,7 @@ use crate::geometry::Point3;
 use crate::links::Links;
 
 use super::face::{GenError, band};
-use super::levels::{Cert, Motion, run_levels};
+use super::levels::{Cert, Motion, run_level_walks, run_levels};
 /// Slotting: a straight channel between two XY points, cleared in rows
 /// parallel to its axis. The channel is the stadium swept by a disc of
 /// radius `width / 2` along `a` -> `b`; shrinking a stadium is narrowing
@@ -22,7 +22,8 @@ use super::levels::{Cert, Motion, run_levels};
 /// `b + q u + d n` with `q = sqrt(h^2 - d^2)`, so each row reaches the
 /// round ends exactly as far as it can. The center area is convex, so
 /// the serpentine joins with lateral feeds and no in-cut rapids are
-/// even possible.
+/// even possible. A row touches a round end only at its end point, so
+/// for `h > 0` one lap of the stadium follows (`slot_lap`, #2906).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SlotParams {
     pub tool_diameter: f64,
@@ -60,6 +61,12 @@ pub struct SlotParams {
     /// stadium wall (the contour law), not by a static cap: a full-
     /// width slot (h = 0) has no room for any orbit, and says so.
     pub helix_radius: f64,
+    /// Arc turns at the row ends (#1759, `slot_turns`); `false` is
+    /// every earlier slot, unchanged to the byte.
+    pub blend_turns: bool,
+    /// The corner arc's radius, read only with `blend_turns`; `None` is
+    /// the tool radius, a radius is held to `corner_arc_radius`'s door.
+    pub blend_radius: Option<f64>,
     /// Level transitions and links (M11.2 C/D), proved against the
     /// closed-form stadium; [`Links::PLANAR`] is every earlier slot.
     pub links: Links,
@@ -122,7 +129,7 @@ impl SlotParams {
         if self.retract_z.is_some_and(|rz| rz < self.top_z) {
             return Err(GenError::Invalid("retract plane sits inside the material".into()));
         }
-        Ok(())
+        super::slot_turns::door(self)
     }
 }
 
@@ -137,27 +144,41 @@ pub fn slot(a: Point2, b: Point2, p: &SlotParams) -> Result<Toolpath, GenError> 
     if len == 0.0 || !len.is_finite() {
         return Err(GenError::Invalid("slot endpoints must be distinct".into()));
     }
-    let r = p.tool_diameter * 0.5;
-    let h = p.width * 0.5 - r - p.stock_to_leave;
-    if h < 0.0 {
-        return Err(GenError::Invalid("slot is narrower than the tool".into()));
-    }
+    let Some(h) = super::slot_band::slot_centre_band(p.width, p.tool_diameter, p.stock_to_leave)? else {
+        return Err(GenError::Invalid(format!(
+            "slot is narrower than the tool: the slot is {:.3} mm wide ({:.3} mm left on each wall) and the tool is {:.3} mm",
+            p.width, p.stock_to_leave, p.tool_diameter
+        )));
+    };
     let u = Point2::new(dx / len, dy / len);
     let n = Point2::new(-u.y, u.x);
     let ds = band(-h, h, 0.0, p.stepover)?;
     let mut pass: Vec<Point2> = Vec::with_capacity(2 * ds.len());
     for (i, &d) in ds.iter().enumerate() {
-        let q = (h * h - d * d).max(0.0).sqrt();
-        let s = Point2::new(a.x - u.x * q + n.x * d, a.y - u.y * q + n.y * d);
-        let e = Point2::new(b.x + u.x * q + n.x * d, b.y + u.y * q + n.y * d);
+        let s = super::slot_lap::cap_point(a, u, n, h, d, false);
+        let e = super::slot_lap::cap_point(b, u, n, h, d, true);
         // Even rows run a -> b under climb; odd rows return. The join is
         // then a short lateral step at the far end, never a diagonal.
         let (s, e) = if p.climb == (i % 2 == 0) { (s, e) } else { (e, s) };
         pass.push(s);
         pass.push(e);
     }
+    // #2906: the last row (d = h, q = 0) ends on a tangent point of the
+    // +n side; the lap rides the whole wall from there, caps included.
+    // #1759: the rows alone, before the lap joins the pass - the row-end
+    // corners round on these, and the lap follows the rounded walk.
+    let rows = pass.clone();
+    let lap = match (h > 0.0, pass.is_empty()) {
+        (true, false) => {
+            let at_b = p.climb == (ds.len().saturating_sub(1) % 2 == 0);
+            let (lap, pts) = super::slot_lap::wall_lap(a, b, u, n, h, &ds, at_b, p.climb);
+            pass.extend(pts);
+            Some(lap)
+        }
+        _ => None,
+    };
 
-    let zs = super::levels::cut_levels_under(p.top_z, p.links.approach.stock_top, p.bottom_z, p.stepdown)?;
+    let zs = super::equal_steps::cut_levels_for(p.top_z, &p.links.approach,p.bottom_z, p.stepdown)?;
     let mut bld = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
     let mut motion = Motion::new(p.clearance_z, p.retract_z, p.feed, p.plunge_feed);
     // `Plunge` passes no center and the ladder dives at the pass start
@@ -198,7 +219,12 @@ pub fn slot(a: Point2, b: Point2, p: &SlotParams) -> Result<Toolpath, GenError> 
         (Some(t), _) | (None, Some(t)) => Some(Cert::Stadium { a, b, h, tess: t }),
         (None, None) => None,
     };
-    run_levels(&mut bld, &[pass], &zs, &motion, None, center.as_ref(), link_cert.as_ref());
+    // #1759: the row-end corners on arcs, where asked and proved; the
+    // #2906 wall lap then follows the (rounded or sharp) rows.
+    let area = if p.blend_turns { stadium_center(a, b, h) } else { None };
+    let turns = super::slot_turns::round(&rows, p, area.as_ref(), &mut bld);
+    let runs = super::slot_turns::with_lap(&rows, turns, lap);
+    run_level_walks(&mut bld, &[pass], &zs, &motion, runs.as_deref(), center.as_ref(), link_cert.as_ref());
     let cur = bld.at();
     bld.push(MoveKind::Rapid, Point3::new(cur.x, cur.y, p.clearance_z), None);
 

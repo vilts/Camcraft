@@ -1,10 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["crates/app", "crates/cl", "crates/motion", "crates/post", "crates/sim",
-  "crates/tools", "crates/ui", "crates/geometry", "crates/kernel", "xtask"]
+members = ["crates/app", "crates/cl", "crates/gcode", "crates/motion", "crates/post", "crates/sim",
+  "crates/tools", "crates/ui", "crates/geometry", "crates/kernel", "crates/gpu", "xtask"]
 
 [workspace.package]
-version = "0.24.0"
+version = "0.27.0"
 edition = "2024"
 rust-version = "1.90"
 
@@ -16,6 +16,7 @@ camcraft-tools = { path = "crates/tools" }
 camcraft-post = { path = "crates/post" }
 camcraft-sim = { path = "crates/sim" }
 camcraft-motion = { path = "crates/motion" }
+camcraft-gpu = { path = "crates/gpu" }
 
 # ECS - alpha bindings, hard-pinned; expect churn on bumps.
 # flecs_alerts is NOT optional: flecs_ecs_sys 0.2.1's bindings.rs references
@@ -41,10 +42,28 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["f
 # and the job-script host (app/script) run the same hard-pinned boa.
 boa_engine = "0.21.1"
 
+# Cancellable AI HTTP requests (#1945): rustls with ring, no system TLS.
+# MIT OR Apache-2.0. Proxy discovery and redirects are disabled in the client.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-webpki-roots"] }
+tokio = { version = "1", features = ["rt", "time", "net", "macros"] }
+# API keys live only in the OS keychain (macOS Keychain, Windows
+# Credential Manager, freedesktop Secret Service over zbus - pure Rust,
+# no libdbus) or in environment variables (#1945). MIT OR Apache-2.0.
+keyring = "4.2"
+# #1945: endpoint URLs are parsed by the same WHATWG parser reqwest uses, so
+# the host the offline and https laws check is the host the socket opens.
+# Already in the lock (through other crates). MIT OR Apache-2.0.
+url = "2.5"
+
 # Platform + dialog deps shared with the UI stack; imgui retired at M1.4.2
 # M-g (the dear-imgui-* trio left with it).
-# No direct wgpu dep: camcraft-ui uses egui_wgpu::wgpu so types match the
-# renderer exactly (wgpu is re-exported, version-selected by the set below).
+# camcraft-ui uses egui_wgpu::wgpu so types match the renderer exactly.
+# camcraft-gpu (#2620, the headless compute seam) is the one direct wgpu
+# user: the version is the one the egui set below pins (egui-wgpu 0.36.2
+# wants ^30.0, the lock has 30.0.1), so the lock keeps one wgpu. It moves
+# with the egui set (#658, #1118): bump the two together or hold.
+# Default features: a subset of what egui-wgpu's defaults already turn on.
+wgpu = "=30.0.1"
 winit = "0.30"
 rfd = "0.15"
 pollster = "0.4"
@@ -68,7 +87,9 @@ objc2 = "0.5"
 egui = "=0.36.2"
 egui-winit = "=0.36.2"
 egui-wgpu = "=0.36.2"
-egui_dock = "=0.21.1"
+# "serde": the saved panel arrangement (#2339) is the dock's own tree, so an
+# arrangement keeps its splits, tab order, collapsed leaves and float rects.
+egui_dock = { version = "=0.21.1", features = ["serde"] }
 egui_kittest = { version = "=0.36.2", features = ["wgpu", "snapshot"] }
 # wasm32 only (#31): the browser shell. eframe's web runner owns the canvas,
 # the DOM events and the awaited GPU start-up; wasm-bindgen exports the
@@ -87,42 +108,22 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 # same png crate `image` already builds on, so no new crate in the tree.
 png = "0.18"
 
-# STEP reading - truck geometry stack (ricosjp), pure Rust, Apache-2.0. The
-# Sept-2024 mutual version set; hard-pinned because the crates are alpha.
-# meshalgo's default features pull vtkio -> lzma-sys (C code): keep it off and
-# take only `tessellation` (which enables `filters` + spade, both pure Rust).
 # Polygon booleans/offset - pure-Rust port (BSL-1.0) of the published Clipper2,
 # backing crates/app/src/geo2d.rs. Hard-pinned (young project); the `clipper2`
 # crate alternative is rejected because it builds C++ (our posture is pure Rust,
-# same reasoning as meshalgo's off defaults above). Notice text in
+# same reasoning as meshalgo's off defaults below). Notice text in
 # assets/ui/LICENSES.md.
 clipper2-rust = "=1.2.0"
 
-truck-stepio = "=0.3.0"
-truck-topology = "=0.6.0"
-truck-polymesh = "=0.6.0"
+# The truck reference kernel of crates/kernel (feature `truck`, booleans and
+# tessellation; its removal is #2922). truck geometry stack (ricosjp), pure
+# Rust, Apache-2.0, hard-pinned because the crates are alpha. meshalgo's
+# default features pull vtkio -> lzma-sys (C code): keep them off and take
+# only `tessellation` (which enables `filters` + spade, both pure Rust).
+# STEP no longer reads through truck-stepio or ruststep (#917, #2790).
 truck-meshalgo = { version = "=0.4.0", default-features = false, features = ["tessellation"] }
-ruststep = "=0.4.0"
 
-# #887: ruststep 0.4.0 - the newest crates.io release (Sept 2024) - cannot
-# parse the empty parameter list `()`, which ISO 10303-21 allows, so HOOPS
-# Exchange exports (one `DRAUGHTING_MODEL('',(),...)` entity) are rejected
-# as corrupt. The fix is merged upstream but unreleased (ricosjp/ruststep#256
-# asks for a release), so pin the fix commit via [patch.crates-io]. Upstream
-# still declares version = "0.4.0", so camcraft-app's `=0.4.0` and
-# truck-stepio's `0.4` both resolve to the patched crate unchanged, and
-# ruststep-derive comes from the same tree. This is deliberately the only
-# git dependency in the workspace (policy elsewhere: crates.io pins) and
-# should be dropped once a ruststep release contains the fix.
-# #1075: crates/app/src/geometry/import/step_depth.rs mirrors ruststep's
-# tokenizer (strings, comments, `<...>`, binaries) to refuse deep nesting
-# before ruststep's recursive parser overflows the stack, so that scan must
-# be re-audited against ruststep's token.rs / exchange parser whenever this
-# pin moves.
-[patch.crates-io]
-ruststep = { git = "https://github.com/ricosjp/ruststep", rev = "90fdc9351746f1f1d1e435b88f15371edaaaa14d" }
-
-# Third-party code is optimized even in dev builds: an unoptimized truck
+# Third-party code is optimized even in dev builds: an unoptimized
 # tessellation or wgpu pass is 5-20x slower and makes imports feel like
 # freezes. opt-level 1 is as fast as 2 on the compute-heavy suites (motion finish3d: 48.7 s vs 46.7 s;
 # opt-level 0 is 3x slower) and cuts the cold dependency build (#900).

@@ -1,3 +1,638 @@
+# CamCraft 0.27.0 (clean-room implementation)
+
+Released 2026-11-26.
+
+## Breaking
+This release has breaking changes. **The project file format goes from
+version 78 to 82, and a tool library file can say version 5 or 6 (was 4).**
+0.27.0 opens the files of 0.26.0 and older: a file of an older version
+steps up and keeps its content. 0.26.0 and older builds refuse a file that
+0.27.0 saves.
+- **v79: the tip form of a tapered mill** (#3368, PR #3929). A tapered
+  mill states its tip form (sharp, flat or ball) and its tip diameter. A
+  tool library file with a flat or ball tip says `.camtools` version 6.
+  Operations refuse a flat or ball tip by name until they read it.
+- **v80: the 2D Chamfer tip offset** (#3153, PR #3251). A 2D Chamfer can
+  select a tip offset (`minimum_cone_radius`) and cut through that band
+  of the cone.
+- **v81: a stated rotation axis on the rotary operations** (#2772,
+  PR #3674). Rotary Contour, Rotary Parallel and Rotary Offset read a
+  stated axis first. A part whose faces do not agree with the stated axis
+  is refused by name.
+- **v82: the Rotary Flow operation** (#2826, PR #3999). Every project file
+  that 0.27.0 writes says version 82.
+- **`.camtools` version 5: a drawn cutter outline** (#3904, PR #3906). A
+  tool library file that keeps a drawn cutter outline says version 5.
+- **Start and exit points are operation-level picks** (#3339, PR #3871).
+  An operation with a start or exit pick must be generated again one time
+  after the update.
+
+A minor release headlined by **start and exit points on nearly all
+operation kinds** (Face, Slot, Drill, Bore, Thread, Sinker, Wire Contour,
+turning and the 5-Axis Contour), **the Rotary Flow operation**, **a tool
+library window** (3D preview with helical flutes, holders, stick-out,
+Recipes tab, editor), **a form mill tool kind**, **native Agie wire EDM
+jobs** (die openings, punch groups, cutoffs, Ra 0.35 quality, inspection
+export, true arcs and tangent arc leads), **SVG and DXF spline import**,
+**live MCP calls into a running window** (`camcraft-cli --ui`), **GPU
+stock playback in Simulate**, and **many 2D Offset, 2D Contour and 3D Pocket
+entry and link fixes**. 154 pull requests merged since 0.26.0 (45
+features, 76 fixes, 4 performance changes, docs, tests, build and process).
+
+## Upgrade notes
+- Save a project in 0.27.0 only when each person who opens it also has
+  0.27.0. Older builds refuse format 82 (see "Breaking").
+- Generate each operation that has a start or exit point again one time
+  (#3339).
+- The "Tool library" dock tab is removed. The Tools ribbon cell opens the
+  tool library in its own window (#3900). The tool Properties page is now
+  a summary with an "Edit in tool library" button (#3930).
+- A 2D Contour under control or wear compensation refuses a Ramp, Helix or
+  Linear entry by name (#3888, #3891). Use the Perpendicular lead.
+- Waterjet Profile operations are refused at posting until the jet records
+  exist (#3637).
+
+## Changes to posted G-code
+These change the program that an existing project posts, or stop a post that
+went through before.
+- **Feed words:** the Fanuc, Doosan DNM and Mazak posts keep the decimal
+  point in feed words (#3690). The fanuc, doosan-dnm, mazak, sinumerik,
+  tormach and linuxcnc posts write the exact G84 tap feed and refuse a tap
+  whose written F and S change the pitch (#3699).
+- **Rotaries at program end:** the Fanuc and Doosan DNM posts return the
+  rotary axes to zero after G49 and the Z retract when the last section is
+  tilted (#3540).
+- **Five-axis approach:** the rotaries turn at a standstill before the
+  first descent, not during it (#3414, PR #3499).
+- **Wire EDM:** DXF and model arcs post as true G2 / G3 arcs (#3215,
+  #3937). Tangent arcs join with no zero-length `G1` (#3959). A tangent arc
+  lead-in and lead-out (#3991). The native Agie job files accept die
+  openings, punch groups of up to nine, straight cutoffs, measured QN2
+  stock heights and the CCB035 quality.
+- **2D Offset "Pass starts at":** one contour-parallel ring set for Auto,
+  Inside and Outside (#3744); rings link in the cut plane and lift only
+  with a named reason (#3747); the Arc entry plunges in air outside the
+  stock box (#3746).
+- **2D Contour:** every ring is entered by its ramp or helix (#3830,
+  #3917); a dive past a tab pecks one stepdown at a time (#3678).
+- **3D Pocket:** stock to leave is kept axially too (#3669); pass restarts
+  enter by helix or ramp (#3670); feed moves shorter than 0.001 mm no
+  longer post as zero-length `G01` blocks (#3852).
+- **Start and exit points:** the picked points change the start, the order
+  and the end of the path on the operations that read them.
+
+## Highlights
+- Start and exit points on Face, Slot, Drill, Bore, Thread (mill), Sinker
+  Burn, Sinker Side Burn, Wire Contour, turning Facing and Profile, and the
+  5-Axis Contour.
+- Rotary Flow: a 4-axis flow-line finishing operation between picked guide
+  chains.
+- The tool library window: 3D preview, helical flutes, holder library,
+  stick-out, Recipes tab and tool editor. A form mill tool kind with
+  presets. Metric tap-drill and clearance drills in the catalog.
+- Native Agie Classic Cut 2S wire jobs for more shapes, and a zero-step
+  inspection export.
+- SVG import, DXF SPLINE and ELLIPSE import, and Engrave and Trace on
+  sketch chains.
+- Arc turns with a corner radius on Face, 2D Contour and Slot.
+- A Waterlines switch on 3D Finish; 2D Chamfer on open edge chains;
+  "Do not touch" on 2D Pocket.
+- `camcraft-cli --ui` sends MCP calls to a running window; `--skill`
+  installs an agent skill; `--read-only` opens a project read-only.
+- Simulate plays back linear-move operations on the GPU, with the CPU as
+  fallback.
+- AI Chat key setup and provider readiness; an update check in the title
+  bar.
+- The new `camcraft-gcode` reader crate for RS-274/NGC and ISO 6983.
+
+## Not exercised on a real control
+The pull requests record no run on a real control for these changes. The
+test goldens are regression records. Check the first program on the machine
+before you cut.
+- The native Agie wire EDM jobs and the wire tangent arc leads.
+- The Fanuc, Doosan DNM and Mazak feed decimals and the exact G84 tap feeds.
+- The rotary return at program end and the five-axis approach order.
+
+## Known issues
+The cut line is 2026-11-25 19:17 UTC. These `P1` and `P2` issues are open
+and are not in this cut. Their fixes ship in the next minor. Two `P1`
+issues need attention before you post:
+- **#4031 (P1): a left-hand tool runs M3.** A tool has no cutter hand yet.
+  A left-hand drill or mill is not refused and is not turned M4. Do not
+  use a left-hand tool until this is fixed.
+- **#4004 (P1): dovetail cutters ignore `corner_r`.** The corner radius is
+  accepted but not read, so the flank is too thin. Its fix (PR #4009) was
+  removed from this cut.
+
+All open `P1` and `P2` issues:
+- #4085 (P1): DIN/ISO Heidenhain post writes no stop or M6 at a tool change
+  on a manual-change machine (Picomax).
+- #4055 (P2): Path kernel: the camcraft-pathkernel crate skeleton, the stage
+  types and the one switch.
+- #4038 (P2): Path kernel phase 1: Thread plans through the path kernel on
+  side/path-kernel.
+- #4037 (P2): Path kernel phase 1: Slot Undercut plans through the path
+  kernel on side/path-kernel.
+- #4036 (P2): Path kernel phase 1: Trochoidal slot plans through the path
+  kernel on side/path-kernel.
+- #4035 (P2): Path kernel phase 1: Slot plans through the path kernel on
+  side/path-kernel.
+- #4034 (P2): Path kernel phase 1: V-Carve plans through the path kernel on
+  side/path-kernel.
+- #4031 (P1): Tools: a cutter hand on the tool, so a left-hand drill or mill
+  is refused or turned M4, not run M3.
+- #4027 (P2): Path kernel K7: one test suite that checks each strategy
+  against the kernel laws.
+- #4026 (P2): Path kernel K3: one load control stage for trochoidal and
+  constant engagement passes.
+- #4025 (P2): Path kernel K1: one region model for selection, material side
+  and bounds.
+- #4023 (P2): Path kernel: one motion planning pipeline for all strategies.
+- #4004 (P1): Dovetail cutters: read the corner radius (`corner_r` is
+  accepted but ignored, so the flank is too thin).
+- #3934 (P1): Pass starts at Outside: every strategy clears in straight
+  lines, not along the stock and the selected edge.
+- #3933 (P2): 2D Pocket offset rings: waterline-like passes with a nominal
+  engagement, not a constant-engagement spiral.
+- #3849 (P1): 2D Adaptive Trochoidal: the clean-up passes are not checked
+  against the engagement limit.
+- #3788 (P1): 2D Offset one ring set: full-width cuts where the rings of two
+  lobes merge (fig8 waist), and the narrow note does not name them.
+- #3759 (P2): Face and the 2D Adaptive Outside plan: air entries through the
+  shared entry rule, Adaptive lifts with a named reason (identical output).
+- #3758 (P2): Trace, Engrave and 2D Chamfer: loop changes on the shared ring
+  linker, with a named reason for each lift (identical output).
+- #3757 (P2): 2D Contour: level links and wall entries on the shared ring
+  linker and entry rule (identical output).
+- #3756 (P1): Bore: rings on the shared circle ring set, as arcs by the
+  chord tolerance, linked at depth with no lift between rings.
+- #3755 (P1): Circular: cut the rings of a level in one walk at depth; no
+  lift and no new entry into material at each ring.
+- #3754 (P2): Do not touch, the 2D Adaptive ring fallback and the 3D Pocket
+  levels on the shared ring set (identical output).
+- #3753 (P2): 2D Pocket rest machining and the Zigzag closing rings on the
+  shared ring set: one chain law (identical output).
+- #3752 (P1): 2D Pocket: Waterline, OffsetRings, Inside and Outside on the
+  shared ring set; rings link in the plane and lift only with a named
+  reason.
+- #3750 (P1): 2D ring planning step 1: one shared ring set, ring linker and
+  entry rule, taken from the 2D Offset path (identical output).
+- #3746 (P1): 2D Offset Pass starts at Inside and Outside: enter in air
+  outside the stock box, then an arc lead-in in the cut plane with Arc
+  radius and Arc sweep.
+- #3334 (P2): Start and exit points: Plasma Profile and the future waterjet
+  kinds (pierce point and cancel point).
+- #3331 (P2): Start and exit points: turning kinds (start in the Z-X plane).
+- #3330 (P2): Start and exit points: multi-axis kinds (5-axis, swarf,
+  rotary, flow, multi-axis rough and contour).
+- #3329 (P2): Start and exit points: 3D kinds (3D Pocket, 3D Finish,
+  Deburr).
+- #3327 (P2): Start and exit points: 2D Adaptive (entry of the first pass,
+  end of the last pass).
+- #3325 (P2): Start and exit points: 2D ring and chain kinds (Pocket,
+  Offset, Circular, Slot, Trochoidal slot, Trace, Engrave, Chamfer).
+- #2629 (P2): GPU stock sim S3: viewport playback cuts on the GPU, with CPU
+  fallback.
+- #2424 (P2): Windows 11, desktop Ryzen 5 with onboard Radeon: the whole PC
+  freezes with screen "snow" while CamCraft v0.23.0 runs.
+- #1473 (P2): Start and exit points: exit points, viewport pick, and the
+  cases the first contour slice refuses.
+- #1448 (P2): Operations: user-set start and exit points, path regenerated
+  to them.
+
+## Process changes
+`PROCESS_VERSION` went from 145 to 155 (pinned issue #681):
+- 146: `gate heavy` narrows its reach for `#[cfg(test)]` modules and
+  binaries (PR #3737).
+- 147: MCP skill row for the lead-in `approach_distance` (PR #3765).
+- 148: the recording prebuild writes cargo's JSON to a file (PR #3738).
+- 149, 150, 152: MCP skill rows for the native Agie wire EDM jobs
+  (PR #2964, PR #2968, PR #2969, PR #2974).
+- 151: the unit sweep covers a package-level link (PR #3552).
+- 153: MCP skill rows for the operation-level start and exit picks
+  (PR #3871).
+- 154: the gate warns when its base branch is behind its remote
+  (PR #3954).
+- 155: the rule **Side branch** (`side/path-kernel`), and MCP skill rows
+  for `camcraft-cli --ui` and the wire lead arc (PR #4043, PR #4049,
+  PR #4002).
+
+## Pixel snapshots
+The pixel-snapshot lanes were not run for this cut: no Windows machine was
+available. The Windows arms of the per-OS pinned readings were not run
+either. The structural UI tests assert what the goldens guard.
+
+---
+
+# CamCraft 0.26.0 (clean-room implementation)
+
+Released 2026-11-23.
+
+## Breaking
+This release has breaking changes. **The project file format goes from
+version 75 to 78.** 0.26.0 opens the files of 0.25.0 and older: a file of
+an older version steps up and keeps its content. 0.25.0 and older builds
+refuse a file that 0.26.0 saves.
+- **v76: 3D Deburr width is the chamfer chord** (#1890, PR #3220). Deburr
+  has contact chord width and depth sizing and multiple passes. An older
+  project width is converted on load.
+- **v77: setups keep their creation order** (#3447, PR #3485). A setup
+  that is added later is listed and posted after the earlier setups,
+  whatever its name.
+- **v78: stored tool reservations** (#2604, PR #3284). Cutting tools skip
+  reserved probe pockets and cannot use reserved tool names.
+- **Part-off puts the whole kerf on the bar side** (#3452, PR #3472).
+  Before, the kerf was centred on the parting plane and cut half a blade
+  width into the part. A part-off saved before this change must be
+  generated again before it posts.
+
+A minor release headlined by **new operations** (V-Carve, Waterjet Profile,
+Multi-Axis Deburr), **rest machining from the previous operations** on 2D
+Pocket and 2D Adaptive, **"Pass starts at" (Auto / Inside / Outside)** on
+the clearing kinds, **"Do not touch" on Face, Trace, Engrave, 2D Adaptive
+and 3D Finish**, **new posts** (Mach3, RichAuto DSP A11, Siemens Sinumerik
+810M, G-EDM wire, generic ISO waterjet, native Agie Classic Cut 2S job),
+**saved cut recipes**, **typed text as outline shapes**, and **a headless
+GPU compute crate**. 184 pull requests merged since 0.25.0 (36 features,
+97 fixes, 3 performance changes, 1 refactor, docs, tests and process).
+
+## Upgrade notes
+- Save a project in 0.26.0 only when each person who opens it also has
+  0.26.0. Older builds refuse format 78 (see "Breaking").
+- Generate each part-off operation again before you post it (#3452).
+- A STEP file that states no length unit is no longer read as millimetres.
+  The desktop app asks for mm or inches. MCP and scripts take `units`
+  (PR #3166).
+- The native wire EDM post has the new name "Native wire EDM job files".
+  The old name still selects the post (#3537, PR #3598).
+- Saving a project no longer writes over changes that another program saved
+  to the same file, and a failed write keeps the old file (#3608, #3509).
+
+## Changes to posted G-code
+These change the program that an existing project posts, or stop a post that
+went through before.
+- **New posts:** Mach3 Mill (#2482), RichAuto DSP A11 routers (`.mmg`),
+  Siemens Sinumerik 810M with the EMCO VMC-200 machine (#2888), G-EDM 2-axis
+  wire EDM, a generic ISO abrasive-waterjet post, and a native Agie Classic
+  Cut 2S job (#2945).
+- **Tap feeds:** the Haas post writes each feed with its decimals and a
+  decimal point, so a G84 tap feed gives the exact pitch (#3681). Mach4
+  keeps the G84 tap feed precision and refuses a pitch error above 0.01
+  percent (#3701).
+- **Fanuc options** (off by default): rigid tap M29 before G84 (#2603), AI
+  contour control G05.1 (#2603), and a Manual Guide i blank block (#2769).
+- **Rotaries after a tilted operation:** the Fanuc and Doosan DNM posts
+  return the rotaries to zero before the next operation. A post script that
+  does not declare `uprightReturn = true` is refused by name in that case.
+  A leaning five-axis path posts A0 B0 on its opening move (#3300).
+- **Arcs:** a post never writes an arc whose written end is its start, or
+  whose start and end have the same angle about the centre. It writes a
+  straight move (#3474).
+- The grblHAL, Grbl 1.1 and TinyG posts write no tool change between
+  operations that keep the same tool (#3445).
+- The Tormach PathPilot mill post reads the operation's coolant.
+- Toolpath changes: entry ramps on later 2D Offset passes, Circular ring
+  links over clearance (#2898), Slot round ends cut to size (#2906), Rotary
+  Parallel cuts the full turn of a bar, 2D Contour tab levels, and 3D
+  Finish hops that stay at the pass height.
+
+## Highlights
+- V-Carve operation along the medial axis (#1443).
+- Waterjet Profile operation on a shared 2D sheet kernel, with sheet cut
+  order and material release checks (#2159).
+- Multi-Axis Deburr with holder tilt-away.
+- 2D Pocket and 2D Adaptive rest machining from the previous operations.
+- "Pass starts at" on 2D Offset, 2D Pocket, 2D Adaptive, Circular, Bore,
+  3D Pocket and 3D Finish.
+- "Do not touch" on Face, Trace, Engrave, 2D Adaptive and 3D Finish.
+- Saved cut recipes (MCP `save_cut_recipe`, `list_cut_recipes`,
+  `apply_cut_recipe`).
+- Typed text in a TrueType outline font as closed shapes
+  (`insert_outline_text`), and the `cam.insertText` script verb.
+- CL toolpath transforms: translate, XY turn, A/B turn, vertical mirror.
+- The simulation steps to the next or previous operation (Page Up /
+  Page Down).
+- Cutting data for wood, MDF, plywood, acrylic and HDPE; a router machine
+  kind; the Ooznest WorkBee 1000x1500 (Estlcam) machine.
+- The browser build loads machine and post files from the user's disk.
+- macOS packages can be signed and notarized.
+- The new `camcraft-gpu` crate and a GPU stock removal kernel (not yet
+  used by the viewport, see #2629).
+
+## Not exercised on a real control
+The pull requests record no run on a real control for these changes. The
+test goldens are regression records. Check the first program on the machine
+before you cut.
+- The Mach3, RichAuto DSP A11, Sinumerik 810M, G-EDM and waterjet posts.
+- The native Agie Classic Cut 2S job.
+- The Fanuc rigid tap, AI contour control and Manual Guide i blank options.
+- The Haas and Mach4 tap feed decimals (#3681, #3701).
+
+## Known issues
+The cut line is 2026-11-23 19:22 UTC. These `P1` and `P2` issues are open
+and are not in this cut. Their fixes ship in the next minor.
+- #3699 (P1): Mill posts fanuc, doosan-dnm, mazak, sinumerik, tormach,
+  linuxcnc: the G84 tap feed is rounded to a whole mm/min.
+- #3339 (P2): Start and exit points: move the picks to one operation-level
+  project key.
+- #3336 (P2): Performance: the stock simulation is very slow - it runs on
+  the CPU, the GPU shader path is not built.
+- #3334 (P2): Start and exit points: Plasma Profile and the future waterjet
+  kinds (pierce point and cancel point).
+- #3333 (P2): Start and exit points: Sinker Burn and Sinker Side Burn
+  (start and end of the orbit and the side move).
+- #3332 (P2): Start and exit points: Wire Contour (threading point into the
+  shared pick, exit on open runs).
+- #3331 (P2): Start and exit points: turning kinds (start in the Z-X plane).
+- #3330 (P2): Start and exit points: multi-axis kinds (5-axis, swarf,
+  rotary, flow, multi-axis rough and contour).
+- #3329 (P2): Start and exit points: 3D kinds (3D Pocket, 3D Finish,
+  Deburr).
+- #3328 (P2): Start and exit points: drilling order (Drill, Bore, Thread
+  mill - first hole and last hole).
+- #3327 (P2): Start and exit points: 2D Adaptive (entry of the first pass,
+  end of the last pass).
+- #3326 (P2): Start and exit points: Face raster (first row corner, last
+  row end).
+- #3325 (P2): Start and exit points: 2D ring and chain kinds (Pocket,
+  Offset, Circular, Slot, Trochoidal slot, Trace, Engrave, Chamfer).
+- #2629 (P2): GPU stock sim S3: viewport playback cuts on the GPU, with CPU
+  fallback.
+- #1473 (P2): Start and exit points: exit points, viewport pick, and the
+  cases the first contour slice refuses.
+- #1448 (P2): Operations: user-set start and exit points, path regenerated
+  to them.
+
+## Process changes
+`PROCESS_VERSION` went from 122 to 145 (pinned issue #681):
+- 123, 124: MCP skill rows for router materials and the Waterjet Profile
+  workflow.
+- 125, 128: `release.yml` inputs `site_only` and `app_run_id`.
+- 126: catalog cases can expect a refusal.
+- 127: the gate names how a test executable stopped.
+- 129: `cut.yml` runs on the `camcraft-cut` runner label.
+- 130: `merge-ready` and `needs-rework` are never on the same PR.
+- 131: `gate heavy --covers` and the wave form of heavy lanes.
+- 132: the gate stall watchdog and the rule "Runner stops".
+- 133: the gate knows the new crate `camcraft-gpu`.
+- 134: the post-merge batch step stops at 75 minutes.
+- 135: targeted tests at review; the full heavy lanes at the cut.
+- 136, 138, 139, 140: MCP skill rows for Wire Contour, the native wire EDM
+  post name, `insert_text`, `pass_start` and 2D Adaptive rest.
+- 137: the quick gate selects the example catalog suites.
+- 141, 142: directory suites in the gate; a failed build stops the quick
+  plan; submodule test selection.
+- 143: new tests join a directory suite.
+- 144: a review finding does not make a ready PR a draft again.
+- 145: the quick gate runs the whole suite for a trait impl or scoped `pub`
+  item.
+- PROCESS_VERSION bump for #3737 follows after the tag.
+
+## Pixel snapshots
+The pixel-snapshot lanes were not run for this cut, by the maintainer's
+standing decision. The Windows arms of the per-OS pinned readings were not
+run either. The structural UI tests assert what the goldens guard.
+
+---
+
+# CamCraft 0.25.0 (clean-room implementation)
+
+Released 2026-11-22.
+
+## Breaking
+This release has breaking changes. **The project file format goes from
+version 69 to 75.** 0.25.0 opens the files of 0.24.0 and older: a file of
+an older version steps up and keeps its content. 0.24.0 and older builds
+refuse a file that 0.25.0 saves.
+- **Sketch selections need format 74** (#1864, PR #2716; #1868, PR #2920).
+  2D Contour, Slot and Trochoidal Slot can read picked DXF sketch chains and
+  layers, with a side and a direction for each chain. A project with such
+  picks is saved as format 74 or later. A v73 file steps up unchanged.
+- **Machine installation facts need format 75** (#3181, PR #3204). A machine
+  can record its installed control, the exact NC software, the installed
+  options and the tool-change procedure. Older readers refuse such a file,
+  so that a save in an older build cannot lose these facts. A v74 file steps
+  up with these facts not stated.
+- The other format steps of this release:
+  - v70: a tool's library holder is a reference to the holder library
+    entry, not a drawn copy (#2016, PR #2092). Tool library files
+    (`.camtools`) go to version 4.
+  - v71: a DXF profile can be placed on the stock of a setup (#1862,
+    PR #2134).
+  - v72: a model can be linked to its source file and is imported again
+    when the file changes (#2463, PR #2563).
+  - v73: "Do not touch" face and edge protection on clearing operations
+    (#2055, PR #2149, merged through PR #2704).
+- A stock copy of an incomplete model keeps the name of its source model's
+  hole after the source is deleted (#1700, PR #2024). Such a project file
+  does not open in 0.21.0 to 0.24.0.
+
+A minor release headlined by **DXF sketches as operation geometry** (2D
+Contour, Slot, Trochoidal Slot, Wire Contour, typed engraving text),
+**first-traverse checks for every operation kind and machine layout**,
+**STEP import through the solidcore kernel only**, **new posts** (Heidenhain
+iTNC 530 Klartext, Grbl 1.1, LinuxCNC 3-axis), **a Slot Undercut
+operation**, **fine boring (G76)**, **dogbone and T-bone corner relief**,
+**AI chat with provider clients and context budgets**, and **a Home page**.
+259 pull requests merged since 0.24.0 (50 features, 162 fixes, 3
+performance changes, 1 refactor, docs, tests and process).
+
+## Upgrade notes
+- Save a project in 0.25.0 only when each person who opens it also has
+  0.25.0. Older builds refuse format 75 (see "Breaking").
+- STEP files are now read only through the solidcore kernel. The truck STEP
+  crates are removed (#917, PR #2904; PR #2939). Faulty STEP files are
+  refused by name, and touching solids import as separate bodies. A model
+  can import with different facets than in 0.24.0. Generate and verify old
+  jobs again before you post them.
+- More programs are refused before the post (see "Changes to posted
+  G-code"). A first rapid that can hit the stock, a fixture or the table now
+  holds the post by name. Raise the clearance height as the message says.
+- Drill and thread operations take the lower of the tool feed and the
+  material feed. A feed above the tool feed holds the post (#2598, #2724).
+- A project that an older build saved after a tilt angle edit on a pre-v65
+  operation can keep the old plane basis (#2739, PR #2751). Change Tool axis
+  A or B, set it back, and check the preview before you post.
+- FreeBSD is no longer a supported platform (#2570).
+
+## Changes to posted G-code
+These change the program that an existing project posts, or stop a post that
+went through before.
+- **New posts:** Heidenhain iTNC 530 Klartext for the Fehlmann Picomax 55
+  (#3182), Grbl 1.1 for 3-axis mills (#2481), a generic LinuxCNC 3-axis
+  mill post (#2303), and a zero-step Agie punch setup encoder (#2984).
+- **The first traverse after a tool change is judged** for 3+2 planes, cross
+  drills, rotary, multi-axis and mill kinds, on mills, lathes and mill-turns,
+  through every pose of the work-turning rotaries (#2965, #2987, #2991,
+  #3077, #3081, #3083, #3084, #3096, #3100, #3127). The opening rapid starts
+  over the entry point of the operation, not over the WCS origin (#2901).
+- **Drilling:** a fine boring cycle (G76 on Haas; other posts refuse it by
+  name) (#1445). Back bore (G89) carries its dwell and feeds out at the
+  plunge feed (#1480). LinuxCNC, Tormach and grblHAL refuse a G73 or G85
+  dwell by name (#2609). Heidenhain G205 writes Q208 as a number (#3102).
+  Posts can write pre- and post-tool-change macros (#2407).
+- **Turning:** Fanuc and Tormach lathe G76 refuse a start point above
+  material (#2878, #2952). Tormach inch G76 states a J that cuts the
+  verified passes (#1619). Threading refuses a helical modelled thread by
+  name (#3023). Turning rides drop duplicate samples and keep to the nose
+  offset (#2881, #2882).
+- **Flipped WCS:** each mill post posts a flipped X or Y as a mirrored
+  program (#2475), also with a Z rotation (#2476). A flipped Z refusal names
+  the reason (#2474).
+- **Wire and sinker EDM:** the generic ISO wire post writes each dimension
+  word with a decimal point (#3206), and refuses by name a wire number (U,
+  V, taper angle, taper, plane) that is not finite (#3236, PR #3263).
+  Sodick skims post on their own LN condition words and state their
+  flushing (#2649, #2686), and Sodick comments drop unsupported characters
+  (#3213). Work outside the stated
+  guide heights is refused (#2923). Sinker Side Burn posts explicit lateral
+  feeds (#3001).
+- **Probing:** LinuxCNC and Tormach probe programs stop when a work offset
+  has an XY rotation (#2683).
+- **Toolpath changes that show in the posted program:**
+  - 2D Contour: leads stay on the air side at the seam (#3019). A None
+    lead-in stands the arc entry down (#3132). Each tab is checked against
+    every cut of its level (#2561), and is as tall as Tab height (#2579).
+    Whole-model contours cut their lower bands or name the uncut range
+    (#2538, #2597, #2677).
+  - 2D pockets: dogbone and T-bone corner relief (#2400), kept by rest
+    passes (#3146). Zigzag levels close with a ring (#3129). Equal depth
+    steps are an option (#2012).
+  - Circular: the helix entries of several rings stay apart (#3109). Ramp
+    transitions stay at depth (#1807).
+  - 3D: Adaptive has a Trochoidal method (#1591). Shallow blind floors are
+    cut (#2088). A straight gap link (#1708).
+  - Face does not lift over holes below the cut plane (#2437). 2D Chamfer
+    with no picks refuses partly bevelled edges by name (#2887, #2944).
+  - Rotary Parallel keeps a held bar end (#2343) and the picked faces.
+    Rotary Contour and Rotary Offset refuse a face selection (#2848).
+    Rotary Contour makes rings about X (#3000).
+  - A 3+2 operation from an older project with new angles posts its plane
+    as a new operation does (#2599).
+- **Machine checks:** the travel check reads only the points that an arc
+  sweeps (#2710). The post output budget scales with the input (#3002).
+
+## Highlights
+### Operations
+- Slot Undercut for T-slot, keyseat, dovetail and lollipop cutters (#1444).
+- 2D Contour on DXF sketches with layer and chain picks (#1864). Slot and
+  Trochoidal Slot read DXF chains (#1868). Wire Contour on one straight DXF
+  chain on stock (#3180). DXF profiles on the stock of a setup (#1862).
+- Typed text as single-line engraving strokes (#2679).
+- A guided sheet job on a milling setup (#3070).
+- 3D Deburr: picked and excluded edges, a minimum edge angle and a policy
+  for edges out of reach (#1888, #1889).
+- "Do not touch" protection on 2D Offset and 3D Pocket (#2055).
+
+### Machines and tools
+- A machine file can name its post (#2374) and record its installed control
+  (#3181). New templates: AGIECUT Classic 2S (#2946) and the Fehlmann
+  Picomax 55 with iTNC 530 (#3181).
+- Tool tables import and export as Tormach PathPilot (.csv) and Hurco
+  WinMax (.TCM) (#2566). Generic starter router cutters (#3069). Plasma
+  torch cut-data recipes (#1521).
+- Thread infeed plans over MCP (#1847).
+
+### Import and models
+- STEP through solidcore (#917), with measured tolerances and named
+  refusals. Many STEP fidelity fixes (#2600, #2718, #2719, #2754, #2781,
+  #2844, #2919, #2973, #2976, #3079).
+- Linked models import again when their file changes (#2463). A model of
+  unknown fidelity can be vouched for (#1339).
+- An optional `cadmpeg` runner for native CAD files (#1873; no format is
+  enabled yet). DXF stock-face import accepts empty layout records (#3176).
+- A true-shape nesting kernel (#2158).
+
+### Viewport and UI
+- A Home button with a start page and the recent projects (#2384).
+- Display menu: quality presets, ground shadow, ambient occlusion and "Look
+  at a work plane" (#2834), a "Wireframe, see-through" mode (#2636), and
+  anti-aliased overlay lines (#2958).
+- The tool body and profile editor has its own window (#2397), with one
+  tool preview (#2007, #2017).
+- The move gizmo has rotate rings, typed values and Shift snapping (#1198,
+  #2624). The Stock page sets the stock axis (#2576).
+- Saved panel setups (#2339), a Report button (#1696), Delete in the model
+  and tool menus (#2777), and hover help on the viewport toolbar (#2776).
+- `camcraft-ui <file>` opens the named file (#2462, #2648).
+
+### Simulation
+- Cylinder stock along X or Y (#2758). Shared keyframe bricks use much less
+  memory (#2194). The playhead waits for the stock removal (#2611).
+- A generated machine model posed by axis values (#2584).
+
+### AI chat and MCP
+- AI chat reaches cloud providers over https and local servers on loopback.
+  Keys come from the environment or the OS keychain, and an "Offline only"
+  switch blocks the other hosts (#1945).
+- Compact MCP read modes and chat context budgets (#1944).
+  `camcraft-cli mcp reference` and `camcraft-cli mcp prompt` print the tool
+  reference (#1947).
+
+### Examples
+- New catalog cases for slots, contour tabs, edge work, hole work, turning
+  kinds, groove and part-off, cone thread, indexed pockets and open pockets,
+  with images for each operation (#2855, #2858).
+
+## Not exercised on a real control
+The pull requests record no run on a real control for these changes. The
+test goldens are regression records. Check the first program on the machine
+before you cut.
+- The iTNC 530 Klartext, Grbl 1.1 and LinuxCNC posts (#3182, #2481, #2303).
+- The fine boring cycle (#1445) and the back bore dwell (#1480).
+- The ISO wire decimal points (#3206), the Sodick skim words (#2649, #2686)
+  and the Sinker Side Burn feeds (#3001).
+- The flipped WCS mirror on the posts other than Fanuc and Haas (#2475,
+  #2476).
+
+## Known issues
+The cut line is 2026-11-21 22:16 UTC. These `P1` and `P2` issues are open:
+- #3264 (P1): Wire ISO post: a non-finite OriginX or OriginY is ignored
+  without a warning, so the program is shifted. It was filed after the cut
+  line. Its fix ships in the next minor.
+
+Open defects with a workaround:
+- #1950 (P3): 3D Pocket Adaptive on a whole model. The stock ring exceeds
+  the planner limits, and Offset rings cut the level. The output is safe.
+- #2849 (P3): on a solidcore STEP mesh, the 2D pocket corner check meets a
+  loop that crosses itself.
+- The release gate skips the tests that pin #1950 and #2849, and checks that
+  they still fail (known-fail markers).
+
+## Process changes
+`PROCESS_VERSION` went from 100 to 122 (pinned issue #681):
+- 101: the MCP skill follows the holder reference (v70).
+- 102: a known-fail list in the release gate; FreeBSD removed.
+- 103-105: MCP skill rows for `import_dxf`, `move_dxf_profile`,
+  `break_through` and `set_model_link`.
+- 106: known-fail markers in the test source.
+- 107: `cargo xtask gate heavy`; the rule "Heavy lanes at review"; the
+  quick gate selects the tests of a changed library fixture (PR #2775); an
+  MCP skill row (PR #2704).
+- 108: the batch tier builds each crate alone and runs parallel lanes.
+- 109: the gate job budget follows the CPU count.
+- 110: batch steps start the test executables directly.
+- 111: MCP skill rows for thread infeed and patch refusals; STEP fixture
+  selection in the quick gate.
+- 112: batch lanes on separate runners; catalog images.
+- 113: `cargo xtask gate light`.
+- 114: MCP skill wording for mill-turn; the post-merge report on a red gate.
+- 115: LF endings for stl/obj fixtures.
+- 116: the rule "Own blocked PRs first".
+- 117: the gate seeds the `target/` of a new worktree.
+- 118: the gate pins `CARGO_INCREMENTAL` and the profile env.
+- 119: the gate removes old test units; catalog metadata; MCP skill rows
+  for sketch picks.
+- 120: the MCP skill has `set_stock` and the stock axis.
+- 121: one independent post-merge run for each merge.
+- 122: `release.yml` runs the site tests.
+
+## Pixel snapshots
+The pixel-snapshot lanes were not run for this cut, by the maintainer's
+earlier decision. The structural UI tests assert what the goldens guard.
+
+---
+
 # CamCraft 0.24.0 (clean-room implementation)
 
 Released 2026-11-18.

@@ -58,9 +58,10 @@ fn edge_selection(g: &FeatureGraph, edge: u32, unit: EdgeUnit) -> Option<Feature
 pub fn selection_of(graph: &FeatureGraph, pick: &FeaturePick, unit: EdgeUnit) -> Option<FeatureSel> {
     match &pick.target {
         PickTarget::Point(p) => Some(FeatureSel::Vertex(p.id)),
-        PickTarget::Face { sel, .. } => *sel,
+        PickTarget::Face { sel, .. } => sel.clone(),
         PickTarget::Edge { edge } => edge_selection(graph, *edge, unit),
         PickTarget::Centre { arc } => super::centre::centre_selection(graph, *arc),
+        PickTarget::SketchChain { id } => Some(FeatureSel::SketchChain(*id)),
     }
 }
 
@@ -74,7 +75,10 @@ pub fn pick_selection(
     skip: impl Fn(&str) -> bool,
 ) -> Option<(FeaturePick, Option<FeatureSel>)> {
     let pick = pick_feature(world, q, skip)?;
-    let sel = graph_of(world, &pick.entity).and_then(|g| selection_of(&g, &pick, unit));
+    let sel = match &pick.target {
+        PickTarget::SketchChain { id } => Some(FeatureSel::SketchChain(*id)),
+        _ => graph_of(world, &pick.entity).and_then(|g| selection_of(&g, &pick, unit)),
+    };
     Some((pick, sel))
 }
 
@@ -97,11 +101,37 @@ pub fn feature_chains(graph: &FeatureGraph) -> Vec<Chain> {
 /// to the command's own stale-pick check. Err is a reason the user (or
 /// agent) can act on.
 pub fn check_pickable(world: &World, g: &GeoSel) -> Result<(), String> {
+    if let Some((_, sketch)) = crate::sketch::find(world, &g.entity) {
+        return match &g.feature {
+            FeatureSel::SketchChain(id) => {
+                if sketch.data.chains().find(*id).is_some() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "{} is no longer in DXF profile '{}'",
+                        super::geo_label(world, g),
+                        g.entity
+                    ))
+                }
+            }
+            FeatureSel::SketchLayer(layer) => {
+                if sketch.data.layers().iter().any(|l| l == layer) {
+                    Ok(())
+                } else {
+                    Err(format!("layer '{layer}' is not in DXF profile '{}'", g.entity))
+                }
+            }
+            _ => Err(format!(
+                "'{}' is a DXF profile - pick a sketch chain or layer, not a {}",
+                g.entity, g.feature
+            )),
+        };
+    }
     let Some(graph) = graph_of(world, &g.entity) else { return Ok(()) };
-    match g.feature {
+    match &g.feature {
         FeatureSel::Vertex(id) => {
-            let known = feature::resolve_vertex(&graph.features, id).is_some();
-            if !known || graph.points.iter().any(|p| p.id == id) {
+            let known = feature::resolve_vertex(&graph.features, *id).is_some();
+            if !known || graph.points.iter().any(|p| p.id == *id) {
                 return Ok(());
             }
             Err(format!(
@@ -110,7 +140,7 @@ pub fn check_pickable(world: &World, g: &GeoSel) -> Result<(), String> {
                 super::geo_label(world, g)
             ))
         }
-        FeatureSel::Chain(id) => match crate::model::resolve_chain(&graph.features, id) {
+        FeatureSel::Chain(id) => match crate::model::resolve_chain(&graph.features, *id) {
             Some(c) if !is_feature_chain(&graph, &c) => Err(format!(
                 "{} runs along the mesh's own triangles, not a model edge - pick an edge where two \
                  faces meet",
@@ -119,5 +149,9 @@ pub fn check_pickable(world: &World, g: &GeoSel) -> Result<(), String> {
             _ => Ok(()),
         },
         FeatureSel::Face(_) | FeatureSel::Patch(_) => Ok(()),
+        FeatureSel::SketchChain(_) | FeatureSel::SketchLayer(_) => Err(format!(
+            "'{}' is a solid model, not a DXF profile",
+            g.entity
+        )),
     }
 }

@@ -5,7 +5,8 @@
 //! A positive G83 dwell is refused by name before any G83 block is written;
 //! a zero dwell posts G83 with no P, as before.
 //!
-//! Gate map: covers assets/posts/tormach.cps, assets/posts/grblhal.cps (the
+//! Gate map: covers assets/posts/tormach.cps, assets/posts/grblhal.cps,
+//! assets/posts/linuxcnc.cps (the
 //! G83 dwell door), camcraft_post::post::cnc, camcraft_post::post::engine.
 
 use camcraft_post::cl::{Cycle, CycleKind, MoveKind, PathBuilder, Toolpath};
@@ -15,7 +16,7 @@ use camcraft_post::post::{cnc, dump, engine, Dump};
 use std::path::Path;
 
 /// The posts whose G83 has no dwell word.
-const LINUXCNC_FAMILY: [&str; 2] = ["tormach", "grblhal"];
+const LINUXCNC_FAMILY: [&str; 3] = ["tormach", "grblhal", "linuxcnc"];
 
 const R: f64 = 2.0;
 const HOP: f64 = 10.0;

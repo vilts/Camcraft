@@ -19,6 +19,7 @@ minimumRevision = 1;
 extension = "I";
 setCodePage = "utf-8";
 capabilities = 1; // reference contract: integer feature mask (bit 1 = milling)
+axisInversion = true; // verified on the engine's mirrored stream for a flipped WCS X/Y and an inverted machine X/Y (#2475): trace equivalence test + golden
 coolantModes = true; // reads PARAM Coolant (#112/#150): the engine refuses non-Flood ops for a post without it
 afterModes = true; // reads PARAM AfterOperation (#110): the engine refuses a stop or home ask for a post without it
 floatingTapping = true; // #51: G206 requires the operation's explicit floating-holder choice
@@ -47,6 +48,7 @@ var setupStockTop = null; // #1647: the current sections stated stock top
 var setupNext = null;      // #1647: null means no marker; a cleaned name may be empty
 var coolantOp = "";        // the section's OperationName, for refusals (#150)
 var sectionOpen = false;
+var wcsFlip = "";          // #1649: the flipped WCS axes ("X", "Y", "XY") - the engine mirrored the section
 var smoothTol = 0;          // #616: the section's PARAM Smoothing, mm (0: none asked)
 var smoothMode = "";        // #616: "finish" or "rough"
 var smoothActive = false;   // #616: this section wrote its smoothing words
@@ -102,6 +104,7 @@ function motion(g, words) {
 }
 function xyz(p) { return [wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ)]; }
 function wo(letter, v, o) { return has(v) ? sgn(letter, v - o) : ""; }
+function arcWord(k, v) { return wo(k, v, k === "X" ? orgX : (k === "Y" ? orgY : orgZ)); }  // #3442: a position word as written, for arcFate
 function msg(s) {  // counted warning where the host offers message()
   if (typeof message === "function") message(s); else writeln("; " + s);
 }
@@ -206,6 +209,8 @@ function joinDash(parts) {  // the non-empty parts, " - " between
   return a.join(" - ");
 }
 function note(s) { block(["; " + s]); }
+// Program notes use this dialect without truncating the stated bound.
+function onComment(s) { note(commentText(s)); }
 function commentParam(name, value) {
   if (name === "SetupName") setupName = clean(value);
   else if (name === "OperationName") opName = clean(value);
@@ -260,6 +265,18 @@ function onOpen() {
   else pgmName = String(nm).replace(/[^A-Za-z0-9._-]/g, "_") || "CAMCRAFT";
   writeln("%" + pgmName + " G71 *");
   if (said && progNumbered()) note("PROGRAM " + progNo());
+  invertedNotes();
+}
+// The machine's inverted linear axes (#375): the engine has mirrored the
+// stream into the controller's frame, and the header says so, one note
+// for each axis. A standard machine lists none.
+function invertedNotes() {
+  var a = (typeof machine !== "undefined" && machine && machine.invertedAxes) || [];
+  var where = { X: "LEFT", Y: "TOWARD THE FRONT", Z: "DOWN" };
+  for (var i = 0; i < a.length; i++) {
+    var l = String(a[i]);
+    note("MACHINE " + l + "+ MOVES " + (where[l] || "THE OTHER WAY") + " - INVERTED AXIS");
+  }
 }
 
 // Cutter compensation in the control (M13.11, #39): refused by name,
@@ -303,6 +320,7 @@ function onParameter(name, value) {
   else if (name === "OriginX" && has(value)) orgX = Number(value);
   else if (name === "OriginY" && has(value)) orgY = Number(value);
   else if (name === "OriginZ" && has(value)) orgZ = Number(value);
+  else if (name === "WcsFlip") wcsFlip = String(value || "");
 }
 
 function onSpindleSpeed() {
@@ -350,6 +368,8 @@ function startPreamble() {
   // stopped before its first move, whatever the tool change did.
   var probeStop = spindleWait && !(sRpm > 0);
   opNotes();
+  // #1649: the operator reads why every sign on a flipped axis is the other one.
+  if (wcsFlip) note("WCS " + wcsFlip.split("").join(" AND ") + " FLIPPED - PROGRAM MIRRORED");
   modalWait = true;
   // Cycle 247 activates on definition; never call it as a hole cycle.
   // It resets coordinate transformations (892905-25 §10.4, p.275).
@@ -433,7 +453,7 @@ function endPreamble() {
 }
 
 function onSection() { startPreamble(); }
-function onSectionEnd() { endPreamble(); clearZ = null; hopZ = null; }  // #1633: the next section states its own planes
+function onSectionEnd() { endPreamble(); wcsFlip = ""; clearZ = null; hopZ = null; }  // #1633: the next section states its own planes
 
 // ------------------------------------------------------------- motions
 // The manual's two-digit G00/G01/G02/G03 (p.752). Native cycles
@@ -543,6 +563,9 @@ function verticalArc(p) {
   var ccw = p.CircularDirection !== "CW";
   var d = ccw ? a1 - a0 : a0 - a1;
   d = ((d % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  // #3442: equal ends are a full turn stated as one record (the form the
+  // stream reader takes), never a zero-length chord.
+  if (u1 === u0 && v1 === v0) d = 2 * Math.PI;
   var n = 1;
   if (has(r) && has(d) && r > 1e-12 && d > 0) {
     var step = 2 * Math.acos(Math.max(-1, Math.min(1, 1 - Math.min(ARC_CHORD_TOL / r, 1))));
@@ -564,11 +587,21 @@ function onCircular() {
   startPreamble();
   if (!tiltOk(properties)) return;
   if (inCycle) { msg("native drilling cycle cannot replace an arc cutting chain"); return; }
+  // #3442: an arc whose written ends coincide is no arc block (arcFate, PRELUDE).
+  var fate = arcFate(arcWord);
+  if (fate !== "arc") { if (fate === "linear") onLinear(); return; }
   if (spindleStopped("arc move " + (properties.CircularDirection === "CW" ? "G02" : "G03"))) return;
   if (!xyFirst(properties.StartX, properties.StartY, properties.StartZ, true)) return;  // #1633: refused - the move is not written
   var p = properties;
   if (p.CircularPlane === "XZ" || p.CircularPlane === "YZ") {
     verticalArc(p);
+    return;
+  }
+  // TNC 640 ISO manual 892909-25, pp. 271-272: a helix uses polar
+  // interpolation. This post has no polar helix output; Cartesian
+  // G02/G03 must stay in the working plane, including under a mirror.
+  if (!has(p.StartZ) || !has(p.Z) || p.Z !== p.StartZ) {
+    msg(coolantWho() + "Heidenhain helix requires polar interpolation - Cartesian G02/G03 with changing Z is not supported");
     return;
   }
   // #49: in this dialect I/J are the circle centre's Cartesian
@@ -604,6 +637,8 @@ var DWELL_TOL = 1e-6;
 function sameHole(p) {
   return Math.abs(p.X - cycleX) < DWELL_TOL && Math.abs(p.Y - cycleY) < DWELL_TOL;
 }
+// #3102: the top of the documented Q208 range (mm/min), the fastest retract.
+var RETRACT_FEED_MAX = 99999.999;
 function qword(n, v) {
   // Q values may need four decimals (not integer feed rounding, which
   // would change a tap's feed/pitch relation). Numeric ranges checked below.
@@ -700,9 +735,15 @@ function onCycle() {
   if (g === "G205") {
     // Constant chip-break pecks, no decrement or deepened start. A
     // conservative feed re-approach avoids inventing an unverified rapid.
+    // #3102: Q208 (retraction feed) is a number, never the word FMAX. An
+    // iTNC 530 (606425 04) DIN/ISO import refuses the G205 block with
+    // Q208=FMAX. The iTNC 530 cycle manual (670388-25, cycle 205) gives
+    // the range 0..99999.999 and writes Q208=99999 in its own example;
+    // the TNC 640 manual (892905-25) takes the same number. The top of
+    // the range asks for the fastest retract that the control permits.
     words.push(qword(212, 0), qword(205, p.Q), qword(258, 0), qword(259, 0),
       qword(257, p.Q), qword(256, Math.min(1, p.Q)), qword(211, dwell),
-      qword(379, 0), qword(253, feed), "Q208=FMAX", qword(395, 0));
+      qword(379, 0), qword(253, feed), qword(208, RETRACT_FEED_MAX), qword(395, 0));
   } else if (g === "G200") words.push(qword(211, dwell), qword(395, 0));
   // #1359: checked last, so a tap's own named refusals (rpm, pitch)
   // still speak; inCycle stays set, so the hole's chain is swallowed too.

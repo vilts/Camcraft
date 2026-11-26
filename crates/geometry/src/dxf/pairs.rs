@@ -167,3 +167,12 @@ pub(super) fn integer(value: &str, kind: &str) -> Result<i32, DxfError> {
         .parse::<i32>()
         .map_err(|_| error(kind, "invalid integer value"))
 }
+
+/// Handles are unsigned hexadecimal strings of at most sixteen digits. Zero is the null pointer.
+pub(super) fn handle(value: &str, kind: &str) -> Result<u64, DxfError> {
+    let digits = value.trim();
+    if digits.len() > 16 || !digits.bytes().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(error(kind, "invalid hexadecimal handle"));
+    }
+    u64::from_str_radix(digits, 16).map_err(|_| error(kind, "invalid hexadecimal handle"))
+}

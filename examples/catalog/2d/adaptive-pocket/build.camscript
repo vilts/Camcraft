@@ -1,0 +1,45 @@
+// Provenance: original open-pocket example using CamCraft's public commands.
+cam.import("model/adaptive-pocket.obj", "adaptive-pocket");
+cam.call("set_model_link", { model: "adaptive-pocket", path: null });
+cam.call("set_stock", { box: { dx: 60.0, dy: 40.0, dz: 12.0 } });
+cam.call("add_tool", { catalog: "EM-0600-4FL", holder: "none" });
+
+var pockets = cam.call("detect_pockets", { model: "adaptive-pocket" });
+if (pockets.features.length !== 1 || pockets.features[0].floor_z !== 6.0 ||
+    pockets.features[0].open_spans.length !== 1) {
+  throw new Error("adaptive-pocket requires one floor at Z6 with one open edge");
+}
+var floor = pockets.features[0].floor;
+
+cam.call("add_operation", {
+  kind: "2D Adaptive", name: "Adaptive rough", tool: "EM-0600-4FL", source: "adaptive-pocket",
+  params: {
+    stepover: 1.0, stock_to_leave: 0.5,
+    clearance_z: 27.0, top_z: 12.0, bottom_z: 6.5, stepdown: 3.0,
+    feed: 800.0, plunge_feed: 200.0, climb: true,
+    entry: "helix", helix_radius: 1.0, optimal_load: 0.1464466094067262
+  }
+});
+cam.call("set_operation_geometry", {
+  operation: "Adaptive rough", picks: [{ model: "adaptive-pocket", id: floor }]
+});
+cam.call("add_operation", {
+  kind: "2D Pocket", name: "Pocket finish", tool: "EM-0600-4FL", source: "adaptive-pocket",
+  params: {
+    stepover: 2.0, stock_to_leave: 0.0,
+    clearance_z: 27.0, top_z: 12.0, bottom_z: 6.0, stepdown: 3.0,
+    feed: 800.0, plunge_feed: 200.0, climb: true,
+    strategy: "offset_rings", entry: "helix", helix_radius: 1.0
+  }
+});
+cam.call("set_operation_geometry", {
+  operation: "Pocket finish", picks: [{ model: "adaptive-pocket", id: floor }]
+});
+cam.generate();
+var verdict = cam.verify();
+if (!verdict.ok) {
+  throw new Error("catalog verify failed: " + JSON.stringify(verdict));
+}
+cam.save("adaptive-pocket.camproj");
+cam.post({ to: "adaptive-pocket.nc" });
+cam.report();

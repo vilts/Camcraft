@@ -40,7 +40,7 @@ fn p(holes: FaceHoles) -> FaceParams {
         feed: 500.0,
         plunge_feed: 100.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         holes,
         stock_top: None,
     }

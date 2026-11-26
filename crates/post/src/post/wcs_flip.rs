@@ -15,10 +15,10 @@
 //! (G41 <-> G42) when exactly one of X and Y is flipped. Both X and Y
 //! flipped is a half turn about Z: nothing reverses.
 //!
-//! Refused by name, never guessed: a flipped Z (tool-length compensation
-//! and the canned cycles' retract assume the controller's +Z leaves the
-//! work), a script that does not declare `axisInversion = true`, a
-//! section that is also rotated (`WcsYaw`), turning, EDM and plasma
+//! Refused by name, never guessed: a flipped Z (#2474: the tool-length
+//! word is not decidable from the flip, [`Z_REASON`], and a canned cycle's
+//! R plane lands on the far side of the hole bottom), a script that does
+//! not declare `axisInversion = true`, turning, EDM and plasma
 //! sections, probing (the maintainer's decision of 2026-11-18: the probe's
 //! work-offset write is proven for a machine axis that runs reversed,
 //! #392, not for a mirrored work offset), and everything the mirror
@@ -35,6 +35,16 @@ use super::js::Script;
 use super::wcs_rotate::{chunk_bounds, read_finite};
 
 const AXES: [char; 3] = ['X', 'Y', 'Z'];
+
+/// Why a flipped Z does not post (#2474), in the words both doors use
+/// (this pass and the app's verification gate). The tool is on the
+/// physical "up" side of its tip, the control's -Z here: a register that
+/// holds a preset (positive) length then needs the subtracting word, one
+/// touched off on that control already has its sign. The flip does not
+/// say which, and the two words differ by twice the tool length.
+pub const Z_REASON: &str = "on a control that reads Z reversed, the tool-length word depends on how the tool \
+     lengths were measured (a preset length needs G44, a length touched off on that control needs G43), the \
+     project does not state which, and the wrong word moves the tool by twice its length";
 
 /// The stream's word for the flags: "X", "XY", "XYZ"; `None` for no flip.
 #[must_use]
@@ -75,10 +85,11 @@ fn phrase(flip: [bool; 3]) -> String {
 #[derive(Default)]
 struct Stated {
     flip: Option<[bool; 3]>,
-    yaw: f64,
     origin: [bool; 2],
     start: [bool; 2],
     motion: bool,
+    /// The section has a canned cycle (an R plane and a hole bottom).
+    cycle: bool,
     op: String,
     /// A section kind the mirror is not verified for, by its name.
     foreign: Option<&'static str>,
@@ -98,7 +109,6 @@ fn read(chunk: &[Record]) -> Result<Stated, PostError> {
                     }
                     st.flip = Some(f);
                 }
-                "WcsYaw" => st.yaw = read_finite(value, "WcsYaw")?,
                 "OriginX" => st.origin[0] = true,
                 "OriginY" => st.origin[1] = true,
                 "StartX" => st.start[0] = true,
@@ -109,7 +119,12 @@ fn read(chunk: &[Record]) -> Result<Stated, PostError> {
                 _ => {}
             },
             Record::Plasma(_) | Record::Torch(_) => st.foreign = Some("a plasma section"),
-            Record::Move(_) | Record::Cycle(_) => st.motion = true,
+            Record::Waterjet(_) | Record::Jet(_) => st.foreign = Some("a waterjet section"),
+            Record::Move(_) => st.motion = true,
+            Record::Cycle(_) => {
+                st.motion = true;
+                st.cycle = true;
+            }
             Record::Touch(_) | Record::Guard(_) | Record::Retreat(_) => {
                 st.motion = true;
                 st.probe = true;
@@ -177,22 +192,19 @@ pub fn apply(records: Vec<Record>, s: &Script) -> Result<Vec<Record>, PostError>
         }
         let what = format!("{op}the WCS has {}", phrase(flip));
         if flip[2] {
+            let cycle = if st.cycle {
+                "; the section also has a canned cycle, whose R plane a mirrored Z puts on the far side of the hole bottom"
+            } else {
+                ""
+            };
             return Err(PostError::Refused(format!(
-                "{what}; posting a flipped Z is not supported yet - tool-length compensation (G43) and the canned \
-                 cycles' retract assume the controller's +Z leaves the work - clear Flip Z on the WCS page"
+                "{what}; posting a flipped Z is not supported yet - {Z_REASON}{cycle} - clear Flip Z on the WCS page"
             )));
         }
         if !s.translates_inverted_axes() {
             return Err(PostError::Refused(format!(
                 "{what}, and this post script is not verified for a mirrored program (it does not declare \
-                 axisInversion = true) - post with a script that does (Fanuc, Haas), or clear the flip on the WCS page"
-            )));
-        }
-        if st.yaw.to_radians().abs() > 1e-9 {
-            return Err(PostError::Refused(format!(
-                "{what} and is also rotated {:.3} deg about Z; a flipped and rotated WCS is not supported yet - \
-                 clear the flip or the rotation",
-                st.yaw.abs()
+                 axisInversion = true) - post with a script that does (each built-in mill post does), or clear the flip on the WCS page"
             )));
         }
         if let Some(kind) = st.foreign {
@@ -207,8 +219,21 @@ pub fn apply(records: Vec<Record>, s: &Script) -> Result<Vec<Record>, PostError>
             )));
         }
         let rules = Rules { probing: false, helix: true, cause: "a flipped WCS axis" };
-        let mirrored = translate_rules(chunk, Flip { x: flip[0], y: flip[1], z: false }, rules)
+        let mut mirrored = translate_rules(chunk, Flip { x: flip[0], y: flip[1], z: false }, rules)
             .map_err(|why| PostError::Refused(format!("{what}: {}", why.join("; "))))?;
+        // #2476: one reflection conjugates rotation: F R(a) F = R(-a).
+        // The following rotation pass uses this mirrored-frame angle,
+        // so R(-yaw') F = F R(-yaw), and the controller voices yaw'.
+        // Two XY reflections preserve its angle. Bake never voices the angle.
+        if flip[0] != flip[1] {
+            for r in &mut mirrored {
+                if let Record::Param { name, value } = r
+                    && name == "WcsYaw"
+                {
+                    *value = serde_json::json!(-read_finite(value, "WcsYaw")?);
+                }
+            }
+        }
         out.extend(mirrored);
     }
     out.extend(it);

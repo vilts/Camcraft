@@ -130,6 +130,25 @@ fn dielectric(ui: &mut Ui, e: &mut Edm) {
         });
         fields::named(cb.response, "Flushing");
     });
+    // #2686: the flushing of each skim pass. It needs the rough cut's
+    // flushing (the machine law), so it is offered only with one stated
+    // and goes with it when that is taken back.
+    if e.flushing.is_none() {
+        e.skim_flushing = None;
+    }
+    ui.add_enabled_ui(e.flushing.is_some(), |ui| {
+        ui.horizontal(|ui| {
+            ui.label("skim flushing");
+            let shown = e.skim_flushing.map_or("not stated", Flushing::word);
+            let cb = ComboBox::from_id_salt("edm_skim_flushing").selected_text(shown).show_ui(ui, |ui| {
+                ui.selectable_value(&mut e.skim_flushing, None, "not stated");
+                for f in [Flushing::High, Flushing::Low] {
+                    ui.selectable_value(&mut e.skim_flushing, Some(f), f.word());
+                }
+            });
+            fields::named(cb.response, "Skim flushing");
+        });
+    });
 }
 
 fn codes(ui: &mut Ui, codes: &mut std::collections::BTreeMap<String, String>) {

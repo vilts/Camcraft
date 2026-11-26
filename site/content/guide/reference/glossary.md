@@ -44,7 +44,7 @@ details in [Tools and tool libraries](@/guide/set-up/tools.md#holders-and-profil
 tool editor's Body tab draws. It is checked against the part like the rest
 of the holder. See [Tools and tool libraries](@/guide/set-up/tools.md#imported-and-modular-tool-bodies).
 
-**Live tooling.** A driven tool in a lathe or mill-turn turret. When a path
+**Live tooling.** A driven tool in the turret of a lathe or a mill-turn machine. When a path
 states spindle C angles it is live-tool work: the S word drives the live
 tool, and the work turns only on C. See [Setups](@/guide/set-up/setups.md#machines).
 
@@ -52,9 +52,12 @@ tool, and the work turns only on C. See [Setups](@/guide/set-up/setups.md#machin
 an MCP server, so an AI agent can drive it headlessly through the same
 undoable commands the window uses. See [Posting](@/guide/check-and-post/posting.md#headless-posting).
 
-**Mill-turn.** A machine that mills and turns in one setup. Mill-turning on
-the Setup group shows both the milling and the turning operation groups.
-See [Setups](@/guide/set-up/setups.md#machines).
+**Mill-turn.** In CamCraft, a lathe (a multitasking turning centre) that
+also mills with live tooling, usually on a C axis, so it mills and turns
+in one setup. Mill-turning on the Setup group shows both the milling and
+the turning operation groups. The built-in machine is `millturn.mch`
+(Multitasking 5-axis). The same word is sometimes used for turning on a
+mill, which is a different setup: see that entry. See [Setups](@/guide/set-up/setups.md#machines).
 
 **Model.** An imported 3D mesh or STEP file (STL, OBJ or STEP) that
 describes the part. Import it with **Model** on the File group. See [First run](@/guide/getting-started/first-run.md#a-first-toolpath).
@@ -118,6 +121,12 @@ work spindle that holds the chuck. A milling post's S drives it. See [Setups](@/
 
 **Toolpath.** The cutter moves an operation generates and caches on the
 operation. **Paths** shows every cached toolpath at once. See [Operations](@/guide/operations/_index.md#generating).
+
+**Turning on a mill.** A mill used as a lathe: the part turns in the
+mill spindle, the lathe tools stand on the table, and each tool has its
+own work offset. Some shops call this "mill-turn" too, but it is not
+CamCraft's Mill-turn kind (live tooling on a lathe). CamCraft does not
+support turning on a mill yet (#2580).
 
 **Verify.** The check on the whole program before it is written: the
 simulated stock has no gouge, no move strikes a fixture, and no move

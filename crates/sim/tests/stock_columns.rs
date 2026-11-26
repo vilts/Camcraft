@@ -110,3 +110,32 @@ fn the_masks_agree_at_the_planes_the_program_cut() {
     let full = cc.above(-2.6).expect("mask").area();
     assert!(cf.above(-1.3).expect("mask").area() < full, "the -1.3 floor is not above -1.3");
 }
+
+/// #3819: a caller that cuts one move for each `simulate` call (a verifier
+/// that reads the stock before each cutting move) gets the one-call stock
+/// to the bit. The history now grows in place (pinned in `cut_history_tests`).
+#[test]
+fn one_move_for_each_call_is_the_one_call_cut() {
+    let moves: Vec<Move> = (0..4000)
+        .map(|k| {
+            let (y, z) = (0.25 + (k % 200) as f64 * 0.1, 9.0 - (k / 200) as f64 * 0.2);
+            mv(MoveKind::Feed, p(-1.0, y, z), p(21.0, y, z))
+        })
+        .collect();
+    fn op(m: &[Move]) -> [SimOp<'_>; 1] {
+        [SimOp { moves: m, radius: 0.5, ball: false, cone: None, corner: None }]
+    }
+    let block = || Stock::block(Backend::Column, 0.0, 0.0, 20.0, 20.0, 10.0, 0.1).expect("the test block");
+    let mut one = block();
+    one.simulate(&op(&moves)).expect("one call");
+    let mut each = block();
+    for m in &moves {
+        each.simulate(&op(std::slice::from_ref(m))).expect("one move");
+    }
+    for i in 0..200 {
+        for j in 0..200 {
+            let (x, y) = (0.05 + i as f64 * 0.1, 0.05 + j as f64 * 0.1);
+            assert_eq!(one.top(x, y).to_bits(), each.top(x, y).to_bits(), "column ({x}, {y})");
+        }
+    }
+}

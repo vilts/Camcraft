@@ -32,7 +32,7 @@ impl OpParams {
                 holes,
                 cross,
                 break_through,
-                break_through_from,
+                break_through_from, picks: _
             } => {
                 // #1557: the break-through, written only when stated,
                 // so every older op keeps the digest it was cached under.
@@ -62,7 +62,14 @@ impl OpParams {
                     CycleChoice::Bore => 5,
                     CycleChoice::BackBore => 6,
                     CycleChoice::Ream => 8,
+                    CycleChoice::FineBore { .. } => 9,
                 });
+                // #1445: the fine-bore shift is params data; only a fine
+                // bore writes it, so every other op keeps its digest.
+                if let CycleChoice::FineBore { shift_x_um, shift_y_um } = cycle {
+                    h.write_i32(*shift_x_um);
+                    h.write_i32(*shift_y_um);
+                }
                 // The hole list is params data, so it digests: recognition
                 // output, a typed edit, or a moved model (whose re-
                 // detect changes the numbers) all mark the op Stale
@@ -99,12 +106,19 @@ impl OpParams {
                 tolerance,
                 holes,
                 break_through,
+                pass_start, picks: _
             } => {
                 // #1557: the break-through, written only when stated,
                 // so every older op keeps the digest it was cached under.
                 if let Some(b) = break_through {
                     h.write_u8(0xB7);
                     w(h, *b);
+                }
+                // #3360: written only off Auto, the #3316 bytes.
+                match pass_start {
+                    crate::machining2d::PassStart::Auto => {}
+                    crate::machining2d::PassStart::Inside => h.write_u8(0xC1),
+                    crate::machining2d::PassStart::Outside => h.write_u8(0xC2),
                 }
                 wh(h, *clearance_z);
                 wh(h, *top_z);
@@ -166,7 +180,7 @@ impl OpParams {
                 hand,
                 external,
                 passes,
-                break_through,
+                break_through, picks: _
             } => {
                 // #1557: the break-through, written only when stated,
                 // so every older op keeps the digest it was cached under.

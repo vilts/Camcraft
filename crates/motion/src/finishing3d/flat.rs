@@ -11,10 +11,11 @@
 
 use crate::cl::{MoveKind, PathBuilder, Toolpath};
 use crate::geometry::{Point3, Triangle};
-use crate::machining2d::GenError;
+use crate::machining2d::{GenError, PassStart};
 
 use super::params::{Finish3DParams, validate};
 use super::shadow::{shadow_pass, shadow_region};
+use super::grid::SupSet;
 use super::support::{Sup, build_sups};
 
 /// Is this facet a FLOOR? Two tests, both scale-honest:
@@ -56,20 +57,28 @@ fn is_floor(s: &Sup, tol: f64) -> bool {
 /// (`support_at`'s `bottom_z` outrank); `steep_stepover` is inert
 /// here, as if it had never arrived.
 pub fn flat(facets: &[Triangle], p: &Finish3DParams) -> Result<Toolpath, GenError> {
+    flat_from(facets, p, PassStart::Auto)
+}
+
+/// [`flat`] with the start side of its offset passes (#3362): `Inside`
+/// cuts the innermost floor pass first. `Auto` is [`flat`] byte for
+/// byte.
+pub fn flat_from(facets: &[Triangle], p: &Finish3DParams, start: PassStart) -> Result<Toolpath, GenError> {
     validate(p, facets)?;
     let r = p.tool_diameter * 0.5;
     // The floors as a support set: geometry unchanged (clearance
     // still answers for EVERY facet), jurisdiction rewritten.
     let sups = build_sups(facets, r);
-    let fsups: Vec<Sup> = sups
-        .iter()
-        .map(|s| Sup { shallow: is_floor(s, p.tolerance), folds: [None; 3], ..*s })
-        .collect();
+    let fsups = SupSet::new(
+        sups.iter()
+            .map(|s| Sup { shallow: is_floor(s, p.tolerance), folds: [None; 3], ..*s })
+            .collect(),
+    );
     let region = shadow_region(&fsups, r)?;
     let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
     // max_rings None: every pass until the floor collapses at its
     // medial axis - the contour family's law, verbatim.
-    if !shadow_pass(&mut b, p, r, &fsups, &region, None, "flat")? {
+    if !shadow_pass(&mut b, p, r, &fsups, &region, None, "flat", start)? {
         return Err(GenError::Empty(
             "flat-area finishing found no floor flatter than one tolerance inside the programmed depths - slopes and flanks belong to the other strategies".into(),
         ));

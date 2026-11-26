@@ -68,6 +68,10 @@ pub struct Edm {
     /// the control, nothing posted.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub flushing: Option<super::edm_dielectric::Flushing>,
+    /// Wire: the flushing of each skim pass (#2686). Stated only with
+    /// `flushing`. Unstated = no word posted for a skim.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skim_flushing: Option<super::edm_dielectric::Flushing>,
     /// Sinker: the orbit patterns the control offers.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub orbits: Vec<OrbitWord>,
@@ -86,7 +90,7 @@ pub struct Edm {
 }
 
 /// The keys only a wire machine states.
-pub const WIRE_KEYS: [&str; 8] = [
+pub const WIRE_KEYS: [&str; 9] = [
     "lower_guide_z",
     "upper_guide_z",
     "max_taper_deg",
@@ -95,6 +99,7 @@ pub const WIRE_KEYS: [&str; 8] = [
     "taper_angle",
     "tank",
     "flushing",
+    "skim_flushing",
 ];
 /// The keys only a sinker machine states.
 pub const SINKER_KEYS: [&str; 3] = ["orbits", "max_orbit_radius", "pickup"];
@@ -138,6 +143,7 @@ impl Edm {
             && pos(self.max_orbit_radius)
             && self.pickup.as_ref().is_none_or(|p| !p.trim().is_empty())
             && self.orbits.iter().all(|o| ORBIT_KINDS.contains(&o.kind.as_str()) && !o.word.trim().is_empty())
+            && (self.skim_flushing.is_none() || self.flushing.is_some())
             && self.conditions_sane()
     }
 
@@ -153,6 +159,7 @@ impl Edm {
             || self.awt.is_some()
             || self.tank.is_some()
             || self.flushing.is_some()
+            || self.skim_flushing.is_some()
             || self.conditions.iter().any(|c| c.wire_diameter.is_some());
         let sinker = !self.orbits.is_empty()
             || self.max_orbit_radius.is_some()
@@ -305,6 +312,7 @@ pub(super) fn parse_edm(v: Option<&Value>, f: f64, k: Option<Kind>) -> Result<Op
     }
     e.taper_angle = super::edm_taper::parse_taper_angle(v.get("taper_angle"))?;
     (e.tank, e.flushing) = super::edm_dielectric::parse_dielectric(v)?;
+    e.skim_flushing = super::edm_dielectric::parse_skim_flushing(v, e.flushing)?;
     Ok(Some(e))
 }
 

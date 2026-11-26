@@ -356,6 +356,10 @@ pub use tts::{TTS, TTS_BODY_D};
 mod weldon;
 pub use weldon::{picker_rows, resolve, weldon_for, weldon_name, PickerRow};
 
+#[path = "holder_library_ref.rs"]
+mod reference;
+pub use reference::HolderRef;
+
 #[cfg(test)]
 #[path = "holder_library_tests.rs"]
 mod tests;

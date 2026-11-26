@@ -241,6 +241,123 @@ fn the_classes_the_eye_names_are_the_classes_the_verdict_counts() {
     assert!(clean_n > 0, "the floor is clean to both: {clean_n} pixels");
 }
 
+/// The faced box of #3612: a flat r-2 tool feeds rows across the
+/// whole top at z = 4.5, so the stock is the 10 x 10 x 4.5 box with a
+/// machined floor on top.
+const FACE_Z: f64 = 4.5;
+
+fn faced_box() -> Stock {
+    let mut stock = box_stock();
+    let row = |y: f64| Move { from: p(-3.0, y, FACE_Z), to: p(13.0, y, FACE_Z), ..pocket(FACE_Z).remove(0) };
+    let moves: Vec<Move> = (0..5).map(|r| row(-1.0 + 3.0 * r as f64)).collect();
+    cut(&mut stock, &moves);
+    stock
+}
+
+/// The slab interval of ray `o + t d` through the box `lo..hi`, or
+/// None on a miss: the analytic silhouette the march must agree with.
+fn slab(o: Point3, d: Point3, lo: [f64; 3], hi: [f64; 3]) -> Option<(f64, f64)> {
+    let (o, d) = ([o.x, o.y, o.z], [d.x, d.y, d.z]);
+    let (mut t0, mut t1) = (0.0f64, f64::INFINITY);
+    for a in 0..3 {
+        if d[a].abs() < 1e-12 {
+            if o[a] < lo[a] || o[a] > hi[a] {
+                return None;
+            }
+            continue;
+        }
+        let (mut ta, mut tb) = ((lo[a] - o[a]) / d[a], (hi[a] - o[a]) / d[a]);
+        if ta > tb {
+            std::mem::swap(&mut ta, &mut tb);
+        }
+        t0 = t0.max(ta);
+        t1 = t1.min(tb);
+    }
+    (t1 >= t0).then_some((t0, t1))
+}
+
+/// What one grazing frame of the faced box read, against the analytic
+/// box: rays that surely meet it and how many of those read no hit,
+/// rays that surely miss it and how many of those were painted.
+#[derive(Default)]
+struct Grazing {
+    sure_hits: usize,
+    missed_hits: usize,
+    sure_misses: usize,
+    painted_misses: usize,
+    unresolved: usize,
+    millis: f64,
+}
+
+/// The eye sits `deg` degrees above the faced floor, 30 mm back from
+/// its centre along -X, looking at the centre: the floor reads at a
+/// grazing angle across the whole lower half of the frame.
+fn grazing_frame(stock: &Stock, deg: f64) -> Grazing {
+    let (w, h) = (64u32, 64u32);
+    let a = deg.to_radians();
+    let target = p(5.0, 5.0, FACE_Z);
+    let eye = p(5.0 - 30.0 * a.cos(), 5.0, FACE_Z + 30.0 * a.sin());
+    let cam = PreviewCamera::look_at(eye, target, p(0.0, 0.0, 1.0), 0.15).unwrap();
+    let start = std::time::Instant::now();
+    let pv = stock.preview(None, &cam, w, h, DEV_TOL).unwrap();
+    let millis = start.elapsed().as_secs_f64() * 1e3;
+    let mut g = Grazing { unresolved: pv.unresolved, millis, ..Grazing::default() };
+    // One cell of slack on each side of the analytic box: the lattice
+    // rounds edges and corners inside that band, never past it.
+    let m = CELL;
+    for py in 0..h {
+        for px in 0..w {
+            let (o, d) = cam.ray(px, py, w, h);
+            let i = (py * w + px) as usize;
+            let depth = pv.depth[i];
+            let outer = slab(o, d, [-m, -m, -m], [10.0 + m, 10.0 + m, FACE_Z + m]);
+            if outer.is_none() {
+                g.sure_misses += 1;
+                if depth.is_finite() {
+                    g.painted_misses += 1;
+                }
+                continue;
+            }
+            // A sure hit: the ray crosses the box shrunk by a cell in
+            // X and Y (clear of the rounded edges) for at least two
+            // cells, so it meets the floor or a wall well inside.
+            let inner = slab(o, d, [m, m, 0.0], [10.0 - m, 10.0 - m, FACE_Z]);
+            if inner.is_some_and(|(t0, t1)| t1 - t0 >= 2.0 * m) {
+                g.sure_hits += 1;
+                if !depth.is_finite() {
+                    g.missed_hits += 1;
+                }
+            }
+        }
+    }
+    g
+}
+
+#[test]
+fn a_grazing_faced_floor_resolves_and_stays_see_through() {
+    // #3612: a 64-step march ran out over a faced floor seen at a few
+    // degrees, and the composite showed the grid through the stock.
+    // Down to 1 degree every ray must give a verdict, each ray that
+    // surely meets the box must hit it, and each ray that surely
+    // misses it must stay a miss. Below that (0.5 degrees) a ray may
+    // still run out, but the exhaustion verdict paints only proved
+    // material: no sure miss is ever painted.
+    let stock = faced_box();
+    for deg in [60.0, 30.0, 10.0, 5.0, 3.0, 2.0, 1.0, 0.5] {
+        let g = grazing_frame(&stock, deg);
+        println!(
+            "grazing {deg:>5.2} deg: unresolved {:>4}, sure hits {:>4} (missed {}), sure misses {:>4} (painted {}), {:.1} ms",
+            g.unresolved, g.sure_hits, g.missed_hits, g.sure_misses, g.painted_misses, g.millis
+        );
+        assert!(g.sure_hits > 1000, "{deg} deg: the floor fills the frame's lower half");
+        assert_eq!(g.painted_misses, 0, "{deg} deg: a ray that misses the box was painted");
+        if deg >= 1.0 {
+            assert_eq!(g.unresolved, 0, "{deg} deg: rays ran out of march steps");
+            assert_eq!(g.missed_hits, 0, "{deg} deg: rays that meet the box read as a miss");
+        }
+    }
+}
+
 #[test]
 fn an_orthographic_eye_casts_parallel_rays_from_its_view_plane() {
     // #609: an orthographic camera traces the box as the parallel box

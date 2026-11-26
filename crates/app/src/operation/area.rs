@@ -72,7 +72,7 @@ pub(super) fn pocket_ladder(
         return Ok(None);
     };
     let mt = stock_top(world, setup, &material.facets, material.top, None);
-    Ok(Some((material.facets, ladder_planes(t, mt, b, stepdown))))
+    Ok(Some((material.facets, ladder_planes(t, mt, b, params.ladder_stepdown(t, b, stepdown)))))
 }
 
 /// Below this (mm^2) the part material inside the enclosed area is
@@ -134,7 +134,9 @@ fn minus_standing(
     if standing.area().abs() < ISLAND_AREA_MIN {
         return Ok(None);
     }
-    Ok(Some(enclosed.difference(&standing)?))
+    // #2766: the two tessellations of a shared wall leave loops of about
+    // 1e-8 mm2 in the difference. They are noise by the same measure.
+    Ok(Some(enclosed.difference(&standing)?.without_slivers(ISLAND_AREA_MIN)))
 }
 
 /// The pocket family on a WHOLE PART source (issue #12): the part is
@@ -181,7 +183,7 @@ pub(super) fn whole_model_pocket(
         Some(f) => (f.local_facets(&part), f.local_facets(&stock)),
         None => (part, stock),
     };
-    Some(around_part(&part, &stock, &ladder_planes(t - oz, mt, b - oz, stepdown), crate::units::of(world)))
+    Some(around_part(&part, &stock, &ladder_planes(t - oz, mt, b - oz, params.ladder_stepdown(t, b, stepdown)), crate::units::of(world)))
 }
 
 /// The pocket family on the STOCK as its source (#1554): the stock is the
@@ -233,7 +235,7 @@ pub(super) fn stock_pocket(
             units::len(z, unit, 3)
         )
     };
-    let planes = ladder_planes(t - oz, mt, b - oz, stepdown);
+    let planes = ladder_planes(t - oz, mt, b - oz, params.ladder_stepdown(t, b, stepdown));
     let enclosed = match slice::project(&stock, FOOTPRINT_SAMPLES).map_err(from_slice) {
         Ok(r) if !r.is_empty() => r,
         Ok(_) => return None,

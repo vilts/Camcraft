@@ -33,6 +33,11 @@ pub(super) struct Cx<'a> {
     pub slot_fit: &'a Option<Result<String, String>>,
     /// #1815: diameter of the currently selected tool for seeding rest params.
     pub tool_diameter: Option<f64>,
+    /// #1864: current operation source for per-chain sketch overrides.
+    pub op_src: &'a SrcRef,
+    /// #1888: the op's picked features - the Deburr page moves its
+    /// edge picks into the exclusion list. Empty for every other kind.
+    pub picks: &'a [camcraft_app::operation::GeoSel],
 }
 
 /// The note explaining what `PocketStrategy::Auto` will generate: when rest
@@ -40,6 +45,7 @@ pub(super) struct Cx<'a> {
 /// rather than the pocket's outline.
 fn pocket_auto_note(
     world: &World,
+    name: &str,
     op: Option<&camcraft_app::schema::Operation>,
     stepover: f64,
     rest_on: bool,
@@ -66,7 +72,8 @@ fn pocket_auto_note(
     let Some(o) = op else {
         return pick.into();
     };
-    let region = operation::region_of(world, o).unwrap_or_default();
+    // #2201: the kept region, built only when the operation changes.
+    let region = crate::frame_memo::region_of(world, name, o).unwrap_or_default();
     let diameter = model::find_by_name(world, &o.tool)
         .as_ref()
         .and_then(|t| model::tool_of(world, t))
@@ -140,6 +147,7 @@ pub(super) fn params_fields(ui: &mut Ui, state: &mut State, tab: usize) {
                     camcraft_app::cl::CycleKind::Bore => "Bore",
                     camcraft_app::cl::CycleKind::BackBore => "Back bore",
                     camcraft_app::cl::CycleKind::Ream => "Ream (feed in, feed out)",
+                    camcraft_app::cl::CycleKind::FineBore => "Fine bore (oriented stop, shift)",
                 };
                 Some(format!(
                     "Auto -> {name} for this tool and a depth of {}",
@@ -181,7 +189,7 @@ pub(super) fn params_fields(ui: &mut Ui, state: &mut State, tab: usize) {
     } = &state.op_ui.params
     {
         let _s = crate::frame_cost::span("ui/properties.op.fields.pocket_auto_note");
-        auto_note = Some(pocket_auto_note(&state.world, op.as_ref(), *stepover, rest.is_some()));
+        auto_note = Some(pocket_auto_note(&state.world, &nm, op.as_ref(), *stepover, rest.is_some()));
     }
 
     // Which Trace-shape name the arm below renders: the engrave twin
@@ -228,6 +236,8 @@ pub(super) fn params_fields(ui: &mut Ui, state: &mut State, tab: usize) {
         .as_ref()
         .and_then(|t| model::tool_of(&state.world, t))
         .map(|t| t.diameter);
+    let draft_src = state.op_ui.src();
+    let picks = if matches!(state.op_ui.params, OpParams::Deburr { .. } | OpParams::MultiAxisDeburr { .. }) { state.op_ui.geo.clone() } else { Vec::new() };
     let mut cx = Cx {
         u,
         tab,
@@ -242,19 +252,25 @@ pub(super) fn params_fields(ui: &mut Ui, state: &mut State, tab: usize) {
         circle_fit: &circle_fit,
         slot_fit: &slot_fit,
         tool_diameter,
+        op_src: &draft_src,
+        picks: &picks,
     };
     let world = &state.world;
     let params = &mut state.op_ui.params;
     super::mill2d_page::fields(ui, world, params, &mut cx);
     super::mill2d_more_page::fields(ui, world, params, &mut cx);
+    super::vcarve_page::fields(ui, world, params, &mut cx);
     super::holes_page::fields(ui, world, params, &mut cx);
     super::probe_page::fields(ui, world, params, &mut cx);
     super::plasma_page::fields(ui, world, params, &mut cx);
+    super::waterjet_page::fields(ui, world, params, &mut cx);
     super::wire_page::fields(ui, world, params, &mut cx);
     super::sinker_page::fields(ui, world, params, &mut cx);
     super::trochoid_page::fields(ui, world, params, &mut cx);
+    super::undercut_page::fields(ui, world, params, &mut cx);
     super::mill3d_page::fields(ui, world, params, &mut cx);
     super::multiaxis_page::fields(ui, world, params, &mut cx);
+    super::multiaxis_deburr_page::fields(ui, world, params, &mut cx);
     super::rotary_page::fields(ui, world, params, &mut cx);
     super::turning_page::fields(ui, world, params, &mut cx);
     super::turning_more_page::fields(ui, world, params, &mut cx);

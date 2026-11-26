@@ -189,6 +189,7 @@ fn tap_job(machine: &str, post: &str) -> (Result<posting::Posted, String>, Vec<S
             stepped: false,
         }],
         cross: Vec::new(),
+        picks: Default::default(),
     };
     let src = SrcRef::Entity("puck".into());
     h.execute(&world, CreateOperation::new(&world, "Tap1", "TAP-M6", src, drill).expect("tap op"));

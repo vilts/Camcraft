@@ -40,7 +40,7 @@ fn fixture() -> World {
     history.execute(&world, cmd.expect("box stock"));
     let tool = catalog().into_iter().find(|(n, _)| *n == "EM-0400-2FL").map(|(_, t)| t).expect("catalog entry");
     history.execute(&world, AddTool::new(&world, "EM-0400-2FL", tool).expect("catalog tool"));
-    let params = OpParams::Face { holes: Default::default(), blend_turns: false,
+    let params = OpParams::Face { holes: Default::default(), blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -50,6 +50,7 @@ fn fixture() -> World {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     let cmd = CreateOperation::new(&world, "Face1", "EM-0400-2FL", SrcRef::Stock, params);
     history.execute(&world, cmd.expect("create"));
@@ -340,7 +341,7 @@ fn cam_post_with_per_op_writes_standalone_files() {
     history.execute(&world, stock.expect("Setup2 stock"));
     let params = OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -350,6 +351,7 @@ fn cam_post_with_per_op_writes_standalone_files() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     let op2 = CreateOperation::new(&world, "Face2", "EM-0400-2FL", SrcRef::Stock, params);
     history.execute(&world, op2.expect("create Face2"));

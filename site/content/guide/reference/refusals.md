@@ -34,6 +34,7 @@ wrong, and usually what to do about it.
 | `post blocked - <operation>: <n> warning(s): ...` | The operation's own checks found something unsafe. | Read the warnings. The flagged moves are marked in the viewport; fix the setting or geometry they name. |
 | `gouge: program cuts below the model ...` | Simulating the whole program found material removed from the part. | Use **Simulate** and **Deviate** to find where, then fix the operation that cuts there. |
 | `... - fix the tool before posting` | An operation's tool is missing or cannot cut that kind of operation. | Pick a suitable tool on the operation's Geometry tab. |
+| `... violates 'Do not touch' ...` | A generated or modified toolpath brings the flutes, shank or holder closer than the stated clearance to a protected face or edge. | Increase clearance room, retract height or machining boundaries and regenerate; the post blocks NC output until clear. |
 
 A machine-limit refusal names the axis or setting and the limit the
 mounted machine states. Either the program really is outside the machine's
@@ -70,6 +71,9 @@ also gives the operation, dimensions or picked geometry.
 | A STEP curve subdivision is refused | An edge or swept generator is discontinuous, non-finite or exceeds the evaluation budget. | Repair or re-export the STEP geometry. The refusal names the edge or face; do not increase tolerances to hide a discontinuity. |
 | `model '...' was imported incomplete` | A STEP closed shell meshes open, so its missing walls prevent a trusted gouge check. Every operation on it is refused at the post. | Re-export a sound model or import an STL. A larger facet budget is not a repair for missing walls. |
 | `mesh may have nested or overlapping shells` | An inward mesh shell can describe a cavity, so automatic orientation is ambiguous. | Re-export separate non-overlapping solids. Isolated closed inward STL and OBJ solids are corrected at import, with a note. |
+| `'Do not touch' item ... is also in the operation's machining selection` | The same face, patch or edge chain was placed in both the cutting selection and **Do not touch**. | Remove the conflicting item from one list. |
+| `cannot cut clear of protected 'Do not touch' ...: no safe cutting room remains` | Subtracting full-tool keep-out volumes around protected faces or edges leaves no room to machine. | Reduce **Clearance**, pick a smaller tool/holder, or shrink the protected area. |
+| `... - the 'Do not touch' keep-out of ... takes part of the region` | On 2D Adaptive, the area left clear of the protected items is too narrow for the method (for Trochoidal: no single channel for the lanes). | Use **Method = Spiral**, reduce **Clearance**, or shrink the protected area. |
 
 For a reduced-fidelity model, Cross Drill checks include the model's
 excess in entry, reach, holder and part clearances. A refusal means those

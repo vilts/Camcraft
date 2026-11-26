@@ -16,6 +16,13 @@ pub(super) fn height_fields(params: &OpParams) -> [(&'static str, &'static str, 
             ("TOP", "Top of Plate Z", Some(p.top_z)),
             ("BOT", "Bottom of Plate Z", Some(p.bottom_z)),
         ],
+        // The waterjet cut (#1883): the same three planes as the plasma.
+        OpParams::WaterjetProfile(p) => [
+            ("CLR", "Clearance Z", Some(p.clearance_z)),
+            ("RET", "Retract Z", None),
+            ("TOP", "Top of Plate Z", Some(p.top_z)),
+            ("BOT", "Bottom of Plate Z", Some(p.bottom_z)),
+        ],
         // The wire cut (#532): the two programmed planes; no rapids
         // plane, no hop.
         OpParams::WireContour(p) => [
@@ -29,6 +36,12 @@ pub(super) fn height_fields(params: &OpParams) -> [(&'static str, &'static str, 
             ("RET", "Retract Z", None),
             ("TOP", "Work Top Z", Some(p.top_z)),
             ("BOT", "Cavity Floor Z", Some(p.floor_z)),
+        ],
+        OpParams::SlotUndercut(p) => [
+            ("CLR", "Clearance Z", Some(p.clearance_z)),
+            ("RET", "Retract Z", p.retract_z),
+            ("TOP", "Top of Part Z", Some(p.top_z)),
+            ("BOT", "Bottom of Part Z", Some(p.bottom_z)),
         ],
         OpParams::Probe { clearance_z, .. } => [
             ("CLR", "Clearance Z", Some(*clearance_z)),
@@ -85,6 +98,13 @@ pub(super) fn height_fields(params: &OpParams) -> [(&'static str, &'static str, 
         // The engrave twin and the circular ladder ride the family's
         // four columns, the optional hop among them (M2.4 B).
         | OpParams::Engrave {
+            clearance_z,
+            retract_z,
+            top_z,
+            bottom_z,
+            ..
+        }
+        | OpParams::VCarve {
             clearance_z,
             retract_z,
             top_z,
@@ -213,6 +233,21 @@ pub(super) fn height_fields(params: &OpParams) -> [(&'static str, &'static str, 
             ("TOP", "Top of Part Z", Some(*top_z)),
             ("BOT", "Bottom of Part Z", Some(*bottom_z)),
         ],
+        // The flow band states two rows, read as RADII about the
+        // stated axis (#2826, #2774's alignment): the picks bound the
+        // band, so no TOP/BOT row exists - and each radius names the
+        // cylinder its moves ride, a ball-center distance from the
+        // axis the sheet says plainly.
+        OpParams::RotaryFlow {
+            clearance_z,
+            retract_z,
+            ..
+        } => [
+            ("CLR", "Clearance radius", Some(*clearance_z)),
+            ("RET", "Retract radius", *retract_z),
+            ("TOP", "Top of Part Z", None),
+            ("BOT", "Bottom of Part Z", None),
+        ],
         // The chamfer ride states three rows: the BOT column is empty
         // because the face's depth is DERIVED - width and angle author
         // the floor, and no height stands there to print (M2.4 B,
@@ -233,6 +268,12 @@ pub(super) fn height_fields(params: &OpParams) -> [(&'static str, &'static str, 
         // there is no RET row - the kernel hops every run to the
         // clearance plane itself (M2.5 E B).
         OpParams::Deburr {
+            clearance_z,
+            top_z,
+            bottom_z,
+            ..
+        }
+        | OpParams::MultiAxisDeburr {
             clearance_z,
             top_z,
             bottom_z,

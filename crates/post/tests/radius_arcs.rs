@@ -287,19 +287,26 @@ fn major_arcs_use_negative_r_and_degenerate_arcs_fall_back_to_ijk() {
         assert_r_arc_valid(&arcs[0], [0.0, 0.0, 0.0], 10.0, 0.003, &ctx);
     }
 
-    // Inch r=0.001 mm rounds to R0, and a 5->6 mm radius mismatch in G18 XZ must fall back to I/K with G18 intact.
+    // Inch r=0.001 mm rounds to R0 and its two ends to the same words: #3442 posts no arc block
+    // at all (an I/J block there is a full circle). A 5->6 mm radius mismatch in G18 XZ must
+    // fall back to I/K with G18 intact.
     let tiny = stream_with_origin([0.0; 3], [0.001, 0.0, 20.0], vec![mv(MoveKind::Rapid, 0.001, 0.0, 0.0, None), arc(0.0, 0.001, 0.0, (0.0, 0.0), true, ArcPlane::Xy, 600.0), mv(MoveKind::Rapid, 0.0, 0.001, 20.0, None)]);
     let tiny_opts = json!({ "useRadiusArcs": true, "Units": "inch" });
+    for stem in RADIUS_POSTS {
+        let cps = read(&format!("assets/posts/{stem}.cps"));
+        let out = engine::run_with(&cps, &Value::Null, &tiny, &tiny_opts).unwrap_or_else(|e| panic!("{stem}/tiny_inch: {e}"));
+        assert!(out.warnings.is_empty(), "{stem}/tiny_inch: {:?}", out.warnings);
+        assert!(parse_posted_arcs(&out.program).is_empty(), "{stem}/tiny_inch: no arc block under the output step:
+{}", out.program);
+    }
     let mismatch = stream_with_origin([0.0; 3], [5.0, 0.0, 20.0], vec![mv(MoveKind::Rapid, 5.0, 0.0, 0.0, None), arc(0.0, 0.0, 6.0, (0.0, 0.0), true, ArcPlane::Xz, 600.0), mv(MoveKind::Rapid, 0.0, 0.0, 20.0, None)]);
     for stem in RADIUS_POSTS {
-        for (label, stream, run_opts, plane) in [("tiny_inch", &tiny, &tiny_opts, 17u8), ("mismatch", &mismatch, &opts, 18u8)] {
-            let ctx = format!("{stem}/{label}");
-            let (_, arcs) = run_arcs(stem, stream, run_opts, &ctx);
-            assert_eq!(arcs.len(), 1, "{ctx}");
-            assert_eq!(arcs[0].plane, plane, "{ctx}: wrong plane in `{}`", arcs[0].line);
-            assert!(arcs[0].r.is_none(), "{ctx}: must emit I/J/K, not R: `{}`", arcs[0].line);
-            assert!(arcs[0].ijk[0].is_some() && (arcs[0].ijk[1].is_some() || arcs[0].ijk[2].is_some()), "{ctx}: missing center increment in `{}`", arcs[0].line);
-        }
+        let ctx = format!("{stem}/mismatch");
+        let (_, arcs) = run_arcs(stem, &mismatch, &opts, &ctx);
+        assert_eq!(arcs.len(), 1, "{ctx}");
+        assert_eq!(arcs[0].plane, 18, "{ctx}: wrong plane in `{}`", arcs[0].line);
+        assert!(arcs[0].r.is_none(), "{ctx}: must emit I/J/K, not R: `{}`", arcs[0].line);
+        assert!(arcs[0].ijk[0].is_some() && (arcs[0].ijk[1].is_some() || arcs[0].ijk[2].is_some()), "{ctx}: missing center increment in `{}`", arcs[0].line);
     }
 }
 

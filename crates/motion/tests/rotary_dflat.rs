@@ -123,6 +123,7 @@ fn stock(rho: f64, z0: f64, z1: f64) -> Vec<Triangle> {
 /// stations (the axis stands on world Z).
 fn params(strategy: PocketStrategy, d: f64, window: f64) -> Pocket3DParams {
     Pocket3DParams {
+        pass_start: Default::default(),
         links: camcraft_motion::links::Links::ROUGH3D,
         tool_diameter: d,
         stepover: 0.6 * d,

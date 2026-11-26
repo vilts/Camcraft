@@ -91,6 +91,8 @@ fn no_pickable_edge_is_a_tangent_piece_of_a_longer_one_in_any_step_fixture() {
         }
     }
     assert!(checked >= 5, "most fixtures import: {checked}");
+    // #2845: since #917 the sample's solids touch along shared edges that
+    // the feature graph's own edge map reads as non-manifold.
     assert!(bad.is_empty(), "tangent pieces of one edge pick apart: {bad:#?}");
 }
 

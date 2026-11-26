@@ -55,6 +55,7 @@ fn slab_with_boss() -> Vec<Triangle> {
 
 fn params(strategy: PocketStrategy) -> Pocket3DParams {
     Pocket3DParams {
+        pass_start: Default::default(),
         links: camcraft_motion::links::Links::ROUGH3D,
         tool_diameter: 8.0,
         stepover: 3.0,
@@ -104,7 +105,9 @@ fn verify_against(facets: &[Triangle], region: &Region, path: &Toolpath) -> Vec<
     verify(path, &cx)
 }
 
-/// Descending straight feed runs of three or more vertices: the fans.
+/// Descending straight feed runs of three or more vertices: the fans. A
+/// run that lands on its own start XY is the zig-zag ramp along a pass
+/// (#3670: a pass restart where the arc does not fit), not a fan.
 fn fans(t: &Toolpath) -> Vec<Vec<Point3>> {
     let mut out = Vec::new();
     let mut run: Vec<Point3> = Vec::new();
@@ -121,7 +124,8 @@ fn fans(t: &Toolpath) -> Vec<Vec<Point3>> {
     if !run.is_empty() {
         out.push(run);
     }
-    out.into_iter().filter(|f| f.len() >= 3).collect()
+    let closed = |f: &[Point3]| (f[0].x - f[f.len() - 1].x).hypot(f[0].y - f[f.len() - 1].y) < 1e-9;
+    out.into_iter().filter(|f| f.len() >= 3 && !closed(f)).collect()
 }
 
 #[test]

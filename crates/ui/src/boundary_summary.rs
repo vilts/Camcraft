@@ -224,7 +224,8 @@ pub fn summarize(state: &State) -> Summary {
         None => {
             if a.offset != 0.0 {
                 let how = if a.offset > 0.0 { "grows outward" } else { "shrinks inward" };
-                out.lines.push(format!("The area {how} by {}, all round.", len(a.offset.abs())));
+                let round = if a.open.is_some() && a.outer_offset != a.offset { " at the picked edge" } else { ", all round" };
+                out.lines.push(format!("The area {how} by {}{round}.", len(a.offset.abs())));
             }
             out.lines.push(match fam {
                 Family::Face => "Tool as Face cuts: the rows clear the area's whole bounding band, each run overrunning both ends.".to_owned(),
@@ -264,7 +265,15 @@ pub fn summarize(state: &State) -> Summary {
     }
 
     // 4. What this kind ignores.
-    if a.corner == CornerStyle::Sharp && a.offset == 0.0 {
+    if a.outer_offset != 0.0 {
+        if a.open.is_some() && fam != Family::Contour {
+            let how = if a.outer_offset > 0.0 { "out" } else { "in" };
+            out.lines.push(format!("The outer side, toward the stock, moves {how} by {}; the picked edge stays.", len(a.outer_offset.abs())));
+        } else {
+            out.notices.push("The outside boundary offset has no effect here: only an open boundary has an outer side.".to_owned());
+        }
+    }
+    if a.corner == CornerStyle::Sharp && a.offset == 0.0 && a.outer_offset == 0.0 {
         out.notices.push("The corner style has no effect while the offset is 0.".to_owned());
     }
     if fam == Family::Face && !a.extra.is_empty() {

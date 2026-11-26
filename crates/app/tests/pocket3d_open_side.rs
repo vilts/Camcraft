@@ -108,6 +108,7 @@ fn world_on(neighbour: Option<Mesh>, side: f64) -> World {
 /// The user's 3D Pocket: offset rings, shell on, no stock to leave.
 fn pocket3d() -> OpParams {
     OpParams::Pocket3D {
+        pass_start: Default::default(),
         links: Links::ROUGH3D,
         stepover: 4.0,
         stock_to_leave: 0.0,
@@ -126,6 +127,8 @@ fn pocket3d() -> OpParams {
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         feed_opt: false,
         shell: true,
+        method: camcraft_app::machining2d::AdaptiveMethod::Spiral,
+        picks: Default::default(),
     }
 }
 
@@ -405,6 +408,7 @@ fn multiaxis_rough_post_refuses_a_part_added_after_clean_generation_on_rotated_s
         lag_deg: 0.0,
         max_tilt_deg: 1.0,
         shank_avoid: false,
+        picks: Default::default(),
     };
     added_part_blocks_live_post(world, params, "BN-0600", "multi-live", |path| {
         let p = path

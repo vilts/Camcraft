@@ -130,6 +130,7 @@ fn params_at(cycle: CycleChoice, radius: f64, top: Height) -> OpParams {
         plunge_feed: 80.0,
         holes: vec![hole],
         cross: vec![],
+        picks: Default::default(),
     }
 }
 

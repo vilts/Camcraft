@@ -43,19 +43,33 @@ pub(super) struct Ask<'a> {
     /// Issue #1950: `entry` is proved in the air outside the stock - a
     /// plain plunge there, for every arm (it bores into nothing).
     pub air: bool,
+    /// Whether this ask is a pass restart inside a level (`reenter`) rather
+    /// than an inter-level transition.
+    pub restart: bool,
 }
 
-/// The plane a descent starts from (M11.3): on the first level the top
+/// The plane a descent starts from (M11.3, #3671): on the first level the top
 /// of the cut plus the plunge height (air above by the generator's
-/// contract), on later levels the plane above - or, for a plain-ladder
-/// ramp to depth, the top of the cut again.
+/// contract), on later levels the plane above plus the plunge height,
+/// capped under the traverse plane - or, for a plain-ladder ramp to depth,
+/// the top of the cut again plus the plunge height. Pass restarts inside
+/// a level start at the cut plane above (`a.prev_z`).
 pub(super) fn from(lvl: &LevelCtx, a: &Ask, ramp: bool) -> f64 {
     let p = lvl.p;
     let ap = &p.links.approach;
-    if a.prev_cut.is_none() || (ramp && ap.ramp_to_depth && lvl.field.is_none()) {
-        (p.top_z + ap.plunge_height).min(a.prev_z)
+    if a.restart {
+        if a.prev_cut.is_none() || (ramp && ap.ramp_to_depth && lvl.field.is_none()) {
+            (p.top_z + ap.plunge_height).min(a.prev_z)
+        } else {
+            a.prev_z
+        }
     } else {
-        a.prev_z
+        let top = if ramp && ap.ramp_to_depth && lvl.field.is_none() {
+            p.top_z
+        } else {
+            mat_top(lvl, a)
+        };
+        (top + ap.plunge_height).min(lvl.tz)
     }
 }
 
@@ -71,7 +85,7 @@ pub(super) fn mat_top(lvl: &LevelCtx, a: &Ask) -> f64 {
 
 /// The axial feed onto `(xy, z_tip)`: a rapid to the plunge height over
 /// the material first (held under the retract plane), then the feed.
-fn feed_down(b: &mut PathBuilder, lvl: &LevelCtx, a: &Ask, xy: Point2, z_tip: f64, feed: f64) {
+pub(super) fn feed_down(b: &mut PathBuilder, lvl: &LevelCtx, a: &Ask, xy: Point2, z_tip: f64, feed: f64) {
     let h = lvl.p.links.approach.plunge_height;
     let top = mat_top(lvl, a);
     let hz = (top + h).min(lvl.hop_z.max(top));
@@ -113,7 +127,7 @@ fn ramp_zig(lvl: &LevelCtx, a: &Ask) -> Option<Result<Zig, &'static str>> {
 
 /// The fallback zig (M11.3): along the first pass at the entry's angle,
 /// the transition's when the entry sets none.
-fn zig_fallback(lvl: &LevelCtx, a: &Ask) -> Result<Zig, &'static str> {
+pub(super) fn zig_fallback(lvl: &LevelCtx, a: &Ask) -> Result<Zig, &'static str> {
     let ap = &lvl.p.links.approach;
     let angle = if ap.ramp_zigs() { ap.ramp_angle } else { lvl.p.links.ramp_angle };
     let zf = from(lvl, a, true);
@@ -213,7 +227,11 @@ fn push_helix(b: &mut PathBuilder, lvl: &LevelCtx, a: &Ask, h: &Hel) -> Option<P
             chosen.r
         ));
     }
-    b.push(MoveKind::Rapid, Point3::new(chosen.start.x, chosen.start.y, z0), None);
+    let rapid_z = if a.restart { (z0 + ap.plunge_height).min(lvl.tz) } else { z0 };
+    b.push(MoveKind::Rapid, Point3::new(chosen.start.x, chosen.start.y, rapid_z), None);
+    if rapid_z > z0 {
+        b.push(MoveKind::Plunge, Point3::new(chosen.start.x, chosen.start.y, z0), Some(ap.descent_feed(p.feed)));
+    }
     helix_about(b, chosen.start, chosen.center, z0, z_hel, turns, ap.descent_feed(p.feed), !ap.helix_cw);
     if chosen.start.x == a.entry.x && chosen.start.y == a.entry.y {
         return None;
@@ -222,10 +240,15 @@ fn push_helix(b: &mut PathBuilder, lvl: &LevelCtx, a: &Ask, h: &Hel) -> Option<P
     Some(chosen.start)
 }
 
-fn push_zig3(b: &mut PathBuilder, lvl: &LevelCtx, a: &Ask, pre: &[Point2], n: usize, zf: f64) {
+pub(super) fn push_zig3(b: &mut PathBuilder, lvl: &LevelCtx, a: &Ask, pre: &[Point2], n: usize, zf: f64) {
     traverse(b, lvl, a.entry);
-    b.push(MoveKind::Rapid, Point3::new(a.entry.x, a.entry.y, zf), None);
-    push_zig(b, pre, n, zf, lvl.z, lvl.p.links.approach.descent_feed(lvl.p.feed));
+    let ap = &lvl.p.links.approach;
+    let rapid_z = if a.restart { (zf + ap.plunge_height).min(lvl.tz) } else { zf };
+    b.push(MoveKind::Rapid, Point3::new(a.entry.x, a.entry.y, rapid_z), None);
+    if rapid_z > zf {
+        b.push(MoveKind::Plunge, Point3::new(a.entry.x, a.entry.y, zf), Some(ap.descent_feed(lvl.p.feed)));
+    }
+    push_zig(b, pre, n, zf, lvl.z, ap.descent_feed(lvl.p.feed));
 }
 
 /// The stand-in when the asked arm cannot be honored (M11.3's order): a
@@ -298,7 +321,12 @@ pub(super) fn descend(b: &mut PathBuilder, lvl: &LevelCtx, a: &Ask) -> Option<Po
                     if s.x != leg.x || s.y != leg.y {
                         b.push(MoveKind::Rapid, Point3::new(s.x, s.y, at.z), None);
                     }
-                    b.push(MoveKind::Rapid, Point3::new(s.x, s.y, from(lvl, a, true)), None);
+                    let z_from = from(lvl, a, true);
+                    let rapid_z = if a.restart { (z_from + ap.plunge_height).min(lvl.tz) } else { z_from };
+                    b.push(MoveKind::Rapid, Point3::new(s.x, s.y, rapid_z), None);
+                    if rapid_z > z_from {
+                        b.push(MoveKind::Plunge, Point3::new(s.x, s.y, z_from), Some(ap.descent_feed(p.feed)));
+                    }
                     let fd = ap.descent_feed(p.feed);
                     if lvl.field.is_none() {
                         b.push(MoveKind::Feed, Point3::new(entry.x, entry.y, z), Some(fd));

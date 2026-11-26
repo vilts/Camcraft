@@ -13,7 +13,7 @@ use super::lift::MICROLIFT;
 use super::lift_split::{Piece, seg_dist};
 use super::lift_swept::{EDGE, Swept};
 use super::raster::Raster;
-use super::route::{clearance, route};
+use super::route::{ZERO_LEG, clearance, route};
 use crate::machining2d::slots::chord_clears;
 
 /// The XY run of a return's ramp down (mm; `microlift`'s rise times its
@@ -121,7 +121,7 @@ impl LinkLaw<'_> {
     /// off the orbit, its disc on no wall and on no stock but a graze of
     /// [`GRAZE`] (lifted over the floor: it never cuts).
     fn leg_ok(&self, a: Point2, b: Point2) -> bool {
-        dist(a, b) < 1e-9 || (chord_clears(self.center, a, b) && self.off_orbit(a, b) && self.ras.capsule_clear(a, b, self.r - GRAZE))
+        dist(a, b) < ZERO_LEG || (chord_clears(self.center, a, b) && self.off_orbit(a, b) && self.ras.capsule_clear(a, b, self.r - GRAZE))
     }
 
     fn off_orbit(&self, a: Point2, b: Point2) -> bool {

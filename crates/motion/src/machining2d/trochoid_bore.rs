@@ -39,7 +39,7 @@ const PITCH_PER_STEP: f64 = 0.5;
 /// The helix radius of the bore: the band's own half-width, or - opened
 /// and wider than the tool can bore clean - [`HELIX_PER_R`] of the tool
 /// radius.
-fn helix_radius(lay: &Layout, p: &TrochoidParams, open: bool) -> f64 {
+pub(super) fn helix_radius(lay: &Layout, p: &TrochoidParams, open: bool) -> f64 {
     let h = HELIX_PER_R * 0.5 * p.tool_diameter;
     if open && lay.b > h { h } else { lay.b }
 }

@@ -56,9 +56,8 @@ pub(super) fn tree_menu(ui: &mut Ui, state: &mut State, pal: &Tokens, rect: Rect
     let Some(target) = state.tree_menu.clone() else {
         return;
     };
-    // #339 slice 4: model rows and a setup's Fixtures node carry the
-    // fixture verbs, drawn by their own menu.
-    if matches!(target, TreeMenuTarget::Model { .. } | TreeMenuTarget::Fixtures(_)) {
+    // Models, tools and a setup's Fixtures node share the command menu.
+    if matches!(target, TreeMenuTarget::Model { .. } | TreeMenuTarget::Tool { .. } | TreeMenuTarget::Fixtures(_)) {
         super::fixture_menu::fixture_menu(ui, state, pal, rect, leaves, &target);
         return;
     }
@@ -76,6 +75,7 @@ pub(super) fn tree_menu(ui: &mut Ui, state: &mut State, pal: &Tokens, rect: Rect
         TreeMenuTarget::Operation(_)
         | TreeMenuTarget::Entry(_)
         | TreeMenuTarget::Model { .. }
+        | TreeMenuTarget::Tool { .. }
         | TreeMenuTarget::Fixtures(_) => None,
     });
     let Some(ix) = row_ix else {
@@ -112,6 +112,7 @@ pub(super) fn tree_menu(ui: &mut Ui, state: &mut State, pal: &Tokens, rect: Rect
         TreeMenuTarget::Operations
         | TreeMenuTarget::Entry(_)
         | TreeMenuTarget::Model { .. }
+        | TreeMenuTarget::Tool { .. }
         | TreeMenuTarget::Fixtures(_) => None,
     };
     let here = name.and_then(|name| model::find_by_name(&state.world, name))

@@ -38,6 +38,9 @@ pub fn wire_tool(diameter: f64) -> Tool {
         catalog: crate::catalog_fields::ToolCatalog::default(),
         cutting: Vec::new(),
         outline: Vec::new(),
+        tip_form: Default::default(),
+        tip_diameter: 0.0,
+        form: None,
     }
 }
 

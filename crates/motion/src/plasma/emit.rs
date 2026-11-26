@@ -12,23 +12,15 @@
 use crate::cl::{CompSide, CompSpan, ContourRole, Move, MoveKind, PathBuilder, Toolpath, TorchSpan};
 use crate::geo2d::{Loop, Point2, Region};
 use crate::geometry::Point3;
-use crate::machining2d::{fit_arcs, GenError, Seg};
+use crate::machining2d::GenError;
 
-use super::nest::Contour;
-use super::ring::{along, centroid, dist, kerf_ring, longest_mid, nearest, unit, walk_from};
+use crate::sheet::laws::{cover_law, kerf_law};
+use crate::sheet::lead::{clear, cross, lead, push_piece, ride, LeadAsk, Piece, LEAD_TRIES};
+use crate::sheet::nest::Contour;
+use crate::sheet::ring::{along, centroid, kerf_ring, longest_mid, nearest, unit, walk_from};
+use crate::sheet::{Lit, Voice};
+
 use super::{header, PlasmaParams, SMALL_HOLE_THICKNESS};
-
-/// The arc fit's budget on the kerf ring (mm): inside [`super::KERF_TOL`].
-pub(super) const FIT_TOL: f64 = 0.005;
-/// How many times a lead that finds no room is halved before refusing.
-const LEAD_TRIES: u32 = 4;
-
-/// One lit piece: a straight move to a point, or an arc to it.
-#[derive(Clone, Copy, Debug)]
-enum Piece {
-    Line(Point2),
-    Arc { to: Point2, center: Point2, ccw: bool },
-}
 
 /// One contour, planned: where the torch pierces, what it rides lit,
 /// the feed factor of the small-hole rule, and the programmed part
@@ -41,97 +33,14 @@ struct Plan {
 }
 
 fn invalid(why: String) -> GenError {
-    GenError::Invalid(format!("plasma profile: {why}"))
-}
-
-fn segs_to_pieces(segs: Vec<Seg>, out: &mut Vec<Piece>) {
-    for s in segs {
-        match s {
-            Seg::Line(qs) => out.extend(qs.into_iter().map(Piece::Line)),
-            Seg::Arc { center, ccw, to } => out.push(Piece::Arc { to, center, ccw }),
-        }
-    }
-}
-
-/// The ride of a closed walk as pieces: arcs where the ring is round.
-fn ride(walk: &[Point2]) -> Vec<Piece> {
-    let mut out = Vec::new();
-    segs_to_pieces(fit_arcs(walk, FIT_TOL), &mut out);
-    out
-}
-
-fn cross(a: Point2, b: Point2) -> f64 {
-    a.x * b.y - a.y * b.x
-}
-
-/// Does every point of the stretch keep the kerf off the part?
-fn clear(forbidden: Option<&Region>, pts: &[Point2]) -> bool {
-    forbidden.is_none_or(|f| pts.iter().all(|p| !f.contains(*p)))
-}
-
-/// Points along a quarter-arc lead (for the room test).
-fn arc_samples(c: Point2, a: Point2, b: Point2, ccw: bool) -> Vec<Point2> {
-    let (a0, a1) = ((a.y - c.y).atan2(a.x - c.x), (b.y - c.y).atan2(b.x - c.x));
-    let mut sweep = a1 - a0;
-    if ccw && sweep < 0.0 {
-        sweep += std::f64::consts::TAU;
-    } else if !ccw && sweep > 0.0 {
-        sweep -= std::f64::consts::TAU;
-    }
-    let r = dist(c, a);
-    (0..=16).map(|k| {
-        let t = a0 + sweep * f64::from(k) / 16.0;
-        Point2::new(c.x + r * t.cos(), c.y + r * t.sin())
-    }).collect()
-}
-
-/// A lead at `s` along travel `t` with waste normal `n`: the lead-in
-/// (`entry`) arriving at `s`, or the lead-out leaving it. Returns the
-/// far end and the piece set, halving the length while it finds no
-/// room; `None` when even the shortest try reaches the part.
-#[allow(clippy::too_many_arguments)]
-fn lead(s: Point2, t: Point2, n: Point2, len: f64, straight: bool, entry: bool, forbidden: Option<&Region>, notes: &mut Vec<String>, label: &str) -> Option<(Point2, Vec<Piece>)> {
-    if len <= 0.0 {
-        return Some((s, Vec::new()));
-    }
-    let tries = if straight { 1 } else { LEAD_TRIES };
-    let mut l = len;
-    for k in 0..tries {
-        let (far, piece, samples) = if straight {
-            let far = Point2::new(s.x + n.x * l, s.y + n.y * l);
-            let samples: Vec<Point2> = (0..=8).map(|i| {
-                let f = f64::from(i) / 8.0;
-                Point2::new(s.x + (far.x - s.x) * f, s.y + (far.y - s.y) * f)
-            }).collect();
-            (far, if entry { Piece::Line(s) } else { Piece::Line(far) }, samples)
-        } else {
-            let r = 2.0 * l / std::f64::consts::PI;
-            let c = Point2::new(s.x + n.x * r, s.y + n.y * r);
-            let sign = if entry { -1.0 } else { 1.0 };
-            let far = Point2::new(c.x + sign * t.x * r, c.y + sign * t.y * r);
-            let ccw = cross(t, n) > 0.0;
-            let (a, b) = if entry { (far, s) } else { (s, far) };
-            (far, Piece::Arc { to: b, center: c, ccw }, arc_samples(c, a, b, ccw))
-        };
-        if clear(forbidden, &samples) {
-            if k > 0 {
-                notes.push(format!(
-                    "plasma: {label} lead-{} shortened to {l:.3} mm - the stated {len:.3} mm found no room beside the part",
-                    if entry { "in" } else { "out" }
-                ));
-            }
-            return Some((far, vec![piece]));
-        }
-        l *= 0.5;
-    }
-    None
+    Voice::PLASMA.invalid(why)
 }
 
 /// Plan one closed contour (the kerf ring, its start, leads or the
 /// small-hole rule, and the programmed contour under G41/G42).
 fn plan_closed(c: &Contour, p: &PlasmaParams, forbidden: Option<&Region>, notes: &mut Vec<String>, label: &str) -> Result<Plan, GenError> {
     let r = p.kerf * 0.5;
-    let ring = kerf_ring(c, r, label)?;
+    let ring = kerf_ring(c, r, label, Voice::PLASMA)?;
     let inner = c.role == ContourRole::Inner;
     let ccw = inner != p.reversed;
     let eq_d = 2.0 * (c.area / std::f64::consts::PI).sqrt();
@@ -173,10 +82,11 @@ fn plan_closed(c: &Contour, p: &PlasmaParams, forbidden: Option<&Region>, notes:
             "{label}: the lead-{end} finds no room beside the part - shorten it, or cut this contour with the leads off"
         ))
     };
-    let (pierce, lead_in) =
-        lead(s, t_in, n_in, p.lead_in, straight, true, forbidden, notes, label).ok_or_else(|| refuse("in"))?;
-    let (_, lead_out) =
-        lead(s, t_out, n_out, p.lead_out, straight, false, forbidden, notes, label).ok_or_else(|| refuse("out"))?;
+    let tries = if straight { 1 } else { LEAD_TRIES };
+    let ask_in = LeadAsk { s, t: t_in, n: n_in, len: p.lead_in, straight, entry: true };
+    let ask_out = LeadAsk { s, t: t_out, n: n_out, len: p.lead_out, straight, entry: false };
+    let (pierce, lead_in) = lead(ask_in, forbidden, tries, notes, ("plasma", label)).ok_or_else(|| refuse("in"))?;
+    let (_, lead_out) = lead(ask_out, forbidden, tries, notes, ("plasma", label)).ok_or_else(|| refuse("out"))?;
     let mut lit = lead_in.clone();
     lit.extend(ride(&walk));
     lit.extend(lead_out.iter().copied());
@@ -185,9 +95,7 @@ fn plan_closed(c: &Contour, p: &PlasmaParams, forbidden: Option<&Region>, notes:
         // cancel blocks are the straight leads to and from it.
         let (nseg, s_nom) = nearest(&c.pts, s);
         let nominal = walk_from(&c.pts, nseg, s_nom, ccw);
-        let far = lead_out.last().map_or(s, |q| match q {
-            Piece::Line(to) | Piece::Arc { to, .. } => *to,
-        });
+        let far = lead_out.last().map_or(s, |q| q.to());
         let mut prog = vec![Piece::Line(s_nom)];
         prog.extend(ride(&nominal));
         prog.push(Piece::Line(far));
@@ -197,13 +105,6 @@ fn plan_closed(c: &Contour, p: &PlasmaParams, forbidden: Option<&Region>, notes:
         None
     };
     Ok(Plan { pierce, lit, small: None, comp })
-}
-
-fn push_piece(b: &mut PathBuilder, q: Piece, z: f64, feed: Option<f64>) {
-    match q {
-        Piece::Line(to) => b.push(MoveKind::Feed, Point3::new(to.x, to.y, z), feed),
-        Piece::Arc { to, center, ccw } => b.push_arc(MoveKind::Feed, Point3::new(to.x, to.y, z), feed, center, ccw),
-    }
 }
 
 /// Lay the contours down in `order` and certify the result.
@@ -248,7 +149,7 @@ pub(super) fn cut(cs: &[Contour], order: &[usize], part: &Region, p: &PlasmaPara
         let on = b.moves_len();
         let feed = p.feed.map(|f| f * plan.small.unwrap_or(1.0));
         for q in &plan.lit {
-            push_piece(&mut b, *q, p.cut_z, feed);
+            push_piece(&mut b, *q, p.cut_z, feed, None);
         }
         if b.moves_len() == on {
             // #871: part-way refusals hand back the contours cut so far.
@@ -258,7 +159,7 @@ pub(super) fn cut(cs: &[Contour], order: &[usize], part: &Region, p: &PlasmaPara
         if let Some((side, prog)) = &plan.comp {
             let mut pb = PathBuilder::new(Point3::new(plan.pierce.x, plan.pierce.y, p.cut_z));
             for q in prog {
-                push_piece(&mut pb, *q, p.cut_z, feed);
+                push_piece(&mut pb, *q, p.cut_z, feed, None);
             }
             let programmed: Vec<Move> = pb.finish().moves;
             let span = CompSpan { side: *side, radius: r, wear: false, first: on, last: off, programmed };
@@ -285,9 +186,11 @@ pub(super) fn cut(cs: &[Contour], order: &[usize], part: &Region, p: &PlasmaPara
     // #672: no edge may stand beyond the kerf's reach - a slot narrower
     // than the kerf that the offset bridged is refused, not left uncut.
     // #871: the laws judge the whole cut; a refusal hands it back.
-    super::laws::cover_law(&path, &rec.torches, cs, order, (p.kerf, tol)).map_err(|e| e.with_ghost(&path))?;
+    let lit: Vec<Lit> =
+        rec.torches.iter().map(|t| Lit { contour: t.contour, role: t.role, on: t.on, off: t.off }).collect();
+    cover_law(&path, &lit, cs, order, (p.kerf, tol), Voice::PLASMA, &|_, _| false).map_err(|e| e.with_ghost(&path))?;
     if let Some(f) = &forbidden {
-        super::laws::kerf_law(&path, &rec.torches, f).map_err(|e| e.with_ghost(&path))?;
+        kerf_law(&path, &lit, f, Voice::PLASMA).map_err(|e| e.with_ghost(&path))?;
     } else {
         notes.push("plasma: no part silhouette to judge - roles read by nesting, the kerf law not run".into());
     }

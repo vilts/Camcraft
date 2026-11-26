@@ -1,0 +1,2 @@
+; mach3.cps refused rotary: 1 warning(s), the program is never released
+warning: tilted move - the Mach3 post is 3-axis and has no rotary or RTCP output

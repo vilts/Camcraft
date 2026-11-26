@@ -21,7 +21,9 @@
 //! milling FEED moves only for a row that names the material (#890's
 //! rule): picking a material never overwrites a hand-set op feed with
 //! the tool's own `Unknown` feed. Where no row says otherwise, the
-//! numbers stay what they are.
+//! numbers stay what they are. #2598: a Drill or Thread op takes its
+//! tool's stated feed at the quick-add and at a retarget, and a feed
+//! above it is refused at the post (`operation::feed_rating`).
 
 use flecs_ecs::prelude::World;
 
@@ -110,6 +112,28 @@ pub fn steps_mut(p: &mut OpParams) -> (Option<&mut f64>, Option<&mut f64>) {
     }
 }
 
+/// The stepdown the verifier's plunge depth law reads (#3679): the kinds
+/// that cut in vertical levels and state a stepdown in mm, as
+/// [`steps_mut`] seeds them. `None` - every kind that cuts no levels
+/// (drills, bores, threads, the turning, wire and plasma families) -
+/// keeps the law silent.
+#[must_use]
+pub fn plunge_stepdown(p: &OpParams) -> Option<f64> {
+    match p {
+        OpParams::Contour { stepdown, .. }
+        | OpParams::Pocket { stepdown, .. }
+        | OpParams::Offset2D { stepdown, .. }
+        | OpParams::Slot { stepdown, .. }
+        | OpParams::TrochoidalSlot { stepdown, .. }
+        | OpParams::Adaptive2D { stepdown, .. }
+        | OpParams::Pocket3D { stepdown, .. }
+        | OpParams::MultiAxisRough { stepdown, .. } => Some(*stepdown),
+        // Staged facing only: `None` faces in one level at `cut_z`.
+        OpParams::Face { stepdown, .. } => *stepdown,
+        _ => None,
+    }
+}
+
 /// Seed `params` from `tool`'s rows for `material`: the feed from a
 /// row naming it, the stepdown / stepover from the row in force (each
 /// missing one from the `Unknown` row). `true` when anything moved.
@@ -139,11 +163,32 @@ fn seed_into(params: &mut OpParams, tool: &Tool, material: Option<WorkMaterial>)
 /// new operation lands). Called where an op is created from a seed with
 /// a known tool (the ribbon's quick-add, MCP `add_operation`, the
 /// feature recognizer), beside `seed_helix_for_tool`; explicit params,
-/// saved files and retypes keep their own numbers. Kinds with no milling
-/// feed or steps (drilling, turning, plasma) are left alone.
+/// saved files and retypes keep their own numbers. A Drill or Thread op
+/// takes the tool's stated feed as its own (#2598,
+/// [`crate::operation::feed_rating::seed_into`]); other kinds with no
+/// milling feed or steps (turning, plasma) are left alone.
 pub fn seed_feed_for_tool(world: &World, params: &mut OpParams, tool: &Tool) {
     let material = crate::stock_material::in_force(world, crate::setup::active(world).as_deref());
     seed_into(params, tool, material);
+    crate::operation::feed_rating::seed_into(params, tool, material, cutting::material_of(world));
+}
+
+/// `params` with `tool` set in its place (`EditOperationLinks`): the
+/// rows' seed of [`reseeded_params`], then a Drill or Thread op's feed
+/// from the new tool's stated feed (#2598; `document` is the document's
+/// material, which the running feed follows, #2724). `None` when nothing
+/// moves.
+#[must_use]
+pub fn retargeted_params(
+    params: &OpParams,
+    tool: &Tool,
+    material: Option<WorkMaterial>,
+    document: Option<WorkMaterial>,
+) -> Option<OpParams> {
+    let mut next = params.clone();
+    let rows = seed_into(&mut next, tool, material);
+    let rated = crate::operation::feed_rating::seed_into(&mut next, tool, material, document);
+    (rows || rated).then_some(next)
 }
 
 /// `params` seeded from `tool`'s rows for `material` (see

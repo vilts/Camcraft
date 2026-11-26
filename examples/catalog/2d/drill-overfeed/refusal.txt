@@ -1,0 +1,1 @@
+post: post blocked - Drill1: feeds 400 mm/min, above the 115 mm/min that tool DR-0600 states - lower the operation's feed, or raise the tool's feed if its maker allows more

@@ -45,11 +45,11 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use super::carry::LatticeTurn;
-use super::field::{SdfField, BRICK, BRICK3};
+use super::field::{CutLayer, SdfField, BRICK, BRICK3};
 use super::field_box::AnalyticBox;
 use crate::geometry::{Point3, Triangle};
 
-/// One cut or band layer: brick key -> 512 cell values.
+/// The band layer: brick key -> 512 cell values.
 type Layer = HashMap<[i32; 3], Box<[f64; BRICK3]>>;
 
 /// The turn's signed permutation per NEW axis: which old axis it reads,
@@ -108,6 +108,11 @@ impl Axes {
     fn layer(&self, old: &Layer) -> Layer {
         old.iter().map(|(k, b)| (self.key(*k), self.brick(b))).collect()
     }
+
+    /// A cut layer, each brick a new allocation (the bake shares none).
+    fn cut_layer(&self, old: &CutLayer) -> CutLayer {
+        old.iter().map(|(k, b)| (self.key(*k), Arc::from(self.brick(b)))).collect()
+    }
 }
 
 impl SdfField {
@@ -135,9 +140,9 @@ impl SdfField {
             cap: self.cap,
             mesh: Arc::new(mesh),
             bricks: Arc::new(ax.layer(&self.bricks)),
-            cuts: ax.layer(&self.cuts),
-            cut_ups: ax.layer(ups),
-            cut_downs: ax.layer(downs),
+            cuts: ax.cut_layer(&self.cuts),
+            cut_ups: ax.cut_layer(ups),
+            cut_downs: ax.cut_layer(downs),
             cost: self.cost.clone(),
             analytic,
             bounded_cuts: self.bounded_cuts,
@@ -172,7 +177,7 @@ mod tests {
         f
     }
 
-    fn same(a: &Layer, b: &Layer) -> bool {
+    fn same<B: std::ops::Deref<Target = [f64; BRICK3]>>(a: &HashMap<[i32; 3], B>, b: &HashMap<[i32; 3], B>) -> bool {
         a.len() == b.len()
             && a.iter().all(|(k, v)| b.get(k).is_some_and(|w| v.iter().zip(w.iter()).all(|(x, y)| x.to_bits() == y.to_bits())))
     }

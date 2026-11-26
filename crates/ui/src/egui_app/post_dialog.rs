@@ -61,7 +61,10 @@ impl PostDialogState {
             Some(s) => setup_post_options::of(&state.world, Some(s)),
             None => setup_post_options::document(&state.world),
         };
-        let target = crate::post_file::dialog_target(state);
+        let mut target = crate::post_file::dialog_target(state);
+        if posting::agie::is_native(&post) && !posting::agie::valid_name(&target.file_name) {
+            target.file_name = "WIREJOB".into();
+        }
         Self {
             tab: PostDialogTab::Settings,
             setup_target,
@@ -139,11 +142,20 @@ pub(crate) fn window(ctx: &egui::Context, state: &mut State) {
                 ui.selectable_value(&mut dlg.tab, PostDialogTab::Settings, "Settings");
                 ui.selectable_value(&mut dlg.tab, PostDialogTab::Operations, "Operations");
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // #2292: show the shipped post script's name in the scope
+                    // line, with its full path on hover. The header row must
+                    // stay narrow so long install paths do not push the tab
+                    // buttons off-screen (the path varies per checkout).
+                    let post_label = posting::post_ref_label(&dlg.post);
+                    let hover_path = posting::post_path(&dlg.post);
                     let scope = match &dlg.setup_target {
-                        Some(s) => format!("Setup: {s} ({})", posting::post_ref_label(&dlg.post)),
-                        None => posting::post_ref_label(&dlg.post),
+                        Some(s) => format!("Setup: {s} ({post_label})"),
+                        None => post_label.to_string(),
                     };
-                    ui.label(RichText::new(scope).weak().small());
+                    let response = ui.label(RichText::new(scope).weak().small());
+                    if let Some(path) = hover_path {
+                        response.on_hover_text(path);
+                    }
                 });
             });
             ui.separator();
@@ -157,26 +169,32 @@ pub(crate) fn window(ctx: &egui::Context, state: &mut State) {
             ScrollArea::vertical()
                 .max_height(max_h)
                 .auto_shrink([false, true])
-                .show(ui, |ui| match dlg.tab {
-                    PostDialogTab::Settings => {
-                        draw_output_section(ui, &mut dlg);
-                        draw_program_section(ui, &mut dlg);
-                        let changed = post_script_options::render_draft(
-                            ui,
-                            "post_dlg_script",
-                            &dlg.schema,
-                            &mut dlg.values,
-                            !dlg.baseline.is_empty(),
-                            true,
-                            &mut dlg.reset_script,
-                        );
-                        if changed && !dlg.values.iter().all(|(k, v)| {
-                            dlg.schema.iter().find(|d| &d.key == k).is_some_and(|d| &d.default == v)
-                        }) {
-                            dlg.reset_script = false;
+                .show(ui, |ui| {
+                    // #3384: the floating scroll bar lies over the right edge of
+                    // the content. Keep a gutter, so that a right-aligned
+                    // checkbox stays clickable when the options overflow.
+                    super::layout::keep_scroll_gutter(ui, 0.0);
+                    match dlg.tab {
+                        PostDialogTab::Settings => {
+                            draw_output_section(ui, &mut dlg);
+                            draw_program_section(ui, &mut dlg);
+                            let changed = post_script_options::render_draft(
+                                ui,
+                                "post_dlg_script",
+                                &dlg.schema,
+                                &mut dlg.values,
+                                !dlg.baseline.is_empty(),
+                                true,
+                                &mut dlg.reset_script,
+                            );
+                            if changed && !dlg.values.iter().all(|(k, v)| {
+                                dlg.schema.iter().find(|d| &d.key == k).is_some_and(|d| &d.default == v)
+                            }) {
+                                dlg.reset_script = false;
+                            }
                         }
+                        PostDialogTab::Operations => draw_operations_tab(ui, state),
                     }
-                    PostDialogTab::Operations => draw_operations_tab(ui, state),
                 });
 
             let bar = [
@@ -254,6 +272,35 @@ fn queue_post_after_apply(
     edit: PostSettingsEdit,
 ) {
     let dir_trim = dlg.target_dir.trim();
+    if posting::agie::is_native(&dlg.post) {
+        if !posting::agie::valid_name(&dlg.file_name) {
+            dlg.error = Some("Enter a job name of up to eight uppercase letters or digits, starting with a letter".into());
+            state.post_dialog = Some(dlg);
+            return;
+        }
+        if dlg.options.per_op {
+            dlg.error = Some("Choose One program to create a native wire EDM job directory".into());
+            state.post_dialog = Some(dlg);
+            return;
+        }
+        let parent = if dir_trim.is_empty() {
+            crate::file_dialog::FileDialog::new().set_title("Choose a parent folder for the native wire EDM job").pick_folder()
+        } else {
+            Some(PathBuf::from(dir_trim))
+        };
+        if let Some(parent) = parent {
+            let path = parent.join(&dlg.file_name);
+            dlg.target_dir = parent.display().to_string();
+            state.pending.push_back(CommandKind::ApplyPostDialog {
+                edit,
+                post_path: Some(path),
+                per_op_dir: None,
+                program_prefix: None,
+            });
+        }
+        state.post_dialog = Some(dlg);
+        return;
+    }
     if dlg.options.per_op {
         let picked = if !dir_trim.is_empty() {
             Some(PathBuf::from(dir_trim))

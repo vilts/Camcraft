@@ -98,11 +98,21 @@ fn plate(radii: &[f64]) -> Vec<[P; 3]> {
     tris
 }
 
+fn fixture_dir(tag: &str) -> PathBuf {
+    // Reserve a fresh directory: a reused PID can name another runner user's leftovers.
+    let mut attempt = 0_u64;
+    loop {
+        let dir = std::env::temp_dir().join(format!("camcraft-bore-core-{tag}-{}-{attempt}", std::process::id()));
+        match std::fs::create_dir(&dir) {
+            Ok(()) => return dir,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => attempt += 1,
+            Err(error) => panic!("reserve bore fixture directory {}: {error}", dir.display()),
+        }
+    }
+}
+
 fn write_stl(tag: &str, radii: &[f64]) -> PathBuf {
-    let mut dir = std::env::temp_dir();
-    dir.push(format!("camcraft-bore-core-{tag}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("temp dir");
+    let dir = fixture_dir(tag);
     let path = dir.join("plate.stl");
     let mut s = String::from("solid plate\n");
     for t in plate(radii) {
@@ -115,6 +125,33 @@ fn write_stl(tag: &str, radii: &[f64]) -> PathBuf {
     s.push_str("endsolid plate\n");
     std::fs::write(&path, s).expect("write stl");
     path
+}
+
+#[test]
+fn bore_fixtures_preserve_existing_pid_paths_and_isolate_repeated_tags() {
+    let mut attempt = 0_u64;
+    let (tag, stale) = loop {
+        let tag = format!("temp-isolation-{attempt}");
+        let stale = std::env::temp_dir().join(format!("camcraft-bore-core-{tag}-{}", std::process::id()));
+        match std::fs::create_dir(&stale) {
+            Ok(()) => break (tag, stale),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => attempt += 1,
+            Err(error) => panic!("reserve seeded PID directory {}: {error}", stale.display()),
+        }
+    };
+    let marker = stale.join("previous-owner.txt");
+    std::fs::write(&marker, "previous owner's fixture").expect("seed prior owner's data");
+
+    let first = write_stl(&tag, &[SMALL_R]);
+    assert_eq!(std::fs::read_to_string(&marker).expect("prior owner's data survives"), "previous owner's fixture");
+    let before = std::fs::read(&first).expect("first fixture");
+    let second = write_stl(&tag, &[BIG_R]);
+    assert_ne!(first, second, "each fixture must reserve its own directory");
+    assert_eq!(std::fs::read(&first).expect("first fixture survives"), before);
+
+    std::fs::remove_dir_all(first.parent().expect("fixture directory")).expect("clean first fixture");
+    std::fs::remove_dir_all(second.parent().expect("fixture directory")).expect("clean second fixture");
+    std::fs::remove_dir_all(stale).expect("clean seeded directory");
 }
 
 /// The plate imported, its own stock, a 4 mm end mill and a Bore op.
@@ -214,7 +251,7 @@ fn an_edited_hole_floor_off_the_lattice_reopens_ok_and_posts_the_same() {
     let g = c.ok("generate", json!({ "name": "B" }));
     assert_eq!(g["generated"][0]["status"], json!("ok"), "{g}");
 
-    let dir = std::env::temp_dir().join(format!("camcraft-bore-core-reopen-{}", std::process::id()));
+    let dir = fixture_dir("reopen-output");
     let nc = |c: &mut Client, tag: &str| {
         let out = dir.join(format!("{tag}.nc"));
         c.ok("post", json!({ "output": out.display().to_string(), "post": "Fanuc" }));

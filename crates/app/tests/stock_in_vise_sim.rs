@@ -65,7 +65,7 @@ fn face_op(world: &World, h: &mut History) {
     let params = OpParams::Face {
         holes: Default::default(),
         tilt: None,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         stepover: 3.0,
         clearance_z: Height::of(HeightReference::TopOfStock, 25.0),
         cut_z: Height::of(HeightReference::TopOfStock, -0.5),
@@ -74,6 +74,7 @@ fn face_op(world: &World, h: &mut History) {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     h.execute(world, CreateOperation::new(world, "Face1", "EM-0400-2FL", SrcRef::Stock, params).expect("op"));
     h.execute(world, GenerateOperation::new(world, "Face1").expect("generated"));
@@ -85,7 +86,7 @@ fn located(rot: [f64; 4]) -> (World, History) {
     let mut h = History::default();
     h.execute(&world, ImportModel::from_mesh("part", cube(p(0.0, 0.0, 0.0), p(20.0, 10.0, 8.0))));
     h.execute(&world, MoveModel::new(&world, "part", Location { pos: p(150.0, 80.0, 30.0), rot }).expect("placed"));
-    h.execute(&world, ImportModel::from_mesh("vise", Mesh { facets: vise().into() }));
+    h.execute(&world, ImportModel::from_mesh("vise", Mesh::from_facets(vise())));
     h.execute(&world, TagFixture::new(&world, "vise", None).expect("mark the vise"));
     h.execute(&world, CreateSetup::new(&world, None, None).expect("Setup1"));
     let e = model::find_by_name(&world, "part").expect("part");

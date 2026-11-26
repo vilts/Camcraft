@@ -15,15 +15,22 @@
 //!
 //! Prime Directive: the fallback only ever turns a refusal into the exact
 //! union, never a guess. Any facet that does not fit - a collapsed one, an
-//! edge used three or more times (two solids welded along an edge or face
-//! share it, so they cannot be told apart and stay one non-manifold body),
-//! an open or mixed-winding body, an inward (cavity) shell whose own section
-//! would read as material - and the caller keeps its non-manifold refusal.
+//! edge used an odd or unbalanced number of times, an edge used 2k times
+//! that is not closed solids touching along a wall (`shared_edge`, #917:
+//! one shell that meets itself, or solids welded only along the edge
+//! line), an open or mixed-winding body, an inward
+//! (cavity) shell whose own section would read as material - and the
+//! caller keeps its non-manifold refusal.
 
 use std::collections::HashMap;
 
 use crate::geo2d::Region;
-use crate::geometry::Triangle;
+use crate::geometry::{Point3, Triangle};
+use crate::geometry::shared_edge::{self, EdgeUse};
+
+/// One facet on a shared edge: its index, its direction along the edge
+/// (low -> high corner) and its third corner.
+type SharedUse = (usize, bool, u32);
 
 use super::slice::{SliceError, material_above, material_overhead, shadow_above};
 
@@ -70,6 +77,15 @@ impl Welder {
     }
 }
 
+fn union(parent: &mut [usize], a: usize, b: usize) {
+    let (ra, rb) = (root(parent, a), root(parent, b));
+    if ra != rb
+        && let Some(slot) = parent.get_mut(ra)
+    {
+        *slot = rb;
+    }
+}
+
 /// Union-find root with path halving; indices are always in range.
 fn root(parent: &mut [usize], mut i: usize) -> usize {
     while let Some(&p) = parent.get(i) {
@@ -107,17 +123,48 @@ pub(super) fn closed_solids(facets: &[Triangle]) -> Option<Vec<Vec<Triangle>>> {
             } else {
                 e.1 = e.1.saturating_add(1);
             }
-            let (ra, rb) = (root(&mut parent, e.2), root(&mut parent, i));
-            if ra != rb
-                && let Some(slot) = parent.get_mut(ra)
-            {
-                *slot = rb;
+        }
+    }
+    // Bodies link over plain edges (once each way). Closed and wound
+    // consistently: every edge is plain, or (#917) an edge that 2k facets
+    // use where closed solids touch along a wall (`shared_edge`).
+    let mut shared: HashMap<(u32, u32), Vec<SharedUse>> = HashMap::new();
+    for (i, [a, b, c]) in corners.iter().enumerate() {
+        for (p, q, r) in [(*a, *b, *c), (*b, *c, *a), (*c, *a, *b)] {
+            let key = if p < q { (p, q) } else { (q, p) };
+            match edges.get(&key) {
+                Some(&(1, 1, first)) => union(&mut parent, first, i),
+                Some(&(f, b, _)) if f == b && f >= 2 => shared.entry(key).or_default().push((i, p < q, r)),
+                _ => return None,
             }
         }
     }
-    // Closed and consistently wound: every edge once each way.
-    if edges.values().any(|&(f, b, _)| f != 1 || b != 1) {
-        return None;
+    let at = |v: u32| welder.pts.get(v as usize).map(|v| Point3::new(v[0], v[1], v[2]));
+    // A contact face can have no plain boundary edge. Link only a unique
+    // nonzero-wedge matching, then validate every edge on the final bodies.
+    let mut contacts: Vec<_> = shared.iter().collect();
+    contacts.sort_by_key(|(key, _)| **key);
+    for ((lo, hi), on) in &contacts {
+        let uses: Option<Vec<_>> = on.iter().map(|&(i, forward, r)| {
+            Some(EdgeUse { body: root(&mut parent, i), forward, apex: at(r)? })
+        }).collect();
+        let uses = uses?;
+        if !shared_edge::solids_touch(at(*lo)?, at(*hi)?, &uses)
+            && let Some(pairs) = shared_edge::fragment_pairs(at(*lo)?, at(*hi)?, &uses)
+        {
+            for (i, j) in pairs {
+                union(&mut parent, on[i].0, on[j].0);
+            }
+        }
+    }
+    for ((lo, hi), on) in &shared {
+        let mut uses = Vec::with_capacity(on.len());
+        for &(i, forward, r) in on {
+            uses.push(EdgeUse { body: root(&mut parent, i), forward, apex: at(r)? });
+        }
+        if !shared_edge::solids_touch(at(*lo)?, at(*hi)?, &uses) {
+            return None;
+        }
     }
     let mut body_of_root: HashMap<usize, usize> = HashMap::new();
     let mut bodies: Vec<Vec<Triangle>> = Vec::new();
@@ -172,6 +219,50 @@ pub(super) fn union_section(
         });
     }
     Some(Ok(acc.unwrap_or_default()))
+}
+
+/// [`slice`](super::slice::slice) of one mesh whose closed solids are known
+/// (#917, `Mesh::solid_ranges`): when the whole soup meets the plane
+/// non-manifold, each solid is sliced on its own and the sections are
+/// united. This parts solids that share a wall line or a whole wall, which
+/// [`closed_solids`] must refuse because it cannot tell them apart. Fewer
+/// than two ranges, or a soup that slices plainly, is the plain call. A
+/// solid whose own enclosed volume is not positive keeps the soup's
+/// refusal (its section would read a cavity as material); a solid that will
+/// not slice on its own refuses with its own error; a range outside
+/// `facets` is an input error.
+pub fn slice_of(
+    facets: &[Triangle],
+    bodies: &[std::ops::Range<usize>],
+    z: f64,
+) -> Result<Region, SliceError> {
+    let whole = super::slice::slice(facets, z);
+    if bodies.len() < 2 || !matches!(whole, Err(SliceError::NonManifold { .. })) {
+        return whole;
+    }
+    let mut acc: Option<Region> = None;
+    for b in bodies {
+        let Some(part) = facets.get(b.clone()) else {
+            return Err(SliceError::Invalid(format!(
+                "solid range {}..{} is outside the {} facets",
+                b.start,
+                b.end,
+                facets.len()
+            )));
+        };
+        if !outward(part) {
+            return whole;
+        }
+        let r = super::slice::slice(part, z)?;
+        if r.is_empty() {
+            continue;
+        }
+        acc = Some(match acc {
+            None => r,
+            Some(a) => a.union(&r)?,
+        });
+    }
+    Ok(acc.unwrap_or_default())
 }
 
 /// [`material_above`] of several bodies that TOUCH, read as the union

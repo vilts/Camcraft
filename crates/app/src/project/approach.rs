@@ -35,6 +35,11 @@ pub struct ApproachDto {
     pub arc_sweep: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub plunge_height: Option<f64>,
+    /// The approach distance outside the stock (#3745), mm: written only
+    /// when it differs from the default; absent is the default, every
+    /// earlier file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approach_distance: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ramp_feed: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -71,14 +76,16 @@ pub struct ApproachDto {
     /// wear, every earlier file. `control_comp` wins if both are set.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wear_comp: Option<bool>,
-    /// The user's start point (#1448), `[x, y]` in mm: written only when
-    /// set; absent is the automatic seam, every earlier file.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Legacy pre-#3339 start point, read on load and migrated to op `picks`.
+    #[serde(default, skip_serializing)]
     pub start_point: Option<[f64; 2]>,
-    /// The user's exit point (#1473), `[x, y]` in mm: written only when
-    /// set; absent leaves at the seam, every earlier file.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Legacy pre-#3339 exit point, read on load and migrated to op `picks`.
+    #[serde(default, skip_serializing)]
     pub exit_point: Option<[f64; 2]>,
+    /// The equal-steps depth ladder (#2012): written only when on;
+    /// absent is the remainder ladder, every earlier file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub equal_steps: Option<bool>,
 }
 
 fn lead_dto(l: Lead) -> LeadDto {
@@ -118,6 +125,7 @@ pub fn approach_to_dto(a: &Approach) -> Option<ApproachDto> {
         arc_radius: num(a.arc_radius, d.arc_radius),
         arc_sweep: num(a.arc_sweep, d.arc_sweep),
         plunge_height: num(a.plunge_height, d.plunge_height),
+        approach_distance: num(a.approach_distance, d.approach_distance),
         ramp_feed: num(a.ramp_feed, d.ramp_feed),
         plunge_feed: num(a.plunge_feed, d.plunge_feed),
         lead_feed_pct: num(a.lead_feed_pct, d.lead_feed_pct),
@@ -133,8 +141,9 @@ pub fn approach_to_dto(a: &Approach) -> Option<ApproachDto> {
         predrilled: flag(a.predrilled, d.predrilled),
         control_comp: (a.compensation == Compensation::Control).then_some(true),
         wear_comp: (a.compensation == Compensation::Wear).then_some(true),
-        start_point: a.start_point.map(|q| [q.x, q.y]),
-        exit_point: a.exit_point.map(|q| [q.x, q.y]),
+        start_point: None,
+        exit_point: None,
+        equal_steps: flag(a.equal_steps, d.equal_steps),
     };
     (dto != ApproachDto::default()).then_some(dto)
 }
@@ -158,6 +167,7 @@ pub fn approach_from_dto(d: Option<&ApproachDto>) -> Approach {
         arc_radius: d.arc_radius.unwrap_or(a.arc_radius),
         arc_sweep: d.arc_sweep.unwrap_or(a.arc_sweep),
         plunge_height: d.plunge_height.unwrap_or(a.plunge_height),
+        approach_distance: d.approach_distance.unwrap_or(a.approach_distance),
         ramp_feed: d.ramp_feed.unwrap_or(a.ramp_feed),
         plunge_feed: d.plunge_feed.unwrap_or(a.plunge_feed),
         lead_feed_pct: d.lead_feed_pct.unwrap_or(a.lead_feed_pct),
@@ -178,8 +188,7 @@ pub fn approach_from_dto(d: Option<&ApproachDto>) -> Approach {
         } else {
             Compensation::Computer
         },
-        start_point: d.start_point.map(|[x, y]| crate::geo2d::Point2::new(x, y)),
-        exit_point: d.exit_point.map(|[x, y]| crate::geo2d::Point2::new(x, y)),
+        equal_steps: d.equal_steps.unwrap_or(a.equal_steps),
         center_cutting: true,
         // #2004: runtime only - the generation lays the stock top over it.
         stock_top: None,

@@ -94,6 +94,12 @@ pub fn voice(params: &OpParams, path: &Toolpath, origin: [f64; 3]) -> LatheVoice
              spindle, and a torch has none; post it through a plasma post, or suppress the operation"
                 .to_owned(),
         ),
+        // #1883: nor a waterjet nozzle.
+        OpParams::WaterjetProfile(_) => LatheVoice::Refused(
+            "a Waterjet Profile operation cannot be posted through a lathe post - it would open the section on the work \
+             spindle, and a jet has none; post it through a waterjet post, or suppress the operation"
+                .to_owned(),
+        ),
         // #532: a wire has no spindle either - the family door and the
         // post door refuse it first; this says so in its own words.
         OpParams::WireContour(_) => LatheVoice::Refused(

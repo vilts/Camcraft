@@ -160,7 +160,7 @@ fn faces_box_the_same_way_and_hidden_faces_stay_out() {
     let picks = boxed(&b, [[-5.0, -5.0], [105.0, 65.0]], BoxMode::Window, PickKinds::FACES, ortho(), false);
     assert_eq!(picks.len(), 1, "from above only the top face shows: {picks:?}");
     assert!(matches!(picks[0].feature, FeatureSel::Face(_)));
-    let top = b.graph.faces.iter().find(|f| f.sel == Some(picks[0].feature)).expect("the face is the plate's");
+    let top = b.graph.faces.iter().find(|f| f.sel.as_ref() == Some(&picks[0].feature)).expect("the face is the plate's");
     let t = &b.tris[top.facets[0] as usize];
     assert!((t.a.z - TOP).abs() < 1e-9, "the top face, not the bottom");
     // A window over one cutout holds no whole face; a crossing box

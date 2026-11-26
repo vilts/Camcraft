@@ -177,3 +177,101 @@ fn focus_loss_mid_drag_cancels_and_a_later_release_sends_no_move() {
     assert!(!st.history.is_dirty(), "the later release queues nothing");
     assert!((block_pos(h.state()).x - before.x).abs() < 1e-12, "the part never moved");
 }
+
+#[test]
+fn shift_drag_snaps_to_the_bar_step_and_updates_the_value() {
+    let mut h = moving_block();
+    assert!(h.query_by_label("Move snap step").is_some(), "the bar shows the move snap step");
+    assert!(h.query_by_label("Move distance").is_some(), "the bar shows the distance field");
+    let before = block_pos(h.state());
+    let (c, b) = x_ball(&h);
+    h.input_mut().events.push(Event::ModifiersChanged(Modifiers::SHIFT));
+    h.input_mut().events.push(Event::PointerMoved(b));
+    h.run();
+    h.input_mut().events.push(Event::PointerButton {
+        pos: b,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Modifiers::SHIFT,
+    });
+    h.run();
+    let to = b + (b - c) * 0.37;
+    h.input_mut().events.push(Event::PointerMoved(to));
+    h.run();
+    let dragged = h.state().state.body_drag.as_ref().map(|d| d.delta).expect("still dragging");
+    assert!(dragged > 0.0, "snapped outward along +X: {dragged}");
+    assert!(
+        (dragged - dragged.round()).abs() < 1e-9,
+        "Shift snaps to the default 1 mm step, got {dragged}"
+    );
+    h.input_mut().events.push(Event::PointerButton {
+        pos: to,
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Modifiers::SHIFT,
+    });
+    h.run();
+    h.input_mut().events.push(Event::ModifiersChanged(Modifiers::NONE));
+    h.run_steps(2);
+    let after = block_pos(h.state());
+    assert!((after.x - before.x - dragged).abs() < 1e-9);
+    assert_eq!(
+        h.state().state.handle_bar.move_draft,
+        camcraft_app::units::len_signed(dragged, camcraft_app::units::Unit::Millimeters, 3),
+        "the dragged distance stays in the bar"
+    );
+    assert!(h.state().state.history.is_dirty());
+    h.state_mut().state.pending.push_back(CommandKind::Undo);
+    h.run_steps(2);
+    assert!(!h.state().state.history.is_dirty());
+}
+
+#[test]
+fn typing_a_distance_in_the_bar_moves_by_that_exact_amount_as_one_undo_step() {
+    let mut h = moving_block();
+    let before = block_pos(h.state());
+    h.get_by_label("Axis Y").click();
+    h.run();
+    h.get_by_label("Move distance").click();
+    h.run();
+    h.get_by_label("Move distance").type_text("12.5");
+    h.run();
+    h.input_mut().events.push(Event::Key {
+        key: Key::Enter,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Modifiers::NONE,
+    });
+    h.run_steps(2);
+    let after = block_pos(h.state());
+    assert!((after.y - before.y - 12.5).abs() < 1e-9, "typed Y move: {before:?} -> {after:?}");
+    assert!((after.x - before.x).abs() < 1e-12 && (after.z - before.z).abs() < 1e-12);
+    assert!(h.state().state.history.is_dirty());
+    h.state_mut().state.pending.push_back(CommandKind::Undo);
+    h.run_steps(2);
+    assert!(!h.state().state.history.is_dirty(), "one typed move, one undo step");
+    assert!((block_pos(h.state()).y - before.y).abs() < 1e-12);
+}
+
+#[test]
+fn bad_or_zero_distance_in_the_bar_adds_no_history_step() {
+    let mut h = moving_block();
+    let before = block_pos(h.state());
+    h.get_by_label("Move distance").click();
+    h.run();
+    h.get_by_label("Move distance").type_text("abc");
+    h.run();
+    h.get_by_label("Set").click();
+    h.run_steps(2);
+    assert!(!h.state().state.history.is_dirty(), "bad text queues nothing");
+    assert!(h.state().state.status.contains("not moved") && h.state().state.status.contains("abc"), "{}", h.state().state.status);
+    assert!((block_pos(h.state()).x - before.x).abs() < 1e-12);
+    // Zero distance adds no history step either.
+    h.state_mut().state.handle_bar.move_draft = "0".into();
+    h.run();
+    h.get_by_label("Set").click();
+    h.run_steps(2);
+    assert!(!h.state().state.history.is_dirty(), "zero distance queues nothing");
+    assert!(h.state().state.status.contains("zero"), "{}", h.state().state.status);
+}

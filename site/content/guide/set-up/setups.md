@@ -30,6 +30,104 @@ Below the pages, {{ <icon name="tree-op-group" /> }} **Operations** lists the se
 
 ![CamCraft setup overview showing browser tree, part, stock outline, work offset, and generated 2D toolpaths](../../../images/guide/setup-overview.png)
 
+## Place a DXF profile
+
+A DXF drawing is a profile on the stock of one setup, not a solid model.
+Create the stock first. On the **Stock** page, open **DXF profiles** and
+choose **Add DXF profile…**. In the desktop app you can also drop one
+`.dxf` file onto the window to import it onto the active setup's stock.
+A drop without stock is refused: "make a stock first (Setup > Stock)".
+Browser drops are refused; use the desktop app for this workflow.
+
+The automation commands `import_dxf` (MCP) and
+`cam.importDxf(path, { setup, units, join_tol, name })` (script) place it
+on the stock top at the stock origin. For box and cylinder stock, that
+origin is the XY centre. A moved or resized stock carries its profile.
+
+Each profile row has **Profile X**, **Profile Y** and **Profile angle
+(deg)**. Choose **Place profile** to apply the placement, **Hide profile**
+or **Show profile** to change visibility, or **Delete profile** to remove
+it. For example, X 10 mm, Y 5 mm and angle 90 place the drawing 10 mm
+across and 5 mm along the stock face, turned a quarter turn.
+The automation equivalent is `move_dxf_profile`. The profile stays on
+that face; it has no independent Z move. Import, placement and deletion
+are undoable; hiding is view state.
+
+A drawing without units waits at **DXF units**, showing its width and
+height under both readings. Choose **Millimeters** or **Inches** from
+the drawing's intended units. **Cancel** places nothing; CamCraft never
+guesses the units. Automation refuses the import until units are stated.
+Read the import summary for skipped DXF items.
+
+**Current limit:** a 2D operation can name a profile, but generation from
+the chains is not available yet. Generate refuses by name and writes no
+toolpath. A 3D operation needs a solid model. Model-top and model-bottom
+heights have no value for a profile; use stock or fixed references.
+
+**Breaking file change:** profiles require project format version 71 or
+later. A build that reads only version 70 or earlier refuses a newer file
+instead of opening the setup without its profiles. Keep an older copy
+when you need to return to an older build.
+
+## Typed text as outline shapes
+
+Outline text makes closed letter shapes in a **TrueType** font. It is
+different from the single-line strokes used for engraving text. A letter's
+inner loop, such as the hole in O, stays a hole. The shapes are stored in
+the project as a profile on the setup's stock top; the font is not needed
+to reopen that profile.
+
+In 0.26.0 there is no desktop outline-font dialog or font picker. Create
+the stock first, then use an [MCP agent](@/guide/automate/mcp.md) connected
+to the app to call `insert_outline_text`. For example, the tool arguments
+below place the left end of the baseline 10 mm across and 5 mm along the
+stock top from its origin. Replace the font path with a file on the
+computer running CamCraft:
+
+```json
+{
+  "font": "/path/to/font.ttf",
+  "text": "PART 01",
+  "height": 7,
+  "position": [10, 5],
+  "angle": 0,
+  "letter_spacing": 0,
+  "name": "Part label"
+}
+```
+
+`height` is the font's cap height in mm, from 0.5 to 1000. `angle` turns
+the baseline counterclockwise in degrees when seen from above.
+`letter_spacing` adds a gap in mm between letters. Use a `.ttf` file or
+an `.otf` file with TrueType outlines. CFF outlines, font collections,
+missing characters, crossing or touching outlines, and empty text are
+refused by name. The setup must have stock.
+
+The result appears with the other **DXF profiles** on the Stock page.
+Use **Profile X**, **Profile Y**, **Profile angle (deg)** and
+**Place profile** to move it as described above. Insertion is one undo
+step. Saving the project keeps the closed shapes. The current profile
+generation limit above also applies to outline text: an operation can
+name it as its source, but generation from its chains is not available
+in this release. It does not produce a machinable text toolpath yet.
+
+## Linked models
+
+A desktop model import from a file records a link to that source file.
+When that file changes, CamCraft imports it again through the normal
+import command. This keeps the model
+identity and makes dependent toolpaths stale. Regenerate and verify the
+job after a source change. Nothing generates or posts automatically.
+The import is one undo step. Undo keeps the old model until the file
+changes again. A missing or unreadable file keeps the model and reports
+the problem on the status line.
+
+To stop updates, right-click the model in the browser and choose
+**Unlink from** followed by its filename. Undo restores the link. MCP `set_model_link` can
+link to another path or clear the link. A moved source file needs a new
+link; there is no Link to file control in the window yet. See
+[opening a file from the command line](@/guide/automate/cli.md#open-a-file-in-the-window).
+
 ## Work offset
 
 Each setup owns one {{ <icon name="tree-wcs" /> }} work coordinate system. G54 to G59 is only the label
@@ -106,7 +204,8 @@ a gouge; a later setup cannot erase it.
 
 The workspace button on the Setup group mounts a built-in machine for
 Milling, Turning or Mill-turning, and the ribbon shows only the operations
-that machine can run. CamCraft also ships machine files for several
+that machine can run. Mill-turning is a lathe with live tooling, not
+turning on a mill: see [Mill-turn](@/guide/check-and-post/machines.md#mill-turn). CamCraft also ships machine files for several
 Tormach mills, and **View > Panels > Machines** browses, validates and
 edits `.mch` machine files. The pane's kind filter offers **All** and every
 machine kind: Mill, Lathe, Mill-turn, Plasma, Waterjet, Wire EDM and Sinker

@@ -39,6 +39,24 @@ impl Body {
             }
             6
         };
+        Self::finish(p, n)
+    }
+
+    pub(super) fn from_edge(e: &[[f64; 3]; 2], d: [f64; 3]) -> Self {
+        let mut p = [[0.0; 3]; 6];
+        p[..2].copy_from_slice(e);
+        let n = if d == [0.0, 0.0, 0.0] {
+            2
+        } else {
+            for k in 0..2 {
+                p[2 + k] = [e[k][0] - d[0], e[k][1] - d[1], e[k][2] - d[2]];
+            }
+            4
+        };
+        Self::finish(p, n)
+    }
+
+    fn finish(p: [[f64; 3]; 6], n: usize) -> Self {
         let (mut zlo, mut zhi) = (f64::INFINITY, f64::NEG_INFINITY);
         for q in &p[..n] {
             zlo = zlo.min(q[2]);
@@ -82,7 +100,9 @@ impl Body {
 /// no height.
 pub(super) fn pen(b: &Body, atom: &Atom, cut_lo: f64, allow: f64, grow: f64, pts: &mut Vec<[f64; 2]>) -> f64 {
     let lo = atom.z0.max(cut_lo).max(b.zlo);
-    let hi = atom.z1.min(b.zhi);
+    // #1444: a cutting top face gets the tip's allowance (`Atom::cap`).
+    let top = if atom.cap { atom.z1 - cut_lo.max(0.0) } else { atom.z1 };
+    let hi = top.min(b.zhi);
     if lo.partial_cmp(&hi).is_none_or(|o| o.is_gt()) {
         return f64::NEG_INFINITY;
     }
@@ -93,11 +113,87 @@ pub(super) fn pen(b: &Body, atom: &Atom, cut_lo: f64, allow: f64, grow: f64, pts
     if hi - lo <= 1e-12 {
         return atom.rho(lo) + grow - d;
     }
-    let bound = atom.rho(hi) + grow - d;
+    let bound = atom.rho_peak(lo, hi) + grow - d;
     if atom.is_flat() || bound <= allow {
         return bound; // exact for a band; clear of the allowance otherwise
     }
-    let mut g = |z: f64| b.slab_dist(z, z, pts) - atom.rho(z) - grow;
+    golden_pen(lo, hi, |z| b.slab_dist(z, z, pts) - atom.rho(z) - grow)
+}
+
+/// Minkowski-expanded radius of `atom` grown in 3D Euclidean distance by `m`.
+pub(super) fn rho_expanded(atom: &super::probe::Atom, w: f64, m: f64) -> f64 {
+    use super::probe::Prof;
+    let m = m.max(0.0);
+    if w < atom.z0 - m || w > atom.z1 + m {
+        return 0.0;
+    }
+    match atom.prof {
+        // #1444: an undercut head is read as its circumscribed cylinder.
+        // `Dove` is widest (r) at its bottom and `Ball` has radius r, so
+        // the cylinder holds the head at each Z stretch of `avoid_poly`,
+        // and the keep-out can only over-report, never under-report.
+        Prof::Flat(r) | Prof::Dove { r, .. } | Prof::Ball(r) => {
+            if w < atom.z0 {
+                r + (m * m - (atom.z0 - w).powi(2)).max(0.0).sqrt()
+            } else if w > atom.z1 {
+                r + (m * m - (w - atom.z1).powi(2)).max(0.0).sqrt()
+            } else {
+                r + m
+            }
+        }
+        Prof::Bull { flat, cr } => {
+            let z_arc = atom.z0 + cr;
+            if w < z_arc {
+                flat + ((cr + m).powi(2) - (z_arc - w).powi(2)).max(0.0).sqrt()
+            } else if w <= atom.z1 {
+                flat + cr + m
+            } else {
+                flat + cr + (m * m - (w - atom.z1).powi(2)).max(0.0).sqrt()
+            }
+        }
+        Prof::Cone { k, r } => {
+            let top = (atom.z0 + r / k).min(atom.z1);
+            let z_star = (w + m * k / (1.0 + k * k).sqrt()).clamp(atom.z0, top);
+            let cone = (k * (z_star - atom.z0)).min(r) + (m * m - (w - z_star).powi(2)).max(0.0).sqrt();
+            if w >= top && w <= atom.z1 {
+                cone.max(r + m)
+            } else if w > atom.z1 {
+                cone.max(r + (m * m - (w - atom.z1).powi(2)).max(0.0).sqrt())
+            } else {
+                cone
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "swept_tests.rs"]
+mod tests;
+
+/// Exact 3D Euclidean penetration of swept `b` inside `atom` inflated by 3D
+/// ball `m = clearance + grow` (`NEG_INFINITY` if disjoint in Z).
+pub(super) fn pen_3d(b: &Body, atom: &Atom, m: f64, allow: f64, pts: &mut Vec<[f64; 2]>) -> f64 {
+    let m = m.max(0.0);
+    let lo = (atom.z0 - m).max(b.zlo);
+    let hi = (atom.z1 + m).min(b.zhi);
+    if lo.partial_cmp(&hi).is_none_or(|o| o.is_gt()) {
+        return f64::NEG_INFINITY;
+    }
+    let d = b.slab_dist(lo, hi, pts);
+    if !d.is_finite() {
+        return f64::NEG_INFINITY;
+    }
+    let upper = atom.rho_max() + m - d;
+    if upper <= allow {
+        return upper;
+    }
+    if hi - lo <= 1e-12 {
+        return rho_expanded(atom, lo, m) - d;
+    }
+    golden_pen(lo, hi, |z| b.slab_dist(z, z, pts) - rho_expanded(atom, z, m))
+}
+
+fn golden_pen(lo: f64, hi: f64, mut g: impl FnMut(f64) -> f64) -> f64 {
     const PHI: f64 = 0.618_033_988_749_894_8;
     let (mut a, mut c) = (lo, hi);
     let mut x = c - PHI * (c - a);

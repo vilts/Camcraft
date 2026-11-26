@@ -38,6 +38,7 @@ use crate::links::Links;
 use super::bore_core::{CORE_TOL, MAX_BORE_RINGS, bore_ring_count, max_bore_diameter};
 use super::face::GenError;
 use super::levels::{Cert, Motion, run_levels};
+use super::pass_start::{PassStart, StartSide};
 
 /// One finished round hole the ride is paid to. `xy`/`radius` are the
 /// model's wall; `floor_z` is where the rim's bottom edge stops.
@@ -247,6 +248,13 @@ fn ring_loop(center: Point2, rho: f64, climb: bool) -> Vec<Point2> {
 /// the recognition's own frame). Returns `Ok(empty)` never: every hole
 /// passed validation, so every hole earns moves.
 pub fn bore(p: &BoreParams) -> Result<Toolpath, GenError> {
+    bore_started(p, PassStart::Auto)
+}
+
+/// [`bore`] with the shared pass order (#3360): `Auto` is [`bore`] byte
+/// for byte; `Outside` cuts each level's wall ring first and walks in;
+/// `Inside` is the centre-out order (the disk has no inner wall).
+pub fn bore_started(p: &BoreParams, pass_start: PassStart) -> Result<Toolpath, GenError> {
     p.validate()?;
     let r = p.tool_diameter * 0.5;
     let mut motion = Motion::new(p.clearance_z, p.retract_z, p.feed, p.plunge_feed);
@@ -264,6 +272,14 @@ pub fn bore(p: &BoreParams) -> Result<Toolpath, GenError> {
         .with_links(p.links, p.helix_radius)
         .with_ring_zig();
     let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
+    // #3360/#3402: Outside cuts each level's wall ring first, a full tool
+    // width along the hole wall in uncut stock. The family warning law
+    // names that cut in the path notes, never silently.
+    if pass_start == PassStart::Outside
+        && let Some(note) = StartSide::from(pass_start).wall_first_note()
+    {
+        b.note(note);
+    }
 
     for h in &p.holes {
         let rc = h.radius - (r + p.stock_to_leave);
@@ -294,7 +310,16 @@ pub fn bore(p: &BoreParams) -> Result<Toolpath, GenError> {
             .ok_or_else(|| GenError::Invalid("bore radial plan exceeds its floor reach or ring budget".into()))?;
         let mut passes = Vec::with_capacity(count * 2);
         let mut prev = h.xy;
-        for k in 1..=count {
+        // #3360: ring `k` (1 the innermost, `count` the wall ring) sits
+        // `count - k` offsets in from the wall; the disk has no hole of
+        // its own. Auto and Inside keep the centre-out walk; Outside cuts
+        // the wall ring first and walks in. Each level still dives at the
+        // centre, so the entry law does not change.
+        let mut order: Vec<usize> = (1..=count).collect();
+        if pass_start == PassStart::Outside {
+            order.reverse();
+        }
+        for k in order {
             let rho = rc * (k as f64 / count as f64);
             let ring = ring_loop(h.xy, rho, p.climb);
             let Some(&start) = ring.first() else {
@@ -305,7 +330,7 @@ pub fn bore(p: &BoreParams) -> Result<Toolpath, GenError> {
             prev = start;
         }
         // #871: a part-way refusal hands back the holes bored so far.
-        let zs = super::levels::cut_levels_under(h.top_z, p.links.approach.stock_top, bottom, p.stepdown).map_err(|e| e.with_ghost_moves(b.moves()))?;
+        let zs = super::equal_steps::cut_levels_for(h.top_z, &p.links.approach,bottom, p.stepdown).map_err(|e| e.with_ghost_moves(b.moves()))?;
         // Each hole's own entry surface is its top of cut (M11.3 B).
         if h.top_z.is_finite() {
             motion.top_z = h.top_z.min(motion.clearance_z);

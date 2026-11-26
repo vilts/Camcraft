@@ -43,7 +43,7 @@ enum Doc {
 fn face() -> OpParams {
     OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -53,6 +53,7 @@ fn face() -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -120,7 +121,9 @@ fn post_with(root: &Path, doc: Doc) -> (i32, String, Vec<String>) {
     let nc = out.join("job.nc");
     let exe = root.join(Path::new(env!("CARGO_BIN_EXE_camcraft-cli")).file_name().expect("exe name"));
     let o = Command::new(exe)
+        .env("RUST_LOG", "info")
         .args(["process", proj.to_str().expect("utf8"), "-o", nc.to_str().expect("utf8")])
+        .env("CAMCRAFT_LOG", "info")
         .output()
         .expect("the CLI runs");
     let code = o.status.code().unwrap_or(-1);
@@ -155,7 +158,16 @@ fn a_missing_default_machine_file_refuses_the_post_per_mount() {
 #[test]
 fn a_missing_default_machine_file_refuses_the_post_per_operation() {
     let err = assert_refused("per-op", Doc::PerOp, |_| {});
+    assert!(err.contains("Face2"), "the output names the operation of the unmounted setup: {err}");
+    assert!(
+        err.lines().any(|line| !line.starts_with("camcraft-cli: post:") && line.contains("Face1")),
+        "generation logs name the mounted operation: {err}"
+    );
+    // Generation logs name both operations; check only the CLI refusal.
+    let err = err.lines().find(|line| line.starts_with("camcraft-cli: post:")).expect("CLI post refusal");
+    assert!(err.contains("Setup2"), "the refusal names the unmounted setup: {err}");
     assert!(err.contains("Face2"), "the refusal names the operation of the unmounted setup: {err}");
+    assert!(!err.contains("Face1"), "the mounted operation has its own machine: {err}");
 }
 
 #[test]

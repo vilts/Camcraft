@@ -97,17 +97,42 @@ pub fn file_in(dir: &Path, name: &str) -> Result<PathBuf, SaveError> {
     Ok(dir.join(file))
 }
 
+/// The temp file that [`write_atomic`] writes before its rename: a hidden
+/// file beside `path`, named for the target, this process and the calling
+/// thread. Two saves at the same moment run on two threads (an autosave
+/// and a save by the user), so they never share a temp file; the saves of
+/// one thread run one after another, so its name can repeat. `None` when
+/// `path` names no file.
+#[must_use]
+pub fn temp_path_for(path: &Path) -> Option<PathBuf> {
+    let dir = path.parent()?;
+    let name = path.file_name()?.to_string_lossy().into_owned();
+    Some(dir.join(format!(".{name}.{}.{}.tmp", std::process::id(), thread_number())))
+}
+
+/// A number for the calling thread, taken from one counter the first time
+/// the thread asks and kept for the thread's life: different threads of
+/// this process never get the same number.
+fn thread_number() -> usize {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static NEXT: AtomicUsize = AtomicUsize::new(1);
+    thread_local! {
+        static NUMBER: usize = NEXT.fetch_add(1, Ordering::Relaxed);
+    }
+    NUMBER.with(|n| *n)
+}
+
 /// Write `text` to `path` atomically: a temp file in the same folder,
 /// flushed, then renamed over the target. The folder is created when
 /// missing. On any failure the temp file is removed and the target is
-/// as it was.
+/// as it was. Machine files, preferences, recent files, view settings
+/// and project files all save through here.
 pub fn write_atomic(path: &Path, text: &str) -> Result<(), SaveError> {
     use std::io::Write;
     let io = |e: std::io::Error| SaveError::Io(e.to_string());
     let dir = path.parent().ok_or_else(|| SaveError::Io(format!("{} has no folder", path.display())))?;
+    let tmp = temp_path_for(path).ok_or_else(|| SaveError::Io(format!("{} names no file", path.display())))?;
     std::fs::create_dir_all(dir).map_err(io)?;
-    let name = path.file_name().map_or_else(|| "machine".into(), |n| n.to_string_lossy().into_owned());
-    let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
     let wrote = (|| {
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(text.as_bytes())?;

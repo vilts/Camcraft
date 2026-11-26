@@ -38,6 +38,8 @@ impl OpParams {
                 optimal_load,
                 feed_opt,
                 shell,
+                method,
+                pass_start, picks: _
             } => {
                 w(h, *stepover);
                 w(h, *stock_to_leave);
@@ -80,9 +82,18 @@ impl OpParams {
                 // (the shell flag is the generator's switch, like
                 // `rest_rough` before it).
                 h.write_u8(u8::from(*shell));
+                // #1591: written only where the method is read and off
+                // its default, so every earlier op keeps its digest.
+                if *strategy == PocketStrategy::Adaptive && *method == crate::machining2d::AdaptiveMethod::Trochoidal {
+                    h.write_u8(0xA5);
+                }
+                // #3361: written only off Auto, so every earlier op keeps
+                // its digest (a forced value on rows changes the notes).
+                digest::write_pass_start(*pass_start, h);
             }
             OpParams::Finish3D {
                 pattern,
+                direction_angle,
                 stepover,
                 tolerance,
                 clearance_z,
@@ -99,6 +110,9 @@ impl OpParams {
                 steep_stepover,
                 pencil_reference,
                 fill_openings,
+                gap_link,
+                waterlines,
+                pass_start, picks: _
             } => {
                 // v16: the pattern chooses a different kinematic (and
                 // the raster fields only answer to Parallel), so they
@@ -176,6 +190,34 @@ impl OpParams {
                     h.write_u8(0x4C);
                     w(h, *s);
                 }
+                // The gap link authors the chain between runs. Only
+                // a non-Jump choice digests (one tag byte plus the
+                // variant), so every op that hops as before keeps
+                // the stamp it had.
+                if *gap_link != crate::finishing3d::GapLink::Jump {
+                    h.write_u8(0x4D);
+                    h.write_u8(match *gap_link {
+                        crate::finishing3d::GapLink::Straight => 2,
+                        crate::finishing3d::GapLink::Jump => 1,
+                    });
+                }
+                // #2811: skipping the waterline ring pass changes the cut
+                // path on steep flanks. Only `false` digests (one tag
+                // byte), so every op with waterlines on keeps its stamp.
+                if !*waterlines {
+                    h.write_u8(0x4E);
+                }
+                // Keep the old stamp for the default direction and for
+                // patterns whose paths do not depend on this angle.
+                if *pattern == crate::finishing3d::FinishPattern::Parallel && *direction_angle != 0.0 {
+                    h.write_u8(0x50);
+                    w(h, *direction_angle);
+                }
+                // #3362: written only off Auto and only for the patterns
+                // that read it, so every other op keeps its stamp.
+                if crate::finishing3d::reads_pass_start(*pattern) {
+                    digest::write_pass_start(*pass_start, h);
+                }
             }
             // The deburr ride digests the one authored number, the
             // window's two planes, the clearance plane it hops to,
@@ -190,6 +232,13 @@ impl OpParams {
                 bottom_z,
                 feed,
                 plunge_feed,
+                exclude_edges,
+                min_edge_angle_deg,
+                exclude_holes,
+                hole_min_diameter,
+                hole_max_diameter,
+                unreachable,
+                sizing, picks: _
             } => {
                 wh(h, *clearance_z);
                 wh(h, *top_z);
@@ -197,6 +246,82 @@ impl OpParams {
                 for v in [*width, *feed, *plunge_feed] {
                     w(h, v);
                 }
+                // #1888: the edge filters, each digested only off its
+                // rest value - an op from before them keeps its stamp.
+                if *min_edge_angle_deg != 0.0 {
+                    h.write_u8(0x4D);
+                    w(h, *min_edge_angle_deg);
+                }
+                if *exclude_holes {
+                    h.write_u8(0x4E);
+                    w(h, *hole_min_diameter);
+                    w(h, *hole_max_diameter);
+                }
+                for g in exclude_edges {
+                    h.write_u8(0x4F);
+                    h.write(g.entity.as_bytes());
+                    h.write_u64(g.feature.id());
+                }
+                // #1889: only `Refuse` writes a byte, so the stamp of
+                // each earlier Deburr (skip with a note) does not move.
+                if *unreachable == crate::finishing3d::UnreachableEdges::Refuse {
+                    h.write_u8(0x52);
+                }
+                // #1890: the break sizing writes only off one Constant
+                // Width chamfer pass, the ride of each earlier Deburr.
+                if *sizing != crate::finishing3d::DeburrBreak::default() {
+                    h.write_u8(0x53);
+                    h.write_u8(u8::from(sizing.mode == crate::finishing3d::BreakMode::ConstantDepth));
+                    w(h, sizing.depth);
+                    h.write_u8(u8::from(sizing.profile == crate::finishing3d::BreakProfile::Round));
+                    h.write_u32(sizing.passes);
+                }
+            }
+            // #1894: a new kind, so every field is digested from the
+            // start - no earlier stamp to keep.
+            OpParams::MultiAxisDeburr {
+                width,
+                clearance_z,
+                top_z,
+                bottom_z,
+                feed,
+                plunge_feed,
+                exclude_edges,
+                min_edge_angle_deg,
+                exclude_holes,
+                hole_min_diameter,
+                hole_max_diameter,
+                unreachable,
+                sizing,
+                axis_mode,
+                lead_deg,
+                lag_deg,
+                max_tilt_deg,
+                shank_avoid, picks: _
+            } => {
+                h.write_u8(0x5A);
+                wh(h, *clearance_z);
+                wh(h, *top_z);
+                wh(h, *bottom_z);
+                for v in [*width, *feed, *plunge_feed, *min_edge_angle_deg, *hole_min_diameter, *hole_max_diameter] {
+                    w(h, v);
+                }
+                h.write_u8(u8::from(*exclude_holes));
+                for g in exclude_edges {
+                    h.write_u8(0x4F);
+                    h.write(g.entity.as_bytes());
+                    h.write_u64(g.feature.id());
+                }
+                h.write_u8(u8::from(*unreachable == crate::finishing3d::UnreachableEdges::Refuse));
+                h.write_u8(u8::from(sizing.mode == crate::finishing3d::BreakMode::ConstantDepth));
+                w(h, sizing.depth);
+                h.write_u8(u8::from(sizing.profile == crate::finishing3d::BreakProfile::Round));
+                h.write_u32(sizing.passes);
+                h.write_u8(u8::from(*axis_mode == crate::multiaxis::DeburrAxisMode::Axis4));
+                for v in [*lead_deg, *lag_deg, *max_tilt_deg] {
+                    w(h, v);
+                }
+                h.write_u8(u8::from(*shank_avoid));
             }
             _ => {}
         }

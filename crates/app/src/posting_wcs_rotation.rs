@@ -110,12 +110,18 @@ fn unsupported_op_reason(
             | OpParams::WireContour(_)
             | OpParams::SinkerBurn(_)
             | OpParams::SinkerSideBurn(_)
+            // #1444: not verified under a rotated offset.
+            | OpParams::SlotUndercut(_)
             | OpParams::RotaryContour { .. }
             | OpParams::RotaryParallel { .. }
             | OpParams::RotaryOffset { .. }
             | OpParams::MultiAxisRough { .. }
             | OpParams::Flow5D { .. }
             | OpParams::MultiAxisContour { .. }
+            | OpParams::MultiAxisDeburr { .. }
+            // #2826: the band's cylinders and rotary words are not
+            // verified under a rotated offset.
+            | OpParams::RotaryFlow { .. }
     ) || op.params.kind().info().section == Section::Turning
     {
         return Some("that operation type is not supported under a rotated work offset yet");

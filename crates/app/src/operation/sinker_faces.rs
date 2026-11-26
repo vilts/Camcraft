@@ -57,10 +57,13 @@ fn model_of(world: &World, picks: &[GeoSel]) -> Result<Option<String>, String> {
 /// same wall twice, which the cavity read takes as one.
 fn faces_of(world: &World, setup: Option<&str>, g: &GeoSel) -> Result<Vec<PickedFace>, String> {
     let label = crate::pick::geo_label(world, g);
-    let pid = match g.feature {
-        FeatureSel::Face(fid) => return Ok(vec![face_of(world, setup, g, fid, label)?]),
-        FeatureSel::Patch(pid) => pid,
-        FeatureSel::Chain(_) | FeatureSel::Vertex(_) => {
+    let pid = match &g.feature {
+        FeatureSel::Face(fid) => return Ok(vec![face_of(world, setup, g, *fid, label)?]),
+        FeatureSel::Patch(pid) => *pid,
+        FeatureSel::Chain(_)
+        | FeatureSel::Vertex(_)
+        | FeatureSel::SketchChain(_)
+        | FeatureSel::SketchLayer(_) => {
             return Err(format!(
                 "electrode from faces: {label} is not a face - an electrode is generated from the cavity's floor and wall faces"
             ));

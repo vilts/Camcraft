@@ -74,6 +74,26 @@ fn the_dragged_angle_is_the_ring_angle_under_the_cursor() {
 }
 
 #[test]
+fn an_edge_on_ring_refuses_the_drag_and_names_the_view_change() {
+    let mut state = part();
+    state.cam = state.cam.toward([0.0, 0.0, 1.0]);
+    state.cam.projection = crate::viewport::ProjectionMode::Orthographic;
+    state.history.mark_clean();
+    let at = ring_px(&state, 0, FRAC_PI_4);
+    assert_eq!(turn_drag::ring_at(&state, at), Some(0), "X ring is under the cursor");
+    assert!(turn_drag::press(&mut state, at), "the disabled ring consumes the press instead of orbiting");
+    assert!(state.body_turn.is_none(), "the edge-on ring starts no inert drag");
+    assert!(state.status.contains("Orbit the view to turn about X"), "{}", state.status);
+    turn_drag::motion(&mut state, [at[0] + 20.0, at[1]]);
+    turn_drag::release(&mut state);
+    assert!(state.pending.is_empty());
+    assert!(!state.history.is_dirty());
+    let from = ring_px(&state, 2, FRAC_PI_4);
+    assert!(turn_drag::press(&mut state, from), "the Z ring still turns in top view");
+    assert_eq!(state.body_turn.as_ref().map(|d| d.axis), Some(2));
+}
+
+#[test]
 fn a_drag_past_half_a_turn_keeps_counting() {
     let mut state = part();
     let from = ring_px(&state, 2, 0.1);
@@ -177,4 +197,29 @@ fn a_bad_axis_or_angle_is_refused_by_name() {
     run(&mut state, CommandKind::TurnModelBy { name: "ghost".into(), axis: 2, angle_rad: TAU / 8.0 });
     assert!(!state.history.is_dirty());
     assert!(state.status.contains("ghost"), "{}", state.status);
+}
+
+#[test]
+fn shift_snap_rounds_angle_and_keeps_unwrapped_raw_angle() {
+    assert!((turn_drag::snap_angle_rad(50f64.to_radians(), 90.0).to_degrees() - 90.0).abs() < 1e-9);
+    assert!((turn_drag::snap_angle_rad(50f64.to_radians(), 15.0).to_degrees() - 45.0).abs() < 1e-9);
+    assert!((turn_drag::snap_angle_rad(0.5, 0.0) - 0.5).abs() < 1e-12);
+    let mut state = part();
+    state.handle_bar.rotate_snap_deg = 15.0;
+    let from = ring_px(&state, 2, 0.2);
+    assert!(turn_drag::press(&mut state, from));
+    // Two snapped steps must accumulate raw_angle cleanly without drifting by snap error.
+    let step1 = ring_px(&state, 2, 0.2 + 22f64.to_radians());
+    let step2 = ring_px(&state, 2, 0.2 + 40f64.to_radians());
+    turn_drag::motion_snapped(&mut state, step1, true);
+    assert!((state.body_turn.as_ref().map(|d| d.angle.to_degrees()).unwrap_or(0.0) - 15.0).abs() < 1e-6);
+    turn_drag::motion_snapped(&mut state, step2, true);
+    assert!((state.body_turn.as_ref().map(|d| d.angle.to_degrees()).unwrap_or(0.0) - 45.0).abs() < 1e-6);
+    assert_eq!(state.handle_bar.rotate_draft, "+45.0");
+    turn_drag::resnap(&mut state, false);
+    let raw_deg = state.body_turn.as_ref().map(|d| d.angle.to_degrees()).unwrap_or(0.0);
+    assert!((raw_deg - 40.0).abs() < 0.05, "releasing Shift shows exact 40 deg, got {raw_deg}");
+    turn_drag::resnap(&mut state, true);
+    turn_drag::release(&mut state);
+    assert!(matches!(state.pending.front(), Some(CommandKind::TurnModelBy { axis: 2, angle_rad, .. }) if (angle_rad.to_degrees() - 45.0).abs() < 1e-6));
 }

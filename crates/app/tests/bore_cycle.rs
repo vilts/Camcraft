@@ -69,6 +69,7 @@ fn params(cycle: CycleChoice, dwell: f64) -> OpParams {
         cross: vec![],
         break_through: None,
         break_through_from: Default::default(),
+        picks: Default::default(),
     }
 }
 
@@ -82,7 +83,7 @@ fn dwell_of(world: &World) -> (CycleChoice, f64) {
 
 #[test]
 fn refused_expanded_bores_write_no_nc_file() {
-    for stem in ["heidenhain", "tinyg", "carvera"] {
+    for stem in ["heidenhain", "tinyg", "grbl", "carvera"] {
         let script = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../assets/posts/{stem}.cps")),
         )

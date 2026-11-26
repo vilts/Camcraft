@@ -77,9 +77,9 @@ pub fn align_marks(state: &State, aspect: f64) -> AlignMarks {
             let w = transform_point(p, loc.pos, loc.rot);
             project_uv(&mvp, [w.x, w.y, w.z])
         };
-        match g.feature {
+        match &g.feature {
             FeatureSel::Face(fid) => {
-                let Some(face) = features.faces.iter().find(|f| f.id == fid) else { continue };
+                let Some(face) = features.faces.iter().find(|f| f.id == *fid) else { continue };
                 let Some(tris) = model::facets_of(&state.world, &e) else { continue };
                 for t in face.facets.iter().filter_map(|&i| tris.get(i as usize)) {
                     if let (Some(a), Some(b), Some(c)) = (uv(t.a), uv(t.b), uv(t.c)) {
@@ -87,16 +87,16 @@ pub fn align_marks(state: &State, aspect: f64) -> AlignMarks {
                     }
                 }
             }
-            FeatureSel::Chain(_) => feature_segments(state, &g.entity, g.feature, aspect, &mut out.edges),
+            FeatureSel::Chain(_) => feature_segments(state, &g.entity, g.feature.clone(), aspect, &mut out.edges),
             FeatureSel::Vertex(vid) => {
-                let v = feature::resolve_vertex(&features, vid).and_then(|vi| features.verts.get(vi as usize));
+                let v = feature::resolve_vertex(&features, *vid).and_then(|vi| features.verts.get(vi as usize));
                 if let Some(p) = v.and_then(|v| uv(Point3::new(v[0], v[1], v[2]))) {
                     out.points.push(p);
                 }
             }
-            // A curved face is never an alignment pick (refused by name);
-            // its outline still draws on the GPU lines.
-            FeatureSel::Patch(_) => {}
+            // A curved face or DXF sketch pick is never an alignment pick;
+            // curved patch outlines still draw on the GPU lines.
+            FeatureSel::Patch(_) | FeatureSel::SketchChain(_) | FeatureSel::SketchLayer(_) => {}
         }
     }
     out

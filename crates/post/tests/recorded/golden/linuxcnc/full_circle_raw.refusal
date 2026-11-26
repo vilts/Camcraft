@@ -1,0 +1,2 @@
+; linuxcnc.cps refused full_circle_raw: 1 warning(s), the program is never released
+warning: no machine states its safe Z retract - the LinuxCNC post lifts Z with G53 G0 Z<safe_retract> before each tool change and at the end, and machine Z0 is not always the top of travel; state the Z axis's safe_retract (machine coordinates) in the machine file, or set the post option Retract to G28, G30 or None

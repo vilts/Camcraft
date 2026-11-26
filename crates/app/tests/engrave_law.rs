@@ -105,9 +105,11 @@ fn cut(kind: Kind, top: f64, bottom: f64) -> OpParams {
     match kind {
         Kind::Engrave => OpParams::Engrave {
             clearance_z, retract_z: None, top_z, bottom_z, stepdown: 10.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None,
+            picks: Default::default(),
         },
         Kind::Trace => OpParams::Trace {
             clearance_z, retract_z: None, top_z, bottom_z, stepdown: 10.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None,
+            picks: Default::default(),
         },
     }
 }

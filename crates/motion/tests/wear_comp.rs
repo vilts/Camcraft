@@ -39,8 +39,9 @@ fn params(lead: Lead, climb: bool, comp: Compensation) -> ContourParams {
         tab_height: 0.0,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: Links { approach: Approach { compensation: comp, ..Approach::DEFAULT }, ..Links::PLANAR },
+        picks: Default::default(),
     }
 }
 
@@ -63,7 +64,9 @@ fn refusal(p: &ContourParams) -> String {
 
 #[test]
 fn wear_walks_controls_centre_path_and_programs_it_verbatim() {
-    let lead = Lead::Linear { length: 8.0 };
+    // #3891: the Perpendicular lead - the Linear shape is refused under
+    // wear as under control (its dive point rides the ring's own offset).
+    let lead = Lead::Perpendicular { length: 8.0 };
     let wear = contour(&square(), &params(lead, true, Compensation::Wear)).unwrap();
     let control = contour(&square(), &params(lead, true, Compensation::Control)).unwrap();
     // The machine runs the same centre moves in both modes.
@@ -91,15 +94,15 @@ fn wear_keeps_the_control_lead_law_and_refuses_by_its_own_name() {
     assert!(none.contains("wear compensation") && none.contains("straight lead-in"), "{none}");
     let short = refusal(&params(Lead::Linear { length: 2.0 }, true, Compensation::Wear));
     assert!(short.contains("at least the tool radius (3.000 mm)"), "{short}");
-    let mut p = params(Lead::Linear { length: 8.0 }, true, Compensation::Wear);
+    let mut p = params(Lead::Perpendicular { length: 8.0 }, true, Compensation::Wear);
     p.links.approach.lead_out = Some(Lead::Arc { radius: 3.0 });
     assert!(refusal(&p).contains("wear compensation needs a straight lead-out"));
-    let mut p = params(Lead::Linear { length: 8.0 }, true, Compensation::Wear);
+    let mut p = params(Lead::Perpendicular { length: 8.0 }, true, Compensation::Wear);
     p.tab_count = 2;
     p.tab_width = 4.0;
     p.tab_height = 1.0;
     assert!(refusal(&p).contains("wear compensation does not ride tabs"));
-    let mut p = params(Lead::Linear { length: 8.0 }, true, Compensation::Wear);
+    let mut p = params(Lead::Perpendicular { length: 8.0 }, true, Compensation::Wear);
     p.links.level = Link::KeepDown;
     assert!(refusal(&p).contains("wear compensation needs Clearance or Retract links"));
 }

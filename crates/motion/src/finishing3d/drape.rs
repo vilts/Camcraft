@@ -42,7 +42,8 @@ use super::crease::{chain, vkey, vkey_scale, Seg};
 use super::march::emit_runs;
 use super::params::{Finish3DParams, refinement_floor, scallop_stepdown};
 use super::shadow::march_loop;
-use super::support::{plunge_support, Sup};
+use super::grid::SupSet;
+use super::support::plunge_support;
 
 /// The model's boundary, welded and chained: closed 3D loops (each
 /// with its duplicate closing vertex removed) and the count of open
@@ -135,7 +136,7 @@ pub(super) fn drape_pass(
     b: &mut PathBuilder,
     p: &Finish3DParams,
     r: f64,
-    sups: &[Sup],
+    sups: &SupSet,
     facets: &[Triangle],
     continuing: bool,
 ) -> bool {

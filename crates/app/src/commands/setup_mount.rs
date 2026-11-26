@@ -87,7 +87,7 @@ impl SetSetupMachine {
 
     /// Read and parse a `.mch` file, then mount it; the refusal names the file.
     pub fn from_file(world: &World, setup: &str, path: &std::path::Path) -> Result<Self, CommandError> {
-        let text = std::fs::read_to_string(path)
+        let text = crate::session_files::read_machine(path)
             .map_err(|e| CommandError::Invalid(format!("machine file {}: {e}", path.display())))?;
         let m = crate::machine::parse_mch(&text).map_err(|e| CommandError::Invalid(format!("{}: {e}", path.display())))?;
         Self::new(world, setup, Some((path.display().to_string(), Some(m))))
@@ -134,6 +134,7 @@ pub struct SetSetupPost {
 impl SetSetupPost {
     pub fn new(world: &World, setup: &str, next: Option<PostRef>) -> Result<Self, CommandError> {
         let def = def_of(world, setup)?;
+        let next = next.map(crate::posting::agie::current_ref);
         if let Some(p) = &next {
             super::post::validate(p)?;
         }

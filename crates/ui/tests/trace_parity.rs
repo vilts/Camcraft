@@ -11,19 +11,21 @@
 //!
 //! Gate map (M4.4): covers ui::trace and sim's preview::pack seam.
 
-use egui_wgpu::wgpu;
-
 use camcraft_app::cl::{Move, MoveKind};
 use camcraft_app::geometry::{cube, Point3};
 use camcraft_app::stock_sim::preview::{pack_field, pack_target, Preview};
 use camcraft_app::stock_sim::{Backend, PreviewCamera, SimOp, Stock, DEV_TOL, FIELD_BAND};
+use camcraft_ui::headless_gpu::TestGpu;
 use camcraft_ui::trace::TracePass;
 
 /// Software adapter first, else the hardware one (#615); no adapter at
 /// all prints a loud SKIP, and `CAMCRAFT_REQUIRE_GPU=1` fails instead.
-fn device_and_queue() -> Option<(wgpu::Device, wgpu::Queue)> {
-    match camcraft_ui::headless_gpu::device_for_test("trace_parity") {
-        Ok(gpu) => gpu.map(|g| (g.device, g.queue)),
+/// #3605: the one device of this binary, held under the process GPU lock
+/// for the life of the returned value. Parallel per-test devices crashed
+/// a hybrid-GPU Windows box with 0xC0000005.
+fn device_and_queue() -> Option<TestGpu> {
+    match camcraft_ui::headless_gpu::test_gpu("trace_parity") {
+        Ok(gpu) => gpu,
         Err(err) => panic!("{err}"),
     }
 }
@@ -86,13 +88,14 @@ fn agreement(cpu: &Preview, gpu: &Preview, depth_tol: f64) -> (f64, f64, f64, us
 }
 
 fn both_eyes(stock: &Stock, target: Option<&Stock>, cam: &PreviewCamera, w: u32, h: u32) -> Option<(Preview, Preview)> {
-    let (device, queue) = match device_and_queue() {
+    let gpu = match device_and_queue() {
         Some(d) => d,
         None => {
             eprintln!("skip: no GPU adapter on this machine");
             return None;
         }
     };
+    let (device, queue) = (gpu.device.clone(), gpu.queue.clone());
     let cpu = stock.preview(target, cam, w, h, DEV_TOL).unwrap();
     let mut pass = TracePass::new(&device).expect("the adapter builds compute kernels");
     let lat = pack_field(stock.field().unwrap()).expect("the fixture packs");
@@ -157,10 +160,11 @@ fn deviation_classes_agree_with_the_cpu_verdict() {
 
 #[test]
 fn the_kernel_refuses_its_bad_inputs_by_name() {
-    let Some((device, queue)) = device_and_queue() else {
+    let Some(gpu) = device_and_queue() else {
         eprintln!("skip: no GPU adapter on this machine");
         return;
     };
+    let (device, queue) = (gpu.device.clone(), gpu.queue.clone());
     let mut pass = TracePass::new(&device).expect("kernel builds");
     let e = pass.trace(&device, &queue, &top_down(), 8, 8, DEV_TOL).unwrap_err();
     assert!(e.contains("no lattice"), "{e}");

@@ -13,6 +13,14 @@
 
 use egui_wgpu::wgpu;
 
+mod pipes;
+mod wide;
+
+pub use wide::{
+    GUARANTEED_SAMPLES, LIFT_WIDTHS, MAX_LINE_PX, MIN_LINE_PX, SEGMENT_BYTES, effective_samples, line_px,
+    offered_samples, segment_bytes,
+};
+
 /// vec3 position + f32 selection flag + f32 deviation class. Like `sel`,
 /// the class rides baked in the vertex stream (same submit-time law as
 /// above) and every `vs_main` pipeline reads all three attributes - the
@@ -20,7 +28,7 @@ use egui_wgpu::wgpu;
 const VERTEX_STRIDE: u64 = 20;
 
 /// The one vertex-buffer law, shared by every solid pipeline.
-const VERTEX_LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+pub(crate) const VERTEX_LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
     array_stride: VERTEX_STRIDE,
     step_mode: wgpu::VertexStepMode::Vertex,
     attributes: &[
@@ -42,11 +50,12 @@ const VERTEX_LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayou
     ],
 };
 
-const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// `struct U`: mvp + eye + wire (80 bytes), six palette vec4s, then the
-/// wireframe edge ink of the live ground (#698).
-const UNIFORM_SIZE: u64 = 80 + 7 * 16;
+/// `struct U`: mvp + eye + wire (80 bytes), six palette vec4s, the
+/// wireframe edge ink of the live ground (#698), then the overlay line
+/// geometry `vp` (#2958: target size, half width, half width + 1 px).
+const UNIFORM_SIZE: u64 = 80 + 8 * 16;
 
 const SHADER: &str = "
 // The verdict / selection palette rides the uniform (M13.4's
@@ -54,7 +63,7 @@ const SHADER: &str = "
 struct U { mvp: mat4x4<f32>, eye: vec3<f32>, wire: f32,
            clean: vec4<f32>, rest: vec4<f32>, gouge: vec4<f32>,
            unjudged: vec4<f32>, hot: vec4<f32>, warm: vec4<f32>,
-           wire_ink: vec4<f32> };
+           wire_ink: vec4<f32>, vp: vec4<f32> };
 @group(0) @binding(0) var<uniform> u: U;
 
 struct VSOut {
@@ -79,26 +88,32 @@ fn vs_main(@location(0) pos: vec3<f32>, @location(1) sel: f32,
 // face normal from screen-space derivatives of the world position.
 // Key + fill give the broad gradient; a view-dependent specular adds the
 // CAD-style sheen that makes facet angles readable at a glance.
-@fragment
-fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
-    let cr = cross(dpdx(in.world), dpdy(in.world));
+// `open` scales the light: 1 on the plain face pass, the baked occlusion
+// value of the vertex on the occluded face pass (#2834, `shade_pass`).
+fn lit(world: vec3<f32>, sel: f32, cls: f32, open: f32) -> vec4<f32> {
+    let cr = cross(dpdx(world), dpdy(world));
     let len = length(cr);
     let n = select(vec3<f32>(0.0, 0.0, 1.0), cr / len, len > 1e-9);
     let key_dir = normalize(vec3<f32>(0.45, 0.60, 0.66));
     // abs(): two-sided, so flipped windings never render unlit-black.
     let key = abs(dot(n, key_dir));
     let fill = abs(dot(n, normalize(vec3<f32>(-0.55, 0.25, 0.40))));
-    let light = 0.34 + 0.52 * key + 0.18 * fill;
-    let to_eye = normalize(u.eye - in.world);
+    let light = (0.34 + 0.52 * key + 0.18 * fill) * open;
+    let to_eye = normalize(u.eye - world);
     let halfv = normalize(key_dir + to_eye);
-    let spec = pow(max(abs(dot(n, halfv)), 0.0), 24.0) * 0.35 * key;
+    let spec = pow(max(abs(dot(n, halfv)), 0.0), 24.0) * 0.35 * key * open;
     let base = vec3<f32>(0.66, 0.70, 0.76) * light + vec3<f32>(spec);
     let hot = vec3<f32>(0.98, 0.72, 0.20) * light + vec3<f32>(spec);
     // #339 slice 4: a fixture the selected op strikes wears the gouge
     // colour (class STRUCK_CLASS; plain models carry class 0).
-    let struck = step(3.5, in.cls);
+    let struck = step(3.5, cls);
     let hit = u.gouge.xyz * light + vec3<f32>(spec);
-    return vec4<f32>(mix(mix(base, hot, in.sel), hit, struck * 0.85), 1.0);
+    return vec4<f32>(mix(mix(base, hot, sel), hit, struck * 0.85), 1.0);
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+    return lit(in.world, in.sel, in.cls, 1.0);
 }
 
 // Facet edges: dark over the shaded pass, warm when the part is selected.
@@ -113,6 +128,14 @@ fn fs_edge(in: VSOut) -> @location(0) vec4<f32> {
     let unlit = mix(dark, gray, u.wire);
     let sel = mix(u.warm.xyz, u.hot.xyz, u.wire);
     return vec4<f32>(mix(unlit, sel, in.sel), 1.0);
+}
+
+// Hidden edges (#2818): the same wire where it lies behind a face, blended
+// thin over the lit metal so that it reads lighter than the front wire.
+@fragment
+fn fs_edge_hidden(in: VSOut) -> @location(0) vec4<f32> {
+    let dark = vec3<f32>(0.06, 0.07, 0.09);
+    return vec4<f32>(mix(dark, u.warm.xyz, in.sel), 0.5);
 }
 
 // Stock: same flat shading, cool steel tint, translucent - the model must
@@ -159,29 +182,7 @@ fn fs_region(in: VSOut) -> @location(0) vec4<f32> {
     return vec4<f32>(0.95, 0.58, 0.15, 0.22);
 }
 
-// Overlay lines (WCS triads, world axes): position + explicit color, no
-// lighting - reference geometry must stay legible at any zoom.
-struct LineOut {
-    @builtin(position) clip: vec4<f32>,
-    @location(0) rgb: vec3<f32>,
-};
-
-@vertex
-fn vs_line(@location(0) pos: vec3<f32>, @location(1) rgb: vec3<f32>) -> LineOut {
-    var out: LineOut;
-    out.clip = u.mvp * vec4<f32>(pos, 1.0);
-    out.rgb = rgb;
-    return out;
-}
-
-@fragment
-fn fs_line(in: LineOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(in.rgb, 1.0);
-}
 ";
-
-/// Overlay line vertex: vec3 position + vec3 color.
-const OVERLAY_STRIDE: u64 = 24;
 
 /// One triangle-soup part for the GPU: world-space vertices (transform
 /// applied by the caller), plus selection and kind flags. Stock parts are
@@ -207,14 +208,16 @@ pub struct GpuPart {
 }
 
 pub struct View3D {
-    pipeline: wgpu::RenderPipeline,
-    /// Faces that only write depth - the wireframe mode's hidden-line
-    /// prepass (same vertex stage and culling as `pipeline`, no color).
-    depth_pipeline: wgpu::RenderPipeline,
-    line_pipeline: wgpu::RenderPipeline,
-    stock_pipeline: wgpu::RenderPipeline,
-    region_pipeline: wgpu::RenderPipeline,
-    overlay_pipeline: wgpu::RenderPipeline,
+    /// Every pipeline of the pass, built for `samples` (#2958).
+    pipes: pipes::Pipes,
+    shader: wgpu::ShaderModule,
+    layout: wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    /// Samples per pixel of the pass targets: 1 draws straight into
+    /// `color_view`; more renders into `msaa_view` and resolves there.
+    samples: u32,
+    /// The overlay line width in target pixels (#2958).
+    line_px: f32,
     bind_group: wgpu::BindGroup,
     uniform: wgpu::Buffer,
     /// The verdict/selection palette the next render uploads (M13.4;
@@ -241,7 +244,12 @@ pub struct View3D {
     edge_count: u32,
     model_edge_count: u32,
     overlay_buf: wgpu::Buffer,
+    /// Overlay segments (instances), not vertices (#2958).
     overlay_count: u32,
+    /// The ground shadow pass and the occlusion pass (#2834).
+    shade: crate::shade_pass::ShadePass,
+    _msaa_tex: Option<wgpu::Texture>,
+    msaa_view: Option<wgpu::TextureView>,
     _color_tex: wgpu::Texture,
     color_view: wgpu::TextureView,
     _depth_tex: wgpu::Texture,
@@ -259,7 +267,7 @@ impl View3D {
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("viewport3d"),
-            source: wgpu::ShaderSource::Wgsl(SHADER.into()),
+            source: wgpu::ShaderSource::Wgsl(format!("{SHADER}{}{}", wide::WIDE_SHADER, crate::shade_pass::WGSL).into()),
         });
 
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -298,278 +306,7 @@ impl View3D {
             }],
         });
 
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("viewport3d-pipe"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(VERTEX_LAYOUT)],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        // Depth-only pass for wireframe mode: the same solid geometry,
-        // rasterized with color writes off. Faces occlude the far wire
-        // exactly as they occlude it when lit - the hidden-line law is
-        // then one branch in `render`, not a second geometry.
-        let depth_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("viewport3d-depth"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(VERTEX_LAYOUT)],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_edge"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::empty(),
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        // Facet edges over the shaded pass. No culling (back-face wire is
-        // hidden by depth anyway) and a negative slope bias so the lines
-        // win the depth test against the faces they lie on.
-        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("viewport3d-lines"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(VERTEX_LAYOUT)],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                // Lines may not carry a depth bias in wgpu 30, so edges win
-                // ties against the faces they lie on via LessEqual instead.
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_edge"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        // Translucent stock: blended over whatever the opaque pass left,
-        // never writing depth (models stay pickable-and-visible through it).
-        let stock_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("viewport3d-stock"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(VERTEX_LAYOUT)],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_stock"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::SrcAlpha,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::Zero,
-                            dst_factor: wgpu::BlendFactor::One,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        // Cut-region fill: the stock blend's shape (last, translucent, no
-        // depth write) with a constant color - cloned, not shared, so a
-        // future stock-material change cannot silently retint the fill.
-        let region_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("viewport3d-region"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(VERTEX_LAYOUT)],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_region"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: Some(wgpu::BlendState {
-                        color: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::SrcAlpha,
-                            dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                        alpha: wgpu::BlendComponent {
-                            src_factor: wgpu::BlendFactor::Zero,
-                            dst_factor: wgpu::BlendFactor::One,
-                            operation: wgpu::BlendOperation::Add,
-                        },
-                    }),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        // Non-indexed lines for the WCS triads and world axes: their own
-        // vertex layout (pos + rgb), no lighting, depth-tested but never
-        // occluded-by-write.
-        let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("viewport3d-overlay"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_line"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: OVERLAY_STRIDE,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &[
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x3,
-                            offset: 0,
-                            shader_location: 0,
-                        },
-                        wgpu::VertexAttribute {
-                            format: wgpu::VertexFormat::Float32x3,
-                            offset: 12,
-                            shader_location: 1,
-                        },
-                    ],
-                })],
-            },
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(false),
-                depth_compare: Some(wgpu::CompareFunction::LessEqual),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_line"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipes = pipes::build(device, &shader, &layout, format, 1);
 
         // 4-byte placeholders keep the empty-document path simple.
         let dummy = |label, usage| {
@@ -585,15 +322,18 @@ impl View3D {
         let edge_buf = dummy("viewport3d-ebuf", wgpu::BufferUsages::INDEX);
         let overlay_buf = dummy("viewport3d-obuf", wgpu::BufferUsages::VERTEX);
 
-        let targets = make_targets(device, format, width, height);
+        let targets = pipes::make_targets(device, format, width, height, 1);
+        // #2834 + #2958: the shade pipelines draw in this pass, so they take
+        // its sample count (1 until `set_samples`).
+        let shade = crate::shade_pass::ShadePass::new(device, &shader, &layout, format, 1);
 
         View3D {
-            pipeline,
-            depth_pipeline,
-            line_pipeline,
-            stock_pipeline,
-            region_pipeline,
-            overlay_pipeline,
+            pipes,
+            shader,
+            layout,
+            format,
+            samples: 1,
+            line_px: line_px(1.5, 1.0),
             bind_group,
             uniform,
             palette: crate::egui_app::colorvision::Semantic::OFF,
@@ -608,6 +348,9 @@ impl View3D {
             model_edge_count: 0,
             overlay_buf,
             overlay_count: 0,
+            shade,
+            _msaa_tex: targets.msaa,
+            msaa_view: targets.msaa_view,
             _color_tex: targets.color,
             color_view: targets.color_view,
             _depth_tex: targets.depth,
@@ -633,11 +376,13 @@ impl View3D {
         if width == self.width && height == self.height {
             return;
         }
-        let targets = make_targets(device, format, width, height);
+        let targets = pipes::make_targets(device, format, width, height, self.samples);
         self._color_tex = targets.color;
         self.color_view = targets.color_view;
         self._depth_tex = targets.depth;
         self.depth_view = targets.depth_view;
+        self._msaa_tex = targets.msaa;
+        self.msaa_view = targets.msaa_view;
         self.width = width;
         self.height = height;
     }
@@ -739,15 +484,11 @@ impl View3D {
     /// drawn non-indexed after every solid - the WCS triads, world axes and
     /// cached toolpaths (the producers cap the list before it gets here).
     pub fn set_overlay(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, lines: &[[f32; 6]]) {
-        if lines.is_empty() {
+        // #2958: one 32-byte instance per segment, drawn as a wide quad.
+        let data = segment_bytes(lines);
+        if data.is_empty() {
             self.overlay_count = 0; // render() then skips the draw entirely
             return;
-        }
-        let mut data = Vec::with_capacity(lines.len() * 24);
-        for v in lines {
-            for c in v {
-                data.extend_from_slice(&c.to_le_bytes());
-            }
         }
         let buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("viewport3d-obuf"),
@@ -757,7 +498,85 @@ impl View3D {
         });
         queue.write_buffer(&buf, 0, &data);
         self.overlay_buf = buf;
-        self.overlay_count = lines.len() as u32;
+        self.overlay_count = u32::try_from(lines.len() / 2).unwrap_or(u32::MAX);
+    }
+
+    /// The cached index partition that the draw list reads (#2818).
+    #[must_use]
+    pub const fn counts(&self) -> crate::draw_list::Counts {
+        crate::draw_list::Counts {
+            index_count: self.index_count,
+            model_index_count: self.model_index_count,
+            stock_index_end: self.stock_index_end,
+            overlay_index_start: self.overlay_index_start,
+            edge_count: self.edge_count,
+            model_edge_count: self.model_edge_count,
+            shadow_vertex_count: self.shade.shadow_count,
+            occlusion_vertex_count: self.shade.occlusion_count,
+        }
+    }
+
+    /// Replace the cached shade data (#2834): the ground shadow mesh and
+    /// the occlusion values of the model vertices of the last
+    /// `set_document`. Call it with each new document.
+    pub fn set_shade(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, shade: &crate::shade_pass::Shade) {
+        self.shade.set(device, queue, shade);
+    }
+
+    /// The shading switches that the next `render` reads (#2834). They pick
+    /// draw list steps; they do not touch a buffer.
+    pub fn set_effects(&mut self, effects: crate::draw_list::Effects) {
+        self.shade.effects = effects;
+    }
+
+    /// The overlay segment count of the last upload.
+    #[must_use]
+    pub const fn overlay_segments(&self) -> u32 {
+        self.overlay_count
+    }
+
+    /// #2958: the overlay line width in target pixels (`line_px` holds it
+    /// to `MIN_LINE_PX..=MAX_LINE_PX`). A uniform: nothing re-uploads.
+    pub fn set_line_px(&mut self, px: f32) {
+        self.line_px = if px.is_finite() { px.clamp(MIN_LINE_PX, MAX_LINE_PX) } else { MIN_LINE_PX };
+    }
+
+    #[must_use]
+    pub const fn line_width_px(&self) -> f32 {
+        self.line_px
+    }
+
+    #[must_use]
+    pub const fn samples(&self) -> u32 {
+        self.samples
+    }
+
+    /// The sample count of the ground shadow and occluded face pipelines
+    /// (#2834). They draw in the 3D pass, so it is always `samples()`.
+    #[must_use]
+    pub const fn shade_samples(&self) -> u32 {
+        self.shade.samples()
+    }
+
+    /// #2958: rebuild the pipelines and the multisample targets for
+    /// `samples` per pixel. The resolved colour target is kept, so the
+    /// shell's egui texture stays bound. The caller passes only a count
+    /// the device offers (`effective_samples`). True when it changed.
+    pub fn set_samples(&mut self, device: &wgpu::Device, samples: u32) -> bool {
+        let samples = samples.max(1);
+        if samples == self.samples {
+            return false;
+        }
+        self.pipes = pipes::build(device, &self.shader, &self.layout, self.format, samples);
+        // #2834: the shadow and the occluded faces draw in the same pass.
+        self.shade.rebuild(device, &self.shader, &self.layout, self.format, samples);
+        let (msaa, depth) = pipes::make_sample_targets(device, self.format, self.width, self.height, samples);
+        self.msaa_view = msaa.as_ref().map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
+        self._msaa_tex = msaa;
+        self.depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
+        self._depth_tex = depth;
+        self.samples = samples;
+        true
     }
 
     /// The verdict/selection palette the next `render` uploads (M13.4's
@@ -769,8 +588,8 @@ impl View3D {
 
     /// Encode the 3D pass into the offscreen target. `eye` is the camera
     /// position in world space, for the specular term; `display` selects
-    /// shaded-with-wire or hidden-line wireframe (the buffers are identical
-    /// either way - only the pass order and the `u.wire` flag differ).
+    /// the display mode (the buffers are identical in each mode - only the
+    /// draw list, `crate::draw_list::plan`, and the `u.wire` flag differ).
     pub fn render(
         &self,
         queue: &wgpu::Queue,
@@ -794,7 +613,7 @@ impl View3D {
         display: crate::state::DisplayMode,
         stock: Option<&dyn Fn(&mut wgpu::RenderPass<'_>)>,
     ) {
-        let wireframe = display == crate::state::DisplayMode::Wireframe;
+        let wireframe = display.is_wireframe();
         // The live theme's viewport ground (#698): the clear colour and
         // the wireframe ink follow it, so a light theme gets a light ground.
         let ground = crate::egui_app::theme::current().viewport;
@@ -825,13 +644,20 @@ impl View3D {
             data[o..o + 4].copy_from_slice(&v.to_le_bytes());
             o += 4;
         }
+        // #2958: the overlay geometry - target size, half width, and the
+        // quad's reach (half width plus the one-pixel fade).
+        let hw = self.line_px * 0.5;
+        for v in [self.width as f32, self.height as f32, hw, hw + 1.0] {
+            data[o..o + 4].copy_from_slice(&v.to_le_bytes());
+            o += 4;
+        }
         queue.write_buffer(&self.uniform, 0, &data);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("viewport3d-pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &self.color_view,
-                resolve_target: None,
+                view: self.msaa_view.as_ref().unwrap_or(&self.color_view),
+                resolve_target: self.msaa_view.as_ref().map(|_| &self.color_view),
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(wgpu::Color {
                         r: f64::from(ground.r()) / 255.0,
@@ -865,55 +691,46 @@ impl View3D {
         // hidden-line cull still holds) and drops the stock faces - the
         // box is a volume of stock, not a surface, and its full wire reads
         // truer than an occluded one.
+        // The order itself is `draw_list::plan` (#2818): one list for each
+        // display mode, read from the cached index partition.
         pass.set_bind_group(0, &self.bind_group, &[]);
+        use crate::draw_list::Pipe;
+        let plan = crate::draw_list::plan_with(display, &self.counts(), stock.is_some(), self.shade.effects);
         if self.index_count > 0 {
             pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
-            pass.set_index_buffer(self.index_buf.slice(..), wgpu::IndexFormat::Uint32);
-            if wireframe {
-                if self.model_index_count > 0 {
-                    pass.set_pipeline(&self.depth_pipeline);
-                    pass.draw_indexed(0..self.model_index_count, 0, 0..1);
+        }
+        for step in plan.steps() {
+            let pipeline = match step.pipe {
+                Pipe::Faces => &self.pipes.pipeline,
+                // No occlusion buffer: the plain faces (the list never asks).
+                Pipe::FacesOccluded => self.shade.bind_occluded(&mut pass).unwrap_or(&self.pipes.pipeline),
+                Pipe::GroundShadow => {
+                    self.shade.draw_shadow(&mut pass, step.range.clone());
+                    pass.set_vertex_buffer(0, self.vertex_buf.slice(..));
+                    continue;
                 }
-            } else {
-                pass.set_pipeline(&self.pipeline);
-                pass.draw_indexed(0..self.model_index_count, 0, 0..1);
-            }
-            if self.model_edge_count > 0 {
-                pass.set_index_buffer(self.edge_buf.slice(..), wgpu::IndexFormat::Uint32);
-                pass.set_pipeline(&self.line_pipeline);
-                pass.draw_indexed(0..self.model_edge_count, 0, 0..1);
-            }
-            let traced = stock.filter(|_| !wireframe);
-            if let Some(draw) = traced {
-                draw(&mut pass);
-                pass.set_bind_group(0, &self.bind_group, &[]);
-                // The overlay stock (the incoming stock, #406) is not the
-                // traced stock's to replace: it still draws.
-                if self.overlay_index_start < self.stock_index_end {
-                    pass.set_index_buffer(self.index_buf.slice(..), wgpu::IndexFormat::Uint32);
-                    pass.set_pipeline(&self.stock_pipeline);
-                    pass.draw_indexed(self.overlay_index_start..self.stock_index_end, 0, 0..1);
+                Pipe::FacesDepthOnly => &self.pipes.depth_pipeline,
+                Pipe::Edges => &self.pipes.line_pipeline,
+                Pipe::HiddenEdges => &self.pipes.hidden_line_pipeline,
+                Pipe::Stock => &self.pipes.stock_pipeline,
+                Pipe::Region => &self.pipes.region_pipeline,
+                Pipe::TracedStock => {
+                    if let Some(draw) = stock {
+                        draw(&mut pass);
+                        pass.set_bind_group(0, &self.bind_group, &[]);
+                    }
+                    continue;
                 }
-            } else if self.model_index_count < self.stock_index_end && !wireframe {
-                pass.set_index_buffer(self.index_buf.slice(..), wgpu::IndexFormat::Uint32);
-                pass.set_pipeline(&self.stock_pipeline);
-                pass.draw_indexed(self.model_index_count..self.stock_index_end, 0, 0..1);
-            }
-            if traced.is_none() && self.model_edge_count < self.edge_count {
-                pass.set_index_buffer(self.edge_buf.slice(..), wgpu::IndexFormat::Uint32);
-                pass.set_pipeline(&self.line_pipeline);
-                pass.draw_indexed(self.model_edge_count..self.edge_count, 0, 0..1);
-            }
-            if self.stock_index_end < self.index_count {
-                pass.set_index_buffer(self.index_buf.slice(..), wgpu::IndexFormat::Uint32);
-                pass.set_pipeline(&self.region_pipeline);
-                pass.draw_indexed(self.stock_index_end..self.index_count, 0, 0..1);
-            }
+            };
+            let indices = if step.pipe.uses_edge_buffer() { &self.edge_buf } else { &self.index_buf };
+            pass.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+            pass.set_pipeline(pipeline);
+            pass.draw_indexed(step.range.clone(), 0, 0..1);
         }
         if self.overlay_count > 0 {
-            pass.set_pipeline(&self.overlay_pipeline);
+            pass.set_pipeline(&self.pipes.wide_pipeline);
             pass.set_vertex_buffer(0, self.overlay_buf.slice(..));
-            pass.draw(0..self.overlay_count, 0..1);
+            pass.draw(0..6, 0..self.overlay_count);
         }
     }
 
@@ -984,53 +801,6 @@ impl View3D {
         drop(raw);
         buf.unmap();
         Some((out, width, height))
-    }
-}
-
-struct Targets {
-    color: wgpu::Texture,
-    color_view: wgpu::TextureView,
-    depth: wgpu::Texture,
-    depth_view: wgpu::TextureView,
-}
-
-fn make_targets(device: &wgpu::Device, format: wgpu::TextureFormat, width: u32, height: u32) -> Targets {
-    let size = wgpu::Extent3d {
-        width: width.max(1),
-        height: height.max(1),
-        depth_or_array_layers: 1,
-    };
-    let color = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("viewport3d-color"),
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format,
-        // COPY_SRC lets tests read the frame back (View3D::snapshot_rgba);
-        // for the app the flag costs nothing at runtime.
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-            | wgpu::TextureUsages::TEXTURE_BINDING
-            | wgpu::TextureUsages::COPY_SRC,
-        view_formats: &[],
-    });
-    let color_view = color.create_view(&wgpu::TextureViewDescriptor::default());
-    let depth = device.create_texture(&wgpu::TextureDescriptor {
-        label: Some("viewport3d-depth"),
-        size,
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: DEPTH_FORMAT,
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        view_formats: &[],
-    });
-    let depth_view = depth.create_view(&wgpu::TextureViewDescriptor::default());
-    Targets {
-        color,
-        color_view,
-        depth,
-        depth_view,
     }
 }
 
@@ -1128,9 +898,10 @@ impl Camera {
     /// Ray through an NDC cursor position (x right, y up, -1..1):
     /// (origin, normalized direction), or None on degenerate math.
     /// In [`ProjectionMode::Orthographic`] the ray is parallel to the
-    /// view axis and its origin is the cursor's point on the eye plane
-    /// - the mirror of the ortho box [`Camera::mvp`] draws, so a pick
-    ///   through the same matrix hits what the screen shows (#434).
+    /// view axis and its origin is the cursor's point on the near plane,
+    /// [`Camera::ortho_behind_eye`] behind the eye plane - the mirror of
+    /// the ortho box [`Camera::mvp`] draws, so a pick through the same
+    /// matrix hits what the screen shows (#434), nearer faces included (#2375).
     #[must_use]
     pub fn ray_through(&self, ndc: [f32; 2], aspect: f64) -> Option<([f64; 3], [f64; 3])> {
         let (fx, fy, fz) = self.fwd();
@@ -1147,10 +918,11 @@ impl Camera {
             let h = self.ortho_half_height();
             let w = h * aspect;
             let e = self.eye();
+            let back = self.ortho_behind_eye();
             let origin = [
-                e[0] + nx * w * rx + ny * h * ux,
-                e[1] + nx * w * ry + ny * h * uy,
-                e[2] + nx * w * rz + ny * h * uz,
+                e[0] + nx * w * rx + ny * h * ux - back * fx,
+                e[1] + nx * w * ry + ny * h * uy - back * fy,
+                e[2] + nx * w * rz + ny * h * uz - back * fz,
             ];
             let dir = [fx, fy, fz];
             if !origin.iter().all(|v| v.is_finite())
@@ -1435,7 +1207,7 @@ impl Camera {
             // the target plane and any nearer geometry would vanish.
             // The near plane reaches far behind the eye plane so nothing
             // inside the visible box clips away.
-            let near = -((self.dist * 20.0).max(1000.0) - ORTHO_EYE_DIST);
+            let near = -self.ortho_behind_eye();
             // Parallel box (#434): half-height is what perspective sees at
             // the target plane, so `dist` keeps spelling zoom and the
             // mode switch never jumps the framing. Depth is linear and
@@ -1473,6 +1245,13 @@ impl Camera {
     #[must_use]
     pub(crate) fn ortho_half_height(&self) -> f64 {
         self.dist * (std::f64::consts::FRAC_PI_6).tan()
+    }
+
+    /// How far the orthographic near plane sits behind the eye plane, mm:
+    /// [`Camera::mvp`] clips there and [`Camera::ray_through`] starts there.
+    #[must_use]
+    pub(crate) fn ortho_behind_eye(&self) -> f64 {
+        (self.dist * 20.0).max(1000.0) - ORTHO_EYE_DIST
     }
 }
 

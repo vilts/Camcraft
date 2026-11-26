@@ -14,19 +14,29 @@ pub struct DeleteEntity {
     name: String,
     location: Location,
     facets: Option<std::sync::Arc<[Triangle]>>,
+    /// #1339: a vouch comes back with the exact geometry revision it names.
+    revision: u64,
+    fidelity_vouched: Option<crate::schema::FidelityVouched>,
     /// #864: a reduced-fidelity model comes back flagged - an undo that
     /// dropped the flag would loosen every verdict against it.
     coarse_mm: Option<f64>,
+    file_tolerance: bool,
     /// #1054: the STEP facet budget it was imported under comes back too.
     facet_budget: Option<u64>,
     /// #1610: an incomplete model comes back with its hole named.
     hole: Option<String>,
+    /// #917: the closed solids of its facets come back with them.
+    solids: Vec<std::ops::Range<usize>>,
     /// #744: raw STEP text preserved across delete/undo.
     step_source: Option<String>,
+    /// #2463: a linked model comes back linked.
+    source: Option<crate::schema::ModelSource>,
     /// Non-`None` restores the `StockDef` component; `wcs` restores the
     /// `Wcs` tag. Together with the CAM components below they keep every
     /// kind of named entity undoable with its kind intact.
     stock: Option<StockShape>,
+    /// #1862: a DXF profile's setup and drawing; shared, not copied.
+    sketch: Option<crate::schema::Sketch>,
     /// #2015: a stock's workpiece material, restored with it.
     stock_material: Option<crate::tools::WorkMaterial>,
     wcs: bool,
@@ -72,11 +82,17 @@ impl DeleteEntity {
             name: name.to_string(),
             location: model::transform_of(world, &entity).unwrap_or_default(),
             facets: model::facets_of(world, &entity),
+            revision: model::rev_of(world, &entity),
+            fidelity_vouched: crate::model_vouch::record_of(world, &entity),
             coarse_mm: crate::model_fidelity::chord_of(world, &entity),
+            file_tolerance: crate::model_fidelity::file_tolerance_of(world, &entity),
             facet_budget: crate::model_fidelity::budget_of(world, &entity),
             hole: crate::mesh_open::hole_of(world, &entity),
+            solids: crate::mesh_solids::of(world, &entity),
             step_source: crate::step_source::of(world, &entity),
+            source: crate::model_source::of(world, &entity),
             stock: model::stock_def_of(world, &entity),
+            sketch: crate::sketch::sketch_of(world, &entity),
             stock_material: crate::stock_material::of_entity(world, &entity),
             wcs: model::is_wcs(world, &entity),
             wcs_flip: crate::setup_wcs_flip::of_entity(world, &entity),
@@ -115,10 +131,14 @@ impl Command for DeleteEntity {
         if let Some(tris) = &self.facets {
             model::set_facets(world, &entity, tris.clone());
         }
-        crate::model_fidelity::set(world, &entity, self.coarse_mm);
+        model::set_rev(world, &entity, self.revision);
+        crate::model_vouch::set(world, &entity, self.fidelity_vouched.clone());
+        crate::model_fidelity::set_with_cause(world, &entity, self.coarse_mm, self.file_tolerance);
         crate::model_fidelity::set_budget(world, &entity, self.facet_budget);
         crate::mesh_open::set(world, &entity, self.hole.as_deref());
+        crate::mesh_solids::set(world, &entity, &self.solids);
         crate::step_source::set(world, &entity, self.step_source.as_deref());
+        crate::model_source::set(world, &entity, self.source.as_ref());
         if let Some(shape) = &self.stock {
             entity
                 .entity_view(world)
@@ -128,6 +148,9 @@ impl Command for DeleteEntity {
         if self.wcs {
             entity.entity_view(world).add(Wcs);
             crate::setup_wcs_flip::set(world, &entity, self.wcs_flip);
+        }
+        if let Some(sketch) = &self.sketch {
+            entity.entity_view(world).set(sketch.clone());
         }
         if let Some(tool) = &self.tool {
             entity

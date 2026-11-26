@@ -34,6 +34,7 @@ fn bore_world(holes: Vec<Hole>) -> World {
     let tool = catalog().into_iter().find(|(n, _)| *n == TOOL).map(|(_, t)| t).expect("catalog entry");
     history.execute(&world, AddTool::new(&world, TOOL, tool).expect("tool"));
     let params = OpParams::Bore {
+        pass_start: camcraft_app::machining2d::PassStart::Auto,
         break_through: None,
         links: camcraft_app::links::Links::PLANAR,
         clearance_z: Height::fixed(25.0),
@@ -47,6 +48,7 @@ fn bore_world(holes: Vec<Hole>) -> World {
         climb: true,
         tolerance: 0.01,
         holes,
+        picks: Default::default(),
     };
     history.execute(&world, CreateOperation::new(&world, "BOR", TOOL, SrcRef::Stock, params).expect("create"));
     world

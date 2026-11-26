@@ -50,7 +50,8 @@ fn faced_doc(side: f64, stepover: f64, stepdown: Option<f64>) -> World {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
+        picks: Default::default(),
     };
     let cmd = CreateOperation::new(&world, "Face1", "EM-0400-2FL", SrcRef::Stock, params);
     history.execute(&world, cmd.expect("create face"));
@@ -296,6 +297,43 @@ fn the_picture_at_the_start_is_the_uncut_stock_after_the_calculation() {
     );
 }
 
+/// What the keyframes cost as whole copies of the cut layers (the #2181
+/// store): the price that #2194's shared bricks are measured against.
+fn whole_copy_bytes(play: &FieldPlay) -> usize {
+    let keys = play.keyframes();
+    let at = (0..=play.total()).step_by(play.stride()).chain([play.total()]);
+    let mut seen = std::collections::BTreeSet::new();
+    at.filter_map(|k| keys.floor(k)).filter(|c| seen.insert(c.0)).map(|c| c.1.field().map_or(0, |f| f.cut_layer_bytes())).sum()
+}
+
+/// #2194: two keyframes share each cut brick that no move between them
+/// changed (a visit that changes no cell copies nothing), so the store
+/// holds the staged face in a quarter of what whole copies cost at most
+/// - and the replay is still the live cut.
+#[test]
+fn the_keyframes_share_the_bricks_that_no_move_changed() {
+    let world = faced_doc(24.0, 0.8, Some(2.5));
+    // ~0.5 mm cells: 4 mm bricks, so a stride of moves touches a few
+    // of the block's bricks and leaves the others alone.
+    let fine = 24.0 * 24.0 * 20.0 * 8.0;
+    let mut pre = FieldPlay::from_seed(PlaySeed::gather(&world, false, fine).expect("seed")).expect("play");
+    pre.begin_precalc(32, 1, PRECALC_BUDGET).expect("begin");
+    while !pre.precalc_step().expect("a stride cuts") {}
+    let (held, whole) = (pre.keyframe_bytes(), whole_copy_bytes(&pre));
+    println!("{} keys; {held} bytes held; whole copies {whole} bytes", pre.checkpoints());
+    assert!(pre.checkpoints() > 16 && held > 0, "a store with keyframes: {} keys, {held} bytes", pre.checkpoints());
+    assert_eq!(held, pre.keyframes().held_bytes(), "the running count is the audit's");
+    assert!(held.saturating_mul(4) <= whole, "{held} bytes held; whole copies cost {whole}: the store falls by a factor of 4 at least");
+    let mut live = FieldPlay::from_seed(PlaySeed::gather(&world, false, fine).expect("seed")).expect("live");
+    let base = PackedBase::of(&live.view().stock, None).expect("packs").0;
+    let total = pre.total();
+    for k in [total / 2, 1, total, total / 3, 0, total - 1] {
+        live.seek(k).expect("live cut");
+        pre.seek(k).expect("replay");
+        assert_eq!(bits(&pre.view().stock, &base), bits(&live.view().stock, &base), "move {k}: a shared brick is never written through");
+    }
+}
+
 /// The reading for the PR (#2181): calculation time and keyframe memory
 /// on the dense face the playback bench uses.
 #[test]
@@ -309,4 +347,14 @@ fn precalc_reading_on_the_dense_face() {
     println!("moves {}; {p:?}; wall {:.2} s", w.index().total(), t0.elapsed().as_secs_f64());
     let Precalc::Ready { bytes, .. } = p else { panic!("the calculation finishes: {p:?}") };
     assert!(bytes <= PRECALC_BUDGET);
+    drop(w);
+    // #2194: the same store, read against whole copies of its keyframes.
+    let seed = PlaySeed::gather(&world, false, camcraft_app::stock_view::DEFAULT_TEXELS).expect("seed");
+    let mut play = FieldPlay::from_seed(seed).expect("play");
+    play.begin_precalc(camcraft_app::stock_play::MAX_KEYFRAMES, camcraft_app::stock_play::MIN_STRIDE, PRECALC_BUDGET).expect("begin");
+    while !play.precalc_step().expect("a stride cuts") {}
+    let (held, whole) = (play.keyframe_bytes(), whole_copy_bytes(&play));
+    println!("{} keys, stride {}; {held} bytes held; whole copies {whole} bytes; factor {:.1}", play.checkpoints(), play.stride(), whole as f64 / held.max(1) as f64);
+    assert_eq!(held, bytes, "the worker's store is this store");
+    assert!(held.saturating_mul(6) <= whole, "{held} bytes held; whole copies cost {whole}: the dense face falls by a factor of 6 at least");
 }

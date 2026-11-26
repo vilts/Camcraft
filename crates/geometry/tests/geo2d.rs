@@ -251,6 +251,11 @@ fn tri_area(t: &[Point2; 3]) -> f64 {
 }
 
 fn check_triangles(r: &Region, tag: &str) {
+    check_triangles_in(r, tag, Point2::new(0.0, 0.0), 60.0);
+}
+
+/// [`check_triangles`] with the samples in the `w` square at `origin`.
+fn check_triangles_in(r: &Region, tag: &str, origin: Point2, w: f64) {
     let tris = r.triangles().expect(tag);
     let sum: f64 = tris.iter().map(tri_area).sum();
     assert!(
@@ -258,7 +263,8 @@ fn check_triangles(r: &Region, tag: &str) {
         "{tag}: triangle signed-area sum {sum} vs region area {}",
         r.area()
     );
-    for p in sample_points(60.0, 4000) {
+    for s in sample_points(w, 4000) {
+        let p = Point2::new(origin.x + s.x, origin.y + s.y);
         let inside = r.contains(p);
         let covered = tris.iter().any(|t| tri_has(t, p));
         assert_eq!(covered, inside, "{tag}: sample {p:?} disagrees with contains");
@@ -309,4 +315,28 @@ fn region_triangles_refuse_self_crossing() {
     ));
     let r = Region::from_slices(vec![bowtie]).expect("lobes");
     check_triangles(&r, "bowtie lobes");
+}
+
+#[test]
+fn region_triangles_bridge_a_hole_to_a_steep_edge() {
+    // #2762: the hole's rightmost vertex looks right onto a steep, short
+    // edge. The ray hit on that edge rounds to a point a few 1e-16 inside
+    // the material, and a bridge to it lost a part of the fill (fig8's
+    // Outside preview: "no ear in a non-triangle walk"). The bridge goes
+    // to a walk vertex, so the fill is the material area exactly. The
+    // coordinates are fig8's own.
+    let p = Point2::new;
+    let outer = Loop::new(vec![
+        p(0.0, 100.0),
+        p(46.735775, 105.784051),
+        p(48.498894, 123.405089),
+        p(48.499534, 123.595077),
+        p(26.25041, 164.301724),
+        p(0.0, 150.0),
+    ])
+    .expect("outer");
+    let hole = Loop::new(vec![p(42.5, 123.520278), p(30.0, 115.0), p(30.0, 130.0)]).expect("hole");
+    assert!(hole.area() < 0.0, "the hole runs clockwise");
+    let r = Region::new(vec![outer, hole]).expect("holed region");
+    check_triangles_in(&r, "steep edge bridge", p(0.0, 100.0), 65.0);
 }

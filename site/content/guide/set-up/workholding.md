@@ -86,7 +86,7 @@ with the part)** off for a chuck, which turns with the part. Tick it for a
 tailstock or a table, which stands still while a rotary turns the part and
 is checked in the machine frame.
 
-A lathe or mill-turn setup also has **Workholding max rpm** on the Setups
+A lathe or mill-turn (live tooling) setup also has **Workholding max rpm** on the Setups
 page (**Apply rpm** / **Clear rpm**), the chuck's or collet's rated
 maximum. It is held to this way:
 

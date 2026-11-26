@@ -57,6 +57,7 @@ pub fn stock(rho: f64, z0: f64, z1: f64) -> Vec<Triangle> {
 
 pub fn params(strategy: PocketStrategy) -> Pocket3DParams {
     Pocket3DParams {
+        pass_start: Default::default(),
         links: camcraft_motion::links::Links::ROUGH3D,
         tool_diameter: D,
         stepover: 4.0,

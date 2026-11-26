@@ -24,6 +24,15 @@
 //! `cutter`, the same `[z, r, arc]` points, re-judged against the
 //! tool's numbers on load (`spun_to_dto`, `cutter_from_dto`).
 
+//!
+//! A library holder (#2016, project v70) is written as a reference on
+//! the tool (`holder`: the entry's name, the gauge length, the
+//! projection) and no `body`: the outline is drawn from the library on
+//! load (`tool_body::build_library`), the same call that drew it when
+//! it was set. An older file's drawn copy of a library holder stays
+//! what it is, a drawn profile with the same shape. [`stated_body`] is
+//! the one reader of the two keys.
+
 use serde::{Deserialize, Serialize};
 
 use super::{dto_to_facets, facets_to_dto};
@@ -71,6 +80,75 @@ pub struct ToolBodyDto {
     /// coordinate systems so existing files stay byte-identical.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pieces: Vec<BodyPieceDto>,
+}
+
+/// #2016: a tool's library holder on file - the reference, not the
+/// outline.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct HolderRefDto {
+    /// The library entry's name, "BT30 ER20".
+    pub entry: String,
+    /// Gauge line to nose face, mm.
+    pub gauge_len: f64,
+    /// Nose face above the tool tip, mm.
+    pub projection: f64,
+    /// #828: the holder is a machine's default, assumed for a new tool
+    /// (judged no smaller than the tool's holder cylinder). Written
+    /// only when true.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub machine_default: bool,
+}
+
+impl HolderRefDto {
+    /// The reference a body carries, if it is a library holder.
+    #[must_use]
+    pub fn from_body(b: &ToolBody) -> Option<Self> {
+        b.library.as_ref().map(|r| Self {
+            entry: r.entry.clone(),
+            gauge_len: r.gauge_len,
+            projection: r.projection,
+            machine_default: b.machine_default,
+        })
+    }
+
+    /// The body the reference names, drawn from the library; a refusal
+    /// (an unknown entry, lengths the entry cannot take) names the tool.
+    pub fn to_body(&self, tool: &str) -> Result<ToolBody, String> {
+        let reference = camcraft_tools::holder_library::HolderRef {
+            entry: self.entry.clone(),
+            gauge_len: self.gauge_len,
+            projection: self.projection,
+        };
+        let mut body = crate::tool_body::build_library(&reference).map_err(|e| format!("tool '{tool}': {e}"))?;
+        body.machine_default = self.machine_default;
+        Ok(body)
+    }
+}
+
+/// What a tool's `holder` and `body` keys say, split from `body` for
+/// writing: a library holder goes out as its reference alone.
+#[must_use]
+pub fn body_to_dto(b: &ToolBody) -> (Option<HolderRefDto>, Option<ToolBodyDto>) {
+    match HolderRefDto::from_body(b) {
+        Some(h) => (Some(h), None),
+        None => (None, Some(ToolBodyDto::from_body(b))),
+    }
+}
+
+/// The body a tool record states through `holder` (a library
+/// reference) or `body` (a custom one): the one reader of both, for the
+/// project loader and the tool library file. Both keys at once is no
+/// tool - the file refuses by name rather than choose one.
+pub fn stated_body(holder: Option<&HolderRefDto>, body: Option<&ToolBodyDto>, tool: &str) -> Result<Option<ToolBody>, String> {
+    match (holder, body) {
+        (Some(_), Some(_)) => Err(format!(
+            "tool '{tool}': it states both a library holder (\"holder\") and a body (\"body\") - a tool has one"
+        )),
+        (Some(h), None) => h.to_body(tool).map(Some),
+        (None, Some(b)) => b.to_body(tool).map(Some),
+        (None, None) => Ok(None),
+    }
 }
 
 /// One named coordinate system on file (#361 / #1040), tool frame.

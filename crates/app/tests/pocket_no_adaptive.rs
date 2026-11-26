@@ -55,7 +55,7 @@ fn setup_world() -> (flecs_ecs::prelude::World, History) {
 }
 
 fn pocket_params(strategy: PocketStrategy) -> OpParams {
-    OpParams::Pocket {
+    OpParams::Pocket { pass_start: Default::default(),
         links: Links::PLANAR,
         stepover: 2.0,
         stock_to_leave: 0.0,
@@ -75,6 +75,8 @@ fn pocket_params(strategy: PocketStrategy) -> OpParams {
         blend_radius: None,
         rest: None,
         tilt: None,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     }
 }
 
@@ -364,7 +366,7 @@ fn v63_uncarriable_params_mark_needs_review_and_block_posting() {
 fn current_version_file_with_pocket_adaptive_is_refused_as_corrupt() {
     let future = v63_project_with_pocket_adaptive("").replace(
         "\"version\": 63",
-        &format!("\"version\": {}", project::PROJECT_VERSION + 1),
+        &format!("\"version\": {}", project::NEWEST_PROJECT_VERSION + 1),
     );
     assert!(matches!(project::open(&new_world(), &future), Err(ProjectError::UnsupportedVersion(_))),
         "future project formats must be refused before migration");

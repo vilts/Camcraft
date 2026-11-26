@@ -79,6 +79,7 @@ fn mask() -> Dexel {
 
 fn params() -> Pocket3DParams {
     Pocket3DParams {
+        pass_start: Default::default(),
         links: camcraft_motion::links::Links::ROUGH3D,
         tool_diameter: 2.0 * R,
         stepover: 3.0,
@@ -273,6 +274,7 @@ fn filleted_notch_after_outside_profile_clears_open_edge_corner_for_jaws() {
     }
     let cols = Columns::of_grid(&grid);
     let p3 = Pocket3DParams {
+        pass_start: Default::default(),
         links: camcraft_motion::links::Links::ROUGH3D,
         tool_diameter: 2.0 * r,
         stepover: 2.032,
@@ -441,6 +443,7 @@ fn offset_shell_fillet_helix_and_floor_never_cross() {
     }
     let cols = Columns::of_grid(&dex);
     let p3 = Pocket3DParams {
+        pass_start: Default::default(),
         links: Links::ROUGH3D,
         tool_diameter: 6.35,
         stepover: 2.032,

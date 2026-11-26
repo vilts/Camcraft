@@ -63,12 +63,21 @@ fn a_deburr_on_a_finished_brick_links_its_runs_without_a_rapid_in_stock() {
     // The operations suite's ride: a 2-wide break, tips in z 6..8 (the
     // top rim and the top ends of the four vertical edges).
     let params = OpParams::Deburr {
-        width: 2.0,
+        width: 2.0 * std::f64::consts::SQRT_2, // #1890: the chord of a 2.0 mm setback
         clearance_z: Height::fixed(CLEARANCE),
         top_z: Height::fixed(8.0),
         bottom_z: Height::fixed(6.0),
         feed: 500.0,
         plunge_feed: 100.0,
+        // #1888: the edge filters at rest - every exposed edge rides.
+        exclude_edges: Vec::new(),
+        min_edge_angle_deg: 0.0,
+        exclude_holes: false,
+        hole_min_diameter: 0.0,
+        hole_max_diameter: 0.0,
+        unreachable: camcraft_app::finishing3d::UnreachableEdges::SkipWithNote,
+        sizing: camcraft_app::finishing3d::DeburrBreak::default(),
+        picks: Default::default(),
     };
     history.execute(
         &world,

@@ -17,11 +17,15 @@ pub mod chuck;
 pub mod fixture;
 // #339: a fixture's closed mesh as the narrow phase of the steel laws.
 pub mod fixture_mesh;
+// #2584: a generated machine model (blocks and cylinders), posed by axis values.
+pub mod machine_model;
 // #2181: the playback keyframes and the calculation before playback.
 pub mod play_keys;
 pub mod play_precalc;
 pub mod play_precalc_mailbox;
 pub mod sim;
+// #2608: the operation steps of the simulation timeline.
+mod sim_steps;
 pub mod solid_rest;
 pub mod stock_sim;
 pub mod verify;

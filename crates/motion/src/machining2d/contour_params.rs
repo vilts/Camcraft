@@ -6,6 +6,7 @@
 
 use crate::entry::Entry3D;
 use crate::links::Links;
+use crate::path_picks::PathPicks;
 
 use super::face::GenError;
 
@@ -66,8 +67,11 @@ pub enum Side {
     Outside,
 }
 
+/// A cut level this near the tab top is the tab top (mm, #2579).
+const TAB_LEVEL_TOL: f64 = 1e-6;
+
 /// 2D contouring: trim a material region's boundary at successive depths.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ContourParams {
     pub tool_diameter: f64,
     /// Thickness of material deliberately left on the finished faces for
@@ -122,6 +126,10 @@ pub struct ContourParams {
     /// stay sharp and are named in the notes with the worst corner
     /// rest. `false` - every pre-M11.1 file - is unchanged to the byte.
     pub blend_turns: bool,
+    /// The corner arc's radius (#1759), read only with `blend_turns`:
+    /// `None` is the tool radius every earlier file blends at; a radius
+    /// is held to `corner_arc_radius`'s door.
+    pub blend_radius: Option<f64>,
     /// Level transitions and links (M11.2 C/D, `contour_link`): the
     /// descent between levels, and how the tool travels between levels
     /// and between rings - clearance, the retract plane, or keep down
@@ -130,6 +138,8 @@ pub struct ContourParams {
     /// every file before the option (the old `level_link` stay-down ramp
     /// is level Keep down with a Ramp transition).
     pub links: Links,
+    /// The user's start and exit picks (#1448, #3339).
+    pub picks: PathPicks,
 }
 
 impl ContourParams {
@@ -190,6 +200,12 @@ impl ContourParams {
             return Err(GenError::Invalid("tabs need positive width".into()));
         }
         self.links.validate().map_err(|e| GenError::Invalid(e.into()))?;
+        if let Some(why) = self.picks.refusal() {
+            return Err(GenError::Invalid(why));
+        }
+        if self.blend_turns {
+            super::fillet_tally::corner_arc_radius(self.blend_radius, self.tool_diameter).map_err(GenError::Invalid)?;
+        }
         let helix = self.entry == Entry3D::Helix || self.links.transition == Some(Entry3D::Helix);
         if helix && self.helix_radius <= 0.0 {
             // Only positivity: the roughing ladders cap the radius at
@@ -218,6 +234,31 @@ impl ContourParams {
     /// Cut levels from `top_z` down to `bottom_z`, always ending exactly
     /// at the bottom (same snap rule as facing rows).
     pub(super) fn levels(&self) -> Result<Vec<f64>, GenError> {
-        super::levels::cut_levels_under(self.top_z, self.links.approach.stock_top, self.bottom_z, self.stepdown)
+        super::equal_steps::cut_levels_for(self.top_z, &self.links.approach,self.bottom_z, self.stepdown)
+    }
+
+    /// [`Self::levels`] for a closed ring, with the tab top as a level
+    /// (#2579): a ring is cut whole down to `bottom_z + tab_height` and
+    /// with tab windows below it, so the tab is `tab_height` tall for any
+    /// stepdown. Without that level the last whole ring was the stepdown
+    /// level above the tab top, and the tab stood up to it. A level
+    /// within [`TAB_LEVEL_TOL`] of the tab top becomes the tab top itself
+    /// (a float one step under it would carry the tabs). A tab top at or
+    /// above Top Z adds nothing: every level carries the tabs. An open
+    /// run has no tabs and reads [`Self::levels`].
+    pub(super) fn ring_levels(&self) -> Result<Vec<f64>, GenError> {
+        let mut zs = self.levels()?;
+        if self.tab_count == 0 || self.tab_height <= TAB_LEVEL_TOL {
+            return Ok(zs);
+        }
+        // The same sum the tabbed-level test reads (`contour::emit_band`).
+        let tab_top = self.bottom_z + self.tab_height;
+        if let Some(z) = zs.iter_mut().find(|z| (**z - tab_top).abs() <= TAB_LEVEL_TOL) {
+            *z = tab_top;
+        } else if tab_top < self.top_z - TAB_LEVEL_TOL {
+            let at = zs.iter().position(|&z| z < tab_top).unwrap_or(zs.len());
+            zs.insert(at, tab_top);
+        }
+        Ok(zs)
     }
 }

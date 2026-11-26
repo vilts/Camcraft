@@ -46,7 +46,9 @@ pub struct BodyDrag {
     pub origin: [f64; 3],
     /// The axis parameter under the cursor at press.
     pub start_t: f64,
-    /// The signed distance dragged so far, mm.
+    /// Unsnapped drag distance so far, mm (keeps Shift toggle smooth).
+    pub raw_delta: f64,
+    /// The signed distance dragged so far (possibly snapped), mm.
     pub delta: f64,
 }
 
@@ -169,7 +171,15 @@ pub(crate) fn px_per_mm(state: &State, at: [f64; 3]) -> Option<f64> {
 
 /// The handles to draw, or None when nothing may be dragged.
 pub(crate) fn handles(state: &State) -> Option<Handles> {
-    let (name, entity) = draggable(state)?;
+    let Some((name, entity)) = draggable(state) else {
+        // Rotate shares the centre; keep it only while a shown part can use it.
+        if !state.rotate_handles || one_part(state).is_none() {
+            let mut cache = state.move_center.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            cache.key = None;
+            cache.center = None;
+        }
+        return None;
+    };
     let mut center = shown_center(state, &entity)?;
     if let Some(d) = state.body_drag.as_ref().filter(|d| d.name == name) {
         let o = d.offset();
@@ -265,26 +275,60 @@ fn step_limit(state: &State, at: [f64; 3]) -> Option<f64> {
     Some(f64::from(x1 - x0) / k)
 }
 
-/// A left press at `p`: a ball under it starts a drag and the press is
-/// taken (true) - the ball wins over orbit and pick. Elsewhere: false.
+/// A left press at `p`: a ball under it starts a drag (ball wins). Elsewhere: false.
 pub(crate) fn press(state: &mut State, p: [f32; 2]) -> bool {
     let Some(axis) = ball_at(state, p) else { return false };
     let Some(h) = handles(state) else { return false };
     let Some(start_t) = axis_t(state, p, h.center, axis) else { return false };
-    state.body_drag = Some(BodyDrag { name: h.name, axis, origin: h.center, start_t, delta: 0.0 });
+    state.body_drag = Some(BodyDrag { name: h.name, axis, origin: h.center, start_t, raw_delta: 0.0, delta: 0.0 });
+    crate::egui_app::viewport_bar::controls::sync_move_drag(state, axis, 0.0);
     true
 }
 
-/// The pointer moved to `p` during a drag: the preview follows.
+/// The pointer moved to `p` during a drag (without Shift snapping).
+#[cfg(test)]
 pub(crate) fn motion(state: &mut State, p: [f32; 2]) {
+    motion_snapped(state, p, false);
+}
+
+/// The pointer moved to `p` during a drag: the preview follows, snapped to
+/// `state.handle_bar.move_snap_mm` when `snap` is true.
+pub(crate) fn motion_snapped(state: &mut State, p: [f32; 2], snap: bool) {
     let Some(d) = state.body_drag.clone() else { return };
     let Some(t) = axis_t(state, p, d.origin, d.axis) else { return };
     let Some(limit) = step_limit(state, d.origin) else { return };
-    let next = clamp_step(d.delta, t - d.start_t, limit);
+    let raw = clamp_step(d.raw_delta, t - d.start_t, limit);
+    if !raw.is_finite() {
+        return;
+    }
+    let delta = if snap {
+        crate::egui_app::viewport_bar::controls::snap_step(raw, state.handle_bar.move_snap_mm)
+    } else {
+        raw
+    };
     if let Some(live) = state.body_drag.as_mut()
+        && delta.is_finite()
+    {
+        live.raw_delta = raw;
+        live.delta = delta;
+    }
+    crate::egui_app::viewport_bar::controls::sync_move_drag(state, d.axis, delta);
+}
+
+/// Re-evaluate snapping on a held drag when Shift changes without motion.
+pub(crate) fn resnap(state: &mut State, snap: bool) {
+    let Some(d) = state.body_drag.clone() else { return };
+    let next = if snap {
+        crate::egui_app::viewport_bar::controls::snap_step(d.raw_delta, state.handle_bar.move_snap_mm)
+    } else {
+        d.raw_delta
+    };
+    if next != d.delta
         && next.is_finite()
+        && let Some(live) = state.body_drag.as_mut()
     {
         live.delta = next;
+        crate::egui_app::viewport_bar::controls::sync_move_drag(state, d.axis, next);
     }
 }
 
@@ -292,13 +336,20 @@ pub(crate) fn motion(state: &mut State, p: [f32; 2]) {
 pub(crate) fn release(state: &mut State) {
     let Some(d) = state.body_drag.take() else { return };
     if d.delta.is_finite() && d.delta.abs() > MIN_MOVE_MM {
+        crate::egui_app::viewport_bar::controls::sync_move_drag(state, d.axis, d.delta);
         state.pending.push_back(CommandKind::MoveModelBy { delta: d.offset(), name: d.name });
+    } else {
+        crate::egui_app::viewport_bar::controls::clear_live_draft(state, true);
     }
 }
 
 /// Escape: drop the drag, queue nothing. True when there was one.
 pub(crate) fn cancel(state: &mut State) -> bool {
-    state.body_drag.take().is_some()
+    let had = state.body_drag.take().is_some();
+    if had {
+        crate::egui_app::viewport_bar::controls::clear_live_draft(state, true);
+    }
+    had
 }
 
 /// The preview offset for `name` while it is being dragged (shown frame).

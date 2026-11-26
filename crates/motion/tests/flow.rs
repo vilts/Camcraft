@@ -35,6 +35,7 @@ fn p3(x: f64, y: f64, z: f64) -> Point3 {
 
 fn finish(top_z: f64, bottom_z: f64) -> Finish3DParams {
     Finish3DParams {
+        gap_link: camcraft_motion::finishing3d::GapLink::Jump,
         pattern: FinishPattern::Waterline,
         stepover: None,
         tool_diameter: 2.0 * R,
@@ -53,6 +54,7 @@ fn finish(top_z: f64, bottom_z: f64) -> Finish3DParams {
         entry_ramp: false,
         steep_stepover: None,
         pencil_reference: None,
+        waterlines: true,
     }
 }
 
@@ -281,7 +283,10 @@ fn flow5d_states_an_axis_on_every_cut_move() {
     let t = flow5d(&plate, &finish(2.0, -0.5), &c, None).expect("flow over plain ground poses");
     assert!(!t.is_prismatic(), "a lead angle spoke no axis anywhere");
     let mut n = 0;
-    for m in t.moves.iter().filter(|m| m.kind != MoveKind::Rapid) {
+    // #3300: the moves before the first lean state the upright Z
+    // column (the post's known start); the lead law reads from there.
+    let first_lean = t.moves.iter().position(|m| m.axis.is_some_and(|a| a[2] < 1.0 - 1e-9)).unwrap_or(0);
+    for m in t.moves[first_lean..].iter().filter(|m| m.kind != MoveKind::Rapid) {
         let Some(a) = m.axis else { continue };
         let l = (a[0] * a[0] + a[1] * a[1] + a[2] * a[2]).sqrt();
         assert!((l - 1.0).abs() < 1e-9, "axis {a:?} is not unit");

@@ -53,6 +53,7 @@ pub(super) struct Material {
     /// mm (#864, `model_fidelity`): the worst of the entities read. 0 for
     /// every model that met it - the gouge laws then read as always.
     pub(super) excess: f64,
+    pub(super) file_tolerance: bool,
 }
 
 /// The world facets an operation's generator stands in - exactly
@@ -83,6 +84,7 @@ pub(super) fn material_of(
             let mut seen: Vec<&str> = Vec::new();
             let mut bodies = Vec::new();
             let mut excess = 0.0f64;
+            let mut file_tolerance = true;
             for g in items {
                 if seen.contains(&g.entity.as_str()) {
                     continue;
@@ -94,16 +96,19 @@ pub(super) fn material_of(
                     &g.entity,
                     &format!("the selection names '{}', which is gone", g.entity),
                 )?;
+                file_tolerance &= m.excess == 0.0 || m.file_tolerance;
                 excess = excess.max(m.excess);
                 let start = facets.len();
                 facets.extend(m.facets);
-                if facets.len() > start {
+                bodies.extend(m.bodies.iter().map(|b| b.start + start..b.end + start));
+                if m.bodies.is_empty() && facets.len() > start { // #917: or its own solids
                     bodies.push(start..facets.len());
                 }
                 top = top.max(m.top);
             }
             let mut m = usable(facets, top, "the selection")?;
             m.excess = excess;
+            m.file_tolerance = file_tolerance;
             // Two or more bodies: each is read as its own solid and the
             // planes are united; one body keeps the plain read.
             if bodies.len() > 1 {
@@ -125,7 +130,10 @@ pub(super) fn judged_material(world: &World, setup: Option<&str>, src: &SrcRef) 
     let mut m = material_of(world, setup, src)?;
     if !matches!(src, SrcRef::Stock) {
         let stock = crate::setup::stock_entity_name(world, setup);
-        m.excess = m.excess.max(crate::model_fidelity::excess_of(world, &stock));
+        let stock_excess = crate::model_fidelity::excess_of(world, &stock);
+        m.file_tolerance = (m.excess == 0.0 || m.file_tolerance)
+            && (stock_excess == 0.0 || crate::model_fidelity::file_tolerance_behind(world, &stock));
+        m.excess = m.excess.max(stock_excess);
     }
     Ok(m)
 }
@@ -169,8 +177,8 @@ pub fn cross_holes_of(
 /// with its source's holes, read NOW, written into whichever hole list
 /// the kind has - the drill, the boring ride and the thread mill store
 /// the same `holes` shape - plus the drill's radial list when the
-/// document's machine holds a turret (M5.2 F2; a plain mill asks nothing
-/// of the mesh's sides). `name` only words the refusals. The caller
+/// mesh has directed holes. Detection keeps those findings on a mill;
+/// generation refuses unsupported directions. `name` words the refusals. The caller
 /// commits the result as one undoable `EditOperationParams`, so the
 /// app's Detect holes button and the MCP `detect_holes` tool store the
 /// same list. A Bore op keeps only the holes its tool's one ring clears
@@ -187,7 +195,8 @@ pub fn detect_holes(
     if let OpParams::Thread { external: true, holes, .. } = &mut params {
         let found = bosses_of(world, setup, src).map_err(|e| e.to_string())?;
         if found.is_empty() {
-            return Err("no upright round bosses found in the source model - an external thread is milled on one".to_string());
+            let (place, hint) = (super::detect_source::searched(src), super::detect_source::stock_hint(world, name, src));
+            return Err(format!("no upright round bosses found in {place} - an external thread is milled on one{hint}"));
         }
         *holes = found;
         return Ok(DetectedHoles { params, skipped: Vec::new(), undersize: Vec::new() });
@@ -198,23 +207,29 @@ pub fn detect_holes(
         _ => return Err(format!("'{name}' is not a drilling operation")),
     };
     let axial = holes_of(world, setup, src).map_err(|e| e.to_string())?;
-    // #388: the op's own setup's machine, not the active one.
-    let radial = if !is_drill || crate::machine::kind_of_setup(world, setup) == crate::machine::Kind::Mill {
+    // #2601: directed mouths are read on every machine. #3448: a mill
+    // has no turret, so each one is named in `skipped`, never stored.
+    let radial = if !is_drill {
         Vec::new()
     } else {
         cross_holes_of(world, setup, src).map_err(|e| e.to_string())?
     };
+    let (radial, side) = super::cross_reach::keep_reachable(world, setup, radial);
     if axial.is_empty() && radial.is_empty() {
-        return Err(if is_drill {
-            "no drilled holes found in the source model - Z or radial".to_string()
+        return Err(if !side.is_empty() {
+            format!("no hole this Drill op can make along Z: {}", side.join("; "))
         } else {
-            "no Z-axis holes found in the source model - this ride reads only those".to_string()
+            let (place, hint) = (super::detect_source::searched(src), super::detect_source::stock_hint(world, name, src));
+            let what = if is_drill { "drilled holes" } else { "Z-axis holes" };
+            let note = if is_drill { "Z or radial" } else { "this ride reads only those" };
+            format!("no {what} found in {place} - {note}{hint}")
         });
     }
     *holes = axial;
     // #1556: a Bore op's ride is one ring; a hole wider than that ring
     // clears would leave a core - left out here, named, never stored.
-    let skipped = super::bore_reach::skip_unborable(world, name, &mut params)?;
+    let mut skipped = super::bore_reach::skip_unborable(world, name, &mut params)?;
+    skipped.extend(side);
     if let OpParams::Drill { cross, .. } = &mut params {
         *cross = radial;
     }
@@ -230,12 +245,23 @@ pub(super) fn named_material(world: &World, setup: Option<&str>, name: &str, gon
     let Some(entity) = model::find_by_name(world, name) else {
         return Err(GenError::Invalid(gone.to_string()));
     };
+    if crate::sketch::is_sketch(world, &entity) {
+        let Some(pose) = crate::sketch::world_pose(world, &entity) else {
+            return Err(GenError::Invalid(format!(
+                "DXF profile '{name}' has no stock to lie on - set up stock first"
+            )));
+        };
+        return Ok(Material { facets: Vec::new(), top: pose.pos.z, bodies: Vec::new(), excess: 0.0, file_tolerance: false });
+    }
     let facets = crate::setup_align::facets_in(world, &entity, setup).unwrap_or_default();
     let top = crate::setup_align::entity_aabb_in(world, &entity, setup)
         .map(|b| b.max.z)
         .unwrap_or(f64::NAN);
     let mut m = usable(facets, top, name)?;
     m.excess = crate::model_fidelity::excess_of(world, name);
+    m.file_tolerance = crate::model_fidelity::file_tolerance_behind(world, name);
+    // #917: the closed solids of a STEP model, while its facets carry them.
+    m.bodies = crate::mesh_solids::of(world, &entity);
     Ok(m)
 }
 
@@ -250,7 +276,7 @@ pub(super) fn usable(facets: Vec<Triangle>, top: f64, label: &str) -> Result<Mat
             "'{label}' has no usable geometry to machine"
         )));
     }
-    Ok(Material { facets, top, bodies: Vec::new(), excess: 0.0 })
+    Ok(Material { facets, top, bodies: Vec::new(), excess: 0.0, file_tolerance: false })
 }
 
 pub(super) fn from_slice(e: SliceError) -> GenError {
@@ -262,7 +288,7 @@ pub(super) fn from_slice(e: SliceError) -> GenError {
     }
 }
 
-/// The section at `z`, retried a micron below when the plane grazes a
+/// The section at `z` (#917: the union of `bodies`), retried a micron below when the plane grazes a
 /// vertex or edge (a tangential slice is an error by contract, and a
 /// 1 um shift cannot change what a cutter sees) - or when it comes back
 /// empty: a plane at the very top of an imported mesh whose top corners
@@ -270,12 +296,12 @@ pub(super) fn from_slice(e: SliceError) -> GenError {
 /// and reads "no material" over a part that is plainly there. The
 /// section is only ever taken at Top of Part Z (`section_z_of`), so an
 /// empty answer names that height and the span that would answer.
-pub(super) fn section(facets: &[Triangle], z: f64) -> Result<Region, GenError> {
-    let first = match slice::slice(facets, z) {
+pub(super) fn section(facets: &[Triangle], bodies: &[std::ops::Range<usize>], z: f64) -> Result<Region, GenError> {
+    let first = match slice::slice_of(facets, bodies, z) {
         Ok(r) if !r.is_empty() => return Ok(r),
         other => other,
     };
-    match (first, slice::slice(facets, z - SLICE_NUDGE)) {
+    match (first, slice::slice_of(facets, bodies, z - SLICE_NUDGE)) {
         (_, Ok(r)) if !r.is_empty() => Ok(r),
         // The asked plane was clean, or the nudged one was: nothing is
         // there - say where something is.

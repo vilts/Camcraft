@@ -82,7 +82,7 @@ preflight, the release gate tier (in process), version bump, commits
 release PR merges, AGENTS.md "A cut goes PR review"), release build of the
 product packages, signing (Windows, if configured), the portable zip (the
 section below, `cargo xtask package`) and, on request, the installer
-(Windows). On Linux, macOS and FreeBSD the packaging phase runs that OS's
+(Windows). On Linux and macOS the packaging phase runs that OS's
 `package-*.sh` instead, and `--installer` is refused by name.
 `release.ps1` is a thin wrapper forwarding its old switches.
 
@@ -115,7 +115,7 @@ this, so the local cut and the published release cannot drift apart.
 - Under GitHub Actions it appends `version=`, `stage=` and `zip=` to
   `$GITHUB_OUTPUT` and `CAMCRAFT_VERSION=` to `$GITHUB_ENV` (the installer
   and publish steps read them).
-- The zip is the Windows package: a real run on macOS / Linux / FreeBSD is
+- The zip is the Windows package: a real run on macOS / Linux is
   refused by name (their packages come from `package-*.sh`); `--dry-run`
   prints the file list on any host.
 
@@ -181,3 +181,41 @@ an unsigned release, not a failed one.
 Obtaining a certificate: buy an OV or EV code-signing certificate from any
 public CA (EV ones live on hardware tokens or a cloud signing service, which
 is the local-thumbprint route).
+
+### macOS signing and notarization (#1642)
+
+`package-macos.sh` can sign the universal app and disk image with Developer
+ID and submit them to Apple for notarization. It works in `release.yml` and
+when run locally on macOS with Xcode tools.
+
+Export one Developer ID Application identity, including its private key, as
+a password-protected PKCS#12 file. Include the matching Apple Developer ID
+intermediate certificate in the export if the signing host does not have it.
+Create a team API key for notarization in App Store Connect. Save the `.p8`
+private key, key ID, and issuer ID. See [Apple's Developer ID
+instructions](https://developer.apple.com/developer-id/) and its
+[App Store Connect API key instructions](https://developer.apple.com/documentation/appstoreconnectapi/creating-api-keys-for-app-store-connect-api).
+
+Set these values as GitHub Actions repository secrets. For a local run, pass
+the same names as environment variables. Join the base64 output into one
+line before saving it.
+
+| Name | Value |
+|---|---|
+| `CAMCRAFT_MACOS_CERT_P12_BASE64` | Base64-encoded PKCS#12 file (`.p12`) |
+| `CAMCRAFT_MACOS_CERT_PASSWORD` | Nonempty password for the PKCS#12 file |
+| `CAMCRAFT_MACOS_NOTARY_KEY_BASE64` | Base64-encoded App Store Connect team private key (`.p8`) |
+| `CAMCRAFT_MACOS_NOTARY_KEY_ID` | App Store Connect API key ID |
+| `CAMCRAFT_MACOS_NOTARY_ISSUER_ID` | App Store Connect issuer ID |
+
+With all five values unset or empty, the script logs that the release is
+unsigned for distribution and uses ad hoc app signing. A partial
+configuration stops packaging. With all values configured, the script signs
+the app with the hardened runtime and a secure timestamp, checks the
+signature, and staples Apple's ticket before making the final ZIP. It then
+signs, notarizes, and staples the DMG. It checks both tickets and copies both
+packages into the distribution folder after packaging succeeds.
+
+If Apple rejects a submission, use the submission ID in the package log to
+retrieve the report with `xcrun notarytool log` and the same API key. See
+[Apple's notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow).

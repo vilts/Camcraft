@@ -12,7 +12,7 @@
 //! Fixture: generated here, our own geometry - the rational quadratic
 //! circular arc of Piegl & Tiller, "The NURBS Book" (2nd ed., sec. 7.2),
 //! with z linear in the angle, written as ISO 10303-21 entities (one
-//! `ADVANCED_FACE` in an `OPEN_SHELL`, two helical `B_SPLINE_CURVE` rails
+//! `ADVANCED_FACE` in an `OPEN_SHELL` of a `SHELL_BASED_SURFACE_MODEL`, two helical `B_SPLINE_CURVE` rails
 //! and two run-out curves crossing the strip on the bias, as polylines of
 //! points on the face). No user file.
 //!
@@ -130,7 +130,6 @@ fn flank_step(turns: usize) -> String {
     // Corners: (0, 0), (1, CAP), (1, 1), (0, 1 - CAP).
     let corners = [cap_start[0], cap_start[CAP_POINTS], cap_end[0], cap_end[CAP_POINTS]];
     let v: Vec<String> = corners.iter().map(|p| point(&mut out, *p)).collect();
-    drop(point);
     let mut e = |body: String| ent(&mut out, body);
     let surface = e(format!(
         "( BOUNDED_SURFACE() B_SPLINE_SURFACE(1, 2, (({}), ({})), .UNSPECIFIED., .F., .F., .F.) \
@@ -189,7 +188,9 @@ fn flank_step(turns: usize) -> String {
     let lp = e(format!("EDGE_LOOP('', ({}))", oriented.join(", ")));
     let bound = e(format!("FACE_OUTER_BOUND('', {lp}, .T.)"));
     let face = e(format!("ADVANCED_FACE('', ({bound}), {surface}, .T.)"));
-    e(format!("OPEN_SHELL('', ({face}))"));
+    // #917: a shell stands in a surface model (ISO 10303-42), not bare.
+    let shell = e(format!("OPEN_SHELL('', ({face}))"));
+    e(format!("SHELL_BASED_SURFACE_MODEL('', ({shell}))"));
     format!(
         "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION(('CamCraft #1602 fixture: a thread flank'), '2;1');\n\
          FILE_NAME('', '', (''), (''), '', '', '');\nFILE_SCHEMA(('AUTOMOTIVE_DESIGN'));\nENDSEC;\nDATA;\n\
@@ -257,7 +258,10 @@ fn a_four_turn_thread_flank_meshes_at_full_fidelity_in_a_bounded_count() {
     let facets = &mesh.facets;
     // ~80 steps a turn at 5 um on a 6.35 mm radius, two triangles each;
     // the isotropic division made 523 K.
-    assert!(facets.len() < 5_000, "{} facets for a four-turn strip", facets.len());
+    // #2844: solidcore-tess plans the strip isotropically (391338 facets
+    // after a replan at half the chord); the kernel seam divides it over
+    // its boundary nodes (`camcraft_kernel::mesh_redivide`, 1150 facets).
+    assert!(facets.len() < 5_000, "facet count over the bound: {} facets for a four-turn strip", facets.len());
     assert!(step::coarse(chord).is_none(), "meshed at the promised chord, not reduced: {chord} mm");
     // No triangle crosses the turns: the longest edge a sound mesh has is
     // the strip's own diagonal (1.47 mm across, ~0.5 mm a step).

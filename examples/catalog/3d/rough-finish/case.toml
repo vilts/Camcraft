@@ -1,0 +1,3 @@
+kinds = ["3D Pocket", "3D Finish"]
+machine = "3-axis mill"
+expect = "post"

@@ -8,7 +8,7 @@ use flecs_ecs::prelude::World;
 use crate::commands::{Command, CommandError};
 use crate::geometry::feature;
 use crate::model;
-use crate::operation::{FeatureSel, GeoSel, SrcRef};
+use crate::operation::{ChainOverride, FeatureSel, GeoSel, OpParams, SrcRef};
 use crate::schema::Operation;
 
 /// Set which features an operation machines - the pick list behind
@@ -25,6 +25,26 @@ pub struct SetOperationGeometry {
 
 impl SetOperationGeometry {
     pub fn new(world: &World, name: &str, items: Vec<GeoSel>) -> Result<Self, CommandError> {
+        Self::build(world, name, items, None)
+    }
+
+    /// #1864: atomically replace geometry picks and Contour per-chain overrides
+    /// as a single undoable command (used by MCP `set_operation_geometry`).
+    pub fn with_chain_overrides(
+        world: &World,
+        name: &str,
+        items: Vec<GeoSel>,
+        overrides: Vec<ChainOverride>,
+    ) -> Result<Self, CommandError> {
+        Self::build(world, name, items, Some(overrides))
+    }
+
+    fn build(
+        world: &World,
+        name: &str,
+        items: Vec<GeoSel>,
+        overrides: Option<Vec<ChainOverride>>,
+    ) -> Result<Self, CommandError> {
         let Some(entity) = model::find_by_name(world, name) else {
             return Err(CommandError::NotFound(name.to_string()));
         };
@@ -48,6 +68,7 @@ impl SetOperationGeometry {
             valid_pick(world, g)?;
         }
         let src = SrcRef::Selection(deduped);
+        super::gates::sketch_gate(world, prev.setup.as_deref(), &src, &prev.params)?;
         // A re-pick moves every From: Selection height (M11.3 A): the
         // new picks must answer them, in order, before the swap lands.
         // Params that never read the selection pass exactly as before.
@@ -62,13 +83,42 @@ impl SetOperationGeometry {
         // A probe's pick seeds its touch (#171) in this same command, so
         // one undo takes back the pick and the seed together; a pick the
         // probe cannot touch is refused here, by name.
-        let params = match crate::operation::probe_from_picks(world, &prev.params, src_items(&src)) {
+        let mut params = match crate::operation::probe_from_picks(world, prev.setup.as_deref(), &prev.params, src_items(&src)) {
             Some(seeded) => seeded.map_err(CommandError::Invalid)?,
             None => prev.params.clone(),
         };
         // #1504: a Slot's picks seed the slot that fills them, in this
         // same command - one undo takes back the pick and the seed.
-        let params = crate::operation::slot_from_picks(world, prev.setup.as_deref(), &params, src_items(&src)).unwrap_or(params);
+        params = crate::operation::slot_from_picks(world, prev.setup.as_deref(), &params, src_items(&src)).unwrap_or(params);
+        if let Some(ovs) = overrides {
+            match &mut params {
+                OpParams::Contour { chain_overrides, .. } => {
+                    *chain_overrides = ovs;
+                    if !params.is_sane() {
+                        return Err(CommandError::Invalid(
+                            "duplicate or invalid per-chain override in selection".into(),
+                        ));
+                    }
+                }
+                _ if !ovs.is_empty() => {
+                    return Err(CommandError::Invalid(format!(
+                        "per-chain side and direction overrides apply to 2D Contour only, not {}",
+                        params.kind()
+                    )));
+                }
+                _ => {}
+            }
+        }
+        if !prev.area.do_not_touch.is_empty()
+            && let Some(why) = crate::operation::avoid_overlap_issue(
+                world,
+                &prev.area.do_not_touch.picks,
+                Some(&src),
+                &prev.area,
+            )
+        {
+            return Err(CommandError::Invalid(why));
+        }
         let next = Operation { src, params, ..prev.clone() };
         Ok(SetOperationGeometry { name: name.to_string(), prev, next })
     }
@@ -101,17 +151,43 @@ fn valid_pick(world: &World, g: &GeoSel) -> Result<(), CommandError> {
             g.entity
         )));
     }
+    if let Some(sketch) = crate::sketch::sketch_of(world, &e) {
+        let found = match &g.feature {
+            FeatureSel::SketchChain(id) => sketch.data.chains().find(*id).is_some(),
+            FeatureSel::SketchLayer(layer) => sketch.data.layers().iter().any(|l| l == layer),
+            _ => {
+                return Err(CommandError::Invalid(format!(
+                    "'{}' is a DXF profile - pick a sketch chain or layer, not a {}",
+                    g.entity, g.feature
+                )));
+            }
+        };
+        if !found {
+            return Err(CommandError::Invalid(format!(
+                "{} is not in DXF profile '{}'",
+                crate::pick::geo_label(world, g),
+                g.entity
+            )));
+        }
+        return Ok(());
+    }
     let Some(features) = model::features_of(world, &e) else {
         return Err(CommandError::Invalid(format!(
             "'{}' has no geometry to select from",
             g.entity
         )));
     };
-    let found = match g.feature {
-        FeatureSel::Face(id) => features.faces.iter().any(|f| f.id == id),
-        FeatureSel::Chain(id) => crate::model::resolve_chain(&features, id).is_some(),
-        FeatureSel::Patch(id) => feature::patches(&features).iter().any(|p| p.id == id),
-        FeatureSel::Vertex(id) => feature::resolve_vertex(&features, id).is_some(),
+    let found = match &g.feature {
+        FeatureSel::Face(id) => features.faces.iter().any(|f| f.id == *id),
+        FeatureSel::Chain(id) => crate::model::resolve_chain(&features, *id).is_some(),
+        FeatureSel::Patch(id) => feature::patches(&features).iter().any(|p| p.id == *id),
+        FeatureSel::Vertex(id) => feature::resolve_vertex(&features, *id).is_some(),
+        FeatureSel::SketchChain(_) | FeatureSel::SketchLayer(_) => {
+            return Err(CommandError::Invalid(format!(
+                "'{}' is a model, not a DXF profile",
+                g.entity
+            )));
+        }
     };
     if !found {
         return Err(CommandError::Invalid(format!(

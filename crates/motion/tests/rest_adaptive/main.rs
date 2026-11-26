@@ -15,7 +15,11 @@ mod sim;
 
 use camcraft_motion::cl::MoveKind;
 use camcraft_motion::geo2d::{Point2, Region};
-use camcraft_motion::machining2d::{rest_adaptive, GenError, PocketParams, RestStock, StockFloor, REST_STOCK_FILM};
+use camcraft_motion::links::{Approach, Links};
+use camcraft_motion::machining2d::{
+    rest_adaptive, rest_adaptive_previous, rest_levels, rest_stock_from_columns, GenError, PocketParams, RestParams,
+    RestSource, RestStock, StockFloor, REST_ADAPTIVE_ENTERED, REST_ADAPTIVE_NO_STOCK, REST_STOCK_FILM,
+};
 use camcraft_motion::quality::rest_area;
 
 use sim::{
@@ -295,4 +299,96 @@ fn on_a_fine_grid_the_corners_read_within_the_planning_margin() {
     let r = read_leaving(&path, &region, &mut sim, 0.3);
     assert_load_within(&r, LOAD_SLACK);
     assert!(r.left < 0.05, "{:.3} mm2 of rest material in reach is left standing", r.left);
+}
+
+fn from_ops() -> RestParams {
+    RestParams {
+        source: RestSource::PreviousOperations,
+        previous_tool_diameter: 0.0,
+        previous_corner_radius: 0.0,
+        previous_stock_to_leave: 0.0,
+        allowance: 0.0,
+    }
+}
+
+#[test]
+fn the_column_stock_of_the_previous_operations_plans_the_rest_adaptive_pass() {
+    // Issue 1446: the stock is read from the simulated columns (not
+    // from the roughing path), and the path is held to every law.
+    let region = filleted(&rect(0.0, 0.0, 60.0, 40.0), 3.0);
+    let mut sim = Sim::new(&region);
+    let _ = roughed(&region, &mut sim, BOTTOM);
+    let before = rest_area(&sim.dex, &region, BOTTOM).unwrap();
+    let path = {
+        let cols = sim.dex.columns().unwrap();
+        rest_adaptive_previous(&region, &rest_params(), &from_ops(), Some(&cols)).unwrap()
+    };
+    assert!(path.notes.iter().any(|n| n.contains("reads the stock that the previous operations leave")), "{:?}", path.notes);
+    let r = read(&path, &region, &mut sim);
+    assert_load_held(&r);
+    assert!(before > 20.0 && r.left < 0.05, "{:.3} of {before:.1} mm2 of rest material is left standing", r.left);
+    for m in path.moves.iter().filter(|m| m.kind == MoveKind::Feed) {
+        let (dx, dy) = (m.to.x.min(60.0 - m.to.x), m.to.y.min(40.0 - m.to.y));
+        assert!(dx < 14.0 && dy < 14.0, "a feed at ({}, {}) is outside the corners", m.to.x, m.to.y);
+    }
+}
+
+#[test]
+fn the_previous_operations_planner_refuses_what_it_cannot_prove() {
+    let region = filleted(&rect(0.0, 0.0, 60.0, 40.0), 3.0);
+    let p = rest_params();
+    // An entered previous tool proves nothing.
+    let entered = RestParams { source: RestSource::EnteredTool, previous_tool_diameter: 12.0, ..from_ops() };
+    let mut sim = Sim::new(&region);
+    let _ = roughed(&region, &mut sim, FIRST);
+    let cols = sim.dex.columns().unwrap();
+    assert!(refusal(rest_adaptive_previous(&region, &p, &entered, Some(&cols))).contains(REST_ADAPTIVE_ENTERED));
+    // No stock of the previous operations.
+    assert!(refusal(rest_adaptive_previous(&region, &p, &from_ops(), None)).contains(REST_ADAPTIVE_NO_STOCK));
+    // Roughed to Z-2 only: the floor at Z-4 stands whole, and no plunge
+    // is proved clear there.
+    let msg = refusal(rest_adaptive_previous(&region, &p, &from_ops(), Some(&cols)));
+    assert!(msg.contains("no proved-clear") || msg.contains("entry"), "{msg}");
+}
+
+#[test]
+fn rest_levels_and_previous_ops_honour_equal_steps() {
+    let region = filleted(&rect(0.0, 0.0, 60.0, 40.0), 3.0);
+    let mut sim = Sim::new(&region);
+    let _ = roughed(&region, &mut sim, BOTTOM);
+    let mut p = rest_params();
+    p.top_z = TOP;
+    p.bottom_z = BOTTOM;
+    p.stepdown = 1.5;
+    p.links = Links { approach: Approach { equal_steps: true, ..Links::PLANAR.approach }, ..Links::PLANAR };
+
+    let zs = rest_levels(&p).unwrap();
+    let expected = [0.0, -4.0 / 3.0, -8.0 / 3.0, -4.0];
+    assert_eq!(zs.len(), expected.len(), "expected 4 equal-step levels, got {zs:?}");
+    for (&got, &want) in zs.iter().zip(&expected) {
+        assert!((got - want).abs() < 1e-9, "got {zs:?}, expected {expected:?}");
+    }
+
+    let cols = sim.dex.columns().unwrap();
+    let prev_path = rest_adaptive_previous(&region, &p, &from_ops(), Some(&cols)).unwrap();
+    let stock = rest_stock_from_columns(&cols, &region, &zs).unwrap().with_film(cols.cell() * (1.0 + std::f64::consts::SQRT_2)).unwrap();
+    let rest_path = rest_adaptive(&region, &p, &stock).unwrap();
+    for (label, path) in [("rest_adaptive_previous", &prev_path), ("rest_adaptive", &rest_path)] {
+        let mut cut_zs: Vec<f64> = path
+            .moves
+            .iter()
+            .filter(|m| m.kind == MoveKind::Feed && (m.from.z - m.to.z).abs() < 1e-9)
+            .map(|m| m.to.z)
+            .collect();
+        cut_zs.sort_by(f64::total_cmp);
+        cut_zs.dedup_by(|a, b| (*a - *b).abs() < 1e-9);
+        for z in [-4.0 / 3.0, -8.0 / 3.0, -4.0] {
+            assert!(cut_zs.iter().any(|&c| (c - z).abs() < 1e-6), "{label}: missing cut at Z{z}: {cut_zs:?}");
+        }
+        assert!(
+            cut_zs.iter().all(|&c| zs.iter().any(|&want| (c - want).abs() < 1e-6)),
+            "{label}: unexpected cut depth in {cut_zs:?}"
+        );
+        assert_eq!(check(path, &region), Vec::new(), "{label}: verifier warnings");
+    }
 }

@@ -86,6 +86,8 @@ fn params(kind: Kind, clearance: f64) -> OpParams {
             lead_deg: 0.0,
             lag_deg: 0.0,
             max_tilt_deg: 60.0,
+            stated_axis: None,
+            picks: Default::default(),
         },
         // The crown and upper flanks: a laid bar's passes stay on the
         // half the head can reach from above (B never past +-90).
@@ -102,6 +104,8 @@ fn params(kind: Kind, clearance: f64) -> OpParams {
             lead_deg: 0.0,
             lag_deg: 0.0,
             max_tilt_deg: 60.0,
+            stated_axis: None,
+            picks: Default::default(),
         },
         Kind::Offset => OpParams::RotaryOffset {
             links: camcraft_app::links::Links::ROUGH3D,
@@ -122,6 +126,8 @@ fn params(kind: Kind, clearance: f64) -> OpParams {
             lead_deg: 0.0,
             lag_deg: 0.0,
             max_tilt_deg: 60.0,
+            stated_axis: None,
+            picks: Default::default(),
         },
     }
 }
@@ -130,6 +136,10 @@ fn params(kind: Kind, clearance: f64) -> OpParams {
 /// stock a rotary job is clamped from (standing for the contour and
 /// the rough, laid along x for the parallel).
 fn world_for(kind: Kind, dia: f64, clearance: f64) -> World {
+    world_with(kind, dia, params(kind, clearance))
+}
+
+fn world_with(kind: Kind, dia: f64, op: OpParams) -> World {
     let world = new_world();
     let mut h = History::default();
     let tool = catalog().into_iter().find(|(n, _)| *n == "BN-0600").map(|(_, t)| t).expect("catalog ball");
@@ -144,7 +154,7 @@ fn world_for(kind: Kind, dia: f64, clearance: f64) -> World {
     h.execute(&world, stock.expect("bar stock"));
     let mesh = if lying { laid() } else { revolve(16) };
     h.execute(&world, ImportModel::from_mesh("bar", Mesh::from_facets(mesh)));
-    let op = CreateOperation::new(&world, "OP", "BN-0600", SrcRef::Entity("bar".into()), params(kind, clearance));
+    let op = CreateOperation::new(&world, "OP", "BN-0600", SrcRef::Entity("bar".into()), op);
     h.execute(&world, op.expect("create"));
     h.execute(&world, GenerateOperation::new(&world, "OP").expect("generate"));
     // The tilting head owns the letters; G54 sits above the work (the
@@ -255,6 +265,26 @@ fn rotary_parallel_on_a_laid_bar_verifies_clean_and_posts() {
     posts_clean(Kind::Parallel, "rp");
 }
 
+/// #2970: with Bottom at the bar's underside the passes go all the
+/// way round, and the tilting head (B -120..120) cannot point the tool
+/// up at the underside: the machine check refuses by axis, angle and
+/// travel, and nothing posts. A Bottom over the axis (the case above)
+/// keeps to the arc the head reaches.
+#[test]
+fn a_full_turn_rotary_parallel_refuses_on_a_head_that_cannot_reach_under() {
+    let OpParams::RotaryParallel { tolerance, stepover, clearance_z, retract_z, top_z, feed, plunge_feed, climb, lead_deg, lag_deg, max_tilt_deg, .. } =
+        params(Kind::Parallel, 25.0)
+    else {
+        unreachable!("the parallel params")
+    };
+    let op = OpParams::RotaryParallel { tolerance, stepover, clearance_z, retract_z, top_z, bottom_z: Height::fixed(-6.2), feed, plunge_feed, climb, lead_deg, lag_deg, max_tilt_deg, stated_axis: None, picks: Default::default() };
+    let world = world_with(Kind::Parallel, 12.4, op);
+    let report = posting::verification_report(&world);
+    let text = format!("{:?}", report.problems);
+    assert!(text.contains(": move ") && text.contains(" commands B ") && text.contains("the travel is -120.000..120.000"), "{text}");
+    blocks(&world, "rp-full");
+}
+
 #[test]
 fn rotary_offset_on_a_round_bar_verifies_clean_and_posts() {
     posts_clean(Kind::Offset, "ro");
@@ -318,10 +348,13 @@ fn a_rough_over_an_oversized_bar_peels_from_the_stock_radius() {
     // matching bar; after: 7,082 - the seven air levels each sweep
     // half what they did. The matching bar has no air level, so its
     // program is the unsplit ladder's, move for move.
+    // #3168 (PR #3496) closes each Auto/Zigzag wrap level with a seam
+    // ring: the matching bar went 2,064 -> 2,110 moves (the rings), the
+    // d20 bar 7,648 -> 7,578. The air-lap law above is unchanged (#3774).
     let snug = cache(&world_for(Kind::Offset, 12.4, 25.0)).path.moves.len();
     let big = c.path.moves.len();
     eprintln!("ROTARY OFFSET | d20 bar {big} moves | d12.4 bar {snug} moves");
-    assert_eq!(snug, 2064, "the matching bar has no air level - its ladder must not move");
+    assert_eq!(snug, 2110, "the matching bar has no air level - its ladder must not move");
     assert!(big < 9000, "air levels still clear both laps: {big} moves (11,967 when they did)");
 }
 

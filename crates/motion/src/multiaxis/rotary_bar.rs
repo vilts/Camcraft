@@ -23,6 +23,26 @@ use super::axis;
 /// path's frame. A fit that fails, or no finite extent, is the error.
 pub fn revolved_bar(facets: &[Triangle], stock: Option<&[Triangle]>) -> Result<Bar, GenError> {
     let ax = axis::fit(facets)?;
+    revolved_bar_about(facets, stock, ax)
+}
+
+/// [`revolved_bar`] about a stated axis the caller has judged (#2772
+/// parts 1-2, `axis_stated::judged_any`): the bar the centre-cutting
+/// audit reads must be the same line the kernel wrapped about.
+pub fn revolved_bar_stated(
+    facets: &[Triangle],
+    stock: Option<&[Triangle]>,
+    ax: axis::Axis,
+) -> Result<Bar, GenError> {
+    revolved_bar_about(facets, stock, ax)
+}
+
+/// The bar about `ax`, the plain entry's own body.
+fn revolved_bar_about(
+    facets: &[Triangle],
+    stock: Option<&[Triangle]>,
+    ax: axis::Axis,
+) -> Result<Bar, GenError> {
     let u = ax.dir;
     let (mut radius, mut lo, mut hi) = (0.0f64, f64::INFINITY, f64::NEG_INFINITY);
     for q in facets.iter().chain(stock.unwrap_or(&[])).flat_map(|t| [t.a, t.b, t.c]) {

@@ -13,10 +13,14 @@
 
 mod controls;
 mod form;
+mod scroll_gutter;
+/// #2339: the saved panel arrangements - the dock's JSON, the start load.
+pub(crate) mod setups;
 // #2516: Tab, Shift+Tab and Enter over the pane's value fields.
 pub mod field_ring;
 pub(crate) use controls::*;
 pub(crate) use form::*;
+pub(crate) use scroll_gutter::keep_scroll_gutter;
 #[cfg(test)]
 mod banner_tests;
 #[cfg(test)]
@@ -115,7 +119,7 @@ fn reopen(dock: &mut DockState<Tab>, tab: Tab) {
     // #287: the Machines pane opens as a tab beside the properties pane
     // when that is open (same side, same width - one more context pane),
     // else alone at the right like the properties pane would.
-    if matches!(tab, Tab::Machines | Tab::Tools | Tab::AiChat | Tab::DebugInfo)
+    if matches!(tab, Tab::Machines | Tab::AiChat | Tab::DebugInfo)
         && let Some(props) = dock.find_tab(&Tab::Properties)
         && let Ok(leaf) = dock.leaf_mut(props.node_path())
     {
@@ -149,7 +153,6 @@ fn close(dock: &mut DockState<Tab>, p: Panel) {
 pub(crate) fn apply(dock: &mut DockState<Tab>, req: LayoutRequest) {
     match req {
         LayoutRequest::Show(p) => show(dock, tab_of(p)),
-        LayoutRequest::ToolLibrary => show(dock, Tab::Tools),
         LayoutRequest::ToggleDebugInfo => match dock.find_tab(&Tab::DebugInfo) {
             Some(path) => {
                 dock.remove_tab(path);
@@ -170,6 +173,11 @@ pub(crate) fn settle(state: &mut State, dock: &mut DockState<Tab>) {
     if let Some(req) = state.layout_request.take() {
         apply(dock, req);
     }
+    // #2339: the Panel setups window files one ask; the dock is read or
+    // swapped here, where the shell keeps it.
+    if let Some(ask) = state.panel_setup_ask.take() {
+        setups::apply_ask(state, dock, ask);
+    }
     state.panels_open = panels_open(dock);
     // #2262: the tab's own X closes the panel too, so the flag follows the dock.
     state.debug_info_open = is_open(dock, &Tab::DebugInfo);
@@ -183,15 +191,18 @@ pub(crate) enum ViewRow {
     /// Listed, always checked, inert: the viewport cannot close.
     Viewport,
     Panel(Panel),
+    /// #2339: open the Panel setups window (save, load, delete).
+    Setups,
     Reset,
 }
 
-const ROWS: [ViewRow; 6] = [
+const ROWS: [ViewRow; 7] = [
     ViewRow::Viewport,
     ViewRow::Panel(Panel::Browser),
     ViewRow::Panel(Panel::Properties),
     ViewRow::Panel(Panel::Machines),
     ViewRow::Panel(Panel::AiChat),
+    ViewRow::Setups,
     ViewRow::Reset,
 ];
 
@@ -202,6 +213,7 @@ fn row_label(r: ViewRow) -> &'static str {
         ViewRow::Panel(Panel::Properties) => "Properties",
         ViewRow::Panel(Panel::Machines) => "Machines",
         ViewRow::Panel(Panel::AiChat) => "AI Chat",
+        ViewRow::Setups => "Panel setups...",
         ViewRow::Reset => "Reset layout",
     }
 }
@@ -274,7 +286,7 @@ pub(super) fn view_drop(
                 let checked = match row {
                     ViewRow::Viewport => Some(true),
                     ViewRow::Panel(pn) => Some(open.get(*pn)),
-                    ViewRow::Reset => None,
+                    ViewRow::Setups | ViewRow::Reset => None,
                 };
                 super::painted::menu_item(&resp, row_label(*row), live, checked);
                 if let Some(on) = checked {
@@ -314,6 +326,10 @@ pub(super) fn view_drop(
         Some(ViewRow::Viewport) => {}
         Some(ViewRow::Panel(p)) => {
             state.layout_request = Some(LayoutRequest::Toggle(p));
+            state.ribbon_view_open = false;
+        }
+        Some(ViewRow::Setups) => {
+            state.panel_setups_open = true;
             state.ribbon_view_open = false;
         }
         Some(ViewRow::Reset) => {

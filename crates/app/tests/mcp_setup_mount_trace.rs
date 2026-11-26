@@ -55,7 +55,7 @@ fn saved_project(dir: &std::path::Path) -> PathBuf {
         }
         let face = OpParams::Face {
             holes: Default::default(),
-            blend_turns: false,
+            blend_turns: false, blend_radius: None,
             tilt: None,
             stepover: 3.0,
             clearance_z: Height::fixed(25.0),
@@ -65,6 +65,7 @@ fn saved_project(dir: &std::path::Path) -> PathBuf {
             feed: 1200.0,
             plunge_feed: 300.0,
             climb: true,
+            picks: Default::default(),
         };
         h.execute(&world, CreateOperation::new(&world, op, TOOL, SrcRef::Stock, face).expect("face"));
     }

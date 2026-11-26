@@ -1,7 +1,8 @@
 //! Wavefront OBJ reader (subset: `v` and `f` geometry; material/group lines
 //! parsed-and-ignored). Polygon faces are fan-triangulated. Vertex dedup is
 //! by exact bit pattern (f64), so coincident vertices are shared, not
-//! duplicated.
+//! duplicated; face references still count the `v` records of the file,
+//! repeated ones included (#3298).
 //!
 //! Provenance: the OBJ line grammar is public; implemented from that spec.
 
@@ -15,6 +16,10 @@ pub fn parse(data: &[u8]) -> Result<Mesh, ImportError> {
         .map_err(|_| ImportError::Obj("not valid UTF-8".into()))?;
 
     let mut verts: Vec<Point3> = Vec::new();
+    // #3298: one entry per `v` record in file order, holding its index in
+    // `verts`. Face references count records, not unique positions. It grows
+    // linearly with the input bytes (each record is at least 7 bytes).
+    let mut records: Vec<u32> = Vec::new();
     let mut seen: HashMap<(u64, u64, u64), u32> = HashMap::new();
     let mut facets: Vec<Triangle> = Vec::new();
 
@@ -36,18 +41,26 @@ pub fn parse(data: &[u8]) -> Result<Mesh, ImportError> {
                     return Err(ImportError::TooLarge);
                 }
                 let key = key_of(p);
-                match seen.entry(key) {
+                let unique = match seen.entry(key) {
                     std::collections::hash_map::Entry::Vacant(vacant) => {
-                        vacant.insert(verts.len() as u32);
+                        let index = verts.len() as u32;
+                        vacant.insert(index);
                         verts.push(p);
+                        index
                     }
-                    std::collections::hash_map::Entry::Occupied(_) => {}
-                }
+                    std::collections::hash_map::Entry::Occupied(occupied) => *occupied.get(),
+                };
+                records.push(unique);
             }
             "f" => {
                 let mut refs: Vec<u32> = Vec::new();
                 for word in tok {
-                    refs.push(resolve_ref(word, verts.len(), line)?);
+                    let record = resolve_ref(word, records.len(), line)?;
+                    // resolve_ref bounds `record` by records.len()
+                    let unique = records.get(record).copied().ok_or_else(|| {
+                        ImportError::Obj(format!("line {line}: vertex reference '{word}' out of range"))
+                    })?;
+                    refs.push(unique);
                 }
                 if refs.len() < 3 {
                     return Err(ImportError::Obj(format!(
@@ -124,7 +137,7 @@ fn read_point<'a>(tok: &mut impl Iterator<Item = &'a str>, line: usize) -> Resul
 }
 
 /// `1`, `1/2`, `1//3`, `1/2/3`, and negative (relative) references.
-fn resolve_ref(word: &str, nverts: usize, line: usize) -> Result<u32, ImportError> {
+fn resolve_ref(word: &str, nverts: usize, line: usize) -> Result<usize, ImportError> {
     let first = word.split('/').next().unwrap_or(word); // split always yields >=1 item
     let idx: i64 = first
         .parse()
@@ -139,7 +152,7 @@ fn resolve_ref(word: &str, nverts: usize, line: usize) -> Result<u32, ImportErro
             "line {line}: vertex reference '{word}' out of range"
         )));
     }
-    Ok(resolved as u32)
+    Ok(resolved as usize)
 }
 
 /// Exact-bit key with -0.0 folded to +0.0 (NaN is impossible: finite-checked).

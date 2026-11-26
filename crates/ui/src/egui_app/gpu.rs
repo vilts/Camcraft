@@ -218,6 +218,7 @@ mod tests {
 
     #[test]
     fn adapter_probe_names_the_gpu() {
+        let _gpu = crate::egui_app::gpu_test_lock::gpu_guard(); // #3589
         // The real instance here; machines without a GPU adapter skip -
         // an honest CI note, not a silent pass.
         let instance =

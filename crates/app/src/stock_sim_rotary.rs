@@ -68,11 +68,24 @@ pub const ROTARY_KIND_UNMEASURED: &str = "a rotary cut turns the part under a po
 /// Contour - 276 standing tops exact, 0 misses over 6,940 centres,
 /// 92,727 sub-chords, the eye 3,947 in 8.7 s; Rotary Offset - 440
 /// standing tops exact, 0 misses over 7,020 centres, 89,685
-/// sub-chords, the eye 3,124 in 6.4 s.
+/// sub-chords, the eye 3,124 in 6.4 s. Rotary Flow - measured
+/// 2026-11-25 (#2828, the laid bar's neck band, its passes picked
+/// between the rings at x 2 and x 16): 168 sphere-cut tops within
+/// 1.27e-5 of the law (bound 2.01e-5), 1,015 standing tops exact,
+/// 0 misses over 7,053 centres, 35,491 sub-chords, the eye 2,131
+/// sub-chords in 3.0 s.
 #[must_use]
 pub fn rotary_kind_lift(params: &OpParams) -> Option<Result<(), &'static str>> {
     match params {
-        OpParams::RotaryParallel { .. } | OpParams::RotaryContour { .. } | OpParams::RotaryOffset { .. } => Some(Ok(())),
+        OpParams::RotaryParallel { .. }
+        | OpParams::RotaryContour { .. }
+        | OpParams::RotaryOffset { .. }
+        // #2828: the flow band's chord-pass parity and cost are
+        // measured on its own program (the heavy lane of
+        // `rotary_field_parity.rs`, the note above) - the eye cuts
+        // it; the column verdict still refuses it by name, as it
+        // refuses every rotary kind.
+        | OpParams::RotaryFlow { .. } => Some(Ok(())),
         _ => None,
     }
 }

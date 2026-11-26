@@ -75,7 +75,7 @@ fn doc(dz: f64) -> (World, History) {
 }
 
 fn cut(world: &World, h: &mut History, name: &str, side: WireSide, start: Option<[f64; 2]>) {
-    let op = WireContourOp { top_z: Height::fixed(12.0), bottom_z: Height::fixed(0.0), condition: "C110".into(), side, start, tabs: None, capture: true, burnout: None, taper_deg: 0.0, clearance: camcraft_app::operation::DEFAULT_CLEARANCE, four_axis: None, skims: Vec::new() };
+    let op = WireContourOp { lead_arc_radius: None, top_z: Height::fixed(12.0), bottom_z: Height::fixed(0.0), condition: "C110".into(), side, picks: camcraft_app::path_picks::PathPicks { start: start.map(|[x, y]| camcraft_app::path_picks::PathPick::xy(camcraft_app::geo2d::Point2::new(x, y))).into_iter().collect(), exit: Vec::new() }, tabs: None, capture: true, both_pieces_restrained: false, stock_centered_in_xy_travel: false, burnout: None, taper_deg: 0.0, clearance: camcraft_app::operation::DEFAULT_CLEARANCE, four_axis: None, skims: Vec::new(), sharp_corners: false };
     let c = CreateOperation::new(world, name, "EDM-W025", SrcRef::Entity("part".into()), OpParams::WireContour(op)).expect("op");
     h.execute(world, c);
     if start.is_some() {
@@ -95,8 +95,13 @@ fn a_correct_die_and_a_correct_punch_pass_and_name_the_piece_they_free() {
     let line = c.line.expect("the judged line");
     assert!(line.starts_with(posting::WIRE_VERDICT), "{line}");
     let (die, punch) = line.split_once("; Punch1").expect("both judged");
-    assert!(die.contains("Die1 frees") && die.ends_with("(waste) into the stated capture"), "the die's slug is waste: {line}");
-    assert!(punch.contains("frees") && punch.ends_with("(the part) into the stated capture"), "the punch drops: {line}");
+    assert!(die.contains("Die1 frees") && die.contains("(waste) into the stated capture"), "the die's slug is waste: {line}");
+    assert!(punch.contains("frees") && punch.contains("(the part) into the stated capture"), "the punch drops: {line}");
+    // #3215: the 2 mm fillets are cut as arcs read from the facets, judged
+    // under the model's chord, and the line says so.
+    for cut in [die, punch] {
+        assert!(cut.contains("kerf judged under the model's chord tolerance 0.0060 mm"), "{line}");
+    }
     let report = posting::verification_report(&world);
     assert!(report.problems.iter().all(|p| !p.contains("wire")), "{:?}", report.problems);
     assert!(report.not_judged.is_some_and(|n| n.contains(posting::WIRE_VERDICT)), "said, not silent");

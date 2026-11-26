@@ -152,7 +152,10 @@ fn numeric_qs(body: &str) -> Vec<(u16, String)> {
     body.split_whitespace().filter_map(|w| {
         let n = w.strip_prefix('Q')?;
         let (n, v) = n.split_once('=')?;
-        if v == "FMAX" { return None; }
+        // #3102: every Q value is a signed number. A word such as FMAX
+        // makes an iTNC 530 DIN/ISO import refuse the whole block.
+        let signed = v.starts_with('+') || v.starts_with('-');
+        assert!(signed && v.parse::<f64>().is_ok(), "Q{n} has the value {v:?}, not a signed number: {body}");
         Some((n.parse().expect("numeric Q address"), v.to_string()))
     }).collect()
 }
@@ -206,8 +209,8 @@ fn peck_and_deep_have_distinct_documented_native_cycles_and_q_inventory() {
     let out = post(&stream(&rs));
     assert!(out.warnings.is_empty(), "{:?}", out.warnings);
     let bs = bodies(&out.program);
-    assert_qs(definition(&bs, "G205"), &[(200,"+0"),(201,"-8"),(206,"+150"),(202,"+4"),(203,"+0"),(204,"+0"),(212,"+0"),(205,"+4"),(258,"+0"),(259,"+0"),(257,"+4"),(256,"+1"),(211,"+0.2"),(379,"+0"),(253,"+150"),(395,"+0")]);
-    assert!(definition(&bs, "G205").contains("Q208=FMAX"));
+    assert_qs(definition(&bs, "G205"), &[(200,"+0"),(201,"-8"),(206,"+150"),(202,"+4"),(203,"+0"),(204,"+0"),(212,"+0"),(205,"+4"),(258,"+0"),(259,"+0"),(257,"+4"),(256,"+1"),(211,"+0.2"),(379,"+0"),(253,"+150"),(208,"+99999.999"),(395,"+0")]);
+    assert!(!out.program.contains("FMAX"), "#3102: no Q word is FMAX: {}", out.program);
     assert_qs(definition(&bs, "G200"), &[(200,"+0"),(201,"-8"),(206,"+90"),(202,"+4"),(210,"+0"),(203,"+0"),(204,"+0"),(211,"+0"),(395,"+0")]);
     assert_eq!(calls(&bs), 2);
 }

@@ -102,6 +102,7 @@ pub fn thread(radius: f64, pitch: Option<f64>, hand: ThreadHand, climb: bool) ->
         hand,
         external: false,
         passes: camcraft_app::machining2d::ThreadPasses::default(),
+        picks: Default::default(),
     }
 }
 
@@ -123,6 +124,7 @@ pub fn drill(radius: f64, floor: f64) -> OpParams {
         plunge_feed: 80.0,
         holes: vec![hole],
         cross: vec![],
+        picks: Default::default(),
     }
 }
 

@@ -52,6 +52,20 @@
 //! threading and slug laws never use it. Zero - the default - judges
 //! the facets as they stand.
 //!
+//! A constant taper against a meshed model (#3210): the generator lays
+//! the wire from the model's section at one height, and the facets at
+//! the other heights stand off the true wall by up to the model's
+//! chord tolerance. The caller states that chord as the verify
+//! tolerance (`taper_chord`), and the undercut law (`undercut`) judges
+//! the last pass under it: a move that cuts a drafted wall at one
+//! height must cut it at every height.
+//!
+//! Arcs read from a meshed model (#3215): a vertical cut whose arcs were
+//! read back from the facets passes between the facet chords and the
+//! true circle. The caller states the model's chord as the verify
+//! tolerance (`taper_chord`) for it too. The undercut law runs only for
+//! a cut that states a taper.
+//!
 //! Provenance: plain 2D distance and region geometry (point-segment
 //! distance, polygon booleans and the disc sweep of `geo2d`, clipper2)
 //! over the public wire EDM practice the umbrella #290 cites: the kerf
@@ -60,11 +74,17 @@
 //! region (die slug or punch). Our own code; no vendor post, control
 //! manual or CAM product behaviour was consulted.
 
+mod arcs;
 mod dist;
 mod finding;
 mod kerf;
 mod passes;
 mod slug;
+mod undercut;
+#[cfg(test)]
+mod arc_tests;
+#[cfg(test)]
+mod depth_tests;
 #[cfg(test)]
 mod hold_tests;
 #[cfg(test)]
@@ -77,6 +97,7 @@ mod tol_tests;
 use crate::cl::Toolpath;
 use crate::geo2d::{Point2, Region};
 
+pub use arcs::ARC_SAG;
 pub use finding::{slugs_said, WireFinding, WireUnder};
 pub use slug::Slug;
 
@@ -161,6 +182,10 @@ pub struct WireJob<'a> {
     /// kerf may enter the model's facets and still pass the kerf law.
     /// 0 judges the facets as they stand.
     pub verify_tol: f64,
+    /// `verify_tol` is the model's chord tolerance (module head): a
+    /// constant-taper cut (#3210), whose undercut law runs under it, or a
+    /// vertical cut of arcs read from the facets (#3215).
+    pub taper_chord: bool,
 }
 
 /// The verdict: every refusal, and the pieces the cut frees at the
@@ -182,6 +207,8 @@ pub struct WireVerdict {
     /// The deepest kerf reading that tolerance let pass; `None` when no
     /// reading needed it.
     pub under: Option<WireUnder>,
+    /// `verify_tol` is the model's chord tolerance (#3210), not stated.
+    pub chord: bool,
 }
 
 /// The product's section at one height (module head): the model, or
@@ -225,6 +252,7 @@ pub fn judge(job: &WireJob<'_>) -> WireVerdict {
         return v;
     }
     v.verify_tol = tol;
+    v.chord = job.taper_chord;
     let wire = match polyline(job.path, job.taper) {
         Ok(p) => p,
         Err(why) => {
@@ -244,6 +272,10 @@ pub fn judge(job: &WireJob<'_>) -> WireVerdict {
     }
     // A tabbed cut's skims (#538 x #539) are not cut: the hold law
     // reads one pass's main cut and its cut-off.
+    if job.cutoff_from.is_some() && wire.has_arcs() {
+        v.findings.push(WireFinding::Unreadable("a tabbed cut holds arc moves - tabs are read on straight moves only".into()));
+        return v;
+    }
     if job.cutoff_from.is_some() && !job.skim_offsets.is_empty() {
         v.findings.push(WireFinding::Unreadable("a tabbed cut states skim passes - skims are cut on an untabbed profile only".into()));
         return v;
@@ -288,6 +320,14 @@ pub fn judge(job: &WireJob<'_>) -> WireVerdict {
     if let Some((clear, z)) = worst.filter(|(c, _)| *c < k - KERF_TOL) {
         v.findings.push(WireFinding::Threading { z, at: start, clear, need: k });
     }
+    if job.taper_chord {
+        gouge = gouge.map(WireFinding::under_chord);
+    }
+    // A burnout is cut vertical and never states a taper; nor does a
+    // vertical cut of arcs read from the facets (#3215).
+    if job.taper_chord && job.taper {
+        v.findings.extend(undercut::judge(&job.sections, |s| product(s, opening), &wire, &passes, tol));
+    }
     v.findings.extend(gouge);
     slug::judge(job, &wire, &passes, opening, &mut v);
     v
@@ -317,7 +357,7 @@ fn open(job: &WireJob<'_>, wire: &Wire, k: f64, v: &mut WireVerdict) {
     if let Some((clear, z, at)) = worst.filter(|(c, _, _)| *c < k - KERF_TOL) {
         v.findings.push(WireFinding::OpenEndInStock { z, at, clear, need: k });
     }
-    v.findings.extend(gouge);
+    v.findings.extend(if job.taper_chord { gouge.map(WireFinding::under_chord) } else { gouge });
 }
 
 fn product(s: &WireSection, opening: bool) -> Product<'_> {

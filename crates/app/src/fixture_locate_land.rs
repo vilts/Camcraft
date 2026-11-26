@@ -82,13 +82,13 @@ pub fn stock_lands(world: &World, spec: &LocateSpec, plan: &Plan, stocks: &[(Str
         let missed = |what: &str| {
             format!(
                 "mate {k}: {} of the stock '{name}' {what} {} - the stock keeps its upright shape round the turned part, so that face does not meet the fixture; locate it without a turn, or locate the part",
-                crate::pick::feature_name_or_kind(world, &name, m.part.feature),
+                crate::pick::feature_name_or_kind(world, &name, &m.part.feature),
                 crate::pick::geo_label(world, &m.fixture),
             )
         };
-        match m.part.feature {
+        match &m.part.feature {
             FeatureSel::Face(fid) => {
-                let f = features.faces.iter().find(|f| f.id == fid).ok_or_else(|| gone(world, &m.part))?;
+                let f = features.faces.iter().find(|f| f.id == *fid).ok_or_else(|| gone(world, &m.part))?;
                 let face: Vec<Triangle> = f.facets.iter().filter_map(|&i| want.get(i as usize).copied()).collect();
                 if face.len() != f.facets.len() {
                     return Err(gone(world, &m.part));
@@ -98,7 +98,7 @@ pub fn stock_lands(world: &World, spec: &LocateSpec, plan: &Plan, stocks: &[(Str
                 }
             }
             FeatureSel::Vertex(id) => {
-                let p = feature::resolve_vertex(&features, id)
+                let p = feature::resolve_vertex(&features, *id)
                     .and_then(|vi| features.verts.get(vi as usize))
                     .map(|q| transform_point(Point3::new(q[0], q[1], q[2]), pose.pos, pose.rot))
                     .map(|q| v(transform_point(q, plan.delta.pos, plan.delta.rot)))
@@ -108,8 +108,11 @@ pub fn stock_lands(world: &World, spec: &LocateSpec, plan: &Plan, stocks: &[(Str
                     return Err(missed("would not touch"));
                 }
             }
-            // `plan` refuses edges and curved patches before this runs.
-            FeatureSel::Patch(_) | FeatureSel::Chain(_) => {}
+            // `plan` refuses edges, curved patches and DXF sketch picks before this runs.
+            FeatureSel::Patch(_)
+            | FeatureSel::Chain(_)
+            | FeatureSel::SketchChain(_)
+            | FeatureSel::SketchLayer(_) => {}
         }
     }
     Ok(())

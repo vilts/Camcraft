@@ -160,6 +160,8 @@ pub(super) fn dispatch_mcp_call(
             summary: summary.clone(),
         },
     );
+    // #1944: the model gets at most the reply cap, with a truncation hint.
+    let (result_val, summary) = super::budget::cap_tool_reply(result_val, summary);
     let raw = tool_result(input.preset.provider, call, &result_val);
     messages.push(TurnMessage {
         role: "tool".to_owned(),

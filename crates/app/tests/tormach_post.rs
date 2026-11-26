@@ -462,7 +462,7 @@ fn a_face_job_on_the_built_in_770mx_passes_the_gate_and_posts_inch() {
     // Z 25 mm and the cut at Z 19.5 both stand ABOVE G54 Z0.
     let face = OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -472,6 +472,7 @@ fn a_face_job_on_the_built_in_770mx_passes_the_gate_and_posts_inch() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     h.execute(
         &world,

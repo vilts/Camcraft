@@ -142,12 +142,12 @@ fn the_inch_thread_words_are_pinned() {
     let mch = posting::machine_value(&world);
     let out = engine::run_with(CPS, &mch, &cnc::serialize(&records), &units(options, "inch")).expect("posts");
     let p = &out.program;
-    // mm: G00 X12.1 Z14 / G76 P010000 Q400 R0.4 / G76 X9.6 Z8 P1200 Q400 F2.
+    // mm: G00 X12.1 Z16. / G76 P010000 Q400 R0.4 / G76 X9.6 Z8. P1200 Q400 F2.
     // 0.4 mm = 157 ten-thousandths, 1.2 mm = 472, lead 2 mm = 0.07874 in.
     // R is 0.0158, not 0.4 mm's 0.0157: the control reads the rounded
     // words, and 472 - 157 = 315 would sit one past the second rung 314
     // and cut a fourth pass (PR #517 review; lathe_post_g76_schedule).
-    assert!(p.contains("G00 X0.4764 Z0.5512\nG76 P010000 Q157 R0.0158\n"), "{p}");
+    assert!(p.contains("G00 X0.4764 Z0.6299\nG76 P010000 Q157 R0.0158\n"), "{p}");
     assert!(p.contains("G76 X0.378 Z0.315 P472 Q157 F0.07874\n"), "{p}");
     assert!(p.contains("G20 G18 G40 G80 G99\n"), "{p}");
     // The G32 passes carry the lead at six decimals.

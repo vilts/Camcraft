@@ -48,7 +48,7 @@ fn the_names_checkbox_flips_view_state_not_a_command_and_persists() {
 fn the_choice_survives_a_restart_and_a_corrupt_file_starts_with_names_on() {
     let d = temp_dir("restart");
     let file = d.join(FILE_NAME);
-    view::save(&file, &ViewPrefs { show_gizmo_names: false }).expect("write an off choice");
+    view::save(&file, &ViewPrefs { show_gizmo_names: false, ..ViewPrefs::default() }).expect("write an off choice");
     let mut second = State::new();
     second.load_view_from(&file);
     assert!(!second.show_gizmo_names, "the next run starts the way the last left it");

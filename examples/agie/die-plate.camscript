@@ -1,0 +1,26 @@
+// Original CAMCraft example. Run from the project root with a fresh output name.
+cam.call("load_machine", {builtin: "AGIECUT Classic 2S (template)"});
+// This synthetic job explicitly selects the resident recipe and its preview gap.
+cam.call("edit_machine", {patch: {edm: {conditions: [{
+  id: "AGIE_QN2", role: "rough", gap: 0.005, wire_diameter: 0.25
+}]}}});
+cam.call("add_tool", {catalog: "EDM-W025"});
+cam.import("examples/agie/die-plate.obj", "plate");
+cam.call("set_stock", {box: {dx: 70, dy: 70, dz: 20}});
+cam.call("set_wcs", {origin: [0, 0, 20]});
+cam.call("add_operation", {
+  kind: "Wire Contour", name: "Die1", source: "plate", tool: "EDM-W025",
+  params: {
+    top_z: 20, bottom_z: 0, side: "die", condition: "AGIE_QN2",
+    start: [-5.5, 0], capture: true
+  }
+});
+// Select the complete opening on the upper face of the retained plate.
+const faces = cam.call("list_features", {model: "plate", kinds: ["faces"]}).faces;
+const top = faces.find(face => face.facing === "up");
+const rim = top.loops.find(loop => loop.kind === "hole" && loop.complete);
+cam.call("set_operation_geometry", {operation: "Die1",
+  picks: rim.chains.map(id => ({model: "plate", id: id}))
+});
+cam.generate();
+cam.post({to: "DIE20", cps: "Native wire EDM job files", options: {separationLengthMm: 1.0}});

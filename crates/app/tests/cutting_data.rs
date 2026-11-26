@@ -43,10 +43,11 @@ fn slot_params() -> OpParams {
         plunge_feed: 200.0,
         climb: true,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
-        helix_radius: 1.0,
+        helix_radius: 1.0, blend_turns: false, blend_radius: None,
         tilt: None,
         extend_start: 0.0,
         extend_end: 0.0,
+        picks: Default::default(),
     }
 }
 
@@ -108,7 +109,7 @@ fn faced_doc() -> (World, History) {
     let stock = SetStock::new(&world, StockShape::Box { dx: 60.0, dy: 60.0, dz: 20.0 }, Default::default());
     h.execute(&world, stock.expect("stock"));
     let face = OpParams::Face { holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -118,6 +119,7 @@ fn faced_doc() -> (World, History) {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     h.execute(&world, CreateOperation::new(&world, "Face1", "EM-0400-2FL", SrcRef::Stock, face).expect("create"));
     h.execute(&world, GenerateOperation::new(&world, "Face1").expect("generate"));

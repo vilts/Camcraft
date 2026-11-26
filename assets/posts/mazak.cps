@@ -15,6 +15,7 @@ minimumRevision = 1;
 extension = "nc";
 setCodePage = "utf-8";
 capabilities = 1; // reference contract: integer feature mask (bit 1 = milling)
+axisInversion = true; // verified on the engine's mirrored stream for a flipped WCS X/Y and an inverted machine X/Y (#2475): trace equivalence test + golden
 coolantModes = true; // reads PARAM Coolant (#112/#150): the engine refuses non-Flood ops for a post without it
 afterModes = true; // reads PARAM AfterOperation (#110): the engine refuses a stop or home ask for a post without it
 workOffsetIndex = true; // reads PARAM WorkOffset as the 1-based offset number (#931)
@@ -87,6 +88,7 @@ var setupNext = null;      // #1647: null means no marker; a cleaned name may be
 var homedAt = -1;          // linesWritten() just after a trip home (#504): onClose skips its own home when nothing followed
 var coolantOp = "";        // the section's OperationName, for refusals (#150)
 var sectionOpen = false;   // preamble written (a legacy .cl carries no SECTION)
+var wcsFlip = "";          // #1649: the flipped WCS axes ("X", "Y", "XY") - the engine mirrored the section
 var smoothTol = 0;          // #616: the section's PARAM Smoothing, mm (0: none asked)
 var smoothMode = "";        // #616: "finish" or "rough"
 var smoothActive = false;   // #616: this section wrote its smoothing words
@@ -125,12 +127,31 @@ function fu(v) { return pt(fn(v)); }  // a length word, with its point
 function fa(v) { return pt(has(v) ? trimNum(Number(v).toFixed(3)) : "0"); }  // angle (deg) at 3 decimals with point
 function ff(v) {  // a feed: whole mm/min, or in/min at two decimals
   if (!(has(v) && v > 0)) return "0";
-  return inch ? trimNum((v / 25.4).toFixed(2)) : String(Math.round(v));
+  // #3690: a whole inch F without a point can use 0.01 in/min units.
+  // MAZATROL MATRIX EIA/ISO programming manual, sections 7-2 and 7-3.
+  return pt(inch ? trimNum((v / 25.4).toFixed(2)) : String(Math.round(v)));
 }
 function eps() { return inch ? "0.0001" : "0.001"; } // one output step, the probe checks' band
 function ni(v) { return has(v) ? String(Math.round(v)) : "0"; }
 function w(letter, v) { return has(v) ? letter + fu(v) : ""; }
 function fw(v) { return has(v) ? "F" + ff(v) : ""; }
+// #3699: a tap feed is pitch x rpm, kept at 0.001 mm/min by the stream, and
+// the control cuts the pitch F / S. G84 writes the feed at three mm or four
+// inch decimals, with its point; a tap whose written F and S do not hold
+// the pitch to 0.01 percent is refused by name.
+function tapFeed(v) { return pt(fn(v)); }
+function tapPitchHolds(feed) {
+  var speed = Math.round(sRpm);
+  var written = Number(fn(feed)) * (inch ? 25.4 : 1);
+  var want = sRpm > 0 ? feed / sRpm : 0;
+  var got = speed > 0 ? written / speed : 0;
+  if (!(want > 0 && Math.abs(got - want) / want <= 1e-4)) {
+    msg("canned cycle G84 (tap)" + (coolantOp ? " in operation " + coolantOp : "") + " feed " + feed + " mm/min at " + sRpm +
+      " rpm posts as F" + tapFeed(feed) + " S" + speed + " - refused: the written pitch differs by more than 0.01 percent");
+    return false;
+  }
+  return true;
+}
 var seqNum = 0;
 var seqNextForce = false;
 var secStarted = 0;
@@ -219,6 +240,7 @@ function retractHome(xyToo) {
 }
 function xyz(p) { return [wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ)]; }
 function wo(letter, v, o) { return has(v) ? letter + fu(v - o) : ""; }  // axis word, origin-relative
+function arcWord(k, v) { return wo(k, v, k === "X" ? orgX : (k === "Y" ? orgY : orgZ)); }  // #3442: a position word as written, for arcFate
 function msg(s) {  // counted warning where the host offers message()
   if (typeof message === "function") message(s); else writeln("; " + s);
 }
@@ -389,6 +411,8 @@ function joinDash(parts) {  // the non-empty parts, " - " between
   return a.join(" - ");
 }
 function note(s) { block(["(" + s + ")"]); }
+// Program notes use this dialect without truncating the stated bound.
+function onComment(s) { note(commentText(s)); }
 function commentParam(name, value) {
   if (name === "SetupName") setupName = clean(value);
   else if (name === "OperationName") opName = clean(value);
@@ -421,6 +445,18 @@ function unitBlock() {
   block([inch ? "G20" : "G21"]);
 }
 
+// The machine's inverted linear axes (#375): the engine has mirrored the
+// stream into the controller's frame, and the header says so, one note
+// for each axis. A standard machine lists none.
+function invertedNotes() {
+  var a = (typeof machine !== "undefined" && machine && machine.invertedAxes) || [];
+  var where = { X: "LEFT", Y: "TOWARD THE FRONT", Z: "DOWN" };
+  for (var i = 0; i < a.length; i++) {
+    var l = String(a[i]);
+    note("MACHINE " + l + "+ MOVES " + (where[l] || "THE OTHER WAY") + " - INVERTED AXIS");
+  }
+}
+
 function onOpen() {
   inch = typeof postOptions !== "undefined" && postOptions.Units === "inch";
   var nm = (typeof machine !== "undefined" && machine.name) || "CAMCRAFT";
@@ -428,6 +464,7 @@ function onOpen() {
   // #594: the machine name is user text - cleaned like every other
   // comment text, so `Tormach 770MX (ML)` never nests.
   rawBlock([oWord(), "(" + (progComment() || clean(nm) || "CAMCRAFT") + ")"]);
+  invertedNotes();
   writeHeaderExtras();
   unitBlock();
 }
@@ -495,6 +532,7 @@ function onParameter(name, value) {
   else if (name === "OriginX" && has(value)) orgX = Number(value);
   else if (name === "OriginY" && has(value)) orgY = Number(value);
   else if (name === "OriginZ" && has(value)) orgZ = Number(value);
+  else if (name === "WcsFlip") wcsFlip = String(value || "");
   else if (name === "WcsYaw" && has(value)) wcsYaw = Number(value);
   else if (name === "WcsRotationMode") wcsRotMode = String(value || "");
 }
@@ -548,6 +586,8 @@ function startPreamble() {
   // stopped before its first move, whatever the tool change did.
   var probeStop = spindleWait && !(sRpm > 0);
   opNotes();
+  // #1649: the operator reads why every sign on a flipped axis is the other one.
+  if (wcsFlip) note("WCS " + wcsFlip.split("").join(" AND ") + " FLIPPED - PROGRAM MIRRORED");
   block(["G17", "G90", wcsWord, "G40", "G49", "G80"]);
   planeG = 17;              // the preamble states the plane
   if (toolWait) {
@@ -631,7 +671,7 @@ function endPreamble() {
 }
 
 function onSection() { seatKnown = false; startPreamble(); }
-function onSectionEnd() { endPreamble(); hopZ = null; clearZ = null; }  // #1028, #1633: the next section states its own planes
+function onSectionEnd() { endPreamble(); wcsFlip = ""; hopZ = null; clearZ = null; }  // #1028, #1633: the next section states its own planes
 
 // ------------------------------------------------------------- motions
 // While a canned-cycle group is open its expanded hole chain is the
@@ -807,6 +847,9 @@ function emitArcWithRadius(p, g, fwd) {
 function onCircular() {
   startPreamble();
   compRefuse("an arc");
+  // #3442: an arc whose written ends coincide is no arc block (arcFate, PRELUDE).
+  var fate = arcFate(arcWord, arcIncOf(fu));  // #3474: I J K are increments from the start
+  if (fate !== "arc") { if (fate === "linear") onLinear(); return; }
   if (!tiltOk(properties) || chainCut()) return;
   if (spindleStopped("arc move " + (properties.CircularDirection === "CW" ? "G02" : "G03"))) return;
   var p = properties;
@@ -919,6 +962,7 @@ function onCycle() {
     return;
   }
   if (spindleStopped("canned cycle " + g)) return;
+  if (g === "G84" && !tapPitchHolds(Number(p.FeedRate))) return;
   if (!xyFirst(p.X, p.Y, p.R, false)) return;  // #1633: refused - the move is not written
   cycleSeat(p);
   var sig = g + "|" + p.Z + "|" + p.R + "|" + p.Q;
@@ -936,7 +980,7 @@ function onCycle() {
       words.push(w("Q", p.Q));
     }
     if (ms > 0 && g !== "G73" && g !== "G84") words.push("P" + ms);
-    words.push(fw(p.FeedRate));
+    words.push(g === "G84" ? "F" + tapFeed(p.FeedRate) : fw(p.FeedRate));
     block(words);
     cycleSig = sig;
   }

@@ -78,10 +78,10 @@ fn level_center() -> Region {
 /// Round E: red on the hop assert (23 over 8): the round C reading of
 /// 8 hops came from joins whose leads crossed other passes.
 #[test]
-#[ignore = "issue #1950 blocked after round H (maintainer decides): red - 10 retract hops (over 8): 7 are wall lap pieces split where a lap meets a front run end; a trim at the outer lap reads 0.2437 over the 0.1538 bound (~25 s debug)"]
+#[ignore = "known-fail #1950 | lib | machining2d::pocket_hsm::ring_tests::the_stock_ring_level_reaches_the_air_planner_with_the_stock | hops "]
 fn the_stock_ring_level_reaches_the_air_planner_with_the_stock() {
     let t = std::time::Instant::now();
-    let Ok((passes, notes, rest, _, _, travel, refused)) = hsm_passes(&level_center(), &params(), Some(&stock())) else { panic!("plan") };
+    let Ok((passes, notes, rest, _, _, travel, refused)) = hsm_passes(&level_center(), &params(), Some(&stock()), false) else { panic!("plan") };
     eprintln!("level: {:.1} s, passes {}, rest {rest:.4}, {travel:?}, refused {refused:?}", t.elapsed().as_secs_f64(), passes.len());
     assert!(refused.is_none(), "{refused:?}");
     assert!(notes.iter().any(|n| n.contains("cut from the air")), "{notes:?}");
@@ -89,6 +89,7 @@ fn the_stock_ring_level_reaches_the_air_planner_with_the_stock() {
     assert!(travel.moves < MOVE_BUDGET, "moves {}", travel.moves);
     // Round C: the passes are joined by microlift returns, so the level
     // keeps the Adaptive plan (not the Offset rings by the hop budget).
+    // known-fail-assert
     assert!(travel.hops <= HOP_BUDGET, "hops {} over {HOP_BUDGET}", travel.hops);
 }
 
@@ -100,9 +101,10 @@ fn the_stock_ring_level_reaches_the_air_planner_with_the_stock() {
 /// whose lead crosses falls back to its hop - 23 hops, over the budget
 /// of 8, so the level still goes to the Offset rings by name. Round F.
 #[test]
-#[ignore = "issue #1950 blocked after round H (maintainer decides): red - 10 retract hops (over 8): 7 are wall lap pieces split where a lap meets a front run end; a trim at the outer lap reads 0.2437 over the 0.1538 bound (~25 s debug)"]
+#[ignore = "known-fail #1950 | lib | machining2d::pocket_hsm::ring_tests::the_stock_ring_level_plans_adaptive_with_no_budget_note |  right: Adaptive"]
 fn the_stock_ring_level_plans_adaptive_with_no_budget_note() {
     let Ok((passes, notes, s, _, _)) = adaptive_passes(&level_center(), &params(), "the level at Z 10.000", false, Some(&stock())) else { panic!("plan") };
+    // known-fail-assert
     assert_eq!(s, PocketStrategy::Adaptive, "{notes:?}");
     assert!(!passes.is_empty());
     assert!(!notes.iter().any(|n| n.contains("budget") || n.contains("Offset rings")), "{notes:?}");
@@ -113,7 +115,7 @@ fn the_stock_ring_level_plans_adaptive_with_no_budget_note() {
 fn no_stock_keeps_the_growth_spiral() {
     let Ok(comps) = components(&level_center()) else { panic!("comps") };
     let Some(bore) = comps.iter().find(|c| c.area() < 1000.0) else { panic!("bore") };
-    let Ok((_, notes, ..)) = hsm_passes(bore, &params(), None) else { panic!("plan") };
+    let Ok((_, notes, ..)) = hsm_passes(bore, &params(), None, false) else { panic!("plan") };
     assert!(!notes.iter().any(|n| n.contains("cut from the air")), "{notes:?}");
 }
 

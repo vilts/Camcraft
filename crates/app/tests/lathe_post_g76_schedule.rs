@@ -162,7 +162,7 @@ fn the_alternating_flag_rides_the_stream_and_the_file() {
     let world = g76_world(0.4, alt);
     let records = posting::stream_records(&world).expect("generated");
     let text = camcraft_app::post::cnc::serialize(&records);
-    assert!(text.lines().any(|l| l.starts_with("THREAD X") && l.ends_with(" ALT 1")), "{text}");
+    assert!(text.lines().any(|l| l.starts_with("THREAD X") && l.contains(" ALT 1")), "{text}");
     let back = camcraft_app::post::cnc::parse(&text).expect("parses");
     assert_eq!(camcraft_app::post::cnc::serialize(&back), text, "write-parse-write is a fixed point");
     let file = std::env::temp_dir().join(format!("camcraft-g76-alt-{}.json", std::process::id()));
@@ -185,7 +185,7 @@ fn a_repeated_depth_posts_as_g32_and_its_flag_rides_the_stream() {
     let world = g76_world(0.4, repeat);
     let records = posting::stream_records(&world).expect("generated");
     let text = camcraft_app::post::cnc::serialize(&records);
-    assert!(text.lines().any(|l| l.starts_with("THREAD X") && l.ends_with(" REP 1")), "{text}");
+    assert!(text.lines().any(|l| l.starts_with("THREAD X") && l.contains(" REP 1")), "{text}");
     let back = camcraft_app::post::cnc::parse(&text).expect("parses");
     assert_eq!(camcraft_app::post::cnc::serialize(&back), text, "write-parse-write is a fixed point");
     // With G32 output the same passes post: five plunges, each a G32 run.

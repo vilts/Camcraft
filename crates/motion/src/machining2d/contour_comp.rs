@@ -18,6 +18,7 @@
 //! Our own model; no vendor material consulted.
 
 use crate::cl::{CompSide, CompSpan, Move, MoveKind, PathBuilder};
+use crate::entry::Entry3D;
 use crate::geo2d::{Point2, Region};
 use crate::geometry::Point3;
 use crate::links::{Compensation, Link};
@@ -65,7 +66,7 @@ pub(super) fn door(p: &ContourParams) -> Result<(), GenError> {
         match straight(lead) {
             None => {
                 return Err(refused_as(p, format!(
-                    "needs a straight lead-{end} (Linear or Perpendicular) of at least the tool radius - \
+                    "needs a straight lead-{end} of at least the tool radius - \
                      the control builds the offset over that move, and an arc or no lead cannot carry G41/G42"
                 )))
             }
@@ -75,6 +76,27 @@ pub(super) fn door(p: &ContourParams) -> Result<(), GenError> {
                 )))
             }
             Some(_) => {}
+        }
+        // #3891: a Linear lead rides the ring's own offset line, so the
+        // move that posts under G40 beside it - the entry's descent at
+        // the lead-in's start, the cancel's withdrawal past the
+        // lead-out's end - stands the nominal radius off the finished
+        // wall, not a radius clear of it: a register over the nominal
+        // radius, or a positive wear value over the stock, cuts the wall
+        // there. The Perpendicular lead stands its length further into
+        // the air, and the length law above holds that at one radius -
+        // the clearance the Plunge's dive and the Arc entry's chord keep.
+        if matches!(lead, Lead::Linear { .. }) {
+            let runs = if end == "in" {
+                "the entry's descent at its start runs"
+            } else {
+                "the cancel's withdrawal at its end lands"
+            };
+            return Err(refused_as(p, format!(
+                "does not ride a Linear lead-{end} - {runs} on the ring's own offset before G41/G42 engages, \
+                 so a register over the nominal radius, or a positive wear value, cuts the finished wall there; \
+                 pick the Perpendicular lead-{end}, or Computer compensation"
+            )));
         }
     }
     if p.tab_count > 0 {
@@ -88,6 +110,22 @@ pub(super) fn door(p: &ContourParams) -> Result<(), GenError> {
     }
     if p.links.level == Link::KeepDown || p.links.pass == Link::KeepDown {
         return Err(refused_as(p, "needs Clearance or Retract links - a keep-down link engages the next cut without a lead"));
+    }
+    // #3888: a Ramp or Helix descends along the lead-in and the ring (the
+    // wall side's zig-zag, the bore side's zig-zag, orbit and links) before
+    // the lead-in move that engages G41/G42, so the register never applies
+    // to it: a register over the nominal radius, or a positive wear value,
+    // cuts the wall there. The dive at the lead-in's start stays off it
+    // only where the lead holds it clear (#3891): the door above refuses
+    // the Linear shape, whose start rides the ring line.
+    for (what, arm) in [("entry", Some(p.entry)), ("level transition", p.links.transition)] {
+        if let Some(arm @ (Entry3D::Ramp | Entry3D::Helix)) = arm {
+            let name = if arm == Entry3D::Ramp { "Ramp" } else { "Helix" };
+            return Err(refused_as(p, format!(
+                "does not ride a {name} {what} - its descent runs on the lead-in and the ring before G41/G42 engages, \
+                 so the register does not apply to it; pick the Plunge or Arc {what}, or Computer compensation"
+            )));
+        }
     }
     Ok(())
 }
@@ -141,7 +179,7 @@ pub(super) fn seam_mid_run(pts: &[Point2]) -> Vec<Point2> {
 
 /// The closest point of `prog`'s boundary to `q`: (loop index, edge
 /// index, the point, the distance).
-fn closest(prog: &Region, q: Point2) -> Option<(usize, usize, Point2, f64)> {
+pub(super) fn closest(prog: &Region, q: Point2) -> Option<(usize, usize, Point2, f64)> {
     let mut best: Option<(usize, usize, Point2, f64)> = None;
     for (li, l) in prog.loops().iter().enumerate() {
         let pts = l.points();
@@ -165,6 +203,8 @@ fn closest(prog: &Region, q: Point2) -> Option<(usize, usize, Point2, f64)> {
 pub(super) struct SpanCtx<'a> {
     pub prog: &'a Region,
     pub p: &'a ContourParams,
+    /// The user's start point when this ring was picked (#1473).
+    pub picked: Option<Point2>,
 }
 
 /// Record the span over the moves `first..=last` of `b` - `first` the
@@ -202,6 +242,10 @@ pub(super) fn push_span(b: &mut PathBuilder, ctx: &SpanCtx, first: usize, last: 
     }
     if moves[first + 1..last].iter().any(|m| m.from.z != z || m.to.z != z || m.kind != MoveKind::Feed) {
         return Err(refused_as(p, "needs one planar feed walk between its leads"));
+    }
+    // #1473: a picked seam was not placed mid-run - prove it, by its name.
+    if let (Some(q), Some(f), Some(l)) = (ctx.picked, moves.get(first + 1), moves.get(last - 1)) {
+        super::contour_comp_pick::picked_seam(p, q, f, l, s_c, (!wear(p)).then_some(ctx.prog))?;
     }
     if wear(p) {
         return push_wear(b, p, first, last, s_c);

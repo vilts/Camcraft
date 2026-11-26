@@ -31,7 +31,16 @@ pub(super) fn draw_output_section(ui: &mut Ui, dlg: &mut PostDialogState) {
                 "Output folder",
             );
         });
-        let name_label = if dlg.options.per_op {
+        let agie = posting::agie::is_native(&dlg.post);
+        if agie {
+            ui.label("A new job folder will contain the native controller files.");
+            ui.label("AGIE_QN2 · Cold die steel 0001 · Berco Cut 0.25 mm · Requested finish: Fine Ra 0.30 µm");
+            ui.label("Check the effective work quality on the control before assigning cutting steps.");
+            ui.label("The control applies wire compensation and selects trim passes. Predrill the 2 mm start hole.");
+        }
+        let name_label = if agie {
+            "Job folder name"
+        } else if dlg.options.per_op {
             "Program prefix"
         } else {
             "Program file"

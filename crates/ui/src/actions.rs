@@ -14,7 +14,7 @@
 use camcraft_app::operation::SrcRef;
 
 use crate::operations::quick_params;
-use crate::state::{CommandKind, State, UiTarget};
+use crate::state::{CommandKind, LayoutRequest, Panel, State, UiTarget};
 use crate::viewport::ProjectionMode;
 
 /// File menu: ask for a mesh to import (the dialog itself runs in
@@ -56,6 +56,11 @@ pub(crate) fn quit(state: &mut State) {
 /// The unsaved-changes prompt's answer (#107), through the same queue.
 pub(crate) fn resolve_unsaved(state: &mut State, choice: crate::unsaved::UnsavedChoice) {
     state.pending.push_back(CommandKind::ResolveUnsaved(choice));
+}
+
+/// The overwrite prompt's answer (#3608): its effect goes through the queue.
+pub(crate) fn resolve_overwrite(state: &mut State, choice: crate::save_guard::OverwriteChoice) {
+    state.resolve_overwrite(choice);
 }
 
 pub(crate) fn undo(state: &mut State) {
@@ -183,13 +188,13 @@ fn walk_whole_program(state: &mut State) {
 /// thread, and until its first publication the sheet stands.
 fn follow_playhead(state: &mut State, judged: bool) -> Result<(), String> {
     use camcraft_app::stock_play::{progress, PlaySeed};
-    use camcraft_app::stock_play_worker::PlayWorker;
     use camcraft_app::stock_view::DEFAULT_TEXELS;
     if state.field_play.is_none() {
         let seed = PlaySeed::gather(&state.world, judged, DEFAULT_TEXELS)?;
         // #2181: the removal is calculated once before playback, then
         // replayed from keyframes (the transport row shows the progress).
-        state.field_play = Some(PlayWorker::spawn_precalc(seed, camcraft_app::stock_play::PRECALC_BUDGET)?);
+        // #3336: on the GPU layer when the eye can show it (`play_layer`).
+        state.field_play = Some(crate::play_layer::spawn(state, seed)?);
     }
     let sc = crate::egui_app::shell::cached_script(state);
     let t = state.sim.as_ref().map_or(0.0, |s| s.t);
@@ -325,36 +330,44 @@ pub(crate) fn toggle_projection(state: &mut State) {
 /// frame. Surfaces that also change what the world highlights (tree nodes,
 /// viewport picks) push a `Select` alongside; a bare retarget never does.
 pub(crate) fn target(state: &mut State, t: UiTarget) {
-    use crate::state::{LayoutRequest, Panel};
+    // A retarget ends the blank new-tool form (#2397).
+    state.new_tool_form = false;
     if let UiTarget::Tool(name) = &t {
+        // #3892: the empty name is the tool library. Every door (the
+        // ribbon's Tools cell, the View menu, the gate route) opens its
+        // window and keeps the Properties subject.
         if name.is_empty() {
-            state.layout_request = Some(LayoutRequest::ToolLibrary);
+            state.open_tool_library();
             return;
         }
-        if state.tool_editor.is_some() {
-            state.close_tool_editor_window();
+        if state.tool_shape_editor.is_some() {
+            state.close_tool_shape_editor();
         }
         state.layout_request = Some(LayoutRequest::Show(Panel::Properties));
     }
     state.ui_target = t;
 }
 
-/// Open the tool editor window (M1.4) on `name` - the named tool through
-/// the same sync law the panes use, so the fields (and the live preview)
-/// start at the world's numbers; the empty name opens a numbered blank
-/// draft as the creation form. View state like `target`: opening itself
-/// queues nothing; closing is the window's ✕ or the ghost law in
-/// `State::drain_actions`, and only the form's buttons ever push
-/// Add/Change/Delete.
-pub(crate) fn open_tool_editor(state: &mut State, name: &str) {
-    if name.is_empty() {
-        let draft = state.new_tool_draft();
-        state.tool_ui = draft;
-    } else {
-        state.tool_ui.name = name.to_owned();
-        state.sync_tool_ui();
-    }
-    state.tool_editor = Some(name.to_owned());
+/// #2397: start a blank numbered tool in Properties. The empty Tool target
+/// is the destination; `new_tool_form` says which face of it shows.
+pub(crate) fn begin_new_tool(state: &mut State) {
+    let draft = state.new_tool_draft();
+    state.tool_ui = draft;
+    state.close_tool_shape_editor();
+    state.new_tool_form = true;
+    state.layout_request = Some(LayoutRequest::Show(Panel::Properties));
+    state.ui_target = UiTarget::Tool(String::new());
+}
+
+/// #2397: open the tool shape editor window on `name` - the body, the
+/// profile and the holder, the settings left in Properties. View state
+/// like `target`: opening queues nothing; closing is the window's ✕ or the
+/// ghost law, and only the shape buttons push a command.
+pub(crate) fn open_tool_shape_editor(state: &mut State, name: &str) {
+    state.tool_ui.name = name.to_owned();
+    state.sync_tool_ui();
+    state.tool_shape_editor = Some(name.to_owned());
+    state.new_tool_form = false;
     // #371: a fresh body draft per opening; it mirrors the tool's body.
     state.tool_body_ui = crate::state::ToolBodyUi::default();
     state.tool_profile_ui = crate::state::ToolProfileUi::default();
@@ -418,6 +431,8 @@ pub(crate) fn add_operation(state: &mut State, kind: usize) {
         .and_then(|e| camcraft_app::model::tool_of(&state.world, &e))
     {
         camcraft_app::operation::seed_helix_for_tool(&mut params, t.diameter);
+        // #3475: a new Slot is at least as wide as its tool.
+        camcraft_app::operation::seed_slot_for_tool(&mut params, t.diameter);
         // #890: and its feed, from the tool's row for the document material.
         camcraft_app::cutting_rows::seed_feed_for_tool(&state.world, &mut params, &t);
     }

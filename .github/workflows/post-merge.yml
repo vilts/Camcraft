@@ -5,14 +5,22 @@
 # pull_request, pull_request_target or schedule (maintainer, 2026-11-13: "Can
 # we setup a build test post merge using local gh runner?"; a push to main
 # only carries merged, reviewed code, so no fork can run code on the runner).
-# Sharing the one runner with the cut: this workflow yields. The running gate
-# finishes; newer merges replace the single pending run. A run skips itself
+# One run per commit (#3184): each push has its own concurrency group, runs on
+# a free camcraft-post-merge runner and always finishes. Nothing waits behind
+# another run and nothing is cancelled, so a red run names exactly its own
+# commit. Runs can finish out of order: the report job runs one at a time and
+# skips a commit older than the last reported one (post-merge-report.sh).
+# Sharing the runners with the cut: this workflow yields. A run skips itself
 # (green, with a notice) while a cut.yml run is queued or running or a
 # release/vX.Y.Z PR from this repo is open (.github/scripts/post-merge-skip.sh).
-# The release gate of the cut covers main's state then. A cut therefore never
-# queues behind more than the one post-merge run that was already going.
+# The release gate of the cut covers main's state then.
+# A push whose commit changes only docs or process paths (site/, docs/, *.md,
+# .claude/) skips too (#4054): no code changed, the previous run covers it. A
+# dispatch always runs.
 # Reporting: one rolling issue "main is red (post-merge gate)", opened or
 # commented on when red, closed when green (.github/scripts/post-merge-report.sh).
+# A runner stall (#3303: a STALL row, or the step timeout, and no FAIL row)
+# opens no issue: the report writes one warning with the step and the runner.
 # Only the report job holds issues: write; the gate job's token is read-only
 # and is never left on disk while the tests run (persist-credentials: false).
 # Provenance: our own AGENTS.md; GitHub's public Actions documentation.
@@ -35,10 +43,10 @@ env:
 permissions:
   contents: read
 
-# A dispatch of a non-main ref gets its own group, so it never cancels (or is
-# cancelled by) the gate of main.
+# One group per commit (#3184): a push never waits behind, and never cancels,
+# the run of another commit. A dispatch gets the group of its ref.
 concurrency:
-  group: post-merge-${{ github.event_name == 'push' && 'main' || inputs.ref || 'main' }}
+  group: post-merge-${{ inputs.ref || github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -51,11 +59,14 @@ jobs:
       pull-requests: read
     outputs:
       skipped: ${{ steps.yield.outputs.skip }}
+      # The machine of this run: the report names it in a runner stall (#3303).
+      runner: ${{ runner.name }}
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.sha }}
-          fetch-depth: 1
+          # Two commits: the yield step diffs the commit against its parent.
+          fetch-depth: 2
           persist-credentials: false
       - name: Yield to a cut
         id: yield
@@ -63,21 +74,31 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           if reason=$(bash .github/scripts/post-merge-skip.sh); then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice title=post-merge gate skipped::$reason; the cut's release gate covers main"
+            echo "::notice title=post-merge gate skipped::skipped: $reason"
             echo "Skipped: $reason." >> "$GITHUB_STEP_SUMMARY"
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
           fi
       - name: Batch gate tier
+        id: gate
         if: ${{ steps.yield.outputs.skip != 'true' }}
+        # Second line of defence against a hung step (#3303): a normal run
+        # takes about 21 minutes, and the xtask watchdog kills a step that is
+        # silent for 15. A cold build of app, gpu and ui can take longer than
+        # 45 minutes (#3535), so the limit is 75. The job cap (90) stays.
+        # "Gate summary" reads 74 or more minutes with no summary as this
+        # timeout.
+        timeout-minutes: 75
         shell: bash
         # The UI suites open windows: inside xvfb-run when no display is set
         # (AGENTS.md "The cut runner"). sccache comes from the runner's
         # environment. No token is in this step's environment.
         run: |
+          date +%s > gate-start.txt
           set -o pipefail
           wrap=()
           if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ] && command -v xvfb-run >/dev/null; then
@@ -88,7 +109,25 @@ jobs:
       - name: Gate summary
         if: ${{ always() && steps.yield.outputs.skip != 'true' }}
         shell: bash
+        env:
+          GATE_OUTCOME: ${{ steps.gate.outcome }}
         run: |
+          # A gate that the step timeout stopped prints no summary (#3303). Say
+          # so in its output, with the last step it started, so the report
+          # tells a runner stall from a red main. A gate that ended early with
+          # no summary (xtask did not build) stays red, and so does a gate
+          # with a step that ended red ("FAIL in") before the hang.
+          # GitHub runs this with bash -eo pipefail: each grep reads a file,
+          # and a grep that finds nothing must not end the step.
+          if [ "$GATE_OUTCOME" != success ] && ! grep -q '^== gate summary' gate-output.txt 2>/dev/null &&
+            ! grep -qE '^ +FAIL in ' gate-output.txt 2>/dev/null; then
+            start=$(cat gate-start.txt 2>/dev/null || echo 0)
+            mins=$(( ($(date +%s) - start) / 60 ))
+            if [ "$start" -gt 0 ] && [ "$mins" -ge 74 ]; then
+              last=$(grep -E '^\[[0-9]+\] ' gate-output.txt 2>/dev/null | tail -n 1 || true)
+              echo "gate step TIMEOUT after ${mins} min; last started step: ${last:-none}" | tee -a gate-output.txt
+            fi
+          fi
           {
             echo "### Post-merge batch gate at $(git rev-parse HEAD)"
             echo '```'
@@ -106,19 +145,28 @@ jobs:
           if-no-files-found: warn
 
   report:
-    # Red or green only: a cancelled run (a newer merge) or a skipped one says nothing.
+    # Red or green only: a cancelled run or a skipped one says nothing.
+    # always() first (#1611): without a status function GitHub adds an implicit
+    # success(), which skips this job when the gate fails - a red main reported nothing.
     needs: gate
-    if: ${{ (needs.gate.result == 'success' || needs.gate.result == 'failure') && needs.gate.outputs.skipped != 'true' && (github.event_name == 'push' || inputs.ref == '' || inputs.ref == 'main') }}
+    if: ${{ always() && (needs.gate.result == 'success' || needs.gate.result == 'failure') && needs.gate.outputs.skipped != 'true' && (github.event_name == 'push' || inputs.ref == '' || inputs.ref == 'main') }}
     runs-on: [self-hosted, camcraft-post-merge]
     timeout-minutes: 10
+    # Runs finish out of order (#3184): one report at a time, so two reports
+    # never read and write the rolling issue's order marker at once.
+    concurrency:
+      group: post-merge-report
+      cancel-in-progress: false
     permissions:
       contents: read
       issues: write
     steps:
+      # The full history: the report script compares this commit with the
+      # last reported one (git merge-base --is-ancestor).
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.sha }}
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/download-artifact@v4
         continue-on-error: true
@@ -131,6 +179,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           STATUS: ${{ needs.gate.result }}
+          RUNNER: ${{ needs.gate.outputs.runner }}
           SHA: ${{ inputs.ref && inputs.ref != 'main' && inputs.ref || github.sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           OUTPUT: gate-report/gate-output.txt

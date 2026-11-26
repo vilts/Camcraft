@@ -57,6 +57,7 @@ fn a_stepped_bar_whose_shank_rubs_the_wall_during_the_ride_is_convicted() {
         plunge_feed: 80.0,
         holes: vec![hole],
         cross: vec![],
+        picks: Default::default(),
     };
     create_on(&world, &mut history, "AX0", "DR-1300-L", "wide", drill_params);
     assert_eq!(status(&world, "AX0"), OpStatus::Ok, "the pilot drills");
@@ -133,7 +134,7 @@ fn a_finishing_bar_riding_where_a_rougher_bar_cut_is_clean() {
     history.execute(&world, AddTool::new(&world, "BR-1008", rough).expect("a sane bar"));
     let full = || match bore_params() {
         OpParams::BoringTurning { tolerance, clearance_z, bottom_z, feed, plunge_feed, .. } => {
-            OpParams::BoringTurning { tolerance, clearance_z, top_z: Height::fixed(50.0), bottom_z, feed, plunge_feed }
+            OpParams::BoringTurning { tolerance, clearance_z, top_z: Height::fixed(50.0), bottom_z, feed, plunge_feed, picks: Default::default() }
         }
         p => p,
     };

@@ -11,7 +11,7 @@
 use super::direction::AxisDirection;
 // #669: the kind moved to its own seam; re-exported so `def::*` (and
 // every `machine::Kind` path) reads as before.
-pub use super::kind::{can_tilt, kind, Kind};
+pub use super::kind::{can_tilt, is_router, is_router_word, kind, Kind};
 pub use super::trunnion::RotarySignConvention;
 use serde::{Deserialize, Serialize};
 
@@ -211,6 +211,10 @@ pub struct Machine {
     /// Unstated reads as "not limited", the unstated-limit law.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rigid_tapping: Option<bool>,
+    /// Whether the spindle can stop oriented (#1445, `spindle.orientation`):
+    /// `Some(false)` refuses a fine-bore cycle by name. Unstated: not limited.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spindle_orientation: Option<bool>,
     /// The builder's codes for C-axis live-tool work (issue #33), or
     /// None - unstated, and a post refuses a C-axis section by name
     /// rather than guess a builder-specific M word.
@@ -224,6 +228,9 @@ pub struct Machine {
     /// post that needs it refuses rather than guess where up is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub safe_retract_z: Option<f64>,
+    /// `general.operator_side` (#2632): the stated side; `None` takes the kind's default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator_side: Option<super::operator_side::OperatorSide>,
     /// The `edm` section of a wire or sinker EDM machine (#530), or
     /// None: unstated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -243,18 +250,31 @@ pub struct Machine {
     /// tool with no holder body, as before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_holder: Option<String>,
+    /// Controller pockets and names reserved for probes or tool setters (#2604).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reserved_tools: Vec<super::reservations::ReservedTool>,
     /// #760: whether the controller supports work-plane / coordinate
     /// rotation (`G68 X0 Y0 R` / `ROT RPL`) via `controller.coordinate_rotation`.
     /// Absent or false (the unstated-limit law) keeps `Control` mode refused
     /// by name; `Bake` works on every machine.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub coordinate_rotation: Option<bool>,
+    /// Installed controller and NC software release, exactly as recorded at the machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub controller_identity: Option<super::ControllerIdentity>,
+    /// Tool-changing procedure supported by this particular installation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_change: Option<super::ToolChangeMode>,
     /// Explicit `controller.rtcp` capability flag (#1962); `None` infers from tilt.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub controller_rtcp: Option<bool>,
     /// Machine-level rotary sign convention (`tool_rh` vs `table_rh`, #1962).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sign_convention: Option<RotarySignConvention>,
+    /// `controller.post` (#2374): the registry post the file names, which
+    /// the Setup page offers; it never changes a setup's post by itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post: Option<String>,
 }
 
 /// The words a control needs around C-axis live-tool work (issue
@@ -291,6 +311,7 @@ impl Machine {
     #[must_use]
     pub fn tooling_refusal(&self, lookup: Option<super::HolderLookup>) -> Option<String> {
         super::mount_check(self.spindle_mount.as_deref(), self.default_holder.as_deref(), lookup).err()
+            .or_else(|| super::reservations::validate(&self.reserved_tools).err())
     }
 
     fn limits_sane(&self) -> bool {
@@ -306,6 +327,7 @@ impl Machine {
                 .kind
                 .as_deref()
                 .is_none_or(|w| Kind::from_word(w).is_some())
+            && self.controller_identity.as_ref().is_none_or(|c| c.validate().is_ok())
             && self.coolants.iter().all(|c| !c.name.is_empty())
             && self.waterjet_sane()
             && self.plasma_sane()

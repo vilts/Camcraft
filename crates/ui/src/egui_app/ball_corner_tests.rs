@@ -1,7 +1,7 @@
 //! #263 in the surface: a ball nose's corner is its ball. The tool
-//! editor shows half the diameter as text with no field to edit, Apply
-//! saves that number, and the library summary reads it; a bull nose
-//! keeps its editable corner.
+//! editor (#3930: the tool library window's Tool tab) shows half the
+//! diameter as text with no field to edit, Apply saves that number, and
+//! the Properties summary reads it; a bull nose keeps its editable corner.
 //! Provenance: our own tests over our own tool editor page.
 
 use egui::Vec2;
@@ -12,7 +12,6 @@ use egui_kittest::kittest::Queryable;
 use camcraft_app::model;
 use camcraft_app::tools::{Tool, catalog};
 
-use crate::actions;
 use crate::state::{CommandKind, State, UiTarget};
 
 /// A 6 mm ball nose from the catalog, saved with a corner field of 0 -
@@ -37,23 +36,27 @@ fn saved(state: &State, name: &str) -> Tool {
     model::find_by_name(&state.world, name).and_then(|e| model::tool_of(&state.world, &e)).expect("the tool")
 }
 
-/// The editor window open on `name`, drawn alone.
+/// The tool library window open on `name`, drawn alone. #3930: the
+/// settings are edited there; Properties shows a summary.
 fn editor(mut state: State, name: &str) -> Harness<'static, State> {
-    actions::open_tool_editor(&mut state, name);
+    state.open_tool_in_library(name);
     let mut h = Harness::builder()
-        .with_size(Vec2::new(900.0, 1000.0))
-        .build_ui_state(|ui, st: &mut State| super::pages::tool_editor_window(ui.ctx(), st), state);
-    h.run();
+        .with_size(Vec2::new(1600.0, 1000.0))
+        .build_ui_state(|ui, st: &mut State| super::tool_library_dialog::tool_library_window(ui.ctx(), st), state);
+    h.run_steps(2);
     h
 }
 
-/// How many number fields sit between the "Corner radius" label and the
-/// next field's label: the editor stacks each value under its label.
+/// How many number fields sit on the "Corner radius" row itself: the
+/// grid puts a row's value to the right of its label, on that row.
 fn corner_fields(h: &Harness<'static, State>) -> usize {
-    let top = h.get_by_label("Corner radius").rect().bottom();
-    let bottom = h.get_by_label("Flute length").rect().top();
+    let row = h
+        .query_all_by_label("Corner radius")
+        .next()
+        .expect("the Corner radius row")
+        .rect();
     h.query_all_by(|n| n.role() == Role::SpinButton)
-        .filter(|n| (top..bottom).contains(&n.rect().center().y))
+        .filter(|n| (row.top()..=row.bottom()).contains(&n.rect().center().y))
         .count()
 }
 

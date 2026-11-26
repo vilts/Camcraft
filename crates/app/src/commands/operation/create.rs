@@ -13,7 +13,7 @@ use crate::schema::{Location, Operation, OperationMeta, Toolpath};
 use crate::setup;
 use crate::verify::Warning;
 
-use super::gates::{area_gate, family_gate, heights_gate, infeed_plan_gate, sinker_gate, tool_door, tool_gate, valid_src, wire_gate};
+use super::gates::{area_gate, family_gate, heights_gate, infeed_plan_gate, sinker_gate, slot_gate, tool_door, tool_gate, valid_src, wire_gate};
 
 /// Create an operation entity. Deliberately does not generate: a new
 /// operation reads "never generated" until `GenerateOperation` runs, the
@@ -29,13 +29,13 @@ pub struct CreateOperation {
 }
 
 /// `(key, before, after)` for each sibling whose position an append pins.
-type Reordered = Vec<(String, OperationMeta, OperationMeta)>;
+pub(in crate::commands) type Reordered = Vec<(String, OperationMeta, OperationMeta)>;
 
 /// Pin every operation of the setup `context` resolves to at its current
 /// program position (0..n) and return those changes with the next free
 /// index `n` - so a new op lands last even when an older project's
 /// siblings carry no stored order (their name order is kept, made explicit).
-fn append_position(world: &World, context: Option<&str>) -> Result<(Reordered, u32), CommandError> {
+pub(in crate::commands) fn append_position(world: &World, context: Option<&str>) -> Result<(Reordered, u32), CommandError> {
     let effective = setup::effective(world, context);
     // #155: the list's Pause / Home entries hold positions too.
     let siblings: Vec<_> = crate::program_entry::sequence(world)
@@ -72,6 +72,68 @@ impl CreateOperation {
         src: SrcRef,
         params: OpParams,
     ) -> Result<Self, CommandError> {
+        Self::with_named_entry(world, name, tool, src, params, false)
+    }
+
+    /// #3863: create door carrying whether the request explicitly named an entry.
+    pub fn with_named_entry(
+        world: &World,
+        name: &str,
+        tool: &str,
+        src: SrcRef,
+        params: OpParams,
+        named_entry: bool,
+    ) -> Result<Self, CommandError> {
+        Self::build(world, name, tool, src, params, false, named_entry)
+    }
+
+    /// Create a nominal inspection reference. Its empty condition refuses every machining generation.
+    pub fn agie_inspection(
+        world: &World,
+        name: &str,
+        tool: &str,
+        drawing: &str,
+        chain: crate::geometry::sketch_chains::ChainId,
+        start: [f64; 2],
+    ) -> Result<Self, CommandError> {
+        use crate::operation::{FeatureSel, GeoSel, Height, HeightReference, WireContourOp, WireSide};
+        let src = SrcRef::Selection(vec![GeoSel {
+            entity: drawing.into(),
+            feature: FeatureSel::SketchChain(chain),
+        }]);
+        let params = OpParams::WireContour(WireContourOp {
+            condition: String::new(),
+            top_z: Height::of(HeightReference::TopOfStock, 0.0),
+            bottom_z: Height::of(HeightReference::BottomOfStock, 0.0),
+            side: WireSide::Die,
+            picks: crate::path_picks::PathPicks {
+                start: vec![crate::path_picks::PathPick::xy(crate::geo2d::Point2::new(start[0], start[1]))],
+                exit: Vec::new(),
+            },
+            tabs: None,
+            capture: false,
+            both_pieces_restrained: false,
+            stock_centered_in_xy_travel: false,
+            taper_deg: 0.0,
+            burnout: None,
+            clearance: crate::operation::DEFAULT_CLEARANCE,
+            skims: Vec::new(),
+            four_axis: None,
+            sharp_corners: false,
+            lead_arc_radius: None,
+        });
+        Self::build(world, name, tool, src, params, true, false)
+    }
+
+    fn build(
+        world: &World,
+        name: &str,
+        tool: &str,
+        src: SrcRef,
+        params: OpParams,
+        inspection: bool,
+        named_entry: bool,
+    ) -> Result<Self, CommandError> {
         if name.is_empty() {
             return Err(CommandError::Invalid("operation name must not be empty".into()));
         }
@@ -84,18 +146,22 @@ impl CreateOperation {
         // exactly. With no setups the name is `None`: the implicit-setup
         // law makes that the first/legacy context byte-identically.
         let setup = crate::setup::active(world);
-        valid_src(world, setup.as_deref(), &src)?;
+        valid_src(world, setup.as_deref(), &src, &params)?;
         // #1504: a Slot created on picks takes the slot that fills them.
         let params = match &src {
             SrcRef::Selection(items) => crate::operation::slot_from_picks(world, setup.as_deref(), &params, items).unwrap_or(params),
             _ => params,
         };
+        // #3863: a 2D Offset created with Inside or Outside takes Arc unless named.
+        let seed = crate::operation::seed_params(params.kind().ordinal());
+        let params = params.with_start_side_entry(&seed, named_entry);
         infeed_plan_gate(world, &params, tool)?;
         if let Some(why) = params.named_refusal() {
             return Err(CommandError::Invalid(why));
         }
-        // #1445: a dwell that is not a time from 0 to the bound, by name.
-        if let Some(why) = params.dwell_refusal() {
+        // #1445: a dwell that is not a time from 0 to the bound, or a fine
+        // bore with no usable shift, by name.
+        if let Some(why) = params.dwell_refusal().or_else(|| params.fine_bore_refusal()) {
             return Err(CommandError::Invalid(why));
         }
         sinker_gate(world, setup.as_deref(), &params)?;
@@ -110,12 +176,15 @@ impl CreateOperation {
         // (AGENTS.md: validate early), not deep in the generator - and
         // so is a From: Selection height its source cannot answer.
         heights_gate(world, setup.as_deref(), &src, &params)?;
-        if let Some(msg) = crate::operation::side_sane(&params, &src) {
+        if let Some(msg) = crate::operation::side_sane(world, &params, &src) {
             return Err(CommandError::Invalid(msg));
         }
         family_gate(world, setup.as_deref(), &params)?;
         tool_gate(world, &params, tool)?;
-        wire_gate(world, setup.as_deref(), tool, &params)?;
+        slot_gate(world, setup.as_deref(), &src, &params, tool)?;
+        if !inspection {
+            wire_gate(world, setup.as_deref(), tool, &params)?;
+        }
         area_gate(world, setup.as_deref(), &src, &params)?;
         let (reordered, order) = append_position(world, setup.as_deref())?;
         // #869: a new op starts on its machine's default coolant - Air on
@@ -124,7 +193,7 @@ impl CreateOperation {
         let coolant = crate::setup_mount::machine_of(world, setup.as_deref())
             .1
             .map_or_else(Default::default, |m| crate::operation::CoolantMode::machine_default(&m.coolants));
-        Ok(CreateOperation {
+        let cmd = CreateOperation {
             name: name.to_string(),
             meta: OperationMeta { label: None, order: Some(order), needs_review: Vec::new() },
             reordered,
@@ -139,7 +208,11 @@ impl CreateOperation {
                 after: Default::default(),
                 suppressed: false,
             },
-        })
+        };
+        if inspection {
+            crate::operation::prepare_inspection(world, &cmd.operation).map_err(CommandError::Invalid)?;
+        }
+        Ok(cmd)
     }
 }
 
@@ -189,7 +262,7 @@ impl PasteOperation {
         }
         let context = operation.setup.as_deref();
         tool_door(world, &operation.params, &operation.tool)?;
-        valid_src(world, context, &operation.src)?;
+        valid_src(world, context, &operation.src, &operation.params)?;
         infeed_plan_gate(world, &operation.params, &operation.tool)?;
         sinker_gate(world, context, &operation.params)?;
         if let Some(why) = operation.params.named_refusal() {
@@ -199,7 +272,7 @@ impl PasteOperation {
             return Err(CommandError::Invalid("copied operation parameters are not usable".into()));
         }
         heights_gate(world, context, &operation.src, &operation.params)?;
-        if let Some(msg) = crate::operation::side_sane(&operation.params, &operation.src) {
+        if let Some(msg) = crate::operation::side_sane(world, &operation.params, &operation.src) {
             return Err(CommandError::Invalid(msg));
         }
         family_gate(world, context, &operation.params)?;

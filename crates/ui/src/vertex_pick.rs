@@ -53,7 +53,7 @@ pub fn queue_origin_at_vertex(state: &mut State, entity: &str, id: VertexId) {
 /// current XY at the face's plane height. Same `SetWcs` command, same
 /// angles as the vertex chip; the targets come from the app.
 pub fn queue_origin_at_face(state: &mut State, entity: &str, sel: FeatureSel, z_only: bool) {
-    let target = match pick::face_origin(&state.world, entity, sel) {
+    let target = match pick::face_origin(&state.world, entity, sel.clone()) {
         Ok(t) => t,
         Err(why) => {
             state.status = format!("origin not set: {why}");

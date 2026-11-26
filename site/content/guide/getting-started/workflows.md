@@ -137,6 +137,23 @@ operation's page.
 **Tools** can export a library (**Export library…**) and **Import
 library…** reads one back, so tools are reused across jobs.
 
+## Save a panel arrangement
+
+Open **View > Panels > Panel setups...** after arranging the panels. Enter
+a name and choose **Save current setup**. Choose **Load** beside a saved
+arrangement to restore it, or **Delete** to remove it. **Reset layout** returns to the
+default arrangement.
+
+The saved arrangement keeps open panels, split sizes, tab order, active
+tabs, collapsed panels and floating-window positions. **Auto-load** is on
+by default and restores the arrangement on the next start. Turn it off
+to start with the default layout. A corrupt or older settings file falls
+back to the default layout and reports why.
+
+Panel setups are application settings in `panel-setups.json`, separate
+from the project. Loading an arrangement changes view state and does not
+enter undo history.
+
 ## Not yet
 
 Importing a tool library from another system, and a router machine mode

@@ -253,6 +253,7 @@ fn facing_simulates_on_the_field_with_meridian_parity() {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     generate(&world, &mut history, "F1", "TN-1600-0R8", p);
     assert_parity("facing", &world, &["F1"], 0.8);
@@ -279,6 +280,7 @@ fn a_bar_off_the_origin_is_turned_about_its_own_fitted_axis() {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     generate(&world, &mut history, "F1", "TN-1600-0R8", p);
     assert_parity_about("facing off the origin", &world, &["F1"], 0.8, (3.0, -2.0));
@@ -297,6 +299,7 @@ fn profile_rough_and_finish_simulate_with_meridian_parity() {
         stock_to_leave: 0.25,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     let finish = OpParams::ProfileFinish {
         tolerance: 0.05,
@@ -305,6 +308,7 @@ fn profile_rough_and_finish_simulate_with_meridian_parity() {
         bottom_z: Height::fixed(2.0),
         feed: 120.0,
         plunge_feed: 60.0,
+        picks: Default::default(),
     };
     // Names are the program order's tie-break for ops created without an
     // explicit position (`setup::operation_order`), so they must sort
@@ -333,6 +337,7 @@ fn multi_pass_contour_simulates_with_meridian_parity() {
         passes: 3,
         feed: 200.0,
         plunge_feed: 50.0,
+        picks: Default::default(),
     };
     generate(&world, &mut history, "MP1", "TN-1600-0R8", p);
     assert_parity("multi-pass contour", &world, &["MP1"], 0.8);
@@ -349,6 +354,7 @@ fn boring_simulates_inside_the_bore_with_meridian_parity() {
         bottom_z: Height::fixed(-10.0),
         feed: 120.0,
         plunge_feed: 40.0,
+        picks: Default::default(),
     };
     generate(&world, &mut history, "BT1", "BR-1000", p);
     let nose = catalog().into_iter().find(|(n, _)| *n == "BR-1000").map(|(_, t)| t.nose_radius).expect("bar");
@@ -381,6 +387,7 @@ fn a_grooving_blade_cuts_its_rectangle_and_the_verdict_refuses_the_lathe() {
         stock_to_leave: 0.25,
         feed: 150.0,
         plunge_feed: 60.0,
+        picks: Default::default(),
     };
     generate(&world, &mut history, "G1", "GT-0200", g);
     let blade = catalog().into_iter().find(|(n, _)| *n == "GT-0200").map(|(_, t)| t).expect("blade");
@@ -401,6 +408,7 @@ fn a_grooving_blade_cuts_its_rectangle_and_the_verdict_refuses_the_lathe() {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     generate(&world, &mut history, "F1", "TN-1600-0R8", p);
     let e = camcraft_app::stock_sim::simulate_document(&world).expect_err("the column verdict has no revolved reading");

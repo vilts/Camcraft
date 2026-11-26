@@ -1,0 +1,2 @@
+; richauto.cps refused rotary: 1 warning(s), the program is never released
+warning: rotary or tilted axis move is unsupported by the 3-axis RichAuto DSP A11 post

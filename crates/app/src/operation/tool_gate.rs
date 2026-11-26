@@ -30,7 +30,11 @@ use super::KindInfo;
 /// "drill, tap or boring bar".
 #[must_use]
 pub fn kinds_phrase(kinds: &[ToolKind]) -> String {
-    let words: Vec<String> = kinds.iter().map(ToString::to_string).collect();
+    // #3369: a form mill cuts no operation yet, so no refusal offers it
+    // beside a kind that does.
+    let read: Vec<&ToolKind> = kinds.iter().filter(|k| **k != ToolKind::FormMill).collect();
+    let shown = if read.is_empty() { kinds.iter().collect() } else { read };
+    let words: Vec<String> = shown.iter().map(ToString::to_string).collect();
     match words.split_last() {
         None => String::from("tool"),
         Some((last, [])) => last.clone(),
@@ -48,11 +52,15 @@ fn setup_words(world: &World) -> String {
     }
 }
 
-/// The tool library, name-sorted, with each tool's kind.
+/// The tool library, name-sorted, with each tool's kind. #3368: a flat
+/// or ball taper tip fits no operation yet, so it is not offered; nor
+/// is a form mill (#3369).
 fn library(world: &World) -> Vec<(String, ToolKind)> {
     model::named_entities(world)
         .into_iter()
-        .filter_map(|(name, e)| model::tool_of(world, &e).map(|t| (name, t.kind)))
+        .filter_map(|(name, e)| model::tool_of(world, &e).map(|t| (name, t)))
+        .filter(|(_, t)| !camcraft_tools::taper::is_unread_tip(t) && t.kind != ToolKind::FormMill)
+        .map(|(name, t)| (name, t.kind))
         .collect()
 }
 
@@ -104,7 +112,9 @@ fn bought_size(t: &Tool) -> f64 {
 /// M13.4, the tool law's catalog hint: the starter-catalog entry the
 /// refusal suggests - of the family's first kind the catalog stocks
 /// (the family lists its primary kind first), the one nearest the
-/// everyday size, a tie to the smaller. `None` when the catalog holds
+/// everyday size, a tie to the smaller, a full tie to the lower name
+/// (#3170: a deterministic rule, so the hint never depends on the
+/// catalog's file order). `None` when the catalog holds
 /// no tool of any fitting kind: then the refusal says nothing extra
 /// rather than suggest a tool that cannot cut the op. Non-finite sizes
 /// never win (total ordering on the distance, NaN last).
@@ -113,13 +123,15 @@ pub fn catalog_suggestion(catalog: &[(&str, Tool)], kinds: &[ToolKind]) -> Optio
     let (name, tool) = kinds.iter().find_map(|kind| {
         catalog
             .iter()
-            .filter(|(_, t)| t.kind == *kind && bought_size(t).is_finite())
-            .min_by(|(_, a), (_, b)| {
+            // #3368: never a flat or ball tip the operations refuse.
+            .filter(|(_, t)| t.kind == *kind && bought_size(t).is_finite() && t.tip_form.is_sharp())
+            .min_by(|(na, a), (nb, b)| {
                 let (sa, sb) = (bought_size(a), bought_size(b));
                 (sa - SUGGEST_SIZE_MM)
                     .abs()
                     .total_cmp(&(sb - SUGGEST_SIZE_MM).abs())
                     .then(sa.total_cmp(&sb))
+                    .then_with(|| na.cmp(nb))
             })
     })?;
     Some(format!(
@@ -135,9 +147,10 @@ pub fn catalog_suggestion(catalog: &[(&str, Tool)], kinds: &[ToolKind]) -> Optio
 /// setup-level sentence answers instead (it names the real fix).
 #[must_use]
 pub fn tool_refusal(world: &World, info: &KindInfo, tool: &str) -> Option<String> {
-    let kind = model::find_by_name(world, tool).and_then(|e| model::tool_of(world, &e))?.kind;
+    let def = model::find_by_name(world, tool).and_then(|e| model::tool_of(world, &e))?;
+    let kind = def.kind;
     if info.accepts(kind) {
-        return None;
+        return unread_tip_refusal(&def, tool, info);
     }
     if let Some(none_fit) = create_refusal(world, info) {
         return Some(none_fit);
@@ -147,6 +160,35 @@ pub fn tool_refusal(world: &World, info: &KindInfo, tool: &str) -> Option<String
         info.label,
         kinds_phrase(info.tool_kinds)
     ))
+}
+
+/// #3368: a chamfer mill with a flat or ball tip, refused by name for
+/// every operation until its generator, simulation and collision laws
+/// read the tip (the consumer sub-issues of #3351). Read as a sharp cone,
+/// it is a smaller tool than the real one, and its toolpath can gouge.
+/// The creation door ([`tool_refusal`]) and the generation and post door
+/// ([`tool_problem`]) both say it, so a tool edited to such a tip after
+/// its operations exist is refused too.
+fn unread_tip_refusal(def: &Tool, tool: &str, info: &KindInfo) -> Option<String> {
+    // #3369: no generator reads a form mill's outline yet. The 2D
+    // Chamfer names the edge form work that opens it (#896).
+    if def.kind == ToolKind::FormMill {
+        let opens = if info.ty == super::OpType::Chamfer2D {
+            " - the edge form work (#896) opens the 2D Chamfer to it"
+        } else {
+            ""
+        };
+        return Some(format!(
+            "'{tool}' is a form mill: a {} operation does not read its form outline yet{opens}",
+            info.label
+        ));
+    }
+    camcraft_tools::taper::is_unread_tip(def).then(|| {
+        format!(
+            "'{tool}' has a {} tip: the tip form is not read by a {} operation yet - use a chamfer mill with a sharp tip",
+            def.tip_form, info.label
+        )
+    })
 }
 
 /// Why a tool's definition cannot change kind from `prev` to `next`:
@@ -179,6 +221,48 @@ pub fn retype_refusal(world: &World, tool: &str, prev: ToolKind, next: ToolKind)
     ))
 }
 
+/// The slot door's sentence (#3475): both sizes and the largest tool that
+/// fits, in the document's unit, by the slot generator's own rule
+/// (`machining2d::slot_centre_band`). `None` when the tool fits, or when
+/// the numbers are no slot at all (`is_sane` and the generator name those).
+#[must_use]
+pub fn slot_fit_refusal(tool: &str, diameter: f64, width: f64, leave: f64, unit: crate::units::Unit) -> Option<String> {
+    if !matches!(crate::machining2d::slot_centre_band(width, diameter, leave), Ok(None)) {
+        return None;
+    }
+    let l = |v: f64| {
+        let s = crate::units::len(v, unit, 3);
+        let s = if s.contains('.') { s.trim_end_matches('0').trim_end_matches('.').to_string() } else { s };
+        format!("{s} {}", unit.suffix())
+    };
+    let walls = if leave > 0.0 { format!(" with {} left on each wall", l(leave)) } else { String::new() };
+    let room = width - 2.0 * leave;
+    let fix = if room > 0.0 {
+        format!("choose a tool of {} or less", l(room))
+    } else {
+        String::from("no tool fits - make the stock to leave smaller")
+    };
+    Some(format!("the tool '{tool}' is {} wide and the slot is {} wide{walls}: {fix}", l(diameter), l(width)))
+}
+
+/// Why a tool's diameter cannot change to `diameter` (#3475): a plain
+/// Slot that uses the tool would be left with a tool wider than the slot.
+#[must_use]
+pub fn resize_refusal(world: &World, tool: &str, diameter: f64) -> Option<String> {
+    let unit = crate::units::of(world);
+    model::named_entities(world)
+        .into_iter()
+        .filter_map(|(name, e)| model::operation_of(world, &e).map(|op| (name, op)))
+        .filter(|(_, op)| op.tool == tool)
+        .filter(|(_, op)| super::slot_width_is_stated(world, op.setup.as_deref(), &op.src, &op.params))
+        .find_map(|(name, op)| match op.params {
+            crate::operation::OpParams::Slot { width, stock_to_leave, .. } => {
+                slot_fit_refusal(tool, diameter, width, stock_to_leave, unit).map(|why| format!("{name} uses it: {why}"))
+            }
+            _ => None,
+        })
+}
+
 /// M10.1 C, the honest after-state: why an existing operation cannot be
 /// cut with the tool it names - the tool was deleted (or its name now
 /// belongs to something that is not a tool), or it is a kind the op's
@@ -208,7 +292,7 @@ pub fn tool_problem(world: &World, op_name: &str, op: &Operation) -> Option<Stri
         return Some(format!("{op_name}'s tool '{tool}' is no longer a tool; {wants}"));
     };
     if info.accepts(def.kind) {
-        return None;
+        return unread_tip_refusal(&def, tool, info).map(|why| format!("{op_name}'s tool {why}"));
     }
     Some(format!("{op_name}'s tool '{tool}' is a {}; {wants}", def.kind))
 }

@@ -246,28 +246,62 @@ pub fn log_mesh_refusals(fixtures: &[MeshedFixture]) {
 }
 
 /// The rotary axis line a rotary kind turns its part about, in the
-/// world frame its cached path is written in: re-fitted from the source
-/// model's world facets (the fit is a pure function of the facets, the
-/// generator's own). None for a non-rotary kind, a stock or selection
-/// source, or a refused fit: no machine frame is stated, and fixed
-/// steel keeps the path-frame verdict - the conservative one.
+/// world frame its cached path is written in. A STATED line first
+/// (#2772 parts 1-2): the op's own direction, else the mounted
+/// machine's stated rotary line, each anchored through the work
+/// offset origin and judged against the source model's world facets
+/// (`multiaxis::axis_stated` - the generator judged the same line
+/// before a move existed). A stated line that is refused or that the
+/// model's faces disagree with leaves no axis here: the generator has
+/// refused the op by name already, and a silent fall back to a free
+/// fit would judge the turning steel about a line the path never
+/// turned about. Nothing stated keeps the free fit (`axis::fit`, a
+/// pure function of the facets). None for a non-rotary kind, a
+/// stock or selection source, or a refused fit: no machine frame is
+/// stated, and fixed steel keeps the path-frame verdict - the
+/// conservative one.
 #[must_use]
 pub fn rotary_axis_of(
     world: &World,
     op: &crate::schema::Operation,
 ) -> Option<camcraft_sim::verify::RotaryAxis> {
     use crate::operation::{OpParams, SrcRef};
+    let flow = matches!(op.params, OpParams::RotaryFlow { .. });
     if !matches!(
         op.params,
         OpParams::RotaryContour { .. } | OpParams::RotaryParallel { .. } | OpParams::RotaryOffset { .. }
-    ) {
+    ) && !flow
+    {
         return None;
     }
-    let SrcRef::Entity(name) = &op.src else { return None };
-    let e = model::find_by_name(world, name)?;
-    let facets = crate::setup_align::facets_in(world, &e, op.setup.as_deref())?;
-    let ax = crate::multiaxis::axis::fit(&facets).ok()?;
-    Some(camcraft_sim::verify::RotaryAxis { origin: ax.origin, dir: [ax.dir.x, ax.dir.y, ax.dir.z] })
+    // #2826: the flow band's source is its picked chains, so the
+    // facets the stated line is judged against are the selection's
+    // own union - exactly the material the generator stands in.
+    let facets = match &op.src {
+        SrcRef::Entity(name) => {
+            let e = model::find_by_name(world, name)?;
+            crate::setup_align::facets_in(world, &e, op.setup.as_deref())?
+        }
+        SrcRef::Selection(_) if flow => {
+            crate::operation::source_facets(world, op.setup.as_deref(), &op.src).ok()?
+        }
+        _ => return None,
+    };
+    let of = |ax: crate::multiaxis::axis::Axis| {
+        Some(camcraft_sim::verify::RotaryAxis { origin: ax.origin, dir: [ax.dir.x, ax.dir.y, ax.dir.z] })
+    };
+    match crate::rotary_stated::axis_lines(world, op.setup.as_deref(), &op.params) {
+        // A stated line the model's faces hold: the very line the
+        // generator turned about (a garbled one left no path at all).
+        Some(Ok(lines)) => {
+            let axes: Vec<_> = lines.iter().map(|(_, l)| *l).collect();
+            crate::multiaxis::axis_stated::holds_any(&facets, &axes).and_then(of)
+        }
+        // Garbled: nothing to judge about, and no path exists.
+        Some(Err(_)) => None,
+        // Nothing stated: today's free fit.
+        None => crate::multiaxis::axis::fit(&facets).ok().and_then(of),
+    }
 }
 
 /// Every name that occupies the context: the tagged models, then the

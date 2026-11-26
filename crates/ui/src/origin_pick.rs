@@ -70,7 +70,7 @@ pub fn take(state: &mut State, pick: GeoSel) {
     let what = camcraft_app::pick::geo_label(&state.world, &pick);
     let Some(draft) = state.origin_pick.as_mut().filter(|d| d.picking) else { return };
     let setup = draft.setup.clone();
-    state.status = match pick.feature {
+    state.status = match &pick.feature {
         FeatureSel::Vertex(_) => {
             draft.pick = Some(pick);
             format!("{setup}: {what} picked for the origin - Apply places the WCS")
@@ -81,7 +81,7 @@ pub fn take(state: &mut State, pick: GeoSel) {
         FeatureSel::Chain(_) => format!(
             "{setup}: {what} is an edge - an origin point takes a vertex (or use a box reading)"
         ),
-        FeatureSel::Patch(_) => format!(
+        FeatureSel::Patch(_) | FeatureSel::SketchChain(_) | FeatureSel::SketchLayer(_) => format!(
             "{setup}: {what} is not a vertex - an origin point takes a vertex"
         ),
     };

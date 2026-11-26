@@ -96,6 +96,7 @@ fn finish() -> OpParams {
         bottom_z: Height::fixed(-2.0),
         feed: 120.0,
         plunge_feed: 60.0,
+        picks: Default::default(),
     }
 }
 
@@ -108,6 +109,7 @@ fn facing() -> OpParams {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     }
 }
 
@@ -232,6 +234,7 @@ fn a_boring_bar_defaults_to_the_id_tip_and_refuses_an_od_one() {
         bottom_z: Height::fixed(0.0),
         feed: 100.0,
         plunge_feed: 50.0,
+        picks: Default::default(),
     };
     let mut bar = tool("BR-1000");
     assert_eq!(posting::nose::checked_orientation(&bore, "BR-1000", &bar), Ok(Some(3)), "a bar cuts toward the chuck on +X");

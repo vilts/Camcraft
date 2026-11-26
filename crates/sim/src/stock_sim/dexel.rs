@@ -18,9 +18,8 @@ pub struct Dexel {
     pub cell: f64,
     pub nx: usize,
     pub ny: usize,
-    /// The surface the whole grid started at: removal is counted from
-    /// here, so a column's removed depth is one subtraction, not a
-    /// history.
+    /// Initial upper plane. A laid cylinder uses its analytic section
+    /// for removal instead of this enclosing plane (#2758).
     pub stock_z: f64,
     /// Top of the material standing at each column, in `TILE`-squared
     /// boxes: `None` is "every cell at `stock_z`", a cut tile carries
@@ -30,6 +29,8 @@ pub struct Dexel {
     /// Continuous box/cut provenance for a later side turn. Direct grid
     /// edits clear it; the validated program and clip paths preserve it.
     pub(super) history: Option<std::sync::Arc<super::carry_history::History>>,
+    /// Exact initial vertical sections of a horizontal cylinder (#2758).
+    pub(super) laid: Option<super::laid_cylinder::LaidCylinder>,
 }
 
 impl Dexel {
@@ -58,6 +59,7 @@ impl Dexel {
             ny,
             stock_z: top_z,
             tiles: vec![None; nx.div_ceil(TILE) * ny.div_ceil(TILE)],
+            laid: None,
             history: Some(std::sync::Arc::new(super::carry_history::History::block(
                 x0, y0, x1, y1, top_z, cell,
             ))),

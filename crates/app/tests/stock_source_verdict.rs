@@ -81,6 +81,7 @@ fn part() -> Mesh {
 /// A milled bore of a 16 mm hole at the origin, from the mouth to `floor`.
 fn bore(floor: f64) -> OpParams {
     OpParams::Bore {
+        pass_start: camcraft_app::machining2d::PassStart::Auto,
         break_through: None,
         links: camcraft_app::links::Links::PLANAR,
         clearance_z: Height::fixed(40.0),
@@ -94,6 +95,7 @@ fn bore(floor: f64) -> OpParams {
         climb: true,
         tolerance: 0.01,
         holes: vec![Hole { xy: Point2::new(0.0, 0.0), radius: 8.0, entry_z: MOUTH, floor_z: floor, through: false, stepped: false }],
+        picks: Default::default(),
     }
 }
 

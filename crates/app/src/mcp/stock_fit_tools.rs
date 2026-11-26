@@ -15,7 +15,7 @@ use crate::stock_fit::{self, FitKind};
 
 pub(super) const TOOLS: &[Tool] = &[Tool {
     name: "fit_stock",
-    description: "Fit the active setup's stock to its part models, as the Stock page's Fit to Models does: a box (`shape` \"box\", the default) or a Z cylinder snug about the parts (\"cylinder\") with `margin` mm on every side (default 2), or a box with `sides` = [-X, +X, -Y, +Y, -Z, +Z] allowances in mm. Only the parts are measured - vises, accessories, plates and tagged fixtures are left out. The stock keeps its rotation. One undoable step; refused by name with no models, a negative allowance or a flat part.",
+    description: "Fit the active setup's stock to its part models, as the Stock page's Fit to Models does: a box (`shape` \"box\", the default) or a Z cylinder snug about the parts (\"cylinder\") with `margin` mm on every side (default 2), or a box with `sides` = [-X, +X, -Y, +Y, -Z, +Z] allowances in mm. Only the parts are measured - vises, accessories, plates and tagged fixtures are left out. The stock keeps its rotation, and the fit is made on the stock's own axes (a stock laid along X or Y wraps the parts along its own length). One undoable step; refused by name with no models, a negative allowance or a flat part.",
     schema: s_fit_stock,
     run: fit_stock,
 }];

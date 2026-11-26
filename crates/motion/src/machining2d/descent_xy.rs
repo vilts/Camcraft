@@ -85,26 +85,62 @@ pub(super) fn plan_xy(l: &Lvl, m: &Motion) -> Result<XyArc, &'static str> {
     let a = &m.links.approach;
     let (&e, rest) = l.pass.split_first().ok_or("the pass has no start")?;
     let walk = l.walk.and_then(|w| w.first());
+    let unit = |d: Point2| {
+        let len = d.x.hypot(d.y);
+        (len.is_finite() && len > 0.0).then(|| Point2::new(d.x / len, d.y / len))
+    };
     let dir = walk.map_or_else(|| pts_dir(e, rest), |s| seg_dir(e, s)).ok_or("the first cut has no direction")?;
-    let len = dir.x.hypot(dir.y);
-    if !(len.is_finite() && len > 0.0) {
-        return Err("the first cut has no direction");
-    }
-    let u = Point2::new(dir.x / len, dir.y / len);
+    let u = unit(dir).ok_or("the first cut has no direction")?;
+    // The closing edge's tangent is tried second, and only when it is
+    // within TANGENT_SLACK of the first cut's: the arc stays tangent to
+    // the first cut, and the ring behind the start is off the hull.
+    let uc = closing_dir(l.pass).and_then(unit).filter(|c| {
+        let cross = u.x * c.y - u.y * c.x;
+        let dot = u.x * c.x + u.y * c.y;
+        dot > 0.0 && cross.abs() <= TANGENT_SLACK && (c.x != u.x || c.y != u.y)
+    });
     let sweep = if a.arc_sweep > 0.0 { a.arc_sweep_rad() } else { std::f64::consts::FRAC_PI_2 };
-    let mut r = a.arc_nominal(m.arc_radius);
-    if !(r.is_finite() && r > 0.0 && sweep.is_finite() && sweep > 0.0) {
+    let r0 = a.arc_nominal(m.arc_radius);
+    if !(r0.is_finite() && r0 > 0.0 && sweep.is_finite() && sweep > 0.0) {
         return Err("the arc has no radius");
     }
-    for _ in 0..RADIUS_TRIES {
-        for ccw in [true, false] {
-            if let Some(arc) = arc_at(l, e, u, r, sweep, ccw) {
-                return Ok(arc);
+    for u in std::iter::once(u).chain(uc) {
+        let mut r = r0;
+        for _ in 0..RADIUS_TRIES {
+            for ccw in [true, false] {
+                if let Some(arc) = arc_at(l, e, u, r, sweep, ccw) {
+                    return Ok(arc);
+                }
             }
+            r *= 0.5;
         }
-        r *= 0.5;
     }
     Err("no radius down to a sixteenth of the nominal stays in the legal area off the other passes")
+}
+
+/// The largest turn (radians, as the sine) between the first cut and the
+/// closing edge for which the closing edge may give the arc its tangent:
+/// the noise of an arc fit or a lattice-step edge, never a ring corner.
+const TANGENT_SLACK: f64 = 1e-3;
+
+/// The shortest closing edge (mm) that gives the arc its tangent: a
+/// shorter one is a few lattice steps long, and the lattice turns its
+/// direction by up to a degree.
+const DIR_MIN_LEN: f64 = 1e-3;
+
+/// The direction the pass arrives at its start, when its first ring
+/// closes there: from the last vertex at least [`DIR_MIN_LEN`] before
+/// the return. The tangent of the first cut can sit a fraction of a
+/// micron off that edge (an arc fit, a lattice-step edge), and then the
+/// ring behind the start crosses the arc's proof polylines on both sides
+/// (#2849). On the closing edge's line, that edge is on the line itself,
+/// so the ring behind the start curves to one side only. `None`: the
+/// pass does not return to its start (a row, an open chain).
+fn closing_dir(pass: &[Point2]) -> Option<Point2> {
+    let &e = pass.first()?;
+    let back = (3..pass.len()).find(|&i| pass[i] == e)?;
+    let p = pass[..back].iter().rev().find(|q| (e.x - q.x).hypot(e.y - q.y) >= DIR_MIN_LEN)?;
+    Some(Point2::new(e.x - p.x, e.y - p.y))
 }
 
 /// Rotate `v` by `t` radians.
@@ -114,7 +150,7 @@ fn rot(v: Point2, t: f64) -> Point2 {
 }
 
 /// The arc at one radius and side, proved, or `None`.
-fn arc_at(l: &Lvl, e: Point2, u: Point2, r: f64, sweep: f64, ccw: bool) -> Option<XyArc> {
+pub(super) fn arc_at(l: &Lvl, e: Point2, u: Point2, r: f64, sweep: f64, ccw: bool) -> Option<XyArc> {
     // The centre on the turning side: left of `u` for G3, right for G2.
     let n = if ccw { Point2::new(-u.y, u.x) } else { Point2::new(u.y, -u.x) };
     let center = Point2::new(lattice(e.x + n.x * r), lattice(e.y + n.y * r));
@@ -246,4 +282,23 @@ pub(super) fn reseat_first(mut passes: Vec<Vec<Point2>>) -> Vec<Vec<Point2>> {
     out.push(mid);
     *first = out;
     passes
+}
+
+#[cfg(test)]
+mod closing_tests {
+    use super::*;
+
+    #[test]
+    fn the_arc_tangent_is_the_closing_edge_of_the_first_ring() {
+        // #2849: the ring starts with a 40 nm edge whose direction the
+        // lattice turns; the tangent comes from the closing edge, and a
+        // closing vertex nearer than DIR_MIN_LEN is skipped.
+        let e = Point2::new(0.051208, -2.296322);
+        let p = Point2::new(0.0, -2.297463);
+        let near = Point2::new(0.051168, -2.296323);
+        let ring = [e, Point2::new(0.051248, -2.296321), Point2::new(0.100384, -2.295225), Point2::new(0.0, 5.0), p, near, e, Point2::new(3.0, 3.0)];
+        assert_eq!(closing_dir(&ring), Some(Point2::new(e.x - p.x, e.y - p.y)));
+        // A row does not return to its start: no closing edge.
+        assert_eq!(closing_dir(&[e, p, Point2::new(1.0, 1.0)]), None);
+    }
 }

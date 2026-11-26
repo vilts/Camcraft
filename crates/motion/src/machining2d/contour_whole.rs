@@ -15,13 +15,15 @@ use crate::cl::{PathBuilder, Toolpath};
 use crate::geo2d::{Point2, Region};
 use crate::geometry::{Point3, Triangle};
 
-use super::contour::{PreparedBand, emit_band, finish_contour, prepare_band};
+use super::contour::{PreparedBand, finish_contour, prepare_band};
 use super::contour_comp;
 use super::contour_depth::{Ladder, ladder};
 use super::contour_entry::say;
 use super::contour_params::{ContourParams, Side};
 use super::contour_start;
 use super::contour_step::Said;
+use super::contour_whole_fence::{Planned, Sink, flush};
+use super::contour_whole_reach::{band_sweep, reach_up};
 use super::contour_whole_slice::{next_region, whole_region_at};
 use super::face::GenError;
 use super::fillet_tally::FilletTally;
@@ -145,6 +147,34 @@ fn forward_band_notes(
     }
 }
 
+/// A band that stops at the next flat level `z_next` and still emits floor
+/// passes: an outer ring that stops there and has no floor level above it
+/// gets no pass, and the re-slice does not return to it (#2538). Name the
+/// uncut Z range of each such ring.
+fn note_rings_without_floor(
+    band: &PreparedBand,
+    lad: &Ladder,
+    trimmed: &Ladder,
+    z_next: f64,
+    ceiling: f64,
+    lead_notes: &mut Vec<String>,
+) {
+    for (li, l) in band.loops.iter().enumerate() {
+        if !l.is_ccw() || lad.walks(li, z_next) || !trimmed.ring(li).is_empty() {
+            continue;
+        }
+        let at = band.plan.get(li).and_then(|r| r.first().copied()).unwrap_or(Point2::new(0.0, 0.0));
+        say(
+            lead_notes,
+            format!(
+                "whole-model contour: the ring at ({:.3}, {:.3}) has no floor level between Z {z_next:.3} \
+                 and Z {ceiling:.3} - that wall is not cut; reduce the stepdown",
+                at.x, at.y
+            ),
+        );
+    }
+}
+
 fn stopped(msg: String, b: PathBuilder) -> GenError {
     let partial = b.finish();
     if partial.moves.is_empty() {
@@ -207,21 +237,31 @@ pub fn contour_whole_bodies_with(
     if top_region.is_empty() {
         return Err(GenError::Empty("empty footprint".into()));
     }
-    let flat = p.levels()?;
+    let flat = p.ring_levels()?;
     let r = p.tool_diameter * 0.5;
     let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
     let mut said = Said::default();
     let mut tally = FilletTally::default();
     let mut lead_notes = Vec::new();
     let mut walked = Vec::new();
+    let mut cover = Region::empty();
     let mut remaining: &[f64] = &flat;
     let mut current_region = top_region.clone();
     let mut ceiling = p.top_z;
     let mut used_fallback = false;
-    let mut pick_matched = p.links.approach.start_point.is_none();
-    let mut exit_matched = p.links.approach.exit_point.is_none();
+    let mut pick_matched = p.picks.first(crate::path_picks::PickRole::Start).is_none();
+    let mut exit_matched = p.picks.first(crate::path_picks::PickRole::Exit).is_none();
     let mut deferred_pick = None;
     let mut deferred_exit = None;
+    // #2677: bands are planned first and emitted together, so each lead room
+    // can fence the other bands' rings on a shared level (contour_whole_fence).
+    // An error that carries the partial path flushes them first.
+    let mut planned: Vec<Planned> = Vec::new();
+    macro_rules! flush_planned {
+        () => {
+            flush(&mut b, &mut planned, p, &mut Sink { said: &mut said, lead_notes: &mut lead_notes, tally: &mut tally })?
+        };
+    }
 
     let mut mid = false;
     let max_bands = flat.len().saturating_mul(2).saturating_add(part.len().saturating_mul(3)).saturating_add(2);
@@ -235,7 +275,12 @@ pub fn contour_whole_bodies_with(
 
         let mut ring_notes = Vec::new();
         let lad = ladder(&band.plan, part, bodies, remaining, ceiling, r, p.stock_to_leave, &mut ring_notes);
-        check_unread(&lad, remaining, p, &b)?;
+        if check_unread(&lad, remaining, p, &b).is_err() {
+            flush_planned!();
+            check_unread(&lad, remaining, p, &b)?;
+        }
+        // #2597: a ring that reaches outside every sweep cut so far starts at Top Z.
+        let lad = reach_up(&band, lad, &cover, &flat, part, bodies, p)?;
 
         // An intermediate band (the outline changed between the last cut level
         // and the next flat level) cuts only its floor passes above that level.
@@ -248,10 +293,12 @@ pub fn contour_whole_bodies_with(
                 let trimmed = trim_ladder(&lad, remaining[0]);
                 let emitted = trimmed.zs.last().is_some_and(|&z| z < ceiling - SAME_LEVEL);
                 if emitted {
+                    note_rings_without_floor(&band, &lad, &trimmed, remaining[0], ceiling, &mut lead_notes);
                     forward_band_notes(&band, &lad, last_z, true, ring_notes, &mut lead_notes);
-                    emit_band(&mut b, &band, p, &trimmed, pick, exit, &mut said, &mut lead_notes, &mut tally)?;
                     walked.push(current_region.clone());
+                    cover = cover.union(&band_sweep(&band.center, r)?)?;
                     ceiling = trimmed.zs.last().copied().unwrap_or(ceiling);
+                    planned.push(Planned { band, lad: trimmed, pick, exit });
                 } else if mid {
                     say(
                         &mut lead_notes,
@@ -273,6 +320,7 @@ pub fn contour_whole_bodies_with(
                     p.bottom_z,
                     ring_notes.join("; ")
                 );
+                flush_planned!();
                 return Err(stopped(msg, b));
             }
             Some(j) => {
@@ -284,9 +332,10 @@ pub fn contour_whole_bodies_with(
                     )));
                 }
                 forward_band_notes(&band, &lad, last_z, true, ring_notes, &mut lead_notes);
-                emit_band(&mut b, &band, p, &trimmed, pick, exit, &mut said, &mut lead_notes, &mut tally)?;
                 walked.push(current_region.clone());
+                cover = cover.union(&band_sweep(&band.center, r)?)?;
                 ceiling = trimmed.zs.last().copied().unwrap_or(remaining[j - 1]);
+                planned.push(Planned { band, lad: trimmed, pick, exit });
                 remaining = &remaining[j..];
                 used_fallback = true;
                 let (raw, next_mid) = next_region(part, bodies, p, ceiling, remaining[0], true)?;
@@ -298,13 +347,14 @@ pub fn contour_whole_bodies_with(
                             "whole-model contour stopped at Z {ceiling:.3} (Bottom Z {:.3}):                              no machinable region at Z {:.3} ({e})",
                             p.bottom_z, remaining[0]
                         );
+                        flush_planned!();
                         return Err(stopped(msg, b));
                     }
                 };
             }
             None => {
                 forward_band_notes(&band, &lad, last_z, false, ring_notes, &mut lead_notes);
-                emit_band(&mut b, &band, p, &lad, pick, exit, &mut said, &mut lead_notes, &mut tally)?;
+                planned.push(Planned { band, lad, pick, exit });
                 walked.push(current_region);
                 remaining = &[];
                 break;
@@ -317,8 +367,10 @@ pub fn contour_whole_bodies_with(
             "whole-model contour stopped at Z {ceiling:.3} (Bottom Z {:.3}): too many outline changes above Z {z:.3}",
             p.bottom_z
         );
+        flush_planned!();
         return Err(stopped(msg, b));
     }
+    flush_planned!();
 
     if !pick_matched
         && let Some(e) = deferred_pick

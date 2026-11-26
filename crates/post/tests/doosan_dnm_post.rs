@@ -409,6 +409,12 @@ fn doosan_dnm_index_names_only_a_stated_rotary() {
     assert!(out.warnings.is_empty(), "{:?}", out.warnings);
     let moves: Vec<&str> = out.program.lines().filter(|l| l.starts_with("G00") || l.starts_with("G01") || *l == "M10" || *l == "M11").collect();
     // #1633: the first traverse's height is stated with the table still
-    // clamped; the index turns on the record itself.
-    assert_eq!(moves, vec!["G00 Z10.", "M11", "G00 X0. Y0. Z10. A90.", "M10", "G01 X50. Y0. Z-1. F400"], "{}", out.program);
+    // clamped; the index turns on the record itself. #3540: the program
+    // end returns A to zero, unclamped and clamped again.
+    assert_eq!(
+        moves,
+        vec!["G00 Z10.", "M11", "G00 X0. Y0. Z10. A90.", "M10", "G01 X50. Y0. Z-1. F400.", "M11", "G00 A0.", "M10"],
+        "{}",
+        out.program
+    );
 }

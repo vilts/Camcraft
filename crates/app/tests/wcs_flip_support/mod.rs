@@ -15,7 +15,7 @@ pub const TOOL: &str = "EM-0400-2FL";
 pub fn face() -> OpParams {
     OpParams::Face {
         holes: Default::default(),
-        blend_turns: true,
+        blend_turns: true, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -25,6 +25,7 @@ pub fn face() -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 

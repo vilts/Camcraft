@@ -40,11 +40,13 @@ fn invalid(why: String) -> GenError {
     GenError::Invalid(format!("wire contour: {why}"))
 }
 
-/// A closed counter-clockwise ring with its arc lengths.
+/// A closed counter-clockwise ring with monotone arc coordinates.
+/// Normally these are its own lengths; `preimage` can instead use the
+/// input's lengths, with repeated points across an excised input span.
 pub(super) struct Ring {
     pub(super) pts: Vec<Point2>,
-    /// `cum[i]` is the arc length from `pts[0]` to `pts[i]`.
-    cum: Vec<f64>,
+    /// `cum[i]` is the arc coordinate of `pts[i]`, starting at zero.
+    pub(super) cum: Vec<f64>,
     pub(super) total: f64,
 }
 
@@ -87,7 +89,7 @@ impl Ring {
         let a = a.rem_euclid(self.total);
         let i = self.cum.partition_point(|c| *c <= a).saturating_sub(1).min(n - 1);
         let (p, q) = (self.pts[i], self.pts[(i + 1) % n]);
-        let len = dist(p, q);
+        let len = self.cum.get(i + 1).copied().unwrap_or(self.total) - self.cum[i];
         let t = if len > 0.0 { ((a - self.cum[i]) / len).clamp(0.0, 1.0) } else { 0.0 };
         Point2::new(p.x + (q.x - p.x) * t, p.y + (q.y - p.y) * t)
     }
@@ -105,7 +107,8 @@ impl Ring {
             let dd = dx * dx + dy * dy;
             let t = if dd > 0.0 { (((q.x - a.x) * dx + (q.y - a.y) * dy) / dd).clamp(0.0, 1.0) } else { 0.0 };
             let f = Point2::new(a.x + t * dx, a.y + t * dy);
-            (self.cum[i] + t * dd.sqrt(), dist(f, q))
+            let span = self.cum.get(i + 1).copied().unwrap_or(self.total) - self.cum[i];
+            (self.cum[i] + t * span, dist(f, q))
         };
         let mut best = (0.0, f64::INFINITY);
         for i in 0..n {

@@ -114,9 +114,11 @@ fn cut_under(kind: Kind, top: f64, bottom: f64, clearance: f64) -> OpParams {
     match kind {
         Kind::Engrave => OpParams::Engrave {
             clearance_z, retract_z: None, top_z, bottom_z, stepdown: 10.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None,
+            picks: Default::default(),
         },
         Kind::Trace => OpParams::Trace {
             clearance_z, retract_z: None, top_z, bottom_z, stepdown: 10.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None,
+            picks: Default::default(),
         },
     }
 }
@@ -311,7 +313,7 @@ fn a_stock_source_cut_through_the_plate_meets_the_same_floor() {
 fn roofed() -> Mesh {
     let mut f = cube(Point3::new(-20.0, -20.0, 0.0), Point3::new(20.0, 20.0, 8.0)).facets.to_vec();
     f.extend(cube(Point3::new(-20.0, -20.0, 120.0), Point3::new(20.0, 20.0, 125.0)).facets.iter().copied());
-    Mesh { facets: f.into() }
+    Mesh::from_facets(f)
 }
 
 #[test]
@@ -341,7 +343,7 @@ fn a_retract_into_an_overhang_of_the_part_is_convicted_on_the_lift_and_never_pos
             assert_eq!(gouges(&warns), 0, "{kind:?} rotated {rotated}: the mark itself is legal: {warns:?}");
             for at in lifts {
                 assert!(
-                    warns.contains(&Warning::RapidInStock { at }),
+                    warns.contains(&Warning::RapidInPart { at }),
                     "{kind:?} rotated {rotated}: the retract (move {at}) into the overhang is not convicted: {warns:?}"
                 );
             }

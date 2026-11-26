@@ -16,10 +16,11 @@ use egui_kittest::kittest::{NodeT, Queryable};
 use super::*;
 
 fn points_of(p: &OpParams) -> (Option<Point2>, Option<Point2>) {
-    match p {
-        OpParams::Contour { links, .. } => (links.approach.start_point, links.approach.exit_point),
-        _ => (None, None),
-    }
+    let picks = p.path_picks();
+    (
+        picks.first(camcraft_app::path_picks::PickRole::Start).map(|k| k.xy),
+        picks.first(camcraft_app::path_picks::PickRole::Exit).map(|k| k.xy),
+    )
 }
 
 fn live_points(st: &State) -> (Option<Point2>, Option<Point2>) {

@@ -93,41 +93,13 @@ pub fn fit(facets: &[Triangle]) -> Result<Axis, GenError> {
 
 /// [`fit`], with what it set aside and the plain fit it started from.
 pub fn fit_report(facets: &[Triangle]) -> Result<Fit, GenError> {
-    let mut data: Vec<Datum> = Vec::with_capacity(facets.len());
-    let mut a_total = 0.0;
-    for f in facets {
-        let n = f.normal();
-        if !n.is_finite() {
-            continue;
-        }
-        let (u, v) = (f.b - f.a, f.c - f.a);
-        let cr = u.cross(v);
-        let area = 0.5 * cr.dot(cr).sqrt();
-        if !area.is_finite() || area <= 0.0 {
-            continue; // degenerate facet: no claim, no vote
-        }
-        let Some(p) = circumcenter(f) else {
-            continue; // a sliver's circumcenter runs off to nowhere;
-        }; // its good neighbors' areas carry the vote anyway
-        data.push(Datum { n, p, a: area });
-        a_total += area;
-    }
+    let (data, a_total) = data_of(facets);
     if data.is_empty() || a_total <= 0.0 {
         return Err(GenError::Invalid(
             "rotary has no surface to read a rotation axis from".into(),
         ));
     }
-    // The second moment of the normals, area-weighted: symmetric,
-    // stored in its six independent entries.
-    let mut m = [[0.0f64; 3]; 3];
-    for d in &data {
-        for (i, ni) in [d.n.x, d.n.y, d.n.z].iter().enumerate() {
-            for (j, nj) in [d.n.x, d.n.y, d.n.z].iter().enumerate() {
-                m[i][j] += d.a * ni * nj;
-            }
-        }
-    }
-    let Some((vals, vecs)) = sym_eigen(m) else {
+    let Some((vals, vecs)) = sym_eigen(moment(&data)) else {
         return Err(GenError::Invalid(
             "the model's normals are not finite - the mesh is corrupt".into(),
         ));
@@ -196,12 +168,51 @@ pub fn fit_report(facets: &[Triangle]) -> Result<Fit, GenError> {
     }
 }
 
+/// Each facet's claim (normal, circumcenter, area) and the total area;
+/// degenerate facets and slivers make no claim.
+pub(super) fn data_of(facets: &[Triangle]) -> (Vec<Datum>, f64) {
+    let mut data: Vec<Datum> = Vec::with_capacity(facets.len());
+    let mut a_total = 0.0;
+    for f in facets {
+        let n = f.normal();
+        if !n.is_finite() {
+            continue;
+        }
+        let (u, v) = (f.b - f.a, f.c - f.a);
+        let cr = u.cross(v);
+        let area = 0.5 * cr.dot(cr).sqrt();
+        if !area.is_finite() || area <= 0.0 {
+            continue; // degenerate facet: no claim, no vote
+        }
+        let Some(p) = circumcenter(f) else {
+            continue; // a sliver's circumcenter runs off to nowhere;
+        }; // its good neighbors' areas carry the vote anyway
+        data.push(Datum { n, p, a: area });
+        a_total += area;
+    }
+    (data, a_total)
+}
+
+/// The second moment of the normals, area-weighted: symmetric,
+/// stored in its six independent entries.
+pub(super) fn moment(data: &[Datum]) -> [[f64; 3]; 3] {
+    let mut m = [[0.0f64; 3]; 3];
+    for d in data {
+        for (i, ni) in [d.n.x, d.n.y, d.n.z].iter().enumerate() {
+            for (j, nj) in [d.n.x, d.n.y, d.n.z].iter().enumerate() {
+                m[i][j] += d.a * ni * nj;
+            }
+        }
+    }
+    m
+}
+
 /// The refusal when no axis is earned: the sphere's, or the freeform's.
 fn refusal(iso: bool) -> Result<Fit, GenError> {
     Err(GenError::Invalid(if iso {
         "every axis fits this model equally - it curves the same the world around; domed ground is 5-Axis Contour or Parallel work".into()
     } else {
-        "the model's normals share no rotation axis - a turned workpiece is rotary work; finish a freeform with the 5-Axis kinds".into()
+        "the model's normals share no rotation axis - it is not a shape of revolution, and the rotary kinds need one today; 4-axis work on a part clamped on A that is not turned (helical lobes, a carving) is not supported yet (#2772); on a 5-axis machine, finish a freeform with the 5-Axis kinds".into()
     }))
 }
 
@@ -216,19 +227,26 @@ pub(super) fn try_axis(data: &[Datum], u0: Point3, a_total: f64) -> Option<(f64,
     judge(data, ax, rho, a_total).map(|r| (r, ax))
 }
 
+/// A direction read canonically: unit, and determinately signed - the
+/// axis points up, or (for a flat-lying fit) along +x, or +y - the
+/// generators read stations along the direction, so its sign is part
+/// of the answer. `None` when `u0` is zero or not finite. The stated
+/// axis of #2772 (`axis_stated.rs`) signs its lines by the same law,
+/// so a stated line and the line the fit would read agree bit for bit.
+pub(super) fn signed(u0: Point3) -> Option<Point3> {
+    let u = unit(u0)?;
+    Some(if u.z < 0.0 || (u.z == 0.0 && (u.x < 0.0 || (u.x == 0.0 && u.y < 0.0))) {
+        Point3::new(-u.x, -u.y, -u.z)
+    } else {
+        u
+    })
+}
+
 /// The least-squares axis LINE about direction `u0` (signed
 /// determinately) over `data`, with the area-weighted mean radius
 /// about it; `None` when the rows cannot place a line.
 pub(super) fn line(data: &[Datum], u0: Point3, a_total: f64) -> Option<(Axis, f64)> {
-    let u = unit(u0)?;
-    // Determinately signed: the axis points up, or (for a flat-lying
-    // fit) along +x, or +y - the generators read stations along the
-    // direction, so its sign is part of the answer.
-    let u = if u.z < 0.0 || (u.z == 0.0 && (u.x < 0.0 || (u.x == 0.0 && u.y < 0.0))) {
-        Point3::new(-u.x, -u.y, -u.z)
-    } else {
-        u
-    };
+    let u = signed(u0)?;
     let mut m = [[0.0f64; 3]; 3];
     let mut b = [0.0f64; 3];
     let mut rows = 0usize;

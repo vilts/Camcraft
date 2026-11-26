@@ -1,0 +1,3 @@
+kinds = ["Boring", "Form Turning"]
+machine = "Lathe"
+expect = "post"

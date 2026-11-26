@@ -40,7 +40,7 @@ fn machine() -> Machine {
 
 fn recipe(thickness: f64) -> CuttingRow {
     CuttingRow {
-        material: Some(WorkMaterial::MildSteel), rpm: 0.0, feed: 600.0, stepdown: None, stepover: None,
+        material: Some(WorkMaterial::MildSteel), rpm: 0.0, feed: 600.0, stepdown: None, stepover: None, plasma: None,
         waterjet: Some(WaterjetCutData {
             thickness, kerf: 0.8, pierce_time: 2.0, abrasive_delay: 0.3,
             re_pierce_time: 1.0, pierce_method: PierceMethod::Wiggle,
@@ -174,9 +174,10 @@ fn cached(moves: Vec<Move>, tool: Tool) -> (World, Entity) {
     e.entity_view(&w).set(Operation {
         tool: "Nozzle".into(), src: SrcRef::Stock,
         params: OpParams::Face {
-            holes: Default::default(), tilt: None, blend_turns: false,
+            holes: Default::default(), tilt: None, blend_turns: false, blend_radius: None,
             stepover: 1.0, clearance_z: Height::fixed(10.0), cut_z: Height::fixed(0.0),
             top_z: None, stepdown: None, feed: 600.0, plunge_feed: 100.0, climb: true,
+            picks: Default::default(),
         },
         stamp: None, setup: None, area: Default::default(), coolant: Default::default(),
         after: Default::default(), suppressed: false,

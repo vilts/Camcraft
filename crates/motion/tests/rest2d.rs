@@ -50,6 +50,7 @@ fn depth_in(p: Point2, cr: f64) -> f64 {
 
 fn prev() -> RestParams {
     RestParams {
+        source: Default::default(),
         previous_tool_diameter: PREV_D,
         previous_corner_radius: 0.0,
         previous_stock_to_leave: 0.0,

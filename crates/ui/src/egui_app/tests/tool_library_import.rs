@@ -102,3 +102,38 @@ fn unticked_imports_bare_ticked_takes_the_holder_and_undo_restores() {
     assert_eq!(has_body(&state), None, "one undo removes tool and holder");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn state_imports_and_exports_pathpilot_csv_and_hurco_tcm_in_document_units() {
+    use camcraft_app::commands::SetUnits;
+    use camcraft_app::tool_numbers;
+    use camcraft_app::units::Unit;
+
+    let dir = temp_dir("tables");
+    let csv = dir.join("pp.csv");
+    std::fs::write(
+        &csv,
+        "Mill Tool Table,2026-11-18 - v1,This must be the first row - do not edit\r\n\
+         Tool number,Description,Z offset,Diameter,Z offset wear,Diameter wear,Max RPM\r\n\
+         1,endmill 1/4,0.0,0.2500000,0.0,0.0,0.0\r\n",
+    )
+    .expect("write csv");
+
+    let mut state = State::new();
+    state.history.execute(&state.world, SetUnits::new(&state.world, Unit::Inches).expect("inches"));
+    state.import_tool_library_from(&csv);
+    let e = model::find_by_name(&state.world, "endmill 1/4").expect("imported tool");
+    let t = model::tool_of(&state.world, &e).expect("tool");
+    assert!((t.diameter - 6.35).abs() < 1e-6, "inch CSV read as 6.35 mm: {}", t.diameter);
+    assert_eq!(tool_numbers::number_of(&state.world, "endmill 1/4"), Some(1));
+
+    let out_csv = dir.join("out.csv");
+    state.export_tool_library_to(&out_csv);
+    assert!(std::fs::read_to_string(&out_csv).expect("read").contains(",0.2500000,"));
+
+    let out_tcm = dir.join("out.TCM");
+    state.history.execute(&state.world, SetUnits::new(&state.world, Unit::Millimeters).expect("mm"));
+    state.export_tool_library_to(&out_tcm);
+    assert!(std::fs::read_to_string(&out_tcm).expect("read").contains("<Diameter>6.35</Diameter>"));
+    let _ = std::fs::remove_dir_all(&dir);
+}

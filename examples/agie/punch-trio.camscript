@@ -1,0 +1,27 @@
+// Original CAMCraft example. Run from the project root with a fresh output name.
+// Each retained rectangle on the 20 mm plate has its own model and threading hole.
+cam.call("load_machine", {builtin: "AGIECUT Classic 2S (template)"});
+cam.call("edit_machine", {patch: {edm: {conditions: [{
+  id: "AGIE_QN2", role: "rough", gap: 0.005, wire_diameter: 0.25
+}]}}});
+cam.call("add_tool", {catalog: "EDM-W025"});
+const centers = [[-32, 0], [0, 0], [32, 0]];
+for (const [i, center] of centers.entries()) {
+  const owner = "Retained" + (i + 1);
+  cam.import("examples/agie/pair-left.obj", owner);
+  // The original 14 x 16 rectangle is centered at X-17.
+  cam.call("move_model", {name: owner, position: [center[0] + 17, center[1], 0]});
+}
+cam.call("set_stock", {box: {dx: 120, dy: 100, dz: 20}});
+cam.call("set_wcs", {origin: [0, 0, 20]});
+for (const [i, center] of centers.entries()) {
+  cam.call("add_operation", {
+    kind: "Wire Contour", name: "Punch" + (i + 1), source: "Retained" + (i + 1),
+    tool: "EDM-W025", params: {
+      top_z: 20, bottom_z: 0, side: "punch", condition: "AGIE_QN2",
+      start: [center[0] - 13, center[1]], capture: true
+    }
+  });
+}
+cam.generate();
+cam.post({to: "TRIO20", cps: "Native wire EDM job files", options: {separationLengthMm: 1.0}});

@@ -140,7 +140,7 @@ pub fn stylus_hits(path: &Toolpath, ball_r: f64, facets: &[Triangle]) -> Vec<War
 /// that much nearer the real part.
 #[must_use]
 pub fn stylus_slack(excess: f64) -> f64 {
-    super::fidelity_law::tightened(STYLUS_SLACK, excess)
+    super::fidelity_law::tightened_strict(STYLUS_SLACK, excess)
 }
 
 /// [`stylus_hits`] on a model `excess` coarser than promised (#1053):
@@ -191,6 +191,7 @@ pub fn stylus_cutter(tool: &Tool, stack: Option<&HolderStack>) -> Cutter {
         holder_len: body_len,
         body: None,
         neck: None,
+        undercut: None,
     };
     Cutter { body: stack.and_then(|s| stylus_body(&g, &c, s)), ..c }
 }
@@ -227,7 +228,7 @@ fn stylus_body(g: &ToolGeom, c: &Cutter, stack: &HolderStack) -> Option<BodyBand
 /// [`stylus_cutter`] reads it. The ball's own verdict is [`stylus_hits`]'s
 /// (`ball` holds it), so a move it convicted is not reported twice;
 /// what the bands meet is a [`Warning::ShankHit`] on the part, a rapid
-/// that meets anything a [`Warning::RapidInStock`]. The expected
+/// that meets anything a [`Warning::RapidInPart`]. The expected
 /// contact excuses nothing here: only the ball ever touches, so a stem
 /// or body meeting the part at any point of any move is refused. A
 /// ball conviction the distance law missed (a ball wholly inside the
@@ -259,7 +260,7 @@ pub fn stylus_reach_hits_excess(
     solid_hits(path, facets, &stylus_cutter(tool, stack), &law)
         .into_iter()
         .filter(|w| match *w {
-            Warning::Gouge { at } | Warning::RapidInStock { at } | Warning::ShankHit { at, .. } => !convicted(at),
+            Warning::Gouge { at } | Warning::RapidInPart { at } | Warning::ShankHit { at, .. } => !convicted(at),
             _ => true,
         })
         .collect()

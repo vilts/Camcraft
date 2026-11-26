@@ -21,7 +21,8 @@ FAMILIES = {
     "2d": {
         "Face": "Face", "Contour": "2D Contour", "Pocket": "2D Pocket",
         "Adaptive2D": "2D Adaptive", "Offset2D": "2D Offset", "Slot": "Slot",
-        "TrochoidalSlot": "Trochoidal slot", "Trace": "Trace", "Engrave": "Engrave",
+        "TrochoidalSlot": "Trochoidal slot", "SlotUndercut": "Slot Undercut",
+        "Trace": "Trace", "Engrave": "Engrave", "VCarve": "V-Carve",
         "Chamfer2D": "2D Chamfer", "Circular": "Circular", "Thread": "Thread",
         "Drill": "Drill", "Bore": "Bore",
     },
@@ -32,6 +33,7 @@ FAMILIES = {
         "Swarf": "Swarf", "AdvancedSwarf": "Advanced Swarf",
         "RotaryContour": "Rotary Contour", "RotaryParallel": "Rotary Parallel",
         "RotaryOffset": "Rotary Offset", "MultiAxisRough": "Multi-Axis Rough",
+        "MultiAxisDeburr": "Multi-Axis Deburr",
     },
     "turning": {
         "Facing": "Facing", "ProfileRough": "Profile Rough",
@@ -42,6 +44,7 @@ FAMILIES = {
     },
     "probing": {"Probe": "Probe"},
     "plasma": {"PlasmaProfile": "Plasma Profile"},
+    "waterjet": {"WaterjetProfile": "Waterjet Profile"},
     "edm": {
         "WireContour": "Wire Contour", "SinkerBurn": "Sinker Burn",
         "SinkerSideBurn": "Sinker Side Burn",

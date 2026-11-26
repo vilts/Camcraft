@@ -10,7 +10,7 @@
 use crate::geometry::Triangle;
 use crate::verify::{self, Warning};
 
-use super::fidelity_law::tightened;
+use super::fidelity_law::tightened_strict as tightened;
 use super::material::GOUGE_TOL;
 use super::types::OpParams;
 
@@ -27,16 +27,21 @@ pub(super) fn rotary_tolerance(params: &OpParams) -> Option<f64> {
     match params {
         OpParams::RotaryContour { tolerance, .. }
         | OpParams::RotaryParallel { tolerance, .. }
-        | OpParams::RotaryOffset { tolerance, .. } => Some(*tolerance),
+        | OpParams::RotaryOffset { tolerance, .. }
+        // The flow band's scallop budget (#2826): the same radial
+        // field judges its passes and cylinders.
+        | OpParams::RotaryFlow { tolerance, .. } => Some(*tolerance),
         _ => None,
     }
 }
 
 /// Append the radial field law's warnings to `warns` (deduped). The
-/// axis is re-fitted from the part - the fit is a pure function of
-/// the facets, so it is the very axis the generator turned about; a
-/// fit that fails here (it cannot, once the generator ran) fails
-/// closed as a Gouge at the first cut, never a silent pass.
+/// axis is the job's own resolution (`fixture::rotary_axis_of`, the
+/// stated line judged or the fit): the very line the generator turned
+/// about, so the field reads the same frame the path was posed in.
+/// `None` (a selection source, a refused fit) falls back to today's
+/// own fit here, which fails closed as a Gouge at the first cut,
+/// never a silent pass.
 /// `excess` is the judged model's chord error past the import promise
 /// (`Material::excess`): each allowance shrinks by it while a positive
 /// one is left - past that the program gate refuses the operation
@@ -48,11 +53,15 @@ pub(super) fn rotary_into(
     stock: Option<&[Triangle]>,
     cutter: &verify::Cutter,
     (tolerance, excess): (f64, f64),
+    axis: Option<&crate::verify::RotaryAxis>,
 ) {
-    let hits = match crate::multiaxis::axis::fit(part) {
-        Ok(ax) => verify::rotary_hits(
+    let hits = match axis
+        .map(|a| verify::RotaryAxis { origin: a.origin, dir: a.dir })
+        .or_else(|| crate::multiaxis::axis::fit(part).ok().map(|ax| verify::RotaryAxis { origin: ax.origin, dir: [ax.dir.x, ax.dir.y, ax.dir.z] }))
+    {
+        Some(ax) => verify::rotary_hits(
             path,
-            &verify::RotaryAxis { origin: ax.origin, dir: [ax.dir.x, ax.dir.y, ax.dir.z] },
+            &ax,
             stock,
             part,
             cutter,
@@ -63,8 +72,8 @@ pub(super) fn rotary_into(
                 rapid_allow: tightened(tolerance.max(GOUGE_TOL), excess),
             },
         ),
-        Err(e) => {
-            tracing::warn!("rotary verdict: the axis fit refused ({e}); the path is not judged clean");
+        None => {
+            tracing::warn!("rotary verdict: no axis can be read for the radial law; the path is not judged clean");
             path.moves
                 .iter()
                 .position(|m| m.kind != crate::cl::MoveKind::Rapid)

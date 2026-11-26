@@ -104,6 +104,7 @@ fn facing(bottom: f64) -> OpParams {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     }
 }
 
@@ -117,6 +118,7 @@ fn profile_rough() -> OpParams {
         stock_to_leave: 0.25,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     }
 }
 
@@ -128,6 +130,7 @@ fn profile_finish() -> OpParams {
         bottom_z: Height::fixed(0.0),
         feed: 120.0,
         plunge_feed: 60.0,
+        picks: Default::default(),
     }
 }
 
@@ -220,6 +223,7 @@ fn profile_finish_to(bottom: f64) -> OpParams {
             bottom_z: Height::fixed(bottom),
             feed,
             plunge_feed,
+            picks: Default::default(),
         },
         other => other,
     }
@@ -259,4 +263,121 @@ fn a_facing_that_gouges_the_grooved_bar_still_blocks_by_name() {
     );
     let why = post(&world, "gouge").expect_err("a gouging facing must not post");
     assert!(why.contains("post blocked") && why.contains("F2") && why.contains("finish envelope"), "{why}");
+}
+
+/// #2880: the #2394 cone-neck-thread meridian: collar D20 Z0..20, cone
+/// D20..D10 Z20..60, neck D8 Z60..63, M10x1.5 60-degree V grooves Z63..69
+/// (major R5.0, root R4.08, depth 0.92, pitch 1.5).
+fn cone_neck_thread() -> Vec<(f64, f64)> {
+    let major = 5.0_f64;
+    let depth = 0.92_f64;
+    let root = major - depth;
+    let pitch = 1.5_f64;
+    let half = depth * 30.0_f64.to_radians().tan();
+    let mut m = vec![
+        (0.0, 0.0),
+        (10.0, 0.0),
+        (10.0, 20.0),
+        (major, 60.0),
+        (4.0, 60.0),
+        (4.0, 63.0),
+        (major, 63.0),
+    ];
+    for k in 0..4 {
+        let c = 63.75 + k as f64 * pitch;
+        m.push((major, c - half));
+        m.push((root, c));
+        m.push((major, c + half));
+    }
+    m.push((major, 69.0));
+    m.push((0.0, 69.0));
+    m
+}
+
+fn bar_world_sized(meridian: &[(f64, f64)], diameter: f64, height: f64) -> (World, History) {
+    let world = new_world();
+    let mut history = History::default();
+    let lathe = Machine { model: "TestBench lathe".into(), kind: Some("lathe".into()), ..Default::default() };
+    history.execute(&world, LoadMachine::new(&world, "lathe.mch".into(), Some(lathe)).expect("lathe"));
+    let cmd = SetStock::new(
+        &world,
+        camcraft_app::stock::StockShape::Cylinder { diameter, height },
+        Location::default(),
+    );
+    history.execute(&world, cmd.expect("bar stock"));
+    let tool = AddTool::new(&world, "TN-1600-0R8", catalog_tool("TN-1600-0R8")).expect("catalog tool");
+    history.execute(&world, tool);
+    history.execute(&world, ImportModel::from_mesh("bar", revolve(meridian, 64)));
+    (world, history)
+}
+
+fn generated_sized(
+    meridian: &[(f64, f64)],
+    diameter: f64,
+    height: f64,
+    ops: &[(&str, OpParams)],
+) -> (World, Vec<(String, Vec<Warning>)>) {
+    let (world, mut history) = bar_world_sized(meridian, diameter, height);
+    let mut out = Vec::new();
+    for (name, params) in ops {
+        let cmd = CreateOperation::new(&world, name, "TN-1600-0R8", SrcRef::Entity("bar".into()), params.clone());
+        history.execute(&world, cmd.expect("create"));
+        history.execute(&world, GenerateOperation::new(&world, name).expect("generate"));
+        let e = model::find_by_name(&world, name).expect("op");
+        let t = model::toolpath_of(&world, &e).expect("the op generated a path");
+        out.push((name.to_string(), t.warnings.into_iter().filter(Warning::blocks_post).collect()));
+    }
+    (world, out)
+}
+
+#[test]
+fn profile_finish_over_cone_neck_and_thread_posts() {
+    let bar = cone_neck_thread();
+    let finish_window = |bottom: f64, top: f64| OpParams::ProfileFinish {
+        tolerance: 0.05,
+        clearance_z: Height::fixed(74.0),
+        top_z: Height::fixed(top),
+        bottom_z: Height::fixed(bottom),
+        feed: 120.0,
+        plunge_feed: 60.0,
+        picks: Default::default(),
+    };
+    let rough_zero_leave = OpParams::ProfileRough {
+        tolerance: 0.05,
+        clearance_z: Height::fixed(74.0),
+        top_z: Height::fixed(69.0),
+        bottom_z: Height::fixed(63.0),
+        stepdown: 1.5,
+        stock_to_leave: 0.0,
+        feed: 150.0,
+        plunge_feed: 80.0,
+        picks: Default::default(),
+    };
+    for (tag, dia, op) in [
+        ("full_z20_z69", 22.0, finish_window(20.0, 69.0)),
+        ("cone_z20_z60", 22.0, finish_window(20.0, 60.0)),
+        ("thread_z63_z69", 22.0, finish_window(63.0, 69.0)),
+        ("rough0_z63_z69", 12.0, rough_zero_leave),
+    ] {
+        let (world, verdicts) = generated_sized(&bar, dia, 70.0, &[("S1", op)]);
+        let w = &verdicts[0].1;
+        assert!(
+            w.is_empty(),
+            "{tag}: S1 carries a blocking finding: {:?}",
+            w.iter().map(ToString::to_string).collect::<Vec<_>>()
+        );
+        let program = post(&world, tag).unwrap_or_else(|why| panic!("{tag}: {why}"));
+        assert!(program.contains("G18"), "{tag}: a lathe program");
+    }
+    // Stopping INSIDE the Z60..Z63 neck (bottom_z = 61.5, above the Z60
+    // step) still owns the neck floor and blocks the post by name.
+    let (world, verdicts) = generated_sized(&bar, 22.0, 70.0, &[("S1", finish_window(61.5, 69.0))]);
+    let w = &verdicts[0].1;
+    assert!(
+        w.iter().any(|w| matches!(w, Warning::Envelope { rest_mm, .. } if *rest_mm > 0.2)),
+        "stopping short inside the neck must still convict: {:?}",
+        w.iter().map(ToString::to_string).collect::<Vec<_>>()
+    );
+    let why = post(&world, "neck_short").expect_err("a pass stopping short inside the neck must not post");
+    assert!(why.contains("post blocked") && why.contains("S1") && why.contains("finish envelope"), "{why}");
 }

@@ -24,7 +24,9 @@
 //!   an A stated off X) is judged; a vertical one (a C) keeps every
 //!   height and is safe; a leaning, zero or non-finite vector, or no
 //!   vector and no RS-274 letter, refuses by name - never judged as if
-//!   level. Machines without one are untouched.
+//!   level. Machines without one are untouched. A non-zero stated
+//!   `pivot` or `offset` puts a level line (or any line of two turning
+//!   rotaries) off the WCS origin: refused by name (#3127).
 //! - **Where the tip is.** The WCS origin sits on the rotary's line
 //!   (the indexed post's setup law), so at the safe Z the tip is at
 //!   program Z `nose_to_axis - tool length` (cutter, shank and holder:
@@ -127,6 +129,18 @@ pub(super) enum Verdict {
     Unlined(String),
     /// A rotary turning the work about a leaning or garbled line (#818).
     Leaning(String),
+    /// A rotary turning the work whose stated `pivot` or `offset` moves
+    /// its line off the WCS origin (#3127).
+    OffOrigin(String),
+}
+
+/// #3127: whether rotary `a` states a `pivot` or an `offset` that is not
+/// zero (or not finite). Every clause here reads a line through the WCS
+/// origin; such a line is elsewhere, and is refused, never judged as if
+/// it passed through the origin.
+#[must_use]
+pub fn off_origin(a: &crate::machine::AxisLimits) -> bool {
+    [a.pivot, a.offset].iter().flatten().any(|v| v.iter().any(|c| !(c.is_finite() && c.abs() <= 1e-9)))
 }
 
 /// Why a judged rotary's `nose_to_axis` cannot be used: its letter.
@@ -147,6 +161,13 @@ pub(super) fn verdict(m: &crate::machine::Machine) -> Option<Verdict> {
     if let Some((a, _)) = lines.iter().find(|(_, l)| *l == RotaryLine::Leaning) {
         return Some(Verdict::Leaning(a.name.clone()));
     }
+    // #3127: a vertical line keeps every height wherever it stands; a
+    // level one, or any line of two turning rotaries, is read through the
+    // WCS origin.
+    let stacked = turning.len() > 1;
+    if let Some((a, _)) = lines.iter().find(|(a, l)| off_origin(a) && (stacked || *l != RotaryLine::Vertical)) {
+        return Some(Verdict::OffOrigin(a.name.clone()));
+    }
     let level: Vec<_> = lines
         .iter()
         .filter_map(|(a, l)| match l {
@@ -164,7 +185,7 @@ pub(super) fn verdict(m: &crate::machine::Machine) -> Option<Verdict> {
             (e, _) => e,
         };
     }
-    Some(Verdict::Judged { letter: first.name.clone(), line, nose, stacked: turning.len() > 1 })
+    Some(Verdict::Judged { letter: first.name.clone(), line, nose, stacked })
 }
 
 /// The angle an op indexes to about `line` (horizontal, unit): the
@@ -268,6 +289,15 @@ pub(super) fn index_swing_problems(world: &World) -> Vec<String> {
                     "{name}: {} turns the work on rotary {r} about a line that is neither level nor vertical \
                      (or no direction at all) - its index swing is not judged, so the post is refused (state a \
                      level or vertical \"axis\" for {r} in the machine file)",
+                    m.model
+                ));
+                continue;
+            }
+            Some(Verdict::OffOrigin(r)) => {
+                out.push(format!(
+                    "{name}: {} turns the work on rotary {r}, whose stated pivot or offset moves its line off the \
+                     WCS origin - its index swing is not judged, so the post is refused (the clause reads only a \
+                     line through the WCS origin)",
                     m.model
                 ));
                 continue;

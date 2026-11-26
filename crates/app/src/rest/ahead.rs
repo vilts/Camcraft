@@ -39,6 +39,9 @@ pub(super) struct Ahead {
     /// (tip = centre - nose) - the insert's real cutting edge, never
     /// the flat disc of its whole size. Only [`super::PriorPlan`] reads it.
     pub(super) nose: Option<f64>,
+    /// Half-width of a grooving blade ahead (#2878): credits the relief
+    /// groove a prior Groove op cut out of stock.
+    pub(super) band: f64,
     pub(super) cut: bool,
     pub(super) moves: Vec<Move>,
     /// The operation's effective setup (#318: the chain across setups
@@ -152,6 +155,12 @@ fn collect(world: &World, name: &str, with_moves: bool, keep: impl Fn(&Option<St
                 .filter(|t| matches!(t.kind, crate::tools::ToolKind::Turning | crate::tools::ToolKind::Bore))
                 .map(|t| t.nose_radius)
                 .filter(|n| n.is_finite() && *n > 0.0),
+            band: tool
+                .as_ref()
+                .filter(|t| t.kind == crate::tools::ToolKind::Groove)
+                .map(|t| t.width * 0.5)
+                .filter(|b| b.is_finite() && *b > 0.0)
+                .unwrap_or(0.0),
             cut,
             moves,
             setup,
@@ -198,6 +207,11 @@ pub(super) fn digest_of(ahead: &[Ahead]) -> u64 {
             if let Some(n) = a.nose {
                 h.write_u8(3);
                 h.write(&n.to_bits().to_le_bytes());
+            }
+            // A grooving blade's width is atom too (#2878).
+            if a.band > 0.0 {
+                h.write_u8(4);
+                h.write(&a.band.to_bits().to_le_bytes());
             }
         } else {
             h.write_u8(0);

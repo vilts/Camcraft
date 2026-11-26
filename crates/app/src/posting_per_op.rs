@@ -179,6 +179,14 @@ fn post_per_op_with(
             .and_then(|e| crate::model::operation_of(world, &e))
             .and_then(|op| op.setup);
         let effective = crate::setup::effective(world, setup.as_deref()).unwrap_or_default();
+        let native = match script_post {
+            ScriptPost::Explicit(post) => super::agie::is_native(post),
+            ScriptPost::Setup => super::agie::is_native(&super::post_of_setup(world, setup.as_deref())),
+            ScriptPost::Anonymous => false,
+        };
+        if native {
+            return Err("Choose One program to create a native wire EDM job directory".into());
+        }
         let (label, cps) = script(&effective).ok_or_else(|| format!("{name}: no post resolved for its setup"))?;
         crate::lathe_voice::at_post(world, [name.as_str()], &cps, label.as_deref())?;
         match by_setup.iter_mut().find(|(s, ..)| *s == effective) {
@@ -241,6 +249,8 @@ fn post_per_op_with(
             path: dir.join(format!("{}.{ext}", file_stem(program, index, name))),
             op: name.clone(),
             posted: Posted {
+                bundle_files: Vec::new(),
+                controller_review: None,
                 ops: 1,
                 lines: out.program.lines().count(),
                 program: out.program,

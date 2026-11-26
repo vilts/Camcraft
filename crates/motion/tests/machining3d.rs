@@ -82,6 +82,7 @@ const FIRST_LEVEL: f64 = -5.0;
 
 fn params(entry: Entry3D, helix_radius: f64) -> Pocket3DParams {
     Pocket3DParams {
+        pass_start: Default::default(),
         links: camcraft_motion::links::Links::ROUGH3D,
         tool_diameter: 8.0,
         stepover: 3.0,
@@ -736,11 +737,9 @@ fn adaptive_refuses_what_the_law_refuses() {
     // Finiteness is strategy-blind, as it has always been.
     assert!(at(PocketStrategy::Zigzag, f64::NAN, 3.0).is_err());
     assert!(at(PocketStrategy::Adaptive, f64::NAN, 3.0).is_err());
-    // A non-positive stepover is nonsense under every strategy. The
-    // diameter bound is the reach law of the strategies the stepover
-    // spaces; under Adaptive the number never spaces a ring (the page
-    // hides it, #1512), so a stale wide value must not refuse the job.
-    assert!(at(PocketStrategy::Adaptive, 45.0, 0.0).is_err());
+    // Strategies spaced by stepover require a positive value within the
+    // tool diameter. Adaptive ignores this hidden field (#1547).
+    assert!(at(PocketStrategy::Zigzag, 45.0, 0.0).is_err());
     assert!(at(PocketStrategy::Adaptive, 45.0, 9.0).is_ok(), "stepover unread under Adaptive");
     assert!(at(PocketStrategy::Zigzag, 45.0, 9.0).is_err(), "over the D under Zigzag");
 }

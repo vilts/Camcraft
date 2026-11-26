@@ -61,7 +61,8 @@ fn faced_doc(at: Point3, model_top: f64) -> (World, History) {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
+        picks: Default::default(),
     };
     let cmd = CreateOperation::new(&world, "Face1", "EM-0400-2FL", SrcRef::Stock, params);
     history.execute(&world, cmd.expect("create face"));

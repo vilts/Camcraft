@@ -66,6 +66,7 @@ fn narrow_slot() -> Vec<Triangle> {
 
 fn params() -> Pocket3DParams {
     Pocket3DParams {
+        pass_start: Default::default(),
         links: camcraft_motion::links::Links::ROUGH3D,
         tool_diameter: 8.0,
         stepover: 3.0,
@@ -132,9 +133,9 @@ const BALL_R: f64 = 4.0;
 /// Every move as (kind, BALL CENTRE, held pose): the stream's tip
 /// lifted `BALL_R` along the pose the machine holds there (the last
 /// stated - the post keeps it modal; upright before any).
-fn balls(path: &camcraft_motion::cl::Toolpath) -> Vec<(MoveKind, Point3, [f64; 3])> {
+fn balls(moves: &[&camcraft_motion::cl::Move]) -> Vec<(MoveKind, Point3, [f64; 3])> {
     let mut held = [0.0, 0.0, 1.0];
-    path.moves
+    moves
         .iter()
         .map(|m| {
             if let Some(a) = m.axis {
@@ -150,6 +151,26 @@ fn leaning(a: [f64; 3]) -> bool {
     !camcraft_motion::cl::is_vertical(&a)
 }
 
+/// #3414: the path's moves without the rotary indices - the standstill
+/// swings the stamp inserts: zero-travel RAPIDS whose axis CHANGES off
+/// the pose held. A zero-travel rapid that states no new pose stays,
+/// and so does an opening upright statement from no held pose (#3300):
+/// the home the path inherits, commanded as zero angles.
+fn sans_swings(path: &camcraft_motion::cl::Toolpath) -> Vec<&camcraft_motion::cl::Move> {
+    let mut held: Option<[f64; 3]> = None;
+    path.moves
+        .iter()
+        .filter(|m| {
+            let swing = m.kind == MoveKind::Rapid && m.from == m.to && m.axis != held
+                && !(held.is_none() && m.axis.is_some_and(|a| camcraft_motion::cl::is_vertical(&a)));
+            if !swing {
+                held = m.axis.or(held);
+            }
+            !swing
+        })
+        .collect()
+}
+
 #[test]
 fn dodging_never_moves_the_ball() {
     // Law (f) is the whole contract: a sphere's envelope is
@@ -163,15 +184,25 @@ fn dodging_never_moves_the_ball() {
     let on =
         multiaxis_rough(&f, &region, &params(), &control(0.0, 0.0, Some(60.0)), Some(&shank()))
             .unwrap();
-    assert_eq!(off.moves.len(), on.moves.len(), "the dodge added a move");
-    let (bo, bn) = (balls(&off), balls(&on));
+    // #3414: the count that must agree is the cutting ladder's - the
+    // posed paths each carry standstill rotary indices, and the dodge's
+    // re-entries may carry more.
+    let cuts = |t: &camcraft_motion::cl::Toolpath| t.moves.iter().filter(|m| m.kind != MoveKind::Rapid).count();
+    assert_eq!(cuts(&off), cuts(&on), "the dodge added a move");
+    let (bo, bn) = (balls(&sans_swings(&off)), balls(&sans_swings(&on)));
     for (i, (a, b)) in bo.iter().zip(&bn).enumerate() {
         assert_eq!(a.0, b.0, "kind changed at move {i}");
         let d = a.1 - b.1;
         assert!(d.dot(d).sqrt() < 1e-9, "the ball moved at {i}: {:?} vs {:?}", a.1, b.1);
     }
-    let mut held: Option<[f64; 3]> = None;
-    for m in &on.moves {
+    // #3300: a path that leans inherits the upright home and states
+    // it before its first lean; a rapid never states a NEW pose.
+    // The exception is the zero-travel rotary index (#3414) - the
+    // standstill swing, which the sweep below skips.
+    assert!(on.moves.iter().any(|m| m.axis.is_some_and(|a| !camcraft_motion::cl::is_vertical(&a))), "the rough must lean");
+    assert_eq!(on.moves[0].axis, Some([0.0, 0.0, 1.0]), "the opening states the upright pose");
+    let mut held: Option<[f64; 3]> = Some([0.0, 0.0, 1.0]);
+    for m in sans_swings(&on) {
         if m.kind == MoveKind::Rapid {
             assert_eq!(m.axis, held, "a rapid changed the pose it inherited");
         }
@@ -184,7 +215,7 @@ fn dodging_never_moves_the_ball() {
     // the 5-radius shank of a horizontal lean dips a millimetre under
     // the 4-radius ball into the pocket floor, and the escape is the
     // honest answer there.)
-    for (a, b) in off.moves.iter().zip(&on.moves) {
+    for (a, b) in sans_swings(&off).into_iter().zip(sans_swings(&on)) {
         if a.kind != MoveKind::Rapid && a.axis != b.axis {
             // Zero lead: E3's pose IS the cone's axis (the contact
             // normal, or upright on a floor).
@@ -196,7 +227,10 @@ fn dodging_never_moves_the_ball() {
     // And the dodge actually spoke somewhere, or this test proves
     // nothing but the opt-out.
     assert!(
-        on.moves.iter().zip(&off.moves).any(|(a, b)| a.axis != b.axis),
+        sans_swings(&on)
+            .into_iter()
+            .zip(sans_swings(&off))
+            .any(|(a, b)| a.axis != b.axis),
         "the shank never spoke on a stub cutting beside a 10-wide boss"
     );
 }
@@ -216,7 +250,7 @@ fn floors_are_posed_only_where_the_shank_speaks() {
             .unwrap();
     let mut grazed = 0;
     let upright = |a: Option<[f64; 3]>| a.is_none_or(|a| !leaning(a));
-    for (i, (a, b)) in off.moves.iter().zip(&on.moves).enumerate() {
+    for (i, (a, b)) in sans_swings(&off).into_iter().zip(sans_swings(&on)).enumerate() {
         // The flag-off ladder's floors stand upright, so their tips
         // are the plan's: the floor rows are read off them.
         if a.kind == MoveKind::Rapid || a.to.z != -10.0 {
@@ -256,7 +290,7 @@ fn the_escape_is_inside_the_cone_and_calm_down_the_wall() {
             .unwrap();
     let mut plus: Vec<[f64; 3]> = Vec::new();
     let mut minus: Vec<[f64; 3]> = Vec::new();
-    for (m, (_, c, _)) in on.moves.iter().zip(balls(&on)) {
+    for (m, (_, c, _)) in sans_swings(&on).into_iter().zip(balls(&sans_swings(&on))) {
         // Read at the BALL CENTRE: a floor row's centre stands r over
         // the floor whatever the pose (the tip follows the lean).
         let Some(a) = m.axis.filter(|a| leaning(*a)) else { continue };

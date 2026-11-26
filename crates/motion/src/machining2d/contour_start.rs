@@ -13,6 +13,7 @@
 //! published CAM practice. No vendor material consulted.
 
 use crate::geo2d::{Loop, Point2};
+use crate::path_picks::PickRole;
 
 use super::arcs::Seg;
 use super::contour_comp;
@@ -62,24 +63,18 @@ fn reach(p: &ContourParams) -> f64 {
 
 /// Which ring (index into `loops`) takes the user's start point, with the
 /// pick; `Ok(None)` when no start point is set. Refused by name: a pick
-/// farther than [`reach`] from every ring, and compensation in the
-/// control (its seam is the comp law's), which this slice does not
-/// certify. Tabs take the pick (#1473): [`seat`] starts the picked ring
-/// at the pick on every level, tabbed ones too, so the tab windows are
-/// measured from the picked start and the first window begins there.
+/// farther than [`reach`] from every ring. Control and wear compensation
+/// take the pick (#1473): `contour_comp_pick` proves the seam law there
+/// and refuses by name a pick it cannot hold. Tabs take the pick (#1473):
+/// [`seat`] starts the picked ring at the pick on every level, tabbed ones
+/// too, so the tab windows are measured from the picked start and the
+/// first window begins there.
 pub(super) fn pick_ring(loops: &[&Loop], p: &ContourParams) -> Result<Option<(usize, Point2)>, GenError> {
     let ap = &p.links.approach;
-    let Some(q) = ap.start_point else {
+    let Some(q) = p.picks.first(PickRole::Start).map(|k| k.xy) else {
         return Ok(None);
     };
     let at = format!("start point ({:.3}, {:.3})", q.x, q.y);
-    if ap.compensation.in_control() {
-        return Err(GenError::Invalid(format!(
-            "{at}: a picked start is not taken with {} compensation yet - its seam is the \
-             compensation law's; clear the start point or compensate in the computer",
-            ap.compensation.label()
-        )));
-    }
     // The part-boundary room law does not include the standing tabs.
     // Only normal departures are certified here; tangential motion can
     // cut the tab ending at the pick, including an extension with no lead.
@@ -134,7 +129,7 @@ fn nearest_ring(loops: &[&Loop], q: Point2, at: &str, what: &str, p: &ContourPar
 /// the seam) and an overlap beside it (both say where the cut leaves).
 pub(super) fn pick_exit(loops: &[&Loop], p: &ContourParams) -> Result<Option<(usize, Point2)>, GenError> {
     let ap = &p.links.approach;
-    let Some(q) = ap.exit_point else {
+    let Some(q) = p.picks.first(PickRole::Exit).map(|k| k.xy) else {
         return Ok(None);
     };
     let at = format!("exit point ({:.3}, {:.3})", q.x, q.y);

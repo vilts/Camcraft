@@ -325,23 +325,29 @@ fn ends(world: &World, pick: &AxisPick, name: &str) -> Result<([f64; 3], [f64; 3
 /// no longer in the model.
 #[must_use]
 pub fn pick_coords(world: &World, g: &GeoSel) -> Option<Vec<[f64; 3]>> {
-    match g.feature {
+    match &g.feature {
         FeatureSel::Vertex(_) => point(world, g).ok().map(|p| vec![p]),
         FeatureSel::Chain(_) => straight_edge(world, g, model::transform_of, "")
             .ok()
             .map(|(a, b)| vec![a, b])
             .or_else(|| super::centre::centre_of(world, g).ok().map(|c| vec![c])),
-        FeatureSel::Face(_) | FeatureSel::Patch(_) => None,
+        FeatureSel::Face(_)
+        | FeatureSel::Patch(_)
+        | FeatureSel::SketchChain(_)
+        | FeatureSel::SketchLayer(_) => None,
     }
 }
 
 /// A picked point in the document frame: a vertex, or (#692) the centre
 /// of a round edge - a straight or non-circular edge refused by name.
 pub(super) fn point(world: &World, g: &GeoSel) -> Result<[f64; 3], String> {
-    let id = match g.feature {
-        FeatureSel::Vertex(id) => id,
+    let id = match &g.feature {
+        FeatureSel::Vertex(id) => *id,
         FeatureSel::Chain(_) => return super::centre::centre_point(world, g),
-        FeatureSel::Face(_) | FeatureSel::Patch(_) => return Err(gone(world, g)),
+        FeatureSel::Face(_)
+        | FeatureSel::Patch(_)
+        | FeatureSel::SketchChain(_)
+        | FeatureSel::SketchLayer(_) => return Err(gone(world, g)),
     };
     let e = model::find_by_name(world, &g.entity).ok_or_else(|| gone(world, g))?;
     let features = model::features_of(world, &e).ok_or_else(|| gone(world, g))?;

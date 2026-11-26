@@ -35,7 +35,7 @@ fn sections(part: &Region, stock: Option<&Region>) -> Vec<WireSection> {
 }
 
 fn run(side: CutSide, tp: &Toolpath, start: Option<Point2>, part: &Region, stock: Option<&Region>) -> WireVerdict {
-    judge(&WireJob { path: tp, kerf_offset: K, skim_offsets: Vec::new(), side, start, sections: sections(part, stock), burnout: false, cutoff_from: None, capture: true, taper: false, verify_tol: 0.0 })
+    judge(&WireJob { path: tp, kerf_offset: K, skim_offsets: Vec::new(), side, start, sections: sections(part, stock), burnout: false, cutoff_from: None, capture: true, taper: false, verify_tol: 0.0, taper_chord: false })
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn a_burnout_frees_nothing_and_a_core_is_refused() {
     }
     b.push(MoveKind::Feed, p(0.0, 0.0), None);
     let burnt = b.finish();
-    let job = |tp| WireJob { path: tp, kerf_offset: K, skim_offsets: Vec::new(), side: CutSide::Die, start: Some(start), sections: sections(&part, Some(&stock)), burnout: true, cutoff_from: None, capture: false, taper: false, verify_tol: 0.0 };
+    let job = |tp| WireJob { path: tp, kerf_offset: K, skim_offsets: Vec::new(), side: CutSide::Die, start: Some(start), sections: sections(&part, Some(&stock)), burnout: true, cutoff_from: None, capture: false, taper: false, verify_tol: 0.0, taper_chord: false };
     let v = judge(&job(&burnt));
     assert!(v.findings.is_empty() && v.slugs.is_empty(), "{:?}", v);
     let ring = path(5.0 - K, start);
@@ -183,7 +183,7 @@ fn skimmed(h: f64, rough_at: f64, skim_at: f64, start: Point2) -> Toolpath {
 
 fn run_skims(side: CutSide, tp: &Toolpath, start: Point2, skims: Vec<f64>) -> WireVerdict {
     let sections = sections(&square(5.0), Some(&square(15.0)));
-    judge(&WireJob { path: tp, kerf_offset: K, skim_offsets: skims, side, start: Some(start), sections, burnout: false, cutoff_from: None, capture: true, taper: false, verify_tol: 0.0 })
+    judge(&WireJob { path: tp, kerf_offset: K, skim_offsets: skims, side, start: Some(start), sections, burnout: false, cutoff_from: None, capture: true, taper: false, verify_tol: 0.0, taper_chord: false })
 }
 
 /// #538 over #534: each move is judged at its own pass's kerf. A skim

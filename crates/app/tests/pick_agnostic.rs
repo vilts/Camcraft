@@ -35,7 +35,7 @@ use camcraft_app::world::new_world;
 use flecs_ecs::prelude::World;
 
 fn pocket(strategy: PocketStrategy, top: f64, bottom: f64) -> OpParams {
-    OpParams::Pocket { rest: None,
+    OpParams::Pocket { pass_start: Default::default(), rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 4.0,
@@ -54,11 +54,14 @@ fn pocket(strategy: PocketStrategy, top: f64, bottom: f64) -> OpParams {
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         blend_turns: false,
         tilt: None,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     }
 }
 
 fn adaptive2d(top: f64, bottom: f64) -> OpParams {
     OpParams::Adaptive2D {
+        rest: None,
         blend_radius: None, blend_turns: false,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 4.0,
@@ -77,6 +80,9 @@ fn adaptive2d(top: f64, bottom: f64) -> OpParams {
         method: camcraft_app::machining2d::AdaptiveMethod::Spiral,
         troch: camcraft_app::machining2d::AdaptiveTrochParams::default(),
         tilt: None,
+        corner_relief: Default::default(),
+        pass_start: Default::default(),
+        picks: Default::default(),
     }
 }
 
@@ -101,10 +107,10 @@ fn user_part() -> (World, String) {
     world_with(ImportModel::new(&path).expect("the user's STEP imports"), -7.0, 27.0)
 }
 
-fn generate(world: &World, name: &str, picks: &[FeatureSel], params: &OpParams) -> Result<(Toolpath, usize), String> {
+fn generate(world: &World, name: &str, picks: &[FeatureSel], params: &OpParams) -> Result<(Toolpath, Vec<camcraft_app::verify::Warning>), String> {
     let op = Operation {
         tool: "EM-1000-4FL".into(),
-        src: SrcRef::Selection(picks.iter().map(|f| GeoSel { entity: name.to_owned(), feature: *f }).collect()),
+        src: SrcRef::Selection(picks.iter().map(|f| GeoSel { entity: name.to_owned(), feature: f.clone() }).collect()),
         params: params.clone(),
         stamp: None,
         setup: None,
@@ -113,7 +119,7 @@ fn generate(world: &World, name: &str, picks: &[FeatureSel], params: &OpParams) 
         after: Default::default(),
         suppressed: false,
     };
-    operation::generate(world, &op, "").map(|(t, w)| (t, w.len())).map_err(|e| e.to_string())
+    operation::generate(world, &op, "").map_err(|e| e.to_string())
 }
 
 /// (max radius about the centroid, mean z, centroid x, centroid y).
@@ -160,10 +166,10 @@ fn picks_of(world: &World, name: &str, fits: impl Fn(f64, f64, f64, f64) -> bool
 
 /// Single picks plus every pair: the same region however spelled.
 fn spellings(picks: &[(String, FeatureSel)]) -> Vec<(String, Vec<FeatureSel>)> {
-    let mut v: Vec<(String, Vec<FeatureSel>)> = picks.iter().map(|(l, s)| (l.clone(), vec![*s])).collect();
+    let mut v: Vec<(String, Vec<FeatureSel>)> = picks.iter().map(|(l, s)| (l.clone(), vec![s.clone()])).collect();
     for i in 0..picks.len() {
         for j in (i + 1)..picks.len() {
-            v.push((format!("{} + {}", picks[i].0, picks[j].0), vec![picks[i].1, picks[j].1]));
+            v.push((format!("{} + {}", picks[i].0, picks[j].0), vec![picks[i].1.clone(), picks[j].1.clone()]));
         }
     }
     v
@@ -173,7 +179,7 @@ fn bore_picks(world: &World, name: &str) -> Vec<(String, FeatureSel)> {
     picks_of(world, name, |r, _, cx, cy| (r - 12.5).abs() < 0.01 && cx.hypot(cy) < 0.01)
 }
 
-/// Assert every spelling cuts the first spelling's bytes, silent.
+/// Assert every spelling cuts the first spelling's bytes, with only fallback warnings.
 fn all_identical(world: &World, name: &str, picks: &[(String, FeatureSel)], params: &OpParams) {
     identical_spellings(world, name, &spellings(picks), params);
 }
@@ -183,7 +189,12 @@ fn identical_spellings(world: &World, name: &str, spelled: &[(String, Vec<Featur
     for (label, sel) in spelled {
         let (label, sel) = (label.clone(), sel.clone());
         let (t, warns) = generate(world, name, &sel, params).unwrap_or_else(|e| panic!("{label}: {e}"));
-        assert_eq!(warns, 0, "{label} must verify silent (depth-aware): {:?}", t.notes);
+        let areas = camcraft_app::machining2d::rings_fallbacks(&t.notes);
+        assert_eq!(warns.len(), usize::from(areas > 0), "{label}: only the fallback is reported: {warns:?}");
+        assert!(warns.iter().all(|w| {
+            matches!(w, camcraft_app::verify::Warning::StrategyFallback { areas: n, .. } if *n == areas)
+                && !w.blocks_post()
+        }), "{label}: unexpected warnings: {warns:?}");
         assert!(t.is_chained() && t.all_finite() && !t.moves.is_empty());
         let cl = common::gen_to_cltext(&t);
         match &first {
@@ -233,8 +244,8 @@ fn level_feeds(t: &Toolpath, z: f64) -> Vec<Move> {
 fn the_chosen_strategy_runs_on_the_round_region_never_a_substitute() {
     let (world, name) = user_part();
     let picks = bore_picks(&world, &name);
-    let floor = picks.iter().find(|(l, _)| l.starts_with("face")).map(|(_, s)| *s).expect("floor face");
-    let cut = |p: &OpParams| generate(&world, &name, &[floor], p).expect("generates").0;
+    let floor = picks.iter().find(|(l, _)| l.starts_with("face")).map(|(_, s)| s.clone()).expect("floor face");
+    let cut = |p: &OpParams| generate(&world, &name, std::slice::from_ref(&floor), p).expect("generates").0;
     // Offset rings (the pre-M11.4 C adaptive, kept by name): rings
     // stepped by the optimal load, 14.64% of D = 1.464 mm.
     let o = cut(&pocket(PocketStrategy::OffsetRings, 20.0, 0.0));
@@ -260,8 +271,8 @@ fn the_chosen_strategy_runs_on_the_round_region_never_a_substitute() {
     }
     // The depth-aware verifier is silent on it (M11.4 C round 2: the
     // HSM spiral never crosses itself, never leaves the floor's area).
-    let (a, warns) = generate(&world, &name, &[floor], &hp).expect("generates");
-    assert_eq!(warns, 0, "the user's bore under HSM verifies clean: {:?}", a.notes);
+    let (a, warns) = generate(&world, &name, std::slice::from_ref(&floor), &hp).expect("generates");
+    assert!(warns.is_empty(), "the user's bore under HSM verifies clean: {warns:?} {:?}", a.notes);
     assert!(
         !a.notes.iter().any(|n| n.contains("Offset rings cut this pocket instead")),
         "the HSM plan runs on the user's bore: {:?}",
@@ -338,7 +349,7 @@ fn island_law(plans: &[OpParams]) {
     // The pocket's floor face (half-width 18: circumradius 25.46) - its
     // loops carry the boss as a hole.
     let picks = picks_of(&world, &name, |r, _, cx, cy| (r - 648f64.sqrt()).abs() < 0.01 && cx.hypot(cy) < 0.01);
-    let face = picks.iter().find(|(l, _)| l.starts_with("face")).map(|(_, s)| *s).expect("floor face");
+    let face = picks.iter().find(|(l, _)| l.starts_with("face")).map(|(_, s)| s.clone()).expect("floor face");
     // A square rim is four open runs (90 degree corners end a chain);
     // picked together they stitch into the ring - at the mouth (Z 20)
     // and at the floor (Z 5). Neither spelling knows about the boss.
@@ -363,9 +374,9 @@ fn island_law(plans: &[OpParams]) {
     let (top, floor) = (rim(20.0), rim(5.0));
     assert!(!top.is_empty() && !floor.is_empty(), "rim runs at both planes");
     let mut with_face = top.clone();
-    with_face.push(face);
+    with_face.push(face.clone());
     let spelled = vec![
-        ("floor face".to_owned(), vec![face]),
+        ("floor face".to_owned(), vec![face.clone()]),
         ("mouth rim runs".to_owned(), top),
         ("floor rim runs".to_owned(), floor),
         ("face + mouth rim".to_owned(), with_face),
@@ -374,7 +385,7 @@ fn island_law(plans: &[OpParams]) {
         identical_spellings(&world, &name, &spelled, params);
         // No feed with its center over the boss's tool-grown footprint
         // below the boss top (r = 5 tool around a 3 mm half-width boss).
-        let (t, _) = generate(&world, &name, &[face], params).expect("generates");
+        let (t, _) = generate(&world, &name, std::slice::from_ref(&face), params).expect("generates");
         // Distance from a center to the boss square; the tool edge must
         // stand off it by the radius (the arc fitter's 0.01 band aside).
         let off = |x: f64, y: f64| (x.abs() - 3.0).max(0.0).hypot((y.abs() - 3.0).max(0.0));
@@ -413,7 +424,7 @@ fn a_pick_enclosing_only_part_material_is_refused_not_pocketed() {
     // down, a gouge only the verifier stood between and the spindle).
     let (world, name) = world_with(ImportModel::from_mesh("part", block_with_boss()), 0.0, 20.0);
     let top = picks_of(&world, &name, |r, z, _, _| (r - 18f64.sqrt()).abs() < 0.01 && (z - 12.0).abs() < 1e-9);
-    let face = top.iter().find(|(l, _)| l.starts_with("face")).map(|(_, s)| *s).expect("boss top face");
+    let face = top.iter().find(|(l, _)| l.starts_with("face")).map(|(_, s)| s.clone()).expect("boss top face");
     let Err(err) = generate(&world, &name, &[face], &adaptive2d(12.0, 5.0)) else {
         panic!("a pick of solid part material must refuse");
     };

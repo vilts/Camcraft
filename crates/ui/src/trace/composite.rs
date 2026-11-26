@@ -16,6 +16,10 @@
 //! - **Refuse, never black-screen.** A device that cannot read storage
 //!   from a fragment refuses at construction by name, and the shell
 //!   keeps the stock sheet.
+//! - **One sample count with the pass.** The composite draws into the
+//!   viewport's pass, so its pipeline follows the pass's anti-aliasing
+//!   (#2958, `set_samples`). It writes one depth for each pixel, so the
+//!   traced stock's own edges are not smoothed; its cost does not change.
 
 use egui_wgpu::wgpu;
 
@@ -55,6 +59,11 @@ pub struct Composite {
     pipeline: wgpu::RenderPipeline,
     bgl: wgpu::BindGroupLayout,
     uniform: wgpu::Buffer,
+    /// Kept to rebuild the pipeline for a new sample count (#2958).
+    module: wgpu::ShaderModule,
+    layout: wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    samples: u32,
 }
 
 impl Composite {
@@ -106,37 +115,7 @@ impl Composite {
             bind_group_layouts: &[Some(&bgl)],
             immediate_size: 0,
         });
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("trace-composite-pipe"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: &module,
-                entry_point: Some("vs_full"),
-                compilation_options: Default::default(),
-                buffers: &[],
-            },
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: DEPTH_FORMAT,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(wgpu::CompareFunction::Less),
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            fragment: Some(wgpu::FragmentState {
-                module: &module,
-                entry_point: Some("fs_composite"),
-                compilation_options: Default::default(),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline = pipeline_for(device, &module, &layout, format, 1);
         let uniform = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("trace-composite-uniform"),
             size: UNIFORM_SIZE,
@@ -146,7 +125,23 @@ impl Composite {
         if let Some(err) = scope.pop().await {
             return Err(format!("the device refused the composite pipeline ({err})"));
         }
-        Ok(Composite { pipeline, bgl, uniform })
+        Ok(Composite { pipeline, bgl, uniform, module, layout, format, samples: 1 })
+    }
+
+    /// #2958: rebuild the pipeline for the viewport pass's sample count.
+    /// The caller passes only a count the device offers (the viewport's
+    /// `effective_samples`); the same count builds the viewport's own.
+    pub fn set_samples(&mut self, device: &wgpu::Device, samples: u32) {
+        let samples = samples.max(1);
+        if samples != self.samples {
+            self.pipeline = pipeline_for(device, &self.module, &self.layout, self.format, samples);
+            self.samples = samples;
+        }
+    }
+
+    #[must_use]
+    pub const fn samples(&self) -> u32 {
+        self.samples
     }
 
     /// Bind a trace frame (one vec4 per trace pixel, STORAGE usage).
@@ -173,6 +168,47 @@ impl Composite {
         pass.set_bind_group(0, bind, &[]);
         pass.draw(0..3, 0..1);
     }
+}
+
+/// The composite pipeline for `samples` per pixel.
+fn pipeline_for(
+    device: &wgpu::Device,
+    module: &wgpu::ShaderModule,
+    layout: &wgpu::PipelineLayout,
+    format: wgpu::TextureFormat,
+    samples: u32,
+) -> wgpu::RenderPipeline {
+    device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        label: Some("trace-composite-pipe"),
+        layout: Some(layout),
+        vertex: wgpu::VertexState {
+            module,
+            entry_point: Some("vs_full"),
+            compilation_options: Default::default(),
+            buffers: &[],
+        },
+        primitive: wgpu::PrimitiveState::default(),
+        depth_stencil: Some(wgpu::DepthStencilState {
+            format: DEPTH_FORMAT,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(wgpu::CompareFunction::Less),
+            stencil: wgpu::StencilState::default(),
+            bias: wgpu::DepthBiasState::default(),
+        }),
+        multisample: wgpu::MultisampleState { count: samples, ..Default::default() },
+        fragment: Some(wgpu::FragmentState {
+            module,
+            entry_point: Some("fs_composite"),
+            compilation_options: Default::default(),
+            targets: &[Some(wgpu::ColorTargetState {
+                format,
+                blend: None,
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+        }),
+        multiview_mask: None,
+        cache: None,
+    })
 }
 
 /// `struct C`, field by field.

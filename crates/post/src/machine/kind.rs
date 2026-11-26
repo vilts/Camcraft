@@ -1,4 +1,4 @@
-//! The machine KIND: what a `.mch` declares itself to be (mill, lathe,
+//! The machine KIND: what a `.mch` declares itself to be (mill or router, lathe,
 //! mill-turn, plasma, wire or sinker EDM), and the axis-inventory inference for files that
 //! declare nothing.
 //!
@@ -97,7 +97,9 @@ impl Kind {
             .flat_map(char::to_lowercase)
             .collect();
         match n.as_str() {
-            "mill" | "milling" => Some(Kind::Mill),
+            // #2410: a router is a mill in every rule (axes, spindle, post);
+            // `is_router` reads the word for what a router offers more.
+            "mill" | "milling" | "router" | "cncrouter" | "routing" => Some(Kind::Mill),
             "lathe" | "turning" | "turn" => Some(Kind::Lathe),
             "millturn" | "turnmill" | "millturning" | "turningmill" => Some(Kind::MillTurn),
             "plasma" | "plasmacutting" | "plasmatable" => Some(Kind::Plasma),
@@ -107,6 +109,22 @@ impl Kind {
             _ => None,
         }
     }
+}
+
+/// Whether a declared kind word names a router (#2410): the router
+/// spellings that `Kind::from_word` reads as [`Kind::Mill`].
+#[must_use]
+pub fn is_router_word(w: &str) -> bool {
+    let n: String = w.chars().filter(|c| c.is_alphanumeric()).flat_map(char::to_lowercase).collect();
+    matches!(n.as_str(), "router" | "cncrouter" | "routing")
+}
+
+/// Whether the machine declares itself a router (#2410). A router is
+/// never inferred: its X/Y/Z inventory is a mill's, so only the stated
+/// word makes one. The unstated machine is not a router.
+#[must_use]
+pub fn is_router(machine: Option<&Machine>) -> bool {
+    machine.and_then(|m| m.kind.as_deref()).is_some_and(is_router_word)
 }
 
 /// The geometric tilt question (M5.1 stage A): can this machine lean
@@ -183,7 +201,7 @@ pub(super) fn declared_kind(v: &Value) -> Result<Option<(Kind, String)>, String>
         Some(Value::String(w)) => {
             let Some(k) = Kind::from_word(w) else {
                 return Err(format!(
-                    "machine file: kind {w:?} is not mill, lathe, mill-turn, plasma, waterjet, wire_edm or sinker_edm"
+                    "machine file: kind {w:?} is not mill, router, lathe, mill-turn, plasma, waterjet, wire_edm or sinker_edm"
                 ));
             };
             let broken = match k {

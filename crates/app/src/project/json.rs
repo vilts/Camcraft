@@ -17,6 +17,14 @@ pub fn params_to_json(p: &OpParams) -> Value {
     serde_json::to_value(ParamsDto::from_params(p)).unwrap_or(Value::Null)
 }
 
+/// The stored door (#3073): a tagged parameter object exactly as this
+/// build's `params_to_json` wrote it into a file (a cut recipe), read
+/// back with no live-edit rewrites.
+pub fn params_from_stored_json(v: &Value) -> Result<OpParams, String> {
+    let dto: ParamsDto = serde_json::from_value(v.clone()).map_err(|e| e.to_string())?;
+    Ok(dto.to_params())
+}
+
 /// The reverse door: a tagged parameter object back to the domain type.
 /// Shape errors (a missing field, a string where a number goes) are the
 /// refusal text; sanity (finite, positive) stays the commands' law.

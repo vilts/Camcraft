@@ -125,7 +125,7 @@ fn trochoid_full_width_slot_holds_the_limit_where_a_straight_slot_reads_180() {
         plunge_feed: 300.0,
         climb: true,
         entry: camcraft_motion::entry::Entry3D::Plunge,
-        helix_radius: 0.0,
+        helix_radius: 0.0, blend_turns: false, blend_radius: None,
         links: camcraft_motion::links::Links::PLANAR,
     };
     let Ok(straight) = slot(Point2::new(0.0, 0.0), Point2::new(40.0, 0.0), &sp) else { panic!("slot") };

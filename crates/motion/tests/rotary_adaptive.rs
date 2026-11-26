@@ -348,7 +348,8 @@ fn offset_rings_on_the_wrap_are_the_program_they_always_were() {
 /// on the same build, so the lattice is the only change.
 /// Issue #2004: re-pinned without the air level on the r6.2 skin (the
 /// program was (5263, 11592310142122113043) with it).
-const GOLDEN_RINGS: (usize, u64) = (2363, 10_359_925_331_182_573_356);
+/// Issue #3671: re-pinned with feed height clearance on inter-level rapids.
+const GOLDEN_RINGS: (usize, u64) = (2387, 3_362_882_240_517_259_677);
 
 /// Issue #983: the level reader reads the ladder's own planes only. A
 /// microlift on the 5.0 level lifts to 5.6 and its down ramp passes a

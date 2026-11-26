@@ -43,7 +43,7 @@ fn face_world() -> (flecs_ecs::prelude::World, History) {
             OpParams::Face {
                 holes: Default::default(),
                 tilt: None,
-                blend_turns: false,
+                blend_turns: false, blend_radius: None,
                 stepover: 3.0,
                 clearance_z: Height::fixed(25.0),
                 cut_z: Height::fixed(19.5),
@@ -52,6 +52,7 @@ fn face_world() -> (flecs_ecs::prelude::World, History) {
                 feed: 1200.0,
                 plunge_feed: 300.0,
                 climb: true,
+                picks: Default::default(),
             },
         )
         .expect("face op"),

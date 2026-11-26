@@ -72,7 +72,8 @@ pub fn is_keep_kind(params: &OpParams) -> bool {
 /// sharp stock corners left uncut inside reached pieces, excluding air
 /// outside `stock`). `cleared_around` is that reading; every other job
 /// is unchanged. The note never blocks the cut: a region the band check
-/// cannot read keeps its path and says that the check did not run.
+/// or the corner check (#2511) cannot read keeps its path and says that
+/// the check did not run.
 pub(super) fn narrow_noted(
     mut path: crate::cl::Toolpath,
     params: &OpParams,
@@ -107,6 +108,10 @@ pub(super) fn narrow_noted(
         Ok(None) => {}
         Err(e) => {
             tracing::warn!(kind = label, "the corner check around the part did not run: {e}");
+            // #2511: a log line alone left the user with no sign.
+            path.notes.push(format!(
+                "{label}: the check for corners of the stock tighter than the tool did not run ({e}) - look at the stock corners around the part"
+            ));
         }
     }
     path
@@ -137,7 +142,9 @@ pub fn is_stock_kept_kind(params: &OpParams) -> bool {
                 | OpParams::Contour { .. }
                 | OpParams::Face { .. }
                 | OpParams::Chamfer2D { .. }
-                | OpParams::Deburr { .. }
+                | OpParams::Deburr { .. } | OpParams::MultiAxisDeburr { .. }
+                // #1444: an undercut off the stock keeps the setup's parts.
+                | OpParams::SlotUndercut(_)
         )
 }
 
@@ -200,7 +207,7 @@ pub(super) fn parts_in_stock(
 /// its stock part law spares, as a part source spares its own part.
 /// `None` for any other kind and any other stock.
 fn spared_stock_part(world: &flecs_ecs::prelude::World, setup: Option<&str>, params: &OpParams) -> Option<String> {
-    matches!(params, OpParams::Deburr { .. })
+    matches!(params, OpParams::Deburr { .. } | OpParams::MultiAxisDeburr { .. })
         .then(|| crate::stock_sim::breaks::stock_part_of(world, setup))
         .flatten()
 }
@@ -237,7 +244,10 @@ pub(super) fn neighbour_parts(
 pub(super) fn is_part_kept_kind(params: &OpParams, src: &SrcRef) -> bool {
     super::generate::depth_law_of(params, src, true) != super::generate::DepthLaw::None
         || is_cross_drill(params)
-        || matches!(params, OpParams::Pocket3D { .. } | OpParams::MultiAxisRough { .. })
+        || matches!(
+            params,
+            OpParams::Pocket3D { .. } | OpParams::MultiAxisRough { .. } | OpParams::MultiAxisDeburr { .. } | OpParams::SlotUndercut(_)
+        )
 }
 
 /// The models whose meshes an operation's part laws read beyond its own
@@ -310,12 +320,52 @@ pub(super) fn note_stock_chamfer_gouges(
     let named: fn(usize) -> Warning = match params {
         _ if part_solid => return,
         OpParams::Chamfer2D { .. } => |at| Warning::StockChamferGouge { at },
-        OpParams::Deburr { .. } => |at| Warning::StockDeburrGouge { at },
+        OpParams::Deburr { .. } | OpParams::MultiAxisDeburr { .. } => |at| Warning::StockDeburrGouge { at },
         _ => return,
     };
     for w in warns {
         if let Warning::Gouge { at } = *w {
             *w = named(at);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::{Carried, Height, OpType};
+    use super::*;
+    use crate::geo2d::{Loop, Point2, Region};
+
+    /// #2511: a corner check that cannot run says so in a note, as the
+    /// band check does. A tool wider than the machinable range makes
+    /// the two checks fail (`GeoError::OutOfRange` from the erosion).
+    #[test]
+    fn a_corner_check_that_cannot_run_says_so_in_a_note() {
+        let c = Carried {
+            feed: 1200.0,
+            plunge: 300.0,
+            climb: true,
+            clearance: Height::fixed(40.0),
+            stepover: 4.0,
+            stepdown: 5.0,
+            top: Height::fixed(10.0),
+            bottom: Height::fixed(0.0),
+            retract: Height::fixed(20.0),
+            tilt: None,
+        };
+        let params = (OpType::Pocket.info().seed)(&c);
+        let p = Point2::new;
+        let square = Loop::new(vec![p(0.0, 0.0), p(50.0, 0.0), p(50.0, 50.0), p(0.0, 50.0)]).expect("square");
+        let region = Region::new(vec![square]).expect("region");
+        let unit = crate::units::Unit::Millimeters;
+        let path = narrow_noted(crate::cl::Toolpath::default(), &params, &region, Some(&region), 4e12, true, unit);
+        let said = |what: &str| path.notes.iter().filter(|n| n.contains(what) && n.contains("did not run")).count();
+        assert_eq!(said("bands of the stock"), 1, "the band check says it did not run: {:?}", path.notes);
+        assert_eq!(said("corners of the stock"), 1, "the corner check says it did not run: {:?}", path.notes);
+        let corner = path.notes.iter().find(|n| n.contains("corners of the stock")).expect("corner note");
+        assert!(corner.starts_with("2D Pocket: ") && corner.contains("outside the machinable range"), "{corner}");
+        // A check that runs and finds nothing stays silent.
+        let ok = narrow_noted(crate::cl::Toolpath::default(), &params, &region, Some(&region), 10.0, true, unit);
+        assert!(ok.notes.iter().all(|n| !n.contains("did not run")), "{:?}", ok.notes);
     }
 }

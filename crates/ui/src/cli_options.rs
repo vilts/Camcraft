@@ -46,7 +46,7 @@ pub const OPTIONS: &[Opt] = &[
         value: None,
         env: None,
         default: "off",
-        help: "Start with no window. Run a short self-check of the 3D view and exit.",
+        help: "Start with no window. Run a short self-check of the 3D view and exit. With a file, open that file and draw it in place of the sample; a file that does not open fails the run.",
     },
     Opt {
         flag: "--ui",
@@ -79,6 +79,30 @@ pub const OPTIONS: &[Opt] = &[
         env: Some("CAMCRAFT_MCP_PORT"),
         default: "off",
         help: "Open the MCP server for AI agents on this local port (0 to 65535).",
+    },
+    Opt {
+        flag: "--no-activate",
+        short: None,
+        value: None,
+        env: None,
+        default: "off",
+        help: "Show the window but do not make it the foreground window. The window that has the focus keeps it.",
+    },
+    Opt {
+        flag: "--minimized",
+        short: None,
+        value: None,
+        env: None,
+        default: "off",
+        help: "Start with the window minimized. It does not take the focus and it covers no other window. This also sets --no-activate.",
+    },
+    Opt {
+        flag: "--read-only",
+        short: None,
+        value: None,
+        env: None,
+        default: "off",
+        help: "Open the project file read-only. Save does not write over the file: it opens Save As, which writes your own copy. Changes are allowed. A model file is imported as usual.",
     },
 ];
 
@@ -140,14 +164,73 @@ fn find(name: &str) -> Option<&'static Opt> {
     OPTIONS.iter().find(|o| o.flag == name || o.short == Some(name))
 }
 
+/// The `--help` lines for the file argument (#2462).
+pub const FILE_HELP: &str = "File:\n  A model file (.stl, .obj, .step, .stp, or a Solidcraft .sc) is imported into a new project.\n  A project file (.camproj) is opened.\n  Give one file at most. A file that cannot be read is refused on the status line.\n";
+
+/// What one walk over the arguments found.
+struct Scan {
+    help: bool,
+    version: bool,
+    /// `--read-only` (#3609): the project file on the command line opens read-only.
+    read_only: bool,
+    /// The arguments that are neither an option nor an option's value, in
+    /// order: the files to open (#2462).
+    files: Vec<String>,
+    start: StartMode,
+}
+
+/// How the window first appears (#3582).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct StartMode {
+    /// `--minimized`: the window opens minimized.
+    pub minimized: bool,
+    /// `--no-activate` (also set by `--minimized`): the window does not take the focus.
+    pub no_activate: bool,
+}
+
+/// The window start mode of the arguments. The default (all false) is the
+/// normal start. Default when [`parse`] refuses the arguments.
+pub fn start_mode(args: &[String]) -> StartMode {
+    scan(args).map(|s| s.start).unwrap_or_default()
+}
+
 /// Check each argument against [`OPTIONS`]. An unknown option is an error
 /// that names it and points to `--help`; the program never ignores it.
 /// An argument without a leading dash is not an option and passes.
 pub fn parse(args: &[String]) -> Result<Parsed, String> {
-    let (mut help, mut version) = (false, false);
+    let s = scan(args)?;
+    Ok(if s.help {
+        Parsed::Help
+    } else if s.version {
+        Parsed::Version
+    } else {
+        Parsed::Run
+    })
+}
+
+/// The file arguments (#2462): each argument that is not an option and is
+/// not the value of the option before it, in order. A bare `-` is not a
+/// file. Empty when [`parse`] refuses the arguments.
+pub fn files(args: &[String]) -> Vec<String> {
+    scan(args).map(|s| s.files).unwrap_or_default()
+}
+
+/// Whether `--read-only` is given (#3609). `false` when [`parse`] refuses
+/// the arguments.
+pub fn read_only(args: &[String]) -> bool {
+    scan(args).is_ok_and(|s| s.read_only)
+}
+
+fn scan(args: &[String]) -> Result<Scan, String> {
+    let (mut help, mut version, mut read_only, mut files) = (false, false, false, Vec::new());
+    let mut start = StartMode::default();
     let mut it = args.iter().peekable();
     while let Some(arg) = it.next() {
-        if !arg.starts_with('-') || arg == "-" {
+        if arg == "-" {
+            continue;
+        }
+        if !arg.starts_with('-') {
+            files.push(arg.clone());
             continue;
         }
         let (name, inline) = match arg.split_once('=') {
@@ -171,22 +254,24 @@ pub fn parse(args: &[String]) -> Result<Parsed, String> {
         match opt.flag {
             "--help" => help = true,
             "--version" => version = true,
+            "--read-only" => read_only = true,
+            "--no-activate" => start.no_activate = true,
+            "--minimized" => {
+                start.minimized = true;
+                start.no_activate = true;
+            }
             _ => {}
         }
     }
-    Ok(if help {
-        Parsed::Help
-    } else if version {
-        Parsed::Version
-    } else {
-        Parsed::Run
-    })
+    Ok(Scan { help, version, read_only, files, start })
 }
 
 /// The text of `--help`, built from the tables.
 pub fn help_text() -> String {
     let mut out = String::from("camcraft-ui - a CAM program that turns 3D models into NC programs\n\n");
-    out.push_str("Usage: camcraft-ui [options]\n\nOptions:\n");
+    out.push_str("Usage: camcraft-ui [options] [file]\n\n");
+    out.push_str(FILE_HELP);
+    out.push_str("\nOptions:\n");
     for o in OPTIONS {
         let mut head = String::new();
         if let Some(s) = o.short {

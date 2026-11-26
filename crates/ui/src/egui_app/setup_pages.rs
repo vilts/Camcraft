@@ -51,6 +51,7 @@ pub(super) fn page(ui: &mut Ui, state: &mut State, name: &str, page: SetupPage) 
                 if ctx.is_some() {
                     ui.separator();
                 }
+                super::agie_inspection::section(ui, state, ctx);
                 pages::post_section(ui, state);
                 ui.separator();
                 super::setup_post_page::options_ownership(ui, state, ctx);
@@ -74,6 +75,12 @@ pub(super) fn page(ui: &mut Ui, state: &mut State, name: &str, page: SetupPage) 
 
 fn hint(ui: &mut Ui, text: &str) {
     ui.label(RichText::new(text).weak());
+}
+
+/// A help line in the small size (#2105: the ownership block's lines wrap
+/// to three tall lines each in the narrow pane).
+fn hint_small(ui: &mut Ui, text: &str) {
+    ui.label(RichText::new(text).small().weak());
 }
 
 /// Whether `ctx` is the active setup (or the implicit one): the pages
@@ -128,7 +135,7 @@ pub(super) fn ownership(ui: &mut Ui, state: &mut State, ctx: Option<&str>, which
         Mount::Machine => state.machine_target(),
         Mount::Post => state.post_target(),
     };
-    ui.label(target_line(word, name, target.as_deref() == Some(name)));
+    ui.label(RichText::new(target_line(word, name, target.as_deref() == Some(name))).small().weak());
     if pick != owns {
         let setup = name.to_owned();
         state.pending.push_back(match which {
@@ -136,7 +143,13 @@ pub(super) fn ownership(ui: &mut Ui, state: &mut State, ctx: Option<&str>, which
             Mount::Post => CommandKind::SetupOwnPost { setup, own: pick },
         });
     }
-    hint(ui, &format!(
+    // #2105: the two prose lines of this block are read-mostly guidance.
+    // They are the tallest rows of the machine page in a 274 px pane
+    // (three wrapped lines each), and their size pushed the page's action
+    // row under the visible bottom of a 720 px window. They keep their
+    // words and their AccessKit labels; they are drawn small and dimmed,
+    // like the machine page's own help line.
+    hint_small(ui, &format!(
         "Setups with different {word}s post one at a time: a program is written by one post for one machine."
     ));
 }

@@ -15,7 +15,11 @@
 
 use thiserror::Error;
 
+mod clip_line;
+mod slivers;
 mod sweep;
+
+pub use clip_line::RingClip;
 
 use clipper2_rust::{
     EndType, FillRule, JoinType, Path64, Paths64, Point64, inflate_paths_64, intersect_64,
@@ -595,8 +599,8 @@ fn tri_contains(t: [Point2; 3], p: Point2) -> bool {
 /// Splice `hole`'s boundary into `walk` with a verified bridge chord,
 /// turning two rings into one weakly-simple walk whose winding still equals
 /// the region's material (the bridge is traversed both ways and cancels).
-/// The textbook ray candidate comes first; a walk vertex is the fallback
-/// for the collinear-ray degeneracies the ray cannot express. A candidate
+/// A walk vertex comes first, nearest first; the computed ray hit is the
+/// last resort, as its rounding can leave it just off its edge. A candidate
 /// is accepted only if the open bridge segment crosses no boundary edge and
 /// stays on material along its length - never a guess (Prime Directive).
 fn merge_hole(walk: &mut Vec<Point2>, hole: &[Point2]) -> Result<(), GeoError> {
@@ -618,8 +622,23 @@ fn merge_hole(walk: &mut Vec<Point2>, hole: &[Point2]) -> Result<(), GeoError> {
         pts: hole.to_vec(),
     };
 
-    let mut cands: Vec<Point2> = Vec::new();
+    // Walk vertices come first (#2762): a bridge between two existing
+    // vertices adds no new point. A computed ray hit lies on its edge only
+    // to the rounding of its coordinates; a hit a few 1e-16 inside the
+    // material reads as strictly inside the ears beside it, and the clip
+    // stalls with "no ear". Eberly's construction (the visible vertex of
+    // the hit edge or a reflex vertex in its triangle) shows that a walk
+    // vertex at x >= r.x is visible whenever the ray hits, so the ray
+    // points stay only as the last resort.
     let nw = walk.len();
+    let by_distance = |p: &Point2, q: &Point2| {
+        ((p.x - r.x) * (p.x - r.x) + (p.y - r.y) * (p.y - r.y))
+            .partial_cmp(&((q.x - r.x) * (q.x - r.x) + (q.y - r.y) * (q.y - r.y)))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    };
+    let mut cands: Vec<Point2> = walk.iter().filter(|p| **p != r && p.x >= r.x).copied().collect();
+    cands.sort_by(by_distance);
+    let mut hits: Vec<Point2> = Vec::new();
     for j in 0..nw {
         let (a, b) = (walk[j], walk[(j + 1) % nw]);
         if a.y == b.y {
@@ -629,20 +648,12 @@ fn merge_hole(walk: &mut Vec<Point2>, hole: &[Point2]) -> Result<(), GeoError> {
         if r.y >= ylo && r.y < yhi {
             let x = a.x + (r.y - a.y) * (b.x - a.x) / (b.y - a.y);
             if x > r.x {
-                cands.push(Point2::new(x, r.y));
+                hits.push(Point2::new(x, r.y));
             }
         }
     }
-    for p in walk.iter() {
-        if *p != r && p.x >= r.x {
-            cands.push(*p);
-        }
-    }
-    cands.sort_by(|p, q| {
-        ((p.x - r.x) * (p.x - r.x) + (p.y - r.y) * (p.y - r.y))
-            .partial_cmp(&((q.x - r.x) * (q.x - r.x) + (q.y - r.y) * (q.y - r.y)))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    hits.sort_by(by_distance);
+    cands.extend(hits);
 
     for q in cands {
         let clear = (0..nw).all(|j| !proper_cross(r, q, walk[j], walk[(j + 1) % nw]));

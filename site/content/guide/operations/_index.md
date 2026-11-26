@@ -8,13 +8,13 @@ weight = 3
 An operation is one machining step: a tool, an area to cut, and how to cut
 it. The ribbon shows the operation groups the mounted machine can run, so a
 mill document has no turning operations and a lathe document no 3D
-milling. A mill-turn shows both.
+milling. A mill-turn (a lathe with live tooling) shows both.
 
 ## Operation kinds
 
 | Group | Operations |
 |---|---|
-| Milling 2D | Face, Contour, Pocket, Slot, Trochoidal slot, Trace, Adaptive, Offset, Engrave, Chamfer, Circular, Thread |
+| Milling 2D | Face, Contour, Pocket, Slot, Trochoidal slot, Slot Undercut, Trace, Adaptive, Offset, Engrave, V-Carve, Chamfer, Circular, Thread |
 | Milling 3D | 3D Pocket, 3D Finish, Deburr |
 | Drilling | Drill, Bore, Probe |
 | Multi-axis | 5-Axis Contour, 5-Axis Parallel, Swarf, Adv. Swarf, Rotary Contour, Rotary Parallel, Rotary Offset, Multi-Axis Rough, 5-Axis Flow, Multi-Axis Contour |
@@ -131,14 +131,18 @@ can be clicked to frame it.
 
 - {{ <icon name="act-show-paths" /> }} **Paths** ({{ <icon name="act-hide-paths" /> }} when hidden) shows every cached toolpath at once.
 - {{ <icon name="act-simulate" /> }} **Simulate** plays the program against the stock with a transport bar;
-  drag the playback slider to jump.
+  drag the playback slider to jump. **Next op** (Page Down) and
+  **Previous op** (Page Up) pause the playback at the start of an
+  operation, with the stock that the earlier operations leave. The readout
+  names the operation.
 - {{ <icon name="tree-stock" /> }} **Deviate** compares the machined stock with the model and colours where
   material is left or where the program cut into the part. **Frame rest**
   and **Frame gouge** take the view to the worst spot of each.
 
-The multi-axis kinds, Probe, Plasma Profile and the EDM kinds (Wire
+The multi-axis kinds, Probe, Plasma Profile, Waterjet Profile and the EDM kinds (Wire
 Contour, Sinker Burn, Sinker Side Burn) each have their own reference, with settings, defaults and common refusals:
 [Multi-axis operations](@/guide/multi-axis/operations-multiaxis.md),
 [Probing](@/guide/operations/operations-probing.md),
-[Plasma cutting](@/guide/operations/operations-plasma.md) and
+[Plasma cutting](@/guide/operations/operations-plasma.md),
+[Waterjet cutting](@/guide/operations/operations-waterjet.md) and
 [Wire and sinker EDM](@/guide/operations/operations-edm.md).

@@ -9,6 +9,7 @@
 //! blank leaves them to the controller's AutoFS).
 
 use super::height::Height;
+use crate::path_picks::PathPicks;
 
 /// Where the kerf offset is made: walked by the computer (the default -
 /// the path is the torch centre), or posted as G41/G42 for the control
@@ -61,6 +62,8 @@ pub struct PlasmaOp {
     pub pierce_height: Option<f64>,
     pub cut_height: Option<f64>,
     pub pierce_delay: Option<f64>,
+    /// The operation's start and exit picks (#3339).
+    pub picks: PathPicks,
 }
 
 impl PlasmaOp {
@@ -86,5 +89,6 @@ impl PlasmaOp {
             && opt(self.pierce_height)
             && opt(self.cut_height)
             && opt(self.pierce_delay)
+            && self.picks.refusal().is_none()
     }
 }

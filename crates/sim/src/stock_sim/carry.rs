@@ -181,13 +181,16 @@ pub struct Body {
 
 impl Body {
     /// A body whose every material column stands on one floor height
-    /// (the box and cylinder stocks).
+    /// (the box and upright cylinder stocks). A laid cylinder retains
+    /// its analytic rounded floor instead (#2758).
     #[must_use]
     pub fn on_floor(mut dex: Dexel, z: f64) -> Self {
         if let Some(h) = &mut dex.history {
             std::sync::Arc::make_mut(h).lo.z = z;
         }
-        let floor = (0..dex.nx * dex.ny).map(|k| if dex.top_at(k).is_finite() { z } else { f64::INFINITY }).collect();
+        let floor = (0..dex.nx * dex.ny).map(|k| {
+            if dex.top_at(k).is_finite() { dex.stock_floor_at(k).unwrap_or(z) } else { f64::INFINITY }
+        }).collect();
         Body { dex, floor, floor_judged: false }
     }
 

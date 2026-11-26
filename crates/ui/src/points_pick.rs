@@ -68,7 +68,7 @@ pub fn take(state: &mut State, pick: GeoSel) {
     let words = camcraft_app::pick::geo_label(&state.world, &pick);
     let Some(d) = state.points_pick.as_mut() else { return };
     let setup = d.setup.clone();
-    state.status = match pick.feature {
+    state.status = match &pick.feature {
         FeatureSel::Chain(_) if no_centre.is_some() => {
             format!("{setup}: {words}: {} - this row takes three points", no_centre.as_deref().unwrap_or_default())
         }
@@ -82,7 +82,10 @@ pub fn take(state: &mut State, pick: GeoSel) {
                 n => format!("{setup}: {words} — point {n} picked - pick point {}", n + 1),
             }
         }
-        FeatureSel::Face(_) | FeatureSel::Patch(_) => {
+        FeatureSel::Face(_)
+        | FeatureSel::Patch(_)
+        | FeatureSel::SketchChain(_)
+        | FeatureSel::SketchLayer(_) => {
             format!("{setup}: {words} is a face - this row takes three points (the face row lays a face)")
         }
     };

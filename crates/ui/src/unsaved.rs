@@ -9,7 +9,7 @@
 
 use camcraft_app::recent::RecentKind;
 
-use crate::state::{CommandKind, State, save_project_dialog};
+use crate::state::{CommandKind, State};
 
 /// The prompt's three answers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,8 +79,7 @@ impl State {
                 }
             }
             UnsavedChoice::Save => {
-                let Some(path) = self.project_path.clone().or_else(|| save_project_dialog(None))
-                else {
+                let Some(path) = self.save_target() else {
                     self.status = String::from("save cancelled - the document stays open");
                     return;
                 };

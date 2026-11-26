@@ -15,7 +15,7 @@
 use camcraft_post::cl::{Move, MoveKind, Toolpath};
 use camcraft_post::geometry::Point3;
 use camcraft_post::machine::{parse_mch, Coolant, Machine};
-use camcraft_post::post::{cnc, dump, engine, machine, Dump};
+use camcraft_post::post::{cnc, dump, engine, machine, Dump, ProgramId};
 use serde_json::json;
 use std::path::Path;
 
@@ -101,7 +101,7 @@ fn assert_inert(stem: &str, l: &str) {
 fn hostile_names_post_well_formed_comments_in_every_mill_dialect() {
     let stream = mill_stream(8000.0);
     let m = mill(MACHINE);
-    for stem in ["fanuc", "haas", "mazak", "tormach", "grblhal", "tinyg"] {
+    for stem in ["fanuc", "haas", "mazak", "tormach", "grblhal", "tinyg", "grbl", "mach3"] {
         let nc = post(stem, &m, &stream);
         for l in nc.lines() {
             assert_paren_line(stem, l);
@@ -210,4 +210,115 @@ fn every_bundled_machine_name_posts_a_single_header_comment() {
         seen += 1;
     }
     assert!(seen >= 10, "the Tormach library posts: {seen}");
+}
+
+/// Keep each executable and comment body. A cycle parameter continues the preceding numbered block.
+fn klartext_blocks(nc: &str) -> Vec<&str> {
+    let mut blocks = Vec::new();
+    let mut number = 0;
+    for line in nc.lines() {
+        if line.starts_with(' ') {
+            assert!(blocks.last().is_some_and(|previous: &&str| previous.ends_with('~')), "{line}");
+            assert_eq!(line.trim(), "Q339=+2", "the sample's preset cycle continuation");
+            blocks.push(line);
+            continue;
+        }
+        let (label, body) = line.split_once(' ').expect("numbered Klartext block");
+        assert_eq!(label, number.to_string(), "{line}");
+        number += 1;
+        if let Some(text) = body.strip_prefix("; ") {
+            assert!(text.is_ascii() && !text.contains(['(', ')', ';', '*', '~']), "{line}");
+        }
+        blocks.push(body);
+    }
+    blocks
+}
+
+fn assert_klartext_header_notes(script: &str, id: &ProgramId, note: &str) {
+    let mch = machine::mirror(&parse_mch(include_str!("../../../assets/machines/fehlmann-picomax55.mch")).unwrap());
+    let stream = include_str!("klartext/contour.cnc");
+    let run = |id: &ProgramId| {
+        let out = engine::run_program_with(script, &mch, stream, &json!(null), id).unwrap();
+        assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+        out.program
+    };
+    let baseline = run(&ProgramId::default());
+    let with_notes = run(id);
+    let baseline = klartext_blocks(&baseline);
+    let with_notes = klartext_blocks(&with_notes);
+    let header: Vec<_> = with_notes[1..].iter().map_while(|line| line.strip_prefix("; ")).collect();
+    assert!(header.len() > id.notes.len(), "the long note spans several blocks");
+    assert_eq!(header.join(" "), format!("{note} Reduced accuracy: model bad G0 X999 M3 checked to 0.024 mm"));
+    // The only difference allowed is the numbered header comments immediately after BEGIN PGM.
+    assert_eq!(with_notes[0], baseline[0]);
+    assert_eq!(with_notes[1 + header.len()..], baseline[1..]);
+}
+
+#[test]
+fn header_notes_use_each_shipped_dialect_and_keep_the_full_surface_bound() {
+    let note = "Reduced accuracy: model brick was checked to 0.024 mm, not 0.010 mm";
+    let hostile = "Reduced accuracy: model bad) (G0 X999;*\nM3 checked to 0.024 mm";
+    let id = ProgramId { notes: vec![note.into(), hostile.into()], ..Default::default() };
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/posts");
+    let mut text_posts = 0;
+    let mut native_refusals = 0;
+    for entry in std::fs::read_dir(dir).expect("shipped posts").flatten() {
+        let p = entry.path();
+        if p.extension().and_then(|s| s.to_str()) != Some("cps") { continue; }
+        let stem = p.file_stem().and_then(|s| s.to_str()).expect("post name");
+        if stem == "heidenhain-klartext" {
+            assert_klartext_header_notes(&std::fs::read_to_string(&p).unwrap(), &id, note);
+            text_posts += 1;
+            continue;
+        }
+        let mut mch = mill("Test mill");
+        if stem.contains("lathe") { mch["kind"] = json!("lathe"); }
+        if stem.contains("wire") { mch["kind"] = json!("wire-edm"); }
+        if stem.contains("sinker") { mch["kind"] = json!("sinker-edm"); }
+        if stem.contains("plasma") { mch["kind"] = json!("plasma"); }
+        if stem.contains("waterjet") { mch["kind"] = json!("waterjet"); }
+        let result = engine::run_program_with(
+            &std::fs::read_to_string(&p).expect("post reads"), &mch, "", &json!(null), &id,
+        );
+        if stem == "agie-native" {
+            let error = result.expect_err("the native Agie job must refuse a single-file program");
+            assert!(
+                matches!(&error, camcraft_post::post::PostError::Script(message) if message.contains(
+                    "Native wire EDM job files require the desktop or CLI One program post to a new job directory"
+                )),
+                "{stem}: {error}"
+            );
+            native_refusals += 1;
+            continue;
+        }
+        let out = result.unwrap_or_else(|e| panic!("{stem}: {e}"));
+        let line = out.program.lines().find(|l| l.contains(note))
+            .unwrap_or_else(|| panic!("{stem}: full bound absent\n{}", out.program));
+        if stem == "sinumerik" {
+            assert_eq!(line, format!("; {note}"), "{stem}");
+        } else if stem == "heidenhain" {
+            assert!(line.contains(&format!("; {note}")) && line.ends_with('*'), "{stem}: {line}");
+        } else {
+            assert_paren_line(stem, line);
+            assert!(line.contains(&format!("({note})")), "{stem}: {line}");
+        }
+        let hostile_line = out.program.lines().find(|l| l.contains("model bad"))
+            .unwrap_or_else(|| panic!("{stem}: hostile name lost\n{}", out.program));
+        assert!(hostile_line.contains("M3 checked to 0.024 mm"), "{stem}: a control character split the note: {hostile_line}");
+        if stem == "sinumerik" {
+            assert!(hostile_line.starts_with("; ") && hostile_line.matches(';').count() == 1, "{stem}: {hostile_line}");
+        } else if stem == "heidenhain" {
+            assert!(hostile_line.contains("; ") && hostile_line.ends_with('*') && hostile_line.matches('*').count() == 1, "{stem}: {hostile_line}");
+        } else {
+            let comment = hostile_line.split_once(' ')
+                .filter(|(n, _)| n.starts_with('N') && n[1..].bytes().all(|b| b.is_ascii_digit()))
+                .map_or(hostile_line, |(_, comment)| comment);
+            assert!(comment.starts_with('(') && comment.ends_with(')'), "{stem}: {hostile_line}");
+            assert_eq!(hostile_line.matches('(').count(), 1, "{stem}: {hostile_line}");
+            assert_eq!(hostile_line.matches(')').count(), 1, "{stem}: {hostile_line}");
+        }
+        text_posts += 1;
+    }
+    assert_eq!(text_posts, 25, "every shipped text post writes both notes");
+    assert_eq!(native_refusals, 1, "the native Agie dispatcher refused the notes");
 }

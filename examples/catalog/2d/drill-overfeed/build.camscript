@@ -1,0 +1,42 @@
+// Example catalog refusal case: 2d/drill-overfeed (#2856).
+// Builds drill-overfeed.camproj headlessly through CamCraft's undoable
+// command verbs, then asks for the post. The Drill feeds above the rated
+// feed of its tool, so the post refuses and no program is written.
+// Run with CWD = this case directory:
+//   camcraft-cli script build.camscript
+
+cam.import("model/drill-overfeed.obj", "drill-overfeed");
+// Keep the mesh in the project without a link to the script working directory.
+cam.call("set_model_link", { model: "drill-overfeed", path: null });
+
+cam.call("set_stock", {
+  box: { dx: 80.0, dy: 50.0, dz: 10.0 }
+});
+
+cam.call("add_tool", { catalog: "DR-0600", holder: "none" });
+
+cam.call("add_operation", {
+  kind: "Drill",
+  name: "Drill1",
+  tool: "DR-0600",
+  source: "drill-overfeed",
+  params: {
+    clearance_z: { reference: "top_of_stock", offset: 25.0 },
+    top_z: { reference: "top_of_stock", offset: 2.0 },
+    cycle: "auto",
+    peck: 0.0,
+    dwell: 0.0,
+    feed: 400.0,
+    plunge_feed: 400.0,
+    holes: [
+      { xy: [-25.0, 0.0], radius: 3.0, entry_z: 10.0, floor_z: 0.0, through: true, stepped: false },
+      { xy: [25.0, 0.0], radius: 3.0, entry_z: 10.0, floor_z: 0.0, through: true, stepped: false }
+    ]
+  }
+});
+
+cam.generate();
+// Save before the refused step: the project is the case's evidence.
+cam.save("drill-overfeed.camproj");
+// The post refuses. The error is not caught, so the run ends with an error.
+cam.post({ to: "drill-overfeed.nc" });

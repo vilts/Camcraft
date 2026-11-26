@@ -125,12 +125,10 @@ impl AddTool {
         if model::find_by_name(world, name).is_some() {
             return Err(CommandError::NameConflict(name.to_string()));
         }
-        let number = crate::tool_numbers::next_free(world).ok_or_else(|| {
-            CommandError::Invalid(format!(
-                "no free tool numbers remain ({})",
-                crate::tool_numbers::RANGE_TEXT
-            ))
-        })?;
+        let taken: Vec<u32> = crate::tool_numbers::numbers(world).map_err(CommandError::Invalid)?
+            .into_iter().map(|(_, n)| n).collect();
+        let number = crate::tool_reservations::allocate(world, name, tool.kind, &taken)
+            .map_err(CommandError::Invalid)?;
         Ok(AddTool {
             name: name.to_string(),
             tool,
@@ -255,6 +253,9 @@ impl ChangeTool {
         };
         let prev = model::tool_of(world, &entity)
             .ok_or_else(|| CommandError::Invalid(format!("'{name}' is not a tool")))?;
+        if let Some(number) = crate::tool_numbers::number_of(world, name) {
+            crate::tool_reservations::for_tool(world, name, next.kind, number).map_err(CommandError::Invalid)?;
+        }
         // #890: an edit of the per-material table that leaves the
         // running numbers alone loads the document material's row into
         // them; an edit that states rpm / feed itself keeps its own.
@@ -277,6 +278,12 @@ impl ChangeTool {
         // holding a tool its family cannot cut with is refused by name.
         if let Some(msg) =
             crate::operation::tool_gate::retype_refusal(world, name, prev.kind, next.kind)
+        {
+            return Err(CommandError::Invalid(msg));
+        }
+        // #3475: a smaller cutter never strands a slot; a wider one can.
+        if next.diameter > prev.diameter
+            && let Some(msg) = crate::operation::tool_gate::resize_refusal(world, name, next.diameter)
         {
             return Err(CommandError::Invalid(msg));
         }

@@ -91,6 +91,7 @@ fn thread_on(mch: &str) -> World {
         plunge_feed: 40.0,
         infeed_plan: Default::default(),
         hand: camcraft_app::cl::ThreadHand::Right,
+        picks: Default::default(),
     };
     h.execute(&world, CreateOperation::new(&world, "TH1", "TD-1732-60", SrcRef::Entity("bar".into()), params).expect("create"));
     h.execute(&world, GenerateOperation::new(&world, "TH1").expect("generate"));

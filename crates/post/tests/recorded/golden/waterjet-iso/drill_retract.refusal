@@ -1,0 +1,4 @@
+; waterjet-iso.cps refused drill_retract: 3 warning(s), the program is never released
+warning: operation Peck: states 1500 rpm - a waterjet turns no spindle (no S word, no G95 feed per revolution)
+warning: the generic waterjet post writes jet words (water and abrasive M-codes) only a waterjet table reads - no machine is stated, so none is declared a waterjet machine
+warning: operation Peck: a canned cycle - a waterjet has no drilling cycle (G81-G89 are mill words)

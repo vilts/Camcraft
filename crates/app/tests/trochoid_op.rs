@@ -46,6 +46,7 @@ fn trochoid(width: f64) -> OpParams {
         return_feed: 2000.0,
         plunge_feed: 200.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -92,6 +93,8 @@ fn a_trochoidal_slot_creates_and_edits_through_the_history() {
 
 #[test]
 fn a_trochoidal_slot_generates_verifies_clean_and_posts() {
+    use camcraft_app::cl::MoveKind;
+
     let (world, mut h) = job(10.0);
     h.execute(&world, GenerateOperation::new(&world, "Troch1").expect("generate"));
     let e = model::find_by_name(&world, "Troch1").expect("op");
@@ -105,6 +108,21 @@ fn a_trochoidal_slot_generates_verifies_clean_and_posts() {
         c.warnings
     );
     assert!(c.path.notes.iter().any(|n| n.starts_with("trochoidal slot:")), "{:?}", c.path.notes);
+    // The loops' floor arcs cross the channel near the entry, middle and exit
+    // in that order. Exclude the entry bore, the end cap and lifted retraces.
+    let mut across = c.path.moves.iter().filter(|m| {
+        m.kind == MoveKind::Feed
+            && m.arc.is_some()
+            && (m.from.z - 14.0).abs() < 1e-6
+            && (m.to.z - 14.0).abs() < 1e-6
+            && m.from.y * m.to.y < -2.25
+    });
+    for section in [-13.0..-8.0, -3.0..3.0, 8.0..13.0] {
+        assert!(
+            across.any(|m| section.contains(&m.to.x)),
+            "no successive floor loop across the slot at {section:?}"
+        );
+    }
     let nc = std::env::temp_dir().join(format!("camcraft-trochoid-{}.nc", std::process::id()));
     posting::post_setup(&world, &nc).expect("a clean trochoid posts");
     let text = std::fs::read_to_string(&nc).expect("nc");
@@ -132,6 +150,7 @@ fn the_trochoidal_slot_round_trips_through_the_project_file() {
     project::save(&world, &path).expect("save");
     let text = std::fs::read_to_string(&path).expect("read");
     assert!(text.contains("\"trochoidal_slot\""), "the params carry their tag");
+    assert!(!text.contains("\"pass_start\""), "the project stores no pass order for this operation");
     let world2 = new_world();
     project::load(&world2, &path).expect("load");
     assert_eq!(params(&world2), Some(p));

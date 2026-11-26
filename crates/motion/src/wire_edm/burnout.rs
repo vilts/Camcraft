@@ -98,9 +98,7 @@ pub fn wire_burnout(loops: &[Loop], chains: &[Vec<Point2>], p: &WireParams, clea
     };
     // The outermost ring at the kerf offset IS the finished wall: the
     // corner minimum holds for it as for a contour.
-    if clearance < k + COVER_TOL {
-        laws::cover(&given, outer, p)?;
-    }
+    let corner_rest = if clearance < k + COVER_TOL { laws::cover(&given, outer, p)? } else { None };
     let Some(start) = p.start else {
         return Err(invalid(
             "no start hole is stated - the burnout is threaded at a start hole inside the pocket; the wire cannot be threaded through solid material".into(),
@@ -139,6 +137,7 @@ pub fn wire_burnout(loops: &[Loop], chains: &[Vec<Point2>], p: &WireParams, clea
     })?;
     no_core(&profile, &path, k, z)?;
     path.notes.extend(notes(p, clearance, rings.len(), start));
+    path.notes.extend(corner_rest.map(|r| laws::sharp_note(r, k)));
     Ok(path)
 }
 

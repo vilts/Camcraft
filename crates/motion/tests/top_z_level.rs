@@ -146,8 +146,9 @@ fn a_contour_whose_stepdown_spans_the_depth_cuts_one_level() {
         tab_height: 0.0,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: Links::PLANAR,
+        picks: Default::default(),
     };
     one_level("2D contour", &contour(&square(0.0, 0.0, 30.0), &p).expect("contour"));
 }
@@ -169,7 +170,7 @@ fn a_slot_and_a_trace_whose_stepdown_spans_the_depth_cut_one_level() {
         plunge_feed: 100.0,
         climb: true,
         entry: Entry3D::Plunge,
-        helix_radius: 1.0,
+        helix_radius: 1.0, blend_turns: false, blend_radius: None,
     };
     one_level("slot", &slot(Point2::new(0.0, 0.0), Point2::new(40.0, 0.0), &p).expect("slot"));
     let tp = TraceParams {
@@ -210,6 +211,7 @@ fn a_bore_whose_stepdown_spans_the_depth_cuts_one_level() {
 
 fn cp(vault: bool) -> CircularParams {
     CircularParams {
+        pass_start: Default::default(),
         links: Links::PLANAR,
         center: Point2::new(0.0, 0.0),
         radius: 10.0,
@@ -267,7 +269,7 @@ fn a_staged_face_cuts_no_level_at_top_z_and_a_plain_face_stays_one_pass() {
         feed: 1000.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         stock_top: None,
     };
     one_level("staged face", &face(&square(0.0, 0.0, 30.0), &p).expect("face"));
@@ -290,6 +292,7 @@ fn plate() -> Vec<Triangle> {
 #[test]
 fn a_3d_pocket_whose_stepdown_spans_the_depth_cuts_one_level() {
     let p = Pocket3DParams {
+        pass_start: Default::default(),
         links: Links::ROUGH3D,
         tool_diameter: 6.0,
         stepover: 2.4,

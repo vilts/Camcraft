@@ -13,6 +13,7 @@ use crate::plunge_law::{Solid, first_solid_plunge};
 
 fn crossing_hop(center_cutting: bool, cleared: bool) -> Toolpath {
     let mut p = Pocket3DParams {
+        pass_start: Default::default(),
         tool_diameter: 2.0,
         stepover: 1.0,
         stock_to_leave: 0.0,

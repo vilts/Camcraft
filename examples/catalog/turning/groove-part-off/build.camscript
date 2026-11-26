@@ -1,0 +1,72 @@
+// Provenance: original CamCraft grooved-bar example using public command verbs (#2864).
+// Run from this case directory: camcraft-cli script build.camscript
+cam.import("model/groove-part-off.obj", "groove-part-off");
+cam.call("set_model_link", { model: "groove-part-off", path: null });
+cam.call("set_stock", { cylinder: { diameter: 30.0, height: 90.0 } });
+cam.call("load_machine", { builtin: "Lathe" });
+cam.call("add_setup", { name: "Turning" });
+cam.call("set_setup_post", { post: "Fanuc Lathe" });
+cam.call("add_tool", { catalog: "GT-0300" });
+
+var z = function (v) { return { reference: "fixed", offset: v }; };
+
+// Rough the 6 mm groove with a 3 mm blade, leaving 0.25 mm radially.
+cam.call("add_operation", {
+  kind: "Groove Rough",
+  name: "Groove rough",
+  tool: "GT-0300",
+  source: "groove-part-off",
+  params: {
+    tolerance: 0.05,
+    clearance_z: z(95.0),
+    top_z: z(41.0),
+    bottom_z: z(35.0),
+    stepdown: 0.5,
+    stock_to_leave: 0.25,
+    feed: 60.0,
+    plunge_feed: 40.0
+  }
+});
+
+// Remove the rough allowance to reach the model's diameter 22 groove floor.
+cam.call("add_operation", {
+  kind: "Groove Finish",
+  name: "Groove finish",
+  tool: "GT-0300",
+  source: "groove-part-off",
+  params: {
+    tolerance: 0.05,
+    clearance_z: z(95.0),
+    top_z: z(41.0),
+    bottom_z: z(35.0),
+    feed: 60.0,
+    plunge_feed: 40.0
+  }
+});
+
+// Part at Z15, the part's end face: the kerf stands below it (Z12..15),
+// and orientation 2 posts the blade's low edge at Z12.
+cam.call("add_operation", {
+  kind: "Parting",
+  name: "Part off",
+  tool: "GT-0300",
+  source: "groove-part-off",
+  params: {
+    tolerance: 0.05,
+    clearance_z: z(95.0),
+    top_z: z(90.0),
+    bottom_z: z(15.0),
+    stepdown: 0.5,
+    feed: 60.0,
+    plunge_feed: 40.0
+  }
+});
+
+cam.generate();
+var verdict = cam.verify();
+if (!verdict.ok) {
+  throw new Error("catalog verify failed: " + JSON.stringify(verdict));
+}
+cam.save("groove-part-off.camproj");
+cam.post({ to: "groove-part-off.nc" });
+cam.report();

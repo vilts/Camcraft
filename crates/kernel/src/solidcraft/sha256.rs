@@ -57,29 +57,84 @@ fn compress(h: &mut [u32; 8], block: &[u8; 64]) {
     }
 }
 
+/// SHA-256 over bytes that arrive in pieces (#2689): a file is hashed as
+/// it is read, so it is never held whole for its digest.
+#[derive(Clone, Debug)]
+pub struct Sha256 {
+    h: [u32; 8],
+    /// The bytes of a block not yet full.
+    buf: [u8; 64],
+    fill: usize,
+    /// The whole length so far, in bytes.
+    len: u64,
+}
+
+impl Default for Sha256 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Sha256 {
+    #[must_use]
+    pub fn new() -> Self {
+        Sha256 { h: H0, buf: [0u8; 64], fill: 0, len: 0 }
+    }
+
+    /// Hash `data` after the bytes already given.
+    pub fn update(&mut self, data: &[u8]) {
+        self.len = self.len.wrapping_add(data.len() as u64);
+        let mut data = data;
+        if self.fill > 0 {
+            let take = (64 - self.fill).min(data.len());
+            let (head, rest) = data.split_at(take);
+            self.buf[self.fill..self.fill + take].copy_from_slice(head);
+            self.fill += take;
+            data = rest;
+            if self.fill < 64 {
+                return;
+            }
+            let block = self.buf;
+            compress(&mut self.h, &block);
+            self.fill = 0;
+        }
+        let (blocks, rest) = data.as_chunks::<64>();
+        for block in blocks {
+            compress(&mut self.h, block);
+        }
+        self.buf[..rest.len()].copy_from_slice(rest);
+        self.fill = rest.len();
+    }
+
+    /// The digest of every byte given, 64 lowercase hex digits.
+    #[must_use]
+    pub fn finish_hex(self) -> String {
+        let mut h = self.h;
+        // Padding: 0x80, zeros, then the bit length as a big-endian u64.
+        let mut tail = [0u8; 128];
+        tail[..self.fill].copy_from_slice(&self.buf[..self.fill]);
+        tail[self.fill] = 0x80;
+        let used = if self.fill < 56 { 64 } else { 128 };
+        let bits = self.len.wrapping_mul(8);
+        tail[used - 8..used].copy_from_slice(&bits.to_be_bytes());
+        for block in tail[..used].as_chunks::<64>().0 {
+            compress(&mut h, block);
+        }
+        h.iter().map(|x| format!("{x:08x}")).collect()
+    }
+}
+
 /// The SHA-256 digest of `data`, 64 lowercase hex digits.
+#[must_use]
 pub fn hex_digest(data: &[u8]) -> String {
-    let mut h = H0;
-    let (blocks, rest) = data.as_chunks::<64>();
-    for block in blocks {
-        compress(&mut h, block);
-    }
-    // Padding: 0x80, zeros, then the bit length as a big-endian u64.
-    let mut tail = [0u8; 128];
-    tail[..rest.len()].copy_from_slice(rest);
-    tail[rest.len()] = 0x80;
-    let used = if rest.len() < 56 { 64 } else { 128 };
-    let bits = (data.len() as u64).wrapping_mul(8);
-    tail[used - 8..used].copy_from_slice(&bits.to_be_bytes());
-    for block in tail[..used].as_chunks::<64>().0 {
-        compress(&mut h, block);
-    }
-    h.iter().map(|x| format!("{x:08x}")).collect()
+    let mut s = Sha256::new();
+    s.update(data);
+    s.finish_hex()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::hex_digest;
+    use super::{hex_digest, Sha256};
 
     /// FIPS 180-4's examples, plus the padding edge of 55/56/64 bytes.
     #[test]
@@ -100,5 +155,22 @@ mod tests {
             hex_digest(&[b'a'; 64]),
             "ffe054fe7ae0cb6dc65c3af9b61d5209f439851db43d0ba5997337df154668eb"
         );
+    }
+
+    /// #2689: the digest of pieces is the digest of the whole, for every
+    /// split around the 55/56/64-byte padding edges.
+    #[test]
+    fn pieces_hash_as_the_whole() {
+        let data: Vec<u8> = (0..300u32).map(|i| (i * 7 + 3) as u8).collect();
+        for len in [0usize, 1, 55, 56, 63, 64, 65, 119, 128, 300] {
+            let whole = hex_digest(&data[..len]);
+            for piece in [1usize, 3, 55, 64, 65, 200] {
+                let mut s = Sha256::new();
+                for chunk in data[..len].chunks(piece) {
+                    s.update(chunk);
+                }
+                assert_eq!(s.finish_hex(), whole, "len {len}, pieces of {piece}");
+            }
+        }
     }
 }

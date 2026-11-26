@@ -1,0 +1,3 @@
+kinds = ["Chamfering", "Multi-Pass Turning"]
+machine = "Lathe"
+expect = "post"

@@ -158,6 +158,468 @@
       }
     },
     {
+      "name": "Router up-cut 3 mm",
+      "definition": {
+        "kind": "end_mill",
+        "diameter": 3.0,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "flute_len": 12.0,
+        "shank_d": 3.0,
+        "shank_len": 13.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router down-cut 3 mm",
+      "definition": {
+        "kind": "end_mill",
+        "diameter": 3.0,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "flute_len": 12.0,
+        "shank_d": 3.0,
+        "shank_len": 13.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router compression 3 mm",
+      "definition": {
+        "kind": "end_mill",
+        "diameter": 3.0,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "flute_len": 12.0,
+        "shank_d": 3.0,
+        "shank_len": 13.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router ball nose 3 mm",
+      "definition": {
+        "kind": "ball_nose",
+        "diameter": 3.0,
+        "corner_r": 1.5,
+        "tip_angle": 0.0,
+        "flute_len": 12.0,
+        "shank_d": 3.0,
+        "shank_len": 13.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router up-cut 6 mm",
+      "definition": {
+        "kind": "end_mill",
+        "diameter": 6.0,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "flute_len": 22.0,
+        "shank_d": 6.0,
+        "shank_len": 16.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router down-cut 6 mm",
+      "definition": {
+        "kind": "end_mill",
+        "diameter": 6.0,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "flute_len": 22.0,
+        "shank_d": 6.0,
+        "shank_len": 16.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router compression 6 mm",
+      "definition": {
+        "kind": "end_mill",
+        "diameter": 6.0,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "flute_len": 22.0,
+        "shank_d": 6.0,
+        "shank_len": 16.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router ball nose 6 mm",
+      "definition": {
+        "kind": "ball_nose",
+        "diameter": 6.0,
+        "corner_r": 3.0,
+        "tip_angle": 0.0,
+        "flute_len": 22.0,
+        "shank_d": 6.0,
+        "shank_len": 16.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router up-cut 1/8 in",
+      "definition": {
+        "kind": "end_mill",
+        "diameter": 3.175,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "flute_len": 12.0,
+        "shank_d": 3.175,
+        "shank_len": 13.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router down-cut 1/8 in",
+      "definition": {
+        "kind": "end_mill",
+        "diameter": 3.175,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "flute_len": 12.0,
+        "shank_d": 3.175,
+        "shank_len": 13.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router compression 1/8 in",
+      "definition": {
+        "kind": "end_mill",
+        "diameter": 3.175,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "flute_len": 12.0,
+        "shank_d": 3.175,
+        "shank_len": 13.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router ball nose 1/8 in",
+      "definition": {
+        "kind": "ball_nose",
+        "diameter": 3.175,
+        "corner_r": 1.5875,
+        "tip_angle": 0.0,
+        "flute_len": 12.0,
+        "shank_d": 3.175,
+        "shank_len": 13.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router up-cut 1/4 in",
+      "definition": {
+        "kind": "end_mill",
+        "diameter": 6.35,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "flute_len": 22.0,
+        "shank_d": 6.35,
+        "shank_len": 16.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router down-cut 1/4 in",
+      "definition": {
+        "kind": "end_mill",
+        "diameter": 6.35,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "flute_len": 22.0,
+        "shank_d": 6.35,
+        "shank_len": 16.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router compression 1/4 in",
+      "definition": {
+        "kind": "end_mill",
+        "diameter": 6.35,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "flute_len": 22.0,
+        "shank_d": 6.35,
+        "shank_len": 16.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router ball nose 1/4 in",
+      "definition": {
+        "kind": "ball_nose",
+        "diameter": 6.35,
+        "corner_r": 3.175,
+        "tip_angle": 0.0,
+        "flute_len": 22.0,
+        "shank_d": 6.35,
+        "shank_len": 16.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router V-bit 60 deg 6 mm",
+      "definition": {
+        "kind": "taper",
+        "diameter": 6.0,
+        "corner_r": 0.0,
+        "tip_angle": 60.0,
+        "flute_len": 10.0,
+        "shank_d": 6.0,
+        "shank_len": 15.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router V-bit 90 deg 6 mm",
+      "definition": {
+        "kind": "taper",
+        "diameter": 6.0,
+        "corner_r": 0.0,
+        "tip_angle": 90.0,
+        "flute_len": 10.0,
+        "shank_d": 6.0,
+        "shank_len": 15.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router V-bit 60 deg 1/4 in",
+      "definition": {
+        "kind": "taper",
+        "diameter": 6.35,
+        "corner_r": 0.0,
+        "tip_angle": 60.0,
+        "flute_len": 10.0,
+        "shank_d": 6.35,
+        "shank_len": 15.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router V-bit 90 deg 1/4 in",
+      "definition": {
+        "kind": "taper",
+        "diameter": 6.35,
+        "corner_r": 0.0,
+        "tip_angle": 90.0,
+        "flute_len": 10.0,
+        "shank_d": 6.35,
+        "shank_len": 15.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true
+      }
+    },
+    {
+      "name": "Router surfacing 25 mm",
+      "definition": {
+        "kind": "end_mill",
+        "diameter": 25.0,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "flute_len": 8.0,
+        "shank_d": 6.0,
+        "shank_len": 17.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 12000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": false
+      }
+    },
+    {
+      "name": "Router surfacing 1 in",
+      "definition": {
+        "kind": "end_mill",
+        "diameter": 25.4,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "flute_len": 8.0,
+        "shank_d": 6.35,
+        "shank_len": 17.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 12000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": false
+      }
+    },
+    {
+      "name": "BN-0300",
+      "definition": {
+        "kind": "ball_nose",
+        "diameter": 3.0,
+        "corner_r": 1.5,
+        "tip_angle": 0.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 9.0,
+        "shank_d": 4.0,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 15000.0,
+        "feed": 750.0,
+        "tool_material": "carbide",
+        "flutes": 2
+      }
+    },
+    {
       "name": "BN-0600",
       "definition": {
         "kind": "ball_nose",
@@ -197,6 +659,28 @@
         "material_group": "aluminum",
         "rpm": 6000.0,
         "feed": 2000.0,
+        "tool_material": "carbide",
+        "flutes": 2
+      }
+    },
+    {
+      "name": "BB-0600-R1",
+      "definition": {
+        "kind": "bull_nose",
+        "diameter": 6.0,
+        "corner_r": 1.0,
+        "tip_angle": 0.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 15.0,
+        "shank_d": 8.0,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 9500.0,
+        "feed": 1500.0,
         "tool_material": "carbide",
         "flutes": 2
       }
@@ -244,6 +728,26 @@
       }
     },
     {
+      "name": "DR-0250",
+      "definition": {
+        "kind": "drill",
+        "diameter": 2.5,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 7.5,
+        "shank_d": 2.5,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 13500.0,
+        "feed": 135.0
+      }
+    },
+    {
       "name": "DR-0300",
       "definition": {
         "kind": "drill",
@@ -260,6 +764,46 @@
         "holder_len": 35.0,
         "material_group": "aluminum",
         "rpm": 12000.0,
+        "feed": 120.0
+      }
+    },
+    {
+      "name": "DR-0330",
+      "definition": {
+        "kind": "drill",
+        "diameter": 3.3,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 10.0,
+        "shank_d": 3.3,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 11400.0,
+        "feed": 120.0
+      }
+    },
+    {
+      "name": "DR-0340",
+      "definition": {
+        "kind": "drill",
+        "diameter": 3.4,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 10.0,
+        "shank_d": 3.4,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 11200.0,
         "feed": 120.0
       }
     },
@@ -284,6 +828,86 @@
       }
     },
     {
+      "name": "DR-0420",
+      "definition": {
+        "kind": "drill",
+        "diameter": 4.2,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 12.5,
+        "shank_d": 4.2,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 9800.0,
+        "feed": 125.0
+      }
+    },
+    {
+      "name": "DR-0450",
+      "definition": {
+        "kind": "drill",
+        "diameter": 4.5,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 13.5,
+        "shank_d": 4.5,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 9400.0,
+        "feed": 125.0
+      }
+    },
+    {
+      "name": "DR-0500",
+      "definition": {
+        "kind": "drill",
+        "diameter": 5.0,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 15.0,
+        "shank_d": 5.0,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 8800.0,
+        "feed": 120.0
+      }
+    },
+    {
+      "name": "DR-0550",
+      "definition": {
+        "kind": "drill",
+        "diameter": 5.5,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 16.5,
+        "shank_d": 5.5,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 8100.0,
+        "feed": 115.0
+      }
+    },
+    {
       "name": "DR-0600",
       "definition": {
         "kind": "drill",
@@ -301,6 +925,146 @@
         "material_group": "aluminum",
         "rpm": 7500.0,
         "feed": 115.0
+      }
+    },
+    {
+      "name": "DR-0660",
+      "definition": {
+        "kind": "drill",
+        "diameter": 6.6,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 20.0,
+        "shank_d": 6.6,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 6800.0,
+        "feed": 110.0
+      }
+    },
+    {
+      "name": "DR-0680",
+      "definition": {
+        "kind": "drill",
+        "diameter": 6.8,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 20.5,
+        "shank_d": 6.8,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 6600.0,
+        "feed": 110.0
+      }
+    },
+    {
+      "name": "DR-0850",
+      "definition": {
+        "kind": "drill",
+        "diameter": 8.5,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 25.5,
+        "shank_d": 8.5,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 5200.0,
+        "feed": 110.0
+      }
+    },
+    {
+      "name": "DR-0900",
+      "definition": {
+        "kind": "drill",
+        "diameter": 9.0,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 27.0,
+        "shank_d": 9.0,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 5000.0,
+        "feed": 110.0
+      }
+    },
+    {
+      "name": "DR-1020",
+      "definition": {
+        "kind": "drill",
+        "diameter": 10.2,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 30.5,
+        "shank_d": 10.2,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 4400.0,
+        "feed": 110.0
+      }
+    },
+    {
+      "name": "DR-1100",
+      "definition": {
+        "kind": "drill",
+        "diameter": 11.0,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 33.0,
+        "shank_d": 11.0,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 4100.0,
+        "feed": 110.0
+      }
+    },
+    {
+      "name": "DR-1350",
+      "definition": {
+        "kind": "drill",
+        "diameter": 13.5,
+        "corner_r": 0.0,
+        "tip_angle": 118.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 40.5,
+        "shank_d": 13.5,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 3300.0,
+        "feed": 110.0
       }
     },
     {
@@ -367,6 +1131,77 @@
         "feed": 3000.0,
         "tool_material": "carbide",
         "flutes": 1
+      }
+    },
+    {
+      "name": "CM-0600-90-F10",
+      "definition": {
+        "kind": "taper",
+        "diameter": 6.0,
+        "corner_r": 0.0,
+        "tip_angle": 90.0,
+        "tip_form": "flat",
+        "tip_diameter": 1.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 6.0,
+        "shank_d": 6.0,
+        "shank_len": 40.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 10000.0,
+        "feed": 1500.0,
+        "tool_material": "carbide",
+        "flutes": 2
+      }
+    },
+    {
+      "name": "TE-0250-03-F10",
+      "definition": {
+        "kind": "taper",
+        "diameter": 2.5,
+        "corner_r": 0.0,
+        "tip_angle": 6.0,
+        "tip_form": "flat",
+        "tip_diameter": 1.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 15.0,
+        "shank_d": 4.0,
+        "shank_len": 35.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 18000.0,
+        "feed": 600.0,
+        "tool_material": "carbide",
+        "flutes": 2
+      }
+    },
+    {
+      "name": "TB-0160-01-R05",
+      "definition": {
+        "kind": "taper",
+        "diameter": 1.6,
+        "corner_r": 0.5,
+        "tip_angle": 2.0,
+        "tip_form": "ball",
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 20.0,
+        "shank_d": 4.0,
+        "shank_len": 30.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 20000.0,
+        "feed": 500.0,
+        "tool_material": "carbide",
+        "flutes": 2
       }
     },
     {
@@ -694,6 +1529,283 @@
         "rpm": 0.0,
         "feed": 50.0,
         "center_cutting": true
+      }
+    },
+    {
+      "name": "TS-2000-0600",
+      "definition": {
+        "kind": "t_slot",
+        "diameter": 20.0,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 6.0,
+        "shank_d": 8.0,
+        "shank_len": 30.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 2400.0,
+        "feed": 200.0,
+        "tool_material": "carbide",
+        "flutes": 6,
+        "center_cutting": false
+      }
+    },
+    {
+      "name": "KS-1600-0300",
+      "definition": {
+        "kind": "keyseat",
+        "diameter": 16.0,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 3.0,
+        "shank_d": 6.0,
+        "shank_len": 25.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 3000.0,
+        "feed": 180.0,
+        "tool_material": "carbide",
+        "flutes": 8,
+        "center_cutting": false
+      }
+    },
+    {
+      "name": "DT-2000-60",
+      "definition": {
+        "kind": "dovetail",
+        "diameter": 20.0,
+        "corner_r": 0.0,
+        "tip_angle": 60.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 5.0,
+        "shank_d": 8.0,
+        "shank_len": 30.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 2400.0,
+        "feed": 200.0,
+        "tool_material": "carbide",
+        "flutes": 6,
+        "center_cutting": false
+      }
+    },
+    {
+      "name": "LP-1000",
+      "definition": {
+        "kind": "lollipop",
+        "diameter": 10.0,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 5.0,
+        "shank_d": 4.0,
+        "shank_len": 30.0,
+        "holder_d": 44.0,
+        "holder_len": 35.0,
+        "material_group": "aluminum",
+        "rpm": 6000.0,
+        "feed": 400.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": false
+      }
+    },
+    {
+      "name": "WJ-KERF-080",
+      "definition": {
+        "kind": "waterjet",
+        "diameter": 0.8,
+        "corner_r": 0.0,
+        "tip_angle": 0.0,
+        "pitch": 0.0,
+        "nose_radius": 0.0,
+        "width": 0.0,
+        "flute_len": 10.0,
+        "shank_d": 30.0,
+        "shank_len": 100.0,
+        "holder_d": 0.0,
+        "holder_len": 0.0,
+        "material_group": "",
+        "rpm": 0.0,
+        "feed": 2500.0,
+        "center_cutting": false
+      }
+    },
+    {
+      "name": "FM-RO-R6",
+      "definition": {
+        "kind": "form_mill",
+        "diameter": 25.0,
+        "corner_r": 0.0,
+        "flute_len": 18.0,
+        "shank_d": 12.0,
+        "shank_len": 32.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 16000.0,
+        "feed": 1500.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": false,
+        "form": {
+          "preset": {
+            "kind": "roundover",
+            "radius": 6.0,
+            "pilot_radius": 6.5,
+            "height": 13.0
+          },
+          "pilot_len": 5.0
+        }
+      }
+    },
+    {
+      "name": "FM-RO-R0250IN",
+      "definition": {
+        "kind": "form_mill",
+        "diameter": 25.4,
+        "corner_r": 0.0,
+        "flute_len": 17.4625,
+        "shank_d": 12.7,
+        "shank_len": 32.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 16000.0,
+        "feed": 1500.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": false,
+        "form": {
+          "preset": {
+            "kind": "roundover",
+            "radius": 6.35,
+            "pilot_radius": 6.35,
+            "height": 12.7
+          },
+          "pilot_len": 4.7625
+        }
+      }
+    },
+    {
+      "name": "FM-CV-R6",
+      "definition": {
+        "kind": "form_mill",
+        "diameter": 25.0,
+        "corner_r": 0.0,
+        "flute_len": 18.0,
+        "shank_d": 12.0,
+        "shank_len": 32.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 16000.0,
+        "feed": 1500.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": false,
+        "form": {
+          "preset": {
+            "kind": "cove",
+            "radius": 6.0,
+            "pilot_radius": 6.5,
+            "height": 13.0
+          },
+          "pilot_len": 5.0
+        }
+      }
+    },
+    {
+      "name": "FM-CV-R0250IN",
+      "definition": {
+        "kind": "form_mill",
+        "diameter": 25.4,
+        "corner_r": 0.0,
+        "flute_len": 17.4625,
+        "shank_d": 12.7,
+        "shank_len": 32.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 16000.0,
+        "feed": 1500.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": false,
+        "form": {
+          "preset": {
+            "kind": "cove",
+            "radius": 6.35,
+            "pilot_radius": 6.35,
+            "height": 12.7
+          },
+          "pilot_len": 4.7625
+        }
+      }
+    },
+    {
+      "name": "FM-VG-90-12",
+      "definition": {
+        "kind": "form_mill",
+        "diameter": 12.0,
+        "corner_r": 0.0,
+        "flute_len": 6.0,
+        "shank_d": 8.0,
+        "shank_len": 32.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 1500.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true,
+        "form": {
+          "preset": {
+            "kind": "v_groove",
+            "angle": 90.0,
+            "tip_radius": 0.0,
+            "diameter": 12.0,
+            "height": 6.0
+          }
+        }
+      }
+    },
+    {
+      "name": "FM-VG-90-0500IN",
+      "definition": {
+        "kind": "form_mill",
+        "diameter": 12.7,
+        "corner_r": 0.0,
+        "flute_len": 6.35,
+        "shank_d": 6.35,
+        "shank_len": 25.0,
+        "holder_d": 32.0,
+        "holder_len": 25.0,
+        "material_group": "wood",
+        "rpm": 18000.0,
+        "feed": 1500.0,
+        "tool_material": "carbide",
+        "flutes": 2,
+        "center_cutting": true,
+        "form": {
+          "preset": {
+            "kind": "v_groove",
+            "angle": 90.0,
+            "tip_radius": 0.0,
+            "diameter": 12.7,
+            "height": 6.35
+          }
+        }
       }
     }
   ]

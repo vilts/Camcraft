@@ -23,20 +23,25 @@
 //! Provenance: our own code, mirrored from app.rs.
 
 use camcraft_app::commands::ImportModel;
-use camcraft_app::geometry::{Point3, cube, feature, transform_point};
+use camcraft_app::geometry::{Point3, cube, feature};
 use camcraft_app::machining2d::{Lead, Side};
 use camcraft_app::model;
 use camcraft_app::operation::{FeatureSel, GeoSel, Height, HeightReference, OpParams, SrcRef};
 use camcraft_app::tools::{Tool, catalog};
 
 use crate::interact::ftoz;
+use crate::shade_cache::ModelSrc;
 use crate::state::{CommandKind, State, UiTarget};
 use crate::viewport::GpuPart;
+
+use super::world_verts::{model_src, world_verts};
 
 /// The shell's whole scene for one frame: what `View3D::set_document` and
 /// `set_overlay` take.
 pub struct Scene {
     pub parts: Vec<GpuPart>,
+    /// The cached shade data of the parts (#2834), for `View3D::set_shade`.
+    pub shade: crate::shade_pass::Shade,
     pub overlay: Vec<[f32; 6]>,
 }
 
@@ -67,6 +72,8 @@ impl Scene {
                 eat(u64::from(f.to_bits()));
             }
         }
+        // #2834: the shade buffers are uploaded with the parts.
+        self.shade.digest(&mut eat);
         eat(!0);
         eat(self.overlay.len() as u64);
         for e in &self.overlay {
@@ -165,8 +172,10 @@ fn contour_params() -> OpParams {
         tab_height: 1.0,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -177,52 +186,33 @@ fn contour_params() -> OpParams {
 #[must_use]
 pub fn collect(state: &State) -> Scene {
     // #2235: one region build per operation for the whole scene.
-    crate::frame_memo::scene_scope(|| Scene { parts: collect_parts(state), overlay: collect_overlay(state) })
+    crate::frame_memo::scene_scope(|| {
+        let (parts, bodies) = collect_parts(state);
+        let shade = crate::shade_cache::collect(state, &parts, &bodies);
+        Scene { parts, shade, overlay: collect_overlay(state) }
+    })
 }
 
 // ---------------------------------------------------------------- parts
 
-fn world_verts(state: &State, entity: &flecs_ecs::prelude::Entity) -> Vec<[f32; 3]> {
-    world_verts_by(state, entity, [0.0; 3])
-}
-
-/// [`world_verts`] slid by `by` (shown frame) - the handle drag's preview
-/// (#1198 b): display only, the world is untouched until the release.
-fn world_verts_by(state: &State, entity: &flecs_ecs::prelude::Entity, by: [f64; 3]) -> Vec<[f32; 3]> {
-    let tris = model::facets_of(&state.world, entity).unwrap_or_default();
-    // #326: the part where the active setup holds it.
-    let mut loc = camcraft_app::setup_align::view_pose(&state.world, entity).unwrap_or_default();
-    loc.pos = Point3::new(loc.pos.x + by[0], loc.pos.y + by[1], loc.pos.z + by[2]);
-    // #2047: a ring drag's preview turns the shown pose about the centre.
-    if state.body_turn.is_some()
-        && let Some(turn) = model::name_of(&state.world, entity).and_then(|n| crate::turn_drag::preview_turn(state, &n))
-    {
-        loc = camcraft_app::setup_align::compose(turn, loc);
-    }
-    let mut verts = Vec::with_capacity(tris.len() * 3);
-    for t in tris.iter() {
-        for p in [t.a, t.b, t.c] {
-            let p = transform_point(p, loc.pos, loc.rot);
-            verts.push([ftoz(p.x), ftoz(p.y), ftoz(p.z)]);
-        }
-    }
-    verts
-}
-
 /// Models (minus browser-eye-hidden), then the stock solid, then the
 /// translucent cut-region fills - `App::collect_parts`'s exact law, fills
 /// included so the region reads as an area, not only an outline.
-fn collect_parts(state: &State) -> Vec<GpuPart> {
+/// With the parts: the source of each drawn model body, in part order.
+fn collect_parts(state: &State) -> (Vec<GpuPart>, Vec<ModelSrc>) {
     // #339 slice 4: the fixtures the selected op's warnings strike are
     // tinted (display only - the classes ride the vertex, nothing else).
     let models = crate::frame_cost::span("scene/parts.models");
     let struck = state.fixture_highlight();
+    let mut bodies = Vec::new();
     let mut parts: Vec<GpuPart> = model::model_entities(&state.world)
         .into_iter()
         .filter(|(name, _)| !state.hidden_models.iter().any(|h| h == name) && !state.fixture_hidden_by_setup(name))
         .map(|(name, entity)| {
             let by = crate::move_drag::preview_offset(state, &name).unwrap_or([0.0; 3]);
-            let verts = world_verts_by(state, &entity, by);
+            let src = model_src(state, &entity, by);
+            let verts = src.as_ref().map(|s| (*s.verts).clone()).unwrap_or_default();
+            bodies.extend(src);
             let classes =
                 if struck.contains(&name) { vec![crate::viewport::STRUCK_CLASS; verts.len()] } else { Vec::new() };
             GpuPart { verts, selected: model::is_selected(&state.world, &entity), stock: false, fill: false, classes }
@@ -317,7 +307,7 @@ fn collect_parts(state: &State) -> Vec<GpuPart> {
         let verts = tris.iter().flat_map(|t| t.iter().map(|p| [ftoz(p.x), ftoz(p.y), ftoz(z)])).collect();
         parts.push(GpuPart { verts, selected: false, stock: false, fill: true, classes: Vec::new() });
     }
-    parts
+    (parts, bodies)
 }
 
 /// #371, #743: the running tool at the playhead as a revolved body -

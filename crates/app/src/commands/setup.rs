@@ -61,6 +61,10 @@ pub(super) struct StockSnap {
     /// The stock's own reduced-fidelity flag (#1056): a clone of a coarse
     /// copy is as coarse as the copy, and an undone delete restores it.
     pub(super) coarse_mm: Option<f64>,
+    pub(super) file_tolerance: bool,
+    /// #1700: the copy's hole when its model was imported incomplete,
+    /// carried with the flag.
+    pub(super) hole: Option<String>,
     /// #2015: the stock's workpiece material, cloned and restored with it.
     pub(super) material: Option<crate::tools::WorkMaterial>,
 }
@@ -122,6 +126,9 @@ impl CreateSetup {
                 "there is nothing to transfer a datum from yet".into(),
             ));
         }
+        let order = setup::next_order(world).ok_or_else(|| {
+            CommandError::Invalid("cannot create setup: setup order is exhausted".into())
+        })?;
         let def = if materializing {
             SetupDef {
                 stock: STOCK_NAME.to_string(),
@@ -137,6 +144,9 @@ impl CreateSetup {
                 post_properties: None,
                 nose_to_axis: None,
                 workholding_max_rpm: None,
+                sheet_job: None,
+                // #3447: the program order is the creation order.
+                order: Some(order),
             }
         } else {
             SetupDef {
@@ -169,6 +179,11 @@ impl CreateSetup {
                 // #1031: the same clamping system keeps its chuck's rating -
                 // dropping a limit would silently lift a safety ceiling.
                 workholding_max_rpm: datum_from.and_then(|f| setup::def_of(world, f)).and_then(|d| d.workholding_max_rpm),
+                // #3070: a new setup holds other stock - the sheet job's
+                // numbers do not describe it.
+                sheet_job: None,
+                // #3447: a setup added later posts later, whatever its name.
+                order: Some(order),
             }
         };
         let mut stock = None;
@@ -186,6 +201,8 @@ impl CreateSetup {
                     location: model::transform_of(world, &entity).unwrap_or_default(),
                     facets: model::facets_of(world, &entity).unwrap_or_default(),
                     coarse_mm: crate::model_fidelity::chord_of(world, &entity),
+                    file_tolerance: crate::model_fidelity::file_tolerance_of(world, &entity),
+                    hole: crate::mesh_open::hole_of(world, &entity),
                     material: crate::stock_material::of_entity(world, &entity),
                 });
             }
@@ -223,7 +240,8 @@ impl Command for CreateSetup {
             };
             model::set_transform(world, &e, s.location);
             model::set_facets(world, &e, s.facets.clone());
-            crate::model_fidelity::set(world, &e, s.coarse_mm);
+            crate::model_fidelity::set_with_cause(world, &e, s.coarse_mm, s.file_tolerance);
+            crate::mesh_open::set(world, &e, s.hole.as_deref());
             e.entity_view(world).set(StockDef {
                 shape: s.shape.clone(),
             });
@@ -304,6 +322,8 @@ pub struct SetOperationSetup {
     next: Operation,
     prev_meta: OperationMeta,
     next_meta: OperationMeta,
+    /// Target siblings whose positions the append pins (key, before, after).
+    pinned: Vec<(String, OperationMeta, OperationMeta)>,
 }
 
 impl SetOperationSetup {
@@ -327,27 +347,50 @@ impl SetOperationSetup {
                 target.map_or_else(|| "the first setup".to_string(), str::to_string)
             )));
         }
+        // #1862: a DXF profile belongs to one setup - an operation on it
+        // does not move to a different one, and a 3D kind does not move
+        // into a setup whose model is virtual.
+        super::operation::sketch_gate(world, target, &prev.src, &prev.params)?;
         let next = Operation {
             setup: target.map(str::to_string),
             ..prev.clone()
         };
         let prev_meta = model::operation_meta_of(world, &entity);
         let mut next_meta = prev_meta.clone();
-        // A rank belongs to its old setup. A moved operation joins the
-        // target's unranked tail until the user places it there.
-        next_meta.order = None;
+        // #3022: the program order is the user's. A move that keeps the
+        // effective setup (implicit `None` <-> the first setup) keeps its
+        // position. A real move lands LAST in the target, as a new op
+        // does, so ops moved one by one keep their relative order. The
+        // old `None` rank fell into the name-ordered tail (tap before
+        // its tap drill).
+        let mut pinned = Vec::new();
+        if setup::effective(world, prev.setup.as_deref()) != setup::effective(world, target) {
+            let (siblings, order) = super::operation::append_position(world, target)?;
+            pinned = siblings.into_iter().filter(|(key, _, _)| key != op_name).collect();
+            next_meta.order = Some(order);
+        }
         Ok(SetOperationSetup {
             name: op_name.to_string(),
             prev,
             next,
             prev_meta,
             next_meta,
+            pinned,
         })
+    }
+}
+
+fn set_pinned(world: &World, rows: &[(String, OperationMeta, OperationMeta)], after: bool) {
+    for (key, before, next) in rows {
+        if let Some(entity) = model::find_by_name(world, key) {
+            entity.entity_view(world).set(if after { next.clone() } else { before.clone() });
+        }
     }
 }
 
 impl Command for SetOperationSetup {
     fn apply(&self, world: &World) {
+        set_pinned(world, &self.pinned, true);
         if let Some(entity) = model::find_by_name(world, &self.name) {
             entity.entity_view(world).set(self.next.clone());
             entity.entity_view(world).set(self.next_meta.clone());
@@ -359,5 +402,6 @@ impl Command for SetOperationSetup {
             entity.entity_view(world).set(self.prev.clone());
             entity.entity_view(world).set(self.prev_meta.clone());
         }
+        set_pinned(world, &self.pinned, false);
     }
 }

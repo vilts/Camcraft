@@ -123,7 +123,7 @@ fn set_wcs_from_features(env: &mut Env, a: &Map<String, Value>) -> Result<Value,
         .map(|(g, r)| {
             json!({
                 "model": g.entity,
-                "id": super::pick::feature_id(g.feature),
+                "id": super::pick::feature_id(&g.feature),
                 "name": crate::pick::geo_label(w, g),
                 "role": role_word(*r),
             })

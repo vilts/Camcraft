@@ -13,8 +13,9 @@
 use camcraft_motion::cl::{MoveKind, Toolpath};
 use camcraft_motion::entry::Entry3D;
 use camcraft_motion::geo2d::{Loop, Point2, Region};
-use camcraft_motion::links::{Approach, Compensation, Links};
+use camcraft_motion::links::{Compensation, Links};
 use camcraft_motion::machining2d::{contour, contour_along_chain, ContourParams, Lead, Side};
+use camcraft_motion::path_picks::{PathPick, PathPicks};
 use camcraft_motion::verify::{crossed_pairs, verify, Mode, ToolGeom, VerifyContext, Warning};
 
 fn square() -> Region {
@@ -42,8 +43,9 @@ fn params(pick: Option<Point2>) -> ContourParams {
         tab_height: 0.0,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
-        links: Links { approach: Approach { start_point: pick, ..Approach::DEFAULT }, ..Links::PLANAR },
+        blend_turns: false, blend_radius: None,
+        links: Links::PLANAR,
+        picks: PathPicks { start: pick.map(PathPick::xy).into_iter().collect(), exit: Vec::new() },
     }
 }
 
@@ -115,12 +117,14 @@ fn a_non_finite_pick_is_refused_before_any_move() {
 }
 
 #[test]
-fn control_compensation_with_a_pick_is_refused_by_name() {
-    let pick = Some(Point2::new(44.0, 20.0));
+fn control_compensation_with_a_corner_pick_is_refused_by_name() {
+    // #1473: a mid-run pick is taken (contour_start_comp.rs); a corner
+    // pick cannot hold the comp seam law and is refused, not moved.
+    let pick = Some(Point2::new(44.0, 44.0));
     let mut p = params(pick);
     p.links.approach.compensation = Compensation::Control;
     let comp = refusal(&p);
-    assert!(comp.contains("compensation"), "{comp}");
+    assert!(comp.contains("start point") && comp.contains("control compensation"), "{comp}");
 }
 
 /// Does a feed move at level `z` pass over the point `w`?
@@ -240,7 +244,7 @@ fn an_open_chain_with_a_pick_is_refused_by_name() {
 
 fn with_exit(start: Option<Point2>, exit: Point2) -> ContourParams {
     let mut p = params(start);
-    p.links.approach.exit_point = Some(exit);
+    p.picks.exit = vec![PathPick::xy(exit)];
     p
 }
 
@@ -344,7 +348,7 @@ fn a_picked_start_no_lead_in_fits_at_is_refused_not_moved() {
     let (r, mut p) = narrow(Lead::Perpendicular { length: 20.0 });
     // Control: the automatic seam cuts (it moves or drops the lead, named).
     assert!(contour(&r, &p).is_ok(), "the automatic seam still cuts");
-    p.links.approach.start_point = Some(Point2::new(20.0, 3.0));
+    p.picks.start = vec![PathPick::xy(Point2::new(20.0, 3.0))];
     let why = match contour(&r, &p) {
         Ok(t) => panic!("a pick no lead-in fits at is refused: {:?}", t.notes),
         Err(e) => e.to_string(),
@@ -356,7 +360,7 @@ fn a_picked_start_no_lead_in_fits_at_is_refused_not_moved() {
 fn a_picked_exit_no_lead_out_fits_at_is_refused_not_moved() {
     let (r, mut p) = narrow(Lead::None);
     p.links.approach.lead_out = Some(Lead::Perpendicular { length: 20.0 });
-    p.links.approach.exit_point = Some(Point2::new(20.0, 3.0));
+    p.picks.exit = vec![PathPick::xy(Point2::new(20.0, 3.0))];
     let why = match contour(&r, &p) {
         Ok(t) => panic!("an exit no lead-out fits at is refused: {:?}", t.notes),
         Err(e) => e.to_string(),

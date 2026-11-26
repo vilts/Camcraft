@@ -7,15 +7,21 @@
 //! spindle law (#62/#67), the raw-stock standoffs (#77), the reach and
 //! holder law (#84); the axial hole keeps its verdict.
 //!
+//! #3077: the first rapid from the turret's index position is judged
+//! against the work and the steel - a tailstock over the holes refuses
+//! the drill by name, a chuck under them does not; a mill-turn's cross
+//! drill also answers to the upright law of its mill post.
+//!
 //! Gate map (M4.4): covers app::operation (generate's lathe_axial
-//! seam, the cross arm on a lathe, the axial verdict), app::posting.
+//! seam, the cross arm on a lathe, the axial verdict, the cross_traverse
+//! seam), app::posting.
 //! Lane shape (M4.4): all tests here run in seconds.
 
 mod punched_bar;
 
 use flecs_ecs::prelude::World;
 
-use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, ImportModel, LoadMachine, SetStock};
+use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, ImportModel, LoadMachine, SetFixtureFixed, SetStock, TagFixture};
 use camcraft_app::drilling::{CrossHole, CycleChoice, Hole};
 use camcraft_app::geo2d::Point2;
 use camcraft_app::geometry::{IDENTITY_Q, Mesh, Point3, Triangle};
@@ -69,6 +75,7 @@ fn params(holes: Vec<Hole>, cross: Vec<CrossHole>) -> OpParams {
         plunge_feed: 80.0,
         holes,
         cross,
+        picks: Default::default(),
     }
 }
 
@@ -218,4 +225,100 @@ fn a_bar_with_one_modelled_cross_hole_fits_on_the_spindle_and_drills_clean() {
     let posted = posting::post_setup(&world, &path);
     let _ = std::fs::remove_file(&path);
     assert!(posted.is_ok(), "the one-hole cross drill posts: {:?}", posted.err());
+}
+
+/// A box of steel from `lo` to `hi`, as twelve facets.
+fn cuboid(lo: [f64; 3], hi: [f64; 3]) -> Vec<Triangle> {
+    let c = |i: usize| Point3::new(if i & 1 == 0 { lo[0] } else { hi[0] }, if i & 2 == 0 { lo[1] } else { hi[1] }, if i & 4 == 0 { lo[2] } else { hi[2] });
+    let quads = [[0, 1, 3, 2], [4, 6, 7, 5], [0, 4, 5, 1], [2, 3, 7, 6], [0, 2, 6, 4], [1, 5, 7, 3]];
+    quads.iter().flat_map(|q| [Triangle::new(c(q[0]), c(q[1]), c(q[2])), Triangle::new(c(q[0]), c(q[2]), c(q[3]))]).collect()
+}
+
+/// Tag a box of steel `name` on the setup: `fixed` (a tailstock) or
+/// turning with the part (a chuck).
+fn steel(world: &World, history: &mut History, name: &str, lo: [f64; 3], hi: [f64; 3], fixed: bool) {
+    history.execute(world, ImportModel::from_mesh(name, Mesh::from_facets(cuboid(lo, hi))));
+    history.execute(world, TagFixture::new(world, name, None).expect("tag"));
+    history.execute(world, SetFixtureFixed::new(world, name, fixed).expect("fixed"));
+}
+
+/// A chuck under the bar's foot (z -80): out of the band the first
+/// rapid can pass (radius 15 and out, Z 8 and up, for the hole at Z 10).
+fn chuck(world: &World, history: &mut History) {
+    steel(world, history, "chuck", [-40.0, -40.0, -100.0], [40.0, 40.0, -82.0], false);
+}
+
+/// #3077: with a chuck under the holes, the first rapid from the
+/// turret's index position is clear on a lathe and on a mill-turn.
+#[test]
+fn a_cross_drill_over_its_chuck_has_a_clear_first_traverse() {
+    for kind in ["lathe", "mill-turn"] {
+        let (world, mut history) = lathe_at(None, 0.0, kind);
+        chuck(&world, &mut history);
+        let (_, warns) = operation::generate(&world, &op(params(vec![], cross(6.0))), "")
+            .unwrap_or_else(|e| panic!("{kind}: the cross drill over its chuck generates: {e}"));
+        assert!(blocking(&warns).is_empty(), "{kind}: a clear first traverse is convicted: {warns:?}");
+    }
+}
+
+/// #3077: a tailstock wider than the first station's radius stands over
+/// the holes. The post sends X and Z in one rapid from the index
+/// position, so the tool can pass through it: refused by name on a
+/// lathe and on a mill-turn, before any move.
+#[test]
+fn a_cross_drill_under_a_wide_tailstock_is_refused_by_name() {
+    for kind in ["lathe", "mill-turn"] {
+        let (world, mut history) = lathe_at(None, 0.0, kind);
+        chuck(&world, &mut history);
+        steel(&world, &mut history, "tailstock", [-30.0, -30.0, 25.0], [30.0, 30.0, 60.0], true);
+        let e = match operation::generate(&world, &op(params(vec![], cross(6.0))), "") {
+            Ok((_, w)) => panic!("{kind}: a cross drill under a wide tailstock generated: {w:?}"),
+            Err(e) => e.to_string(),
+        };
+        assert!(e.contains("first rapid") && e.contains("index position"), "{kind}: the refusal names the first traverse: {e}");
+    }
+}
+
+/// #3077: a thin tailstock centre (radius 5.7, under the first station's
+/// radius 15) over the bar's end. The lathe post never traverses over
+/// the end face, so a lathe drill is clear. A mill-turn's mill post
+/// sends Z to the clearance height (Z 25), then X/Y from an unknown X/Y:
+/// that traverse can cross the centre (top Z 60), so the upright law
+/// convicts it - the blocking first-traverse verdict.
+#[test]
+fn a_thin_tailstock_centre_is_clear_on_a_lathe_and_convicts_a_mill_turn() {
+    for kind in ["lathe", "mill-turn"] {
+        let (world, mut history) = lathe_at(None, 0.0, kind);
+        chuck(&world, &mut history);
+        steel(&world, &mut history, "centre", [-4.0, -4.0, 22.0], [4.0, 4.0, 60.0], true);
+        let (_, warns) = operation::generate(&world, &op(params(vec![], cross(6.0))), "")
+            .unwrap_or_else(|e| panic!("{kind}: the cross drill under a thin centre generates: {e}"));
+        let low = warns.iter().any(|w| matches!(w, Warning::FirstTraverseLow { fixture: true, .. }) && w.blocks_post());
+        if kind == "lathe" {
+            assert!(blocking(&warns).is_empty(), "lathe: the lathe post never crosses the centre: {warns:?}");
+        } else {
+            assert!(low, "mill-turn: the mill post's X/Y traverse at Z25 crosses the centre: {warns:?}");
+        }
+    }
+}
+
+/// #3077: the lathe post's first G00 X Z goes to the first move's END,
+/// the R-plane point (radius 15 at Z 10 here), not to the kernel's
+/// standoff. A collar that turns with the part over the bar's end,
+/// flush with that radius, only touches the band the rapid can pass: it
+/// is clear. One 1 mm proud of it stands in the band: refused by name.
+#[test]
+fn a_turning_collar_flush_with_the_first_point_is_clear_and_one_proud_of_it_is_refused() {
+    let (world, mut history) = lathe(None);
+    steel(&world, &mut history, "collar", [-15.0, -15.0, 22.0], [15.0, 15.0, 30.0], false);
+    let (_, warns) = operation::generate(&world, &op(params(vec![], cross(6.0))), "")
+        .unwrap_or_else(|e| panic!("a flush collar is only touched by the first rapid: {e}"));
+    assert!(blocking(&warns).is_empty(), "a flush collar convicts: {warns:?}");
+    let (world, mut history) = lathe(None);
+    steel(&world, &mut history, "collar", [-16.0, -16.0, 22.0], [16.0, 16.0, 30.0], false);
+    let e = match operation::generate(&world, &op(params(vec![], cross(6.0))), "") {
+        Ok((_, w)) => panic!("a collar proud of the first point generated: {w:?}"),
+        Err(e) => e.to_string(),
+    };
+    assert!(e.contains("first rapid") && e.contains("turns with the part") && e.contains("16.000"), "{e}");
 }

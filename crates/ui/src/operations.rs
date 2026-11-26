@@ -54,7 +54,10 @@ pub fn side_names() -> &'static [&'static str] {
 /// for a tap, a boring cycle for a bore, depth-vs-diameter otherwise),
 /// so the note next to the combo reads from the op's tool, not a guess.
 pub fn cycle_names() -> &'static [&'static str] {
-    &["Auto", "Spot", "Drill", "Peck", "Tap (rigid)", "Bore", "Back bore", "Tap (floating holder)", "Ream (feed in, feed out)"]
+    &[
+        "Auto", "Spot", "Drill", "Peck", "Tap (rigid)", "Bore", "Back bore", "Tap (floating holder)",
+        "Ream (feed in, feed out)", "Fine bore (oriented stop, shift)",
+    ]
 }
 
 /// Combo index for a cycle choice - the inverse of what picking names.
@@ -70,6 +73,7 @@ pub(crate) fn cycle_index(c: &camcraft_app::drilling::CycleChoice) -> usize {
         C::Bore => 5,
         C::BackBore => 6,
         C::Ream => 8,
+        C::FineBore { .. } => 9,
     }
 }
 
@@ -86,6 +90,10 @@ pub(crate) fn cycle_from_index(i: usize) -> camcraft_app::drilling::CycleChoice 
         6 => C::BackBore,
         7 => C::FloatingTap,
         8 => C::Ream,
+        // #1445: a fine bore has no default shift. The pick states none
+        // (zero); the page's two shift fields state it, and Apply refuses
+        // the cycle by name while it is zero.
+        9 => C::FineBore { shift_x_um: 0, shift_y_um: 0 },
         _ => C::Auto,
     }
 }
@@ -176,8 +184,8 @@ pub(crate) fn retract_note(
     }
 }
 
-/// The chamfer's derived corner Z (width x tan(angle) below the top),
-/// resolved through the op's source like [`retract_note`].
+/// The chamfer's virtual tip Z, resolved through the op's source like
+/// [`retract_note`].
 pub(crate) fn corner_note(
     world: &World,
     setup: Option<&str>,
@@ -188,11 +196,11 @@ pub(crate) fn corner_note(
 ) -> String {
     match resolve_all(world, setup, src, tilt, [top]) {
         Ok([tz]) if (tz - drop).is_finite() => format!(
-            "the corner stands at {} - derived: width x tan(angle) below the top plane",
+            "the virtual cone tip stands at {} - derived: (tip offset + width) x tan(angle) below the top plane",
             units::len(tz - drop, units::of(world), 3)
         ),
-        Ok(_) => "the corner is unresolved: width x tan(angle) is not finite".to_owned(),
-        Err(why) => format!("the corner is unresolved: {why}"),
+        Ok(_) => "the cone tip is unresolved: (tip offset + width) x tan(angle) is not finite".to_owned(),
+        Err(why) => format!("the cone tip is unresolved: {why}"),
     }
 }
 
@@ -207,9 +215,7 @@ pub(crate) fn unresolved_note(
     src: Option<&SrcRef>,
     params: &OpParams,
 ) -> Option<String> {
-    operation::resolve_params(world, setup, src, params)
-        .err()
-        .map(|why| format!("{why}; set the source up or switch the reference"))
+    crate::height_memo::unresolved_note(world, setup, src, params)
 }
 
 /// Swap the draft's parameter variant, carrying over every shared number
@@ -265,12 +271,20 @@ pub fn fold_warnings_located(warnings: &[Warning]) -> Vec<(String, Option<usize>
             Warning::StockChamferGouge { .. } | Warning::StockDeburrGouge { .. } => (1, true),
             Warning::ShankHit { part, .. } => (2, *part),
             Warning::RapidInStock { .. } => (3, false),
+            Warning::RapidInPart { .. } => (3, true),
+            // #2901: the first traverse under a top - its own fix (raise
+            // the clearance height), clear of the avoid range (216..=220).
+            Warning::FirstTraverseLow { .. } => (221, false),
+            // #3081: a down-pointing tool axis under the table top - the
+            // opposite fix (lower the clearance plane), so its own line.
+            Warning::FirstTraverseUnderTable { .. } => (224, false),
             Warning::NonFinite { .. } => (4, false),
             Warning::Envelope { .. } => (5, false),
             // Fixture hits group by the part that hit (M3.2 stage B): a
             // shank against a vise reads differently from a rapid into
             // the table, and the fixes differ too.
             Warning::FixtureHit { fixture_part, .. } => (6 + *fixture_part as u8, false),
+            Warning::AvoidHit { part, .. } => (216 + *part as u8, false),
             // Sweep hits (M5.1 stage G) split stock from part like the
             // shank law's two flavors; the key space starts clear of
             // the fixture range's worst case.
@@ -284,8 +298,28 @@ pub fn fold_warnings_located(warnings: &[Warning]) -> Vec<(String, Option<usize>
             Warning::ProbeSearch { .. } => (214, false),
             // A sinker finish out of order (#543): advisory, its own line.
             Warning::SinkerFinishOrder { .. } => (215, false),
-            // A hole wider than its drill (#2496): advisory, its own line.
-            Warning::DrillUndersize { .. } => (216, false),
+            // An undercut cutter's Z move under material (#1444): its own line,
+            // clear of the avoid range (216..=220) and of 221.
+            Warning::UndercutLift { .. } => (222, false),
+            // A hole wider than its drill (#2496): advisory, its own line,
+            // clear of the avoid range (216..=220) and of 221 (#3040).
+            Warning::DrillUndersize { .. } => (223, false),
+            // Adaptive's fallback to Offset rings (#3035): advisory, its
+            // own line, clear of the keys above (224 is the table's).
+            Warning::StrategyFallback { .. } => (225, false),
+            // #3525: a cut deeper than the flute length - the cause of
+            // the shank findings after it, its own line (advisory).
+            Warning::FluteShort { .. } => (226, false),
+            // #3679: a feed plunge deeper than one stepdown below the
+            // uncut floor - a tool-load note, its own line (advisory).
+            Warning::PlungeTooDeep { .. } => (227, false),
+            // #3748: a selected entry that is not the recommended Arc on
+            // a start-side pass - advisory, its own line.
+            Warning::EntryNotRecommended { .. } => (227, false),
+            // #3884: the stand-in entries and a selected Plunge into
+            // uncut stock of a start-side pass - advisory, own lines.
+            Warning::EntryStandIn { .. } => (228, false),
+            Warning::PlungeIntoStock { .. } => (229, false),
             // A lathe holder's rub (#369) splits part from stock too.
             Warning::HolderHit { part, .. } => (212 + *part as u8, false),
         }
@@ -300,14 +334,25 @@ pub fn fold_warnings_located(warnings: &[Warning]) -> Vec<(String, Option<usize>
             | Warning::HolderHit { at, .. }
             | Warning::SweepHit { at, .. }
             | Warning::RapidInStock { at }
+            | Warning::RapidInPart { at }
+            | Warning::UndercutLift { at }
+            | Warning::FirstTraverseLow { at, .. }
+            | Warning::FirstTraverseUnderTable { at, .. }
             | Warning::FixtureHit { at, .. }
+            | Warning::AvoidHit { at, .. }
             | Warning::NonFinite { at }
             | Warning::Envelope { at, .. }
             | Warning::RestUnjudged { at, .. }
             | Warning::Scallop { at, .. }
             | Warning::ProbeSearch { at, .. }
             | Warning::SinkerFinishOrder { at, .. }
-            | Warning::DrillUndersize { at, .. } => *at,
+            | Warning::DrillUndersize { at, .. }
+            | Warning::StrategyFallback { at, .. }
+            | Warning::FluteShort { at, .. }
+            | Warning::PlungeTooDeep { at, .. }
+            | Warning::EntryNotRecommended { at, .. }
+            | Warning::EntryStandIn { at, .. }
+            | Warning::PlungeIntoStock { at } => *at,
         }
     }
     let mut lines: Vec<(String, Option<usize>)> = Vec::new();
@@ -393,7 +438,7 @@ mod height_row_tests {
     #[test]
     fn the_pane_note_appears_only_while_something_is_unresolved() {
         let world = new_world();
-        let ok = OpParams::Face { holes: Default::default(), tilt: None, blend_turns: false,
+        let ok = OpParams::Face { holes: Default::default(), tilt: None, blend_turns: false, blend_radius: None,
             stepover: 3.0,
             clearance_z: Height::fixed(25.0),
             cut_z: Height::fixed(19.5),
@@ -402,9 +447,10 @@ mod height_row_tests {
             feed: 1200.0,
             plunge_feed: 300.0,
             climb: true,
+            picks: Default::default(),
         };
         assert_eq!(unresolved_note(&world, None, None, &ok), None, "all fixed - no alarm");
-        let broken = OpParams::Face { holes: Default::default(), tilt: None, blend_turns: false,
+        let broken = OpParams::Face { holes: Default::default(), tilt: None, blend_turns: false, blend_radius: None,
             stepover: 3.0,
             clearance_z: Height::fixed(25.0),
             cut_z: Height::of(HeightReference::BottomOfStock, 0.0),
@@ -413,6 +459,7 @@ mod height_row_tests {
             feed: 1200.0,
             plunge_feed: 300.0,
             climb: true,
+            picks: Default::default(),
         };
         let note = unresolved_note(&world, None, None, &broken).expect("the stock is gone");
         assert!(note.contains("Cut Z"), "{note}");
@@ -498,8 +545,10 @@ mod height_row_tests {
             tab_height: 1.0,
             entry: camcraft_app::machining3d::Entry3D::Plunge,
             helix_radius: 1.0,
-            blend_turns: false,
+            blend_turns: false, blend_radius: None,
             links: camcraft_app::links::Links::PLANAR,
+            chain_overrides: Vec::new(),
+            picks: Default::default(),
         }
     }
 
@@ -602,14 +651,75 @@ mod warning_fold_tests {
         );
     }
 
+    /// #3040: `DrillUndersize` had the key of the shank `AvoidHit`
+    /// (216), so the advisory line hid a blocking "Do not touch" hit.
+    /// Each avoid part keeps its own line beside the undersize hole.
+    #[test]
+    fn a_drill_undersize_never_hides_an_avoid_hit() {
+        use camcraft_app::verify::FixturePart;
+        let parts = [FixturePart::Shank, FixturePart::Holder, FixturePart::Spindle, FixturePart::Rapid, FixturePart::Flute];
+        let mut w = vec![Warning::DrillUndersize { at: 3, hole_mm: 6.0, drill_mm: 5.0 }];
+        w.extend(parts.iter().enumerate().map(|(i, &part)| Warning::AvoidHit { at: 10 + i, item: 1, part, short_mm: 0.5 }));
+        let folded = fold_warnings(&w);
+        assert_eq!(folded.len(), 1 + parts.len(), "{folded:?}");
+        assert!(folded[0].contains("move 3"), "{folded:?}");
+        for (i, line) in folded[1..].iter().enumerate() {
+            assert!(line.contains(&format!("move {}", 10 + i)) && !line.contains("repeated"), "{folded:?}");
+        }
+    }
+
+    /// Refresh against main (#3108): `UndercutLift` (222) and
+    /// `StrategyFallback` (225) keep separate display groups from each
+    /// other, from `DrillUndersize` (223), and from every `AvoidHit` part.
+    #[test]
+    fn undercut_lift_and_strategy_fallback_keep_separate_display_groups() {
+        use camcraft_app::verify::FixturePart;
+        let parts = [FixturePart::Shank, FixturePart::Holder, FixturePart::Spindle, FixturePart::Rapid, FixturePart::Flute];
+        let mut w = vec![
+            Warning::UndercutLift { at: 2 },
+            Warning::DrillUndersize { at: 3, hole_mm: 6.0, drill_mm: 5.0 },
+            Warning::StrategyFallback { at: 4, areas: 1, cause: camcraft_app::verify::FallbackCause::PassStart },
+        ];
+        w.extend(parts.iter().enumerate().map(|(i, &part)| Warning::AvoidHit { at: 10 + i, item: 1, part, short_mm: 0.5 }));
+        assert!(w[0].blocks_post(), "an undercut lift must still block posting");
+        assert!(!w[2].blocks_post(), "a fallback must remain advisory");
+        let folded = fold_warnings(&w);
+        assert_eq!(folded.len(), 3 + parts.len(), "{folded:?}");
+        assert!(folded[0].contains("move 2") && !folded[0].contains("repeated"), "{folded:?}");
+        assert!(folded[1].contains("move 3") && !folded[1].contains("repeated"), "{folded:?}");
+        assert!(folded[2].contains("move 4") && !folded[2].contains("repeated"), "{folded:?}");
+        for (i, line) in folded[3..].iter().enumerate() {
+            assert!(line.contains(&format!("move {}", 10 + i)) && !line.contains("repeated"), "{folded:?}");
+        }
+    }
+
+    /// #3040: `UndercutLift` (#1444) came with the key 217, the key of an
+    /// `AvoidHit` on part 1. It now has 222, so an undercut lift never
+    /// hides a blocking "Do not touch" hit either.
+    #[test]
+    fn an_undercut_lift_never_hides_an_avoid_hit() {
+        use camcraft_app::verify::FixturePart;
+        let parts = [FixturePart::Shank, FixturePart::Holder, FixturePart::Spindle, FixturePart::Rapid, FixturePart::Flute];
+        let mut w = vec![Warning::UndercutLift { at: 3 }, Warning::DrillUndersize { at: 4, hole_mm: 6.0, drill_mm: 5.0 }];
+        w.extend(parts.iter().enumerate().map(|(i, &part)| Warning::AvoidHit { at: 10 + i, item: 1, part, short_mm: 0.5 }));
+        let folded = fold_warnings(&w);
+        assert_eq!(folded.len(), 2 + parts.len(), "{folded:?}");
+        assert!(folded[0].contains("move 3") && folded[1].contains("move 4"), "{folded:?}");
+        for (i, line) in folded[2..].iter().enumerate() {
+            assert!(line.contains(&format!("move {}", 10 + i)) && !line.contains("repeated"), "{folded:?}");
+        }
+    }
+
     #[test]
     fn flavors_group_apart_and_order_is_first_appearance() {
         let mut w = shank_run(10, 12, false);
         w.push(Warning::ShankHit { at: 500, part: true });
         w.push(Warning::RapidInStock { at: 3 });
+        w.push(Warning::RapidInPart { at: 4 });
         w.push(Warning::ShankHit { at: 540, part: true });
+        w.push(Warning::RapidInPart { at: 6 });
         let folded = fold_warnings(&w);
-        assert_eq!(folded.len(), 3);
+        assert_eq!(folded.len(), 4);
         assert!(
             folded[0].starts_with("warning: shank/holder at move 10 collides with the uncut stock"),
             "{folded:?}"
@@ -625,5 +735,9 @@ mod warning_fold_tests {
             folded[2],
             "warning: rapid move 3 travels through stock (below the clearance plane, or at it below the stock top)"
         );
+        assert_eq!(folded[3], "warning: tool meets the part on rapid move 4 - repeated on 1 more move (to 6)");
+        let at: Vec<_> = super::fold_warnings_located(&w).into_iter().map(|(_, at)| at).collect();
+        assert_eq!(at, [Some(10), Some(500), Some(3), Some(4)]);
+        assert!(w[5].blocks_post(), "a part rapid remains a blocking warning");
     }
 }

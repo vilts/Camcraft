@@ -119,3 +119,37 @@ fn tool_preview_body_sets_frame_without_parameter_holder() {
         "the shorter body determines the height, with 18 px padding: background {background:?}, body {body:?}"
     );
 }
+
+/// #2017: with no body the preview draws the holder cylinder the collision
+/// check sweeps (`HolderStack::cylinder`): to scale, its height over its
+/// width is `holder_len / holder_d`.
+#[test]
+fn tool_preview_without_body_draws_the_collision_cylinder() {
+    let mut tool = crate::state::ToolUi::default().to_tool();
+    tool.diameter = 8.0;
+    tool.flute_len = 20.0;
+    tool.shank_d = 8.0;
+    tool.shank_len = 40.0;
+    tool.holder_d = 60.0;
+    tool.holder_len = 45.0;
+    let ctx = egui::Context::default();
+    let mut out = ctx.run_ui(egui::RawInput::default(), |ui| draw_tool_preview(ui, &tool, Unit::Millimeters, None));
+    out.textures_delta.clear();
+    let g = tool.geom();
+    let cyl = camcraft_app::tool_body::stack(&g, None);
+    let band = cyl.bands[0];
+    let mut boxes = Vec::new();
+    fn walk(s: &Shape, boxes: &mut Vec<egui::Rect>) {
+        match s {
+            Shape::Vec(v) => v.iter().for_each(|s| walk(s, boxes)),
+            Shape::Path(p) if p.fill == Color32::from_rgb(86, 92, 104) => {
+                boxes.push(egui::Rect::from_points(&p.points));
+            }
+            _ => {}
+        }
+    }
+    out.shapes.iter().for_each(|c| walk(&c.shape, &mut boxes));
+    assert_eq!(boxes.len(), 1, "one holder fill");
+    let ratio = f64::from(boxes[0].height() / boxes[0].width());
+    assert!((ratio - band.len / (2.0 * band.r)).abs() < 1e-3, "drawn {ratio}, swept {band:?}");
+}

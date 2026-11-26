@@ -75,7 +75,7 @@ fn arc_parity(
 }
 
 /// Crossing-number containment of `p` in a watertight loop.
-fn contains(sealed: &Sealed, p: Point2) -> bool {
+pub(super) fn contains(sealed: &Sealed, p: Point2) -> bool {
     let mut inside = false;
     for piece in &sealed.pieces {
         inside ^= match piece.shape {

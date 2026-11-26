@@ -20,14 +20,14 @@ use super::*;
 use crate::egui_app::machine_file_editor::Prompt;
 
 /// A fresh, empty user machines folder for one test.
-fn user_dir(tag: &str) -> PathBuf {
+pub(super) fn user_dir(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("camcraft_ui_machines_edit_{tag}_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).expect("make the test folder");
     d
 }
 
-fn select_row(h: &mut Harness<'static, ShellUi>, name: &str) {
+pub(super) fn select_row(h: &mut Harness<'static, ShellUi>, name: &str) {
     let label = h
         .state()
         .state
@@ -43,7 +43,7 @@ fn select_row(h: &mut Harness<'static, ShellUi>, name: &str) {
     h.run_steps(2);
 }
 
-fn press(h: &mut Harness<'static, ShellUi>, label: &str) {
+pub(super) fn press(h: &mut Harness<'static, ShellUi>, label: &str) {
     h.get_by_label(label).scroll_to_me();
     h.run_steps(4);
     h.get_by_label(label).click();
@@ -79,7 +79,7 @@ fn prompt(h: &Harness<'static, ShellUi>) -> Option<Prompt> {
     h.state().state.machines_pane.editor.as_ref().and_then(|e| e.prompt.clone())
 }
 
-fn read_json(p: &Path) -> serde_json::Value {
+pub(super) fn read_json(p: &Path) -> serde_json::Value {
     serde_json::from_str(&std::fs::read_to_string(p).expect("read back")).expect("json")
 }
 
@@ -262,9 +262,9 @@ fn new_blank_disabled(h: &Harness<'static, ShellUi>) -> bool {
     h.get_by_label("New blank").accesskit_node().is_disabled()
 }
 
-/// Open the kind dropdown (a ComboBox showing `now`) and pick `to`,
-/// with real pointer events like a user.
-fn pick_kind(h: &mut Harness<'static, ShellUi>, now: &str, to: &str) {
+/// Open a dropdown (a ComboBox showing `now`) and pick `to`, the kind
+/// dropdown or the editor's Post field (#2374), with real pointer events like a user.
+pub(super) fn pick_kind(h: &mut Harness<'static, ShellUi>, now: &str, to: &str) {
     let at = h
         .get_by(|n| n.role() == Role::ComboBox && n.value().as_deref() == Some(now))
         .rect()

@@ -30,7 +30,8 @@ struct U {
 // portable NaN, so the host turns status into the NaN law.
 @group(0) @binding(4) var<storage, read_write> out: array<vec4<f32>>;
 
-const MAX_STEPS: i32 = 64;  // march::MAX_STEPS
+const MAX_STEPS: i32 = 256; // march::MAX_STEPS (#3612: 64 holed grazing floors)
+const BISECT: i32 = 6;      // march::BISECT
 const RELAX: f32 = 0.9;     // march::RELAX
 const LIGHT: vec3<f32> = vec3<f32>(-0.35, -0.5, 0.79); // march::LIGHT
 
@@ -128,7 +129,36 @@ fn trace(o: vec3<f32>, d: vec3<f32>) -> vec2<f32> {
         }
         t = nt;
     }
-    return vec2<f32>(0.0, 2.0);
+    return exhausted(o, d, t, cell);
+}
+
+// march::exhausted (#3612): the budget ran out at t. A hit stands only
+// where material is proved on the ray (the last sample, or the hit
+// law's probe one cell on, inside); bisect that bracket to the surface.
+// Any other ray keeps status 2: a near miss is never painted.
+fn exhausted(o: vec3<f32>, d: vec3<f32>, t: f32, cell: f32) -> vec2<f32> {
+    let phi = dist(o + d * t);
+    if (phi != phi) {
+        return vec2<f32>(0.0, 2.0);
+    }
+    if (phi < 0.0) {
+        return vec2<f32>(t, 1.0);
+    }
+    var hi = t + cell;
+    let ahead = dist(o + d * hi);
+    if (ahead != ahead || ahead >= 0.0) {
+        return vec2<f32>(0.0, 2.0);
+    }
+    var lo = t;
+    for (var b = 0; b < BISECT; b = b + 1) {
+        let mid = 0.5 * (lo + hi);
+        if (dist(o + d * mid) < 0.0) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    return vec2<f32>(hi, 1.0);
 }
 
 // march::shade: gradient normal, one-march ambient, lambert.

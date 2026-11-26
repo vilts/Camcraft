@@ -6,11 +6,11 @@
 use egui::Ui;
 
 use camcraft_app::links::Approach;
-use camcraft_app::machining2d::{GenError, PocketStrategy, RestParams, rest_strategy};
+use camcraft_app::machining2d::{GenError, PocketStrategy, RestParams, RestSource, rest_strategy};
 use camcraft_app::operation::{POCKET_ADAPTIVE_RETIRED, REST_PREDRILLED};
 use camcraft_app::units::Unit;
 
-use super::fields::num_row;
+use super::fields::{combo, num_row};
 use super::layout::{consequence, group, prop_row_hint};
 
 fn seed_rest(tool_diameter: Option<f64>) -> RestParams {
@@ -19,6 +19,7 @@ fn seed_rest(tool_diameter: Option<f64>) -> RestParams {
         _ => 12.0,
     };
     RestParams {
+        source: RestSource::EnteredTool,
         previous_tool_diameter,
         previous_corner_radius: 0.0,
         previous_stock_to_leave: 0.0,
@@ -39,24 +40,36 @@ pub(super) fn rest_group(
     let mut armed = rest.is_some();
     let g = group(ui, "Rest machining", Some(&mut armed), |ui| {
         if let Some(r) = rest.as_mut() {
+            // #2033: which reading plans the rest area. The previous tool
+            // rows are not read from the previous operations, so they hide.
+            let mut from = usize::from(r.source == RestSource::PreviousOperations);
             prop_row_hint(
                 ui,
-                "Prev. tool Ø",
-                "diameter of the larger tool that previously roughed this pocket; must exceed this tool's diameter",
-                |ui| num_row(ui, u, &mut r.previous_tool_diameter),
+                "Rest stock from",
+                "entered tool: trusts the previous tool below; previous operations: reads the stock that the earlier operations of this setup leave at every cut depth",
+                |ui| combo(ui, "rest_source", &mut from, &["Entered tool", "Previous operations"]),
             );
-            prop_row_hint(
-                ui,
-                "Prev. corner rad.",
-                "corner (bull-nose) radius of that previous tool (0 for a flat end mill)",
-                |ui| num_row(ui, u, &mut r.previous_corner_radius),
-            );
-            prop_row_hint(
-                ui,
-                "Prev. stock left",
-                "radial stock left on the pocket walls by the previous operation",
-                |ui| num_row(ui, u, &mut r.previous_stock_to_leave),
-            );
+            r.source = if from == 1 { RestSource::PreviousOperations } else { RestSource::EnteredTool };
+            if r.source == RestSource::EnteredTool {
+                prop_row_hint(
+                    ui,
+                    "Prev. tool Ø",
+                    "diameter of the larger tool that previously roughed this pocket; must exceed this tool's diameter",
+                    |ui| num_row(ui, u, &mut r.previous_tool_diameter),
+                );
+                prop_row_hint(
+                    ui,
+                    "Prev. corner rad.",
+                    "corner (bull-nose) radius of that previous tool (0 for a flat end mill)",
+                    |ui| num_row(ui, u, &mut r.previous_corner_radius),
+                );
+                prop_row_hint(
+                    ui,
+                    "Prev. stock left",
+                    "radial stock left on the pocket walls by the previous operation",
+                    |ui| num_row(ui, u, &mut r.previous_stock_to_leave),
+                );
+            }
             prop_row_hint(
                 ui,
                 "Rest allowance",

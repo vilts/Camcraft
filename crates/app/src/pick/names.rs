@@ -71,30 +71,60 @@ pub fn feature_names_of(world: &World, entity: &Entity) -> Option<Arc<FeatureNam
 
 /// Lookup one item's friendly name (without `" of '<entity>'"`) if resolved.
 #[must_use]
-pub fn feature_name(world: &World, entity: &str, sel: FeatureSel) -> Option<String> {
+pub fn feature_name(world: &World, entity: &str, sel: &FeatureSel) -> Option<String> {
+    if let FeatureSel::SketchLayer(layer) = sel {
+        return crate::sketch::find(world, entity).and_then(|(_, s)| {
+            s.data.layers().iter().any(|l| l == layer).then(|| {
+                let n = s.data.chains().by_layer(layer).len();
+                format!("Layer '{layer}' ({n} chain{})", if n == 1 { "" } else { "s" })
+            })
+        });
+    }
+    if let FeatureSel::SketchChain(id) = sel {
+        return crate::sketch::find(world, entity).and_then(|(_, s)| {
+            let chains = s.data.chains();
+            let c = chains.find(*id)?;
+            let idx = chains.index_of(*id).unwrap_or(1);
+            let kind = if c.is_closed() { "Closed loop" } else { "Open chain" };
+            Some(format!("{kind} {idx} ({})", c.layer()))
+        });
+    }
     let e = model::find_by_name(world, entity)?;
     let table = feature_names_of(world, &e)?;
-    table.get(sel.name_kind(), sel.id()).map(str::to_owned)
+    let kind = sel.name_kind()?;
+    table.get(kind, sel.id()).map(str::to_owned)
 }
 
 /// One item's friendly name on `entity`, falling back to its plain kind noun
-/// (`"Face"`, `"Curved face"`, `"Edge"`, `"Vertex"`) when stale or missing.
+/// (`"Face"`, `"Curved face"`, `"Edge"`, `"Vertex"`, `"Sketch chain"`, `"Layer '...'""`) when stale or missing.
 #[must_use]
-pub fn feature_name_or_kind(world: &World, entity: &str, sel: FeatureSel) -> String {
-    feature_name(world, entity, sel)
-        .unwrap_or_else(|| FeatureNames::fallback(sel.name_kind()).to_owned())
+pub fn feature_name_or_kind(world: &World, entity: &str, sel: &FeatureSel) -> String {
+    feature_name(world, entity, sel).unwrap_or_else(|| match sel {
+        FeatureSel::SketchChain(_) => "Sketch chain".to_owned(),
+        FeatureSel::SketchLayer(layer) => format!("Layer '{layer}'"),
+        _ => sel
+            .name_kind()
+            .map_or("Feature", FeatureNames::fallback)
+            .to_owned(),
+    })
 }
 
 /// Format using an already-fetched entity table (used when iterating many features
 /// of the same entity, e.g. `list_features`).
 #[must_use]
-pub fn label_in_table(table: Option<&FeatureNames>, entity: &str, sel: FeatureSel) -> String {
-    let kind = sel.name_kind();
-    let base = table
-        .and_then(|t| t.get(kind, sel.id()))
-        .unwrap_or_else(|| FeatureNames::fallback(kind));
+pub fn label_in_table(table: Option<&FeatureNames>, entity: &str, sel: &FeatureSel) -> String {
+    let base = match sel.name_kind() {
+        Some(kind) => table
+            .and_then(|t| t.get(kind, sel.id()))
+            .unwrap_or_else(|| FeatureNames::fallback(kind))
+            .to_owned(),
+        None => match sel {
+            FeatureSel::SketchLayer(layer) => format!("Layer '{layer}'"),
+            _ => "Sketch chain".to_owned(),
+        },
+    };
     if entity.is_empty() {
-        base.to_owned()
+        base
     } else {
         format!("{base} of '{entity}'")
     }
@@ -104,7 +134,7 @@ pub fn label_in_table(table: Option<&FeatureNames>, entity: &str, sel: FeatureSe
 /// `"Bore 1 of 'part'"`, falling back to `"Face of 'part'"` if stale/deleted).
 #[must_use]
 pub fn geo_label(world: &World, g: &GeoSel) -> String {
-    let base = feature_name_or_kind(world, &g.entity, g.feature);
+    let base = feature_name_or_kind(world, &g.entity, &g.feature);
     if g.entity.is_empty() {
         base
     } else {

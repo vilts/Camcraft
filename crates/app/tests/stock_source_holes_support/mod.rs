@@ -164,6 +164,7 @@ pub fn tap_through_a_lid(rotated: bool) -> Vec<Warning> {
         plunge_feed: 600.0,
         holes: vec![hole],
         cross: Vec::new(),
+        picks: Default::default(),
     };
     h.execute(&world, CreateOperation::new(&world, "S1", TAP, SrcRef::Entity("part".into()), params).expect("create"));
     h.execute(&world, GenerateOperation::new(&world, "S1").expect("generate"));
@@ -195,11 +196,13 @@ fn drill(cut: Cut, cycle: CycleChoice) -> OpParams {
         plunge_feed: 100.0,
         holes: vec![cut.hole()],
         cross: Vec::new(),
+        picks: Default::default(),
     }
 }
 
 fn bore(cut: Cut) -> OpParams {
     OpParams::Bore {
+        pass_start: camcraft_app::machining2d::PassStart::Auto,
         break_through: None,
         links: camcraft_app::links::Links::PLANAR,
         clearance_z: Height::fixed(25.0),
@@ -213,6 +216,7 @@ fn bore(cut: Cut) -> OpParams {
         climb: true,
         tolerance: 0.01,
         holes: vec![cut.hole()],
+        picks: Default::default(),
     }
 }
 
@@ -224,7 +228,8 @@ fn thread(cut: Cut) -> OpParams {
         top_z: Height::fixed(TOP),
         bottom_z: None,
         infeed: 0.1,
-        feed: 400.0,
+        // #2598: the thread mill's own 300 mm/min.
+        feed: 300.0,
         plunge_feed: 150.0,
         climb: true,
         holes: vec![cut.hole()],
@@ -232,6 +237,7 @@ fn thread(cut: Cut) -> OpParams {
         hand: camcraft_app::cl::ThreadHand::Right,
         external: false,
         passes: camcraft_app::machining2d::ThreadPasses::default(),
+        picks: Default::default(),
     }
 }
 
@@ -240,6 +246,7 @@ pub fn chamfer(width: f64) -> OpParams {
     OpParams::Chamfer2D {
         width,
         angle_deg: 45.0,
+        minimum_cone_radius: 0.0,
         clearance_z: Height::fixed(25.0),
         retract_z: None,
         top_z: Height::fixed(TOP),
@@ -249,6 +256,7 @@ pub fn chamfer(width: f64) -> OpParams {
         side: Side::Auto,
         tolerance: 0.01,
         tilt: None,
+        picks: Default::default(),
     }
 }
 

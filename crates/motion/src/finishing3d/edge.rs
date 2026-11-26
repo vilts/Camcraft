@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use crate::geometry::Point3;
 
 use super::params::TOUCH_EPS;
+use super::grid::SupSet;
 use super::support::{ball_clear, Sup};
 
 /// Mark, on ONE of its two facets, every edge shared by two shallow facets
@@ -164,7 +165,7 @@ fn fold_drops(s: &Sup, x: f64, y: f64, r: f64, ray: (f64, f64)) -> impl Iterator
 /// `above` (the best facet tangent so far), keeps the floor, and passes
 /// the exact clearance `ball_clear` - the facet candidates' own law.
 pub(super) fn fold_best(
-    sups: &[Sup],
+    sups: &SupSet,
     x: f64,
     y: f64,
     r: f64,
@@ -173,7 +174,7 @@ pub(super) fn fold_best(
     above: Option<f64>,
 ) -> Option<(f64, f64)> {
     let mut best: Option<(f64, f64)> = None;
-    for s in sups {
+    for s in sups.near(x, y) {
         if !s.shallow || x < s.xmin || x > s.xmax || y < s.ymin || y > s.ymax {
             continue;
         }

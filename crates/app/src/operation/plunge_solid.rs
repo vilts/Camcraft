@@ -98,9 +98,10 @@ where
 }
 
 /// The same law, audit-only, for Rotary Offset (#16): solid is the
-/// TRUE bar - the setup stock revolved about the part's fitted axis
-/// (`multiaxis::revolved_bar`, read from the generator's own facets so
-/// it stands in the path's frame) - not the box reading of top Z over
+/// TRUE bar - the setup stock revolved about the axis the kernel
+/// wrapped about (`multiaxis::revolved_bar_stated`, the stated line
+/// or the fit `ax` names, read from the generator's own facets so it
+/// stands in the path's frame) - not the box reading of top Z over
 /// the outline, which also counted the air around the bar. A bar that
 /// cannot be read refuses by name: the audit never guesses air.
 pub(super) fn audit_bar(
@@ -110,11 +111,12 @@ pub(super) fn audit_bar(
     stock_facets: Option<&[Triangle]>,
     path: &super::Toolpath,
     tool_r: f64,
+    ax: &crate::multiaxis::axis::Axis,
 ) -> Result<(), super::GenError> {
     if center_cutting {
         return Ok(());
     }
-    let bar = crate::multiaxis::revolved_bar(facets, stock_facets)
+    let bar = crate::multiaxis::revolved_bar_stated(facets, stock_facets, *ax)
         .map_err(|e| GenError::Invalid(format!("{kind}: the bar the centre-cutting audit reads cannot be built: {e}")))?;
     camcraft_motion::plunge_law::audit_bar(path, false, tool_r, &bar, &format!("{kind}'s entry descent"))
 }

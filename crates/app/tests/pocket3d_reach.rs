@@ -41,6 +41,7 @@ fn generate(tool: Tool, bottom: f64) -> Result<(Toolpath, Vec<camcraft_app::veri
     history.execute(&world, SetStock::new(&world, StockShape::Box { dx: 40.0, dy: 40.0, dz: 40.0 }, Location::default()).expect("stock"));
     history.execute(&world, AddTool::new(&world, NAME, tool).expect("tool"));
     let params = OpParams::Pocket3D {
+        pass_start: Default::default(),
         links: camcraft_app::links::Links::ROUGH3D,
         stepover: 2.0,
         stock_to_leave: 0.0,
@@ -59,6 +60,8 @@ fn generate(tool: Tool, bottom: f64) -> Result<(Toolpath, Vec<camcraft_app::veri
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         feed_opt: false,
         shell: false,
+        method: camcraft_app::machining2d::AdaptiveMethod::Spiral,
+        picks: Default::default(),
     };
     let mut operation = op(SrcRef::Entity("cavity".into()), params, AreaControls::default());
     operation.tool = NAME.into();

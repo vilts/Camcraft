@@ -107,7 +107,7 @@ fn faced_on(via: Via, a: Machine) -> (World, History) {
     mount(&world, &mut h, via, "a.mch", a);
     let face = OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -117,6 +117,7 @@ fn faced_on(via: Via, a: Machine) -> (World, History) {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     h.execute(&world, CreateOperation::new(&world, "Face1", "EM-0400-2FL", SrcRef::Stock, face).expect("create"));
     h.execute(&world, GenerateOperation::new(&world, "Face1").expect("generate on A"));
@@ -140,7 +141,7 @@ fn tilted_on(via: Via) -> (World, History) {
     let loc = Location { pos: Point3::new(20.0, 15.0, -20.0), ..Location::default() };
     h.execute(&world, SetStock::new(&world, StockShape::Box { dx: 40.0, dy: 30.0, dz: 10.0 }, loc).expect("stock"));
     mount_builtin(&world, &mut h, via, "Tilt-head 5-axis");
-    let params = OpParams::Pocket { rest: None,
+    let params = OpParams::Pocket { pass_start: Default::default(), rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         tilt: Some(Tilt { basis_version: 1, a_deg: 0.0, b_deg: 90.0, origin: [-25.0, 0.0, -15.0] }),
@@ -159,6 +160,8 @@ fn tilted_on(via: Via) -> (World, History) {
         helix_radius: 1.0,
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         blend_turns: false,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     };
     h.execute(&world, CreateOperation::new(&world, "P", "EM-0600-4FL", SrcRef::Stock, params).expect("create"));
     h.execute(&world, GenerateOperation::new(&world, "P").expect("generate on the tilt-head"));

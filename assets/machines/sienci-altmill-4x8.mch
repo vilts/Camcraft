@@ -1,5 +1,5 @@
 {
-  "general": { "model": "Sienci AltMill 4x8", "vendor": "Camcraft", "kind": "mill" },
+  "general": { "model": "Sienci AltMill 4x8", "vendor": "Camcraft", "kind": "router" },
   "kinematics": { "default": {
     "units": { "length": "mm", "angle": "degrees" },
     "parts": [
@@ -18,7 +18,7 @@
             ] } }
       ] }
     ] } },
-  "controller": { "synced_configuration": { "parts": {
+  "controller": { "post": "grblHAL", "synced_configuration": { "parts": {
     "X": { "coordinate": 0, "max_normal_speed": 15000.0, "max_rapid_speed": 15000.0 },
     "Y": { "coordinate": 1, "max_normal_speed": 25000.0, "max_rapid_speed": 25000.0 },
     "Z": { "coordinate": 2, "max_normal_speed": 6000.0, "max_rapid_speed": 6000.0 }

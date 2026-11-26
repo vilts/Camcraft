@@ -170,7 +170,16 @@ fn recognition_finds_the_bar_two_holes_and_they_generate() {
     assert!((blind.floor_d - -10.0).abs() < 0.5 && !blind.through, "{blind:?}");
     let thru = found.iter().find(|h| h.origin.z < 0.0).expect("the through one");
     assert!(thru.through, "{thru:?}");
-    create(&world, &mut history, "CD1", cross_params(found, None));
+    // #3077: the 44 box stock stands out to X 22 from Z 0 up, over the
+    // through hole at Z -10. The lathe post's first rapid comes down to
+    // the R plane from the turret's index position, so the R plane must
+    // stand outside that stock: clearance 30 over top 15 puts it at
+    // radius 30 (the shared 20 put it at 20, inside the stock's radius).
+    let mut params = cross_params(found, None);
+    if let OpParams::Drill { clearance_z, .. } = &mut params {
+        *clearance_z = Height::fixed(30.0);
+    }
+    create(&world, &mut history, "CD1", params);
     let c = cache(&world, "CD1").expect("cached");
     assert_eq!(status(&world, "CD1"), OpStatus::Ok, "{:?}", c.warnings);
 }
@@ -230,6 +239,7 @@ fn a_z_only_drill_file_never_writes_the_cross_key() {
             stepped: false,
         }],
         cross: vec![],
+        picks: Default::default(),
     };
     create(&world, &mut history, "D1", p);
     // The fixture is an honest program: it generates (R under the box

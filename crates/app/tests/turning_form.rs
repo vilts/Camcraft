@@ -162,6 +162,7 @@ fn form_params() -> OpParams {
         bottom_z: Height::fixed(7.0),
         feed: 40.0,
         plunge_feed: 20.0,
+        picks: Default::default(),
     }
 }
 
@@ -343,6 +344,7 @@ fn an_upward_window_refuses_at_the_create_door() {
         bottom_z: Height::fixed(13.0),
         feed: 40.0,
         plunge_feed: 20.0,
+        picks: Default::default(),
     };
     let Err(err) =
         CreateOperation::new(&world, "FB1", "FG-0600-04", SrcRef::Entity("bar".into()), params)

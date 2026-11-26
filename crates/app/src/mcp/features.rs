@@ -19,7 +19,7 @@ use crate::pick::{FeatureGraph, feature_chains, feature_graph_shared};
 use crate::schema::Location;
 use crate::script::{fnum, Env};
 
-use flecs_ecs::prelude::World;
+use flecs_ecs::prelude::{Entity, World};
 use serde_json::{json, Map, Value};
 use std::collections::HashMap;
 
@@ -30,6 +30,8 @@ const DEFAULT_LIMIT: usize = 500;
 const MAX_LIMIT: usize = 20_000;
 
 const KINDS: [&str; 4] = ["faces", "chains", "patches", "vertices"];
+const ALL_KINDS: [&str; 5] = ["faces", "chains", "patches", "vertices", "layers"];
+const SKETCH_KINDS: [&str; 2] = ["chains", "layers"];
 
 fn world_pt(loc: &Location, p: [f64; 3]) -> Point3 {
     transform_point(Point3::new(p[0], p[1], p[2]), loc.pos, loc.rot)
@@ -106,7 +108,7 @@ fn loop_view(lp: &feature::Loop, by_edge: &HashMap<(u32, u32), u64>, loc: &Locat
             None => complete = false,
         }
     }
-    let chains: Vec<String> = ids.into_iter().map(|id| feature_id(FeatureSel::Chain(id))).collect();
+    let chains: Vec<String> = ids.into_iter().map(|id| feature_id(&FeatureSel::Chain(id))).collect();
     json!({
         "kind": match lp.kind { LoopKind::Outer => "outer", LoopKind::Hole => "hole", LoopKind::Open => "open" },
         "vertices": n,
@@ -163,14 +165,14 @@ fn faces_view(
             };
             let verts = fa.loops.iter().flat_map(|l| l.verts.iter()).filter_map(|&v| f.verts.get(v as usize).copied());
             json!({
-                "id": feature_id(FeatureSel::Face(fa.id)),
-                "name": crate::pick::label_in_table(names, name, FeatureSel::Face(fa.id)),
+                "id": feature_id(&FeatureSel::Face(fa.id)),
+                "name": crate::pick::label_in_table(names, name, &FeatureSel::Face(fa.id)),
                 "normal": side["normal"],
                 "facing": side["facing"],
                 "outside_unknown": side["outside_unknown"],
                 "area": fnum(fa.area),
                 "bounds": bounds(loc, verts),
-                "patch": patch_of.get(&fa.id).map(|p| feature_id(FeatureSel::Patch(*p))),
+                "patch": patch_of.get(&fa.id).map(|p| feature_id(&FeatureSel::Patch(*p))),
                 "loops": fa.loops.iter().map(|l| loop_view(l, &by_edge, loc, f)).collect::<Vec<_>>(),
             })
         })
@@ -201,8 +203,8 @@ fn chains_view(
                 .filter(|l| l.is_finite())
                 .sum();
             json!({
-                "id": feature_id(FeatureSel::Chain(c.id)),
-                "name": crate::pick::label_in_table(names, name, FeatureSel::Chain(c.id)),
+                "id": feature_id(&FeatureSel::Chain(c.id)),
+                "name": crate::pick::label_in_table(names, name, &FeatureSel::Chain(c.id)),
                 "closed": c.closed,
                 "edges": c.edges.len(),
                 "length": fnum(length),
@@ -226,10 +228,10 @@ fn patches_view(
         .iter()
         .take(limit)
         .map(|p| {
-            let faces: Vec<String> = p.faces.iter().map(|id| feature_id(FeatureSel::Face(*id))).collect();
+            let faces: Vec<String> = p.faces.iter().map(|id| feature_id(&FeatureSel::Face(*id))).collect();
             json!({
-                "id": feature_id(FeatureSel::Patch(p.id)),
-                "name": crate::pick::label_in_table(names, name, FeatureSel::Patch(p.id)),
+                "id": feature_id(&FeatureSel::Patch(p.id)),
+                "name": crate::pick::label_in_table(names, name, &FeatureSel::Patch(p.id)),
                 "faces": faces,
             })
         })
@@ -249,8 +251,8 @@ fn vertices_view(
         .iter()
         .map(|p| {
             json!({
-                "id": feature_id(FeatureSel::Vertex(p.id)),
-                "name": crate::pick::label_in_table(names, name, FeatureSel::Vertex(p.id)),
+                "id": feature_id(&FeatureSel::Vertex(p.id)),
+                "name": crate::pick::label_in_table(names, name, &FeatureSel::Vertex(p.id)),
                 "at": pt(world_pt(loc, p.at)),
             })
         })
@@ -259,15 +261,15 @@ fn vertices_view(
     (all.into_iter().take(limit).collect(), total)
 }
 
-fn wanted_kinds(a: &Map<String, Value>) -> Result<Vec<&'static str>, String> {
+fn wanted_kinds(a: &Map<String, Value>, default: &[&'static str]) -> Result<Vec<&'static str>, String> {
     match a.get("kinds") {
-        None | Some(Value::Null) => Ok(KINDS.to_vec()),
+        None | Some(Value::Null) => Ok(default.to_vec()),
         Some(Value::Array(items)) => items
             .iter()
             .map(|v| {
                 v.as_str()
-                    .and_then(|s| KINDS.iter().find(|k| **k == s).copied())
-                    .ok_or_else(|| format!("\"kinds\" entries are {}; got {v}", KINDS.join(", ")))
+                    .and_then(|s| ALL_KINDS.iter().find(|k| **k == s).copied())
+                    .ok_or_else(|| format!("\"kinds\" entries are {}; got {v}", ALL_KINDS.join(", ")))
             })
             .collect(),
         Some(other) => Err(format!("\"kinds\" must be an array, got {other}")),
@@ -285,18 +287,126 @@ fn limit_of(a: &Map<String, Value>) -> Result<usize, String> {
     }
 }
 
+fn sketch_chains_view(
+    w: &World,
+    name: &str,
+    sketch: &crate::schema::Sketch,
+    pose: &Location,
+    limit: usize,
+) -> (Vec<Value>, usize) {
+    let all: Vec<_> = sketch.data.chains().all().collect();
+    let rows = all
+        .iter()
+        .take(limit)
+        .map(|c| {
+            let local = c.sample(0.05);
+            let pts_3d: Vec<[f64; 3]> = local.iter().map(|p| [p.x, p.y, 0.0]).collect();
+            let sel = FeatureSel::SketchChain(c.id());
+            let (nesting, nesting_error) = match c.nesting() {
+                Some(Ok(n)) => (
+                    json!(match n.role {
+                        crate::geometry::sketch_chains::LoopRole::Outer => "outer",
+                        crate::geometry::sketch_chains::LoopRole::Hole => "hole",
+                    }),
+                    Value::Null,
+                ),
+                Some(Err(e)) => (Value::Null, json!(e.to_string())),
+                None => (Value::Null, Value::Null),
+            };
+            json!({
+                "id": feature_id(&sel),
+                "name": crate::pick::geo_label(w, &GeoSel { entity: name.to_owned(), feature: sel }),
+                "layer": c.layer(),
+                "closed": c.is_closed(),
+                "nesting": nesting,
+                "nesting_error": nesting_error,
+                "primitives": c.segments().len(),
+                "length": fnum(c.length()),
+                "start": pts_3d.first().map(|p| pt(world_pt(pose, *p))),
+                "end": pts_3d.last().map(|p| pt(world_pt(pose, *p))),
+                "bounds": bounds(pose, pts_3d),
+            })
+        })
+        .collect();
+    (rows, all.len())
+}
+
+fn sketch_layers_view(w: &World, name: &str, sketch: &crate::schema::Sketch, limit: usize) -> (Vec<Value>, usize) {
+    let layers = sketch.data.layers();
+    let chains = sketch.data.chains();
+    let rows = layers
+        .iter()
+        .take(limit)
+        .map(|layer| {
+            let member = chains.by_layer(layer);
+            let closed_count = member.iter().filter(|c| c.is_closed()).count();
+            let open_count = member.len() - closed_count;
+            let chain_ids: Vec<String> = member
+                .iter()
+                .map(|c| feature_id(&FeatureSel::SketchChain(c.id())))
+                .collect();
+            let sel = FeatureSel::SketchLayer(layer.clone());
+            json!({
+                "id": feature_id(&sel),
+                "name": crate::pick::geo_label(w, &GeoSel { entity: name.to_owned(), feature: sel }),
+                "layer": layer,
+                "closed_count": closed_count,
+                "open_count": open_count,
+                "chains": chain_ids,
+            })
+        })
+        .collect();
+    (rows, layers.len())
+}
+
+fn sketch_features(
+    env: &Env,
+    name: &str,
+    e: Entity,
+    sketch: crate::schema::Sketch,
+    a: &Map<String, Value>,
+) -> Result<Value, String> {
+    let w = &env.world;
+    let pose = crate::sketch::world_pose(w, &e)
+        .ok_or_else(|| format!("DXF profile '{name}' has no stock to lie on - set up stock first"))?;
+    let kinds = wanted_kinds(a, &SKETCH_KINDS)?;
+    let limit = limit_of(a)?;
+    let mut out = json!({ "model": name, "kind": "sketch", "frame": "world", "truncated": false });
+    let mut truncated = false;
+    for k in kinds {
+        let (rows, total) = match k {
+            "chains" => sketch_chains_view(w, name, &sketch, &pose, limit),
+            "layers" => sketch_layers_view(w, name, &sketch, limit),
+            _ => (Vec::new(), 0),
+        };
+        truncated |= rows.len() < total;
+        out[k] = Value::Array(rows);
+        out[format!("{k}_total")] = json!(total);
+    }
+    out["truncated"] = json!(truncated);
+    Ok(out)
+}
+
 pub(super) fn list_features(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> {
     let name = req_str(a, "model")?;
-    let kinds = wanted_kinds(a)?;
-    let limit = limit_of(a)?;
+    let w = &env.world;
+    if let Some((e, sketch)) = crate::sketch::find(w, name) {
+        return sketch_features(env, name, e, sketch, a);
+    }
+    let kinds = wanted_kinds(a, &KINDS)?;
+    // #1944: compact rows, and a chat-sized page unless `limit` says otherwise.
+    let compact = super::compact::flag(a, "compact")?;
+    let limit = match a.get("limit") {
+        None | Some(Value::Null) if compact => super::compact::COMPACT_LIMIT,
+        _ => limit_of(a)?,
+    };
     // #561: a fixture's faces are pickable too - `locate_part` mates them.
-    let e = match model::find_by_name(&env.world, name) {
-        Some(e) if model::is_fixture(&env.world, &e) => e,
+    let e = match model::find_by_name(w, name) {
+        Some(e) if model::is_fixture(w, &e) => e,
         // #2173: so is a stock's - `locate_part` with body "stock" mates them.
-        Some(e) if model::is_stock(&env.world, &e) => e,
+        Some(e) if model::is_stock(w, &e) => e,
         _ => req_model(env, name)?,
     };
-    let w = &env.world;
     let tris = model::facets_of(w, &e).ok_or_else(|| format!("'{name}' has no geometry to pick from"))?;
     let g = feature_graph_shared(&tris);
     let names = crate::pick::feature_names_of(w, &e);
@@ -309,12 +419,17 @@ pub(super) fn list_features(env: &mut Env, a: &Map<String, Value>) -> Result<Val
             "faces" => faces_view(w, name, names.as_deref(), &g, &loc, limit),
             "chains" => chains_view(name, names.as_deref(), &g, &loc, limit),
             "patches" => patches_view(name, names.as_deref(), f, limit),
-            _ => vertices_view(name, names.as_deref(), &g, &loc, limit),
+            "vertices" => vertices_view(name, names.as_deref(), &g, &loc, limit),
+            _ => (Vec::new(), 0),
         };
         truncated |= rows.len() < total;
+        let rows = if compact { super::compact::compact_rows(k, rows) } else { rows };
         out[k] = Value::Array(rows);
         out[format!("{k}_total")] = json!(total);
     }
     out["truncated"] = json!(truncated);
+    if compact {
+        out["compact"] = json!(true);
+    }
     Ok(out)
 }

@@ -118,7 +118,12 @@ fn verify_is_not_ok_while_an_ops_own_warnings_hold_the_post() {
     assert_eq!(ver["operations"][0]["status"], json!("ok"), "{ver}");
     let findings = ver["findings"].as_array().cloned().unwrap_or_default();
     assert!(!findings.is_empty(), "the shank rubs the wall below the flutes: {ver}");
-    assert!(findings.iter().all(|f| f["blocks_post"] == json!(true) && f["kind"] == json!("shank_hit")), "{ver}");
+    // #3525: the cause first - the cut is deeper than the flute (advisory);
+    // every finding after it is a shank hit that holds the post.
+    assert_eq!(findings[0]["kind"], json!("flute_short"), "{ver}");
+    assert_eq!(findings[0]["blocks_post"], json!(false), "{ver}");
+    assert!(findings.len() > 1, "{ver}");
+    assert!(findings[1..].iter().all(|f| f["blocks_post"] == json!(true) && f["kind"] == json!("shank_hit")), "{ver}");
     assert_eq!(ver["ok"], json!(false), "a program the post refuses is not ok: {ver}");
     assert_eq!(ver["held_by"], json!(["C1"]), "the reply names the op holding the post: {ver}");
     // Asking about the op by name gives the same answer.

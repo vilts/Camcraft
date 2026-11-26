@@ -67,13 +67,21 @@ const fn tw(vc: (f64, f64), frev: (f64, f64)) -> TurnWindow {
 /// One row of the turning table: (HSS, carbide), in `WorkMaterial::ALL`
 /// order (pinned by a test). Our own numbers inside public handbook
 /// turning ranges (module provenance), held to the conservative side.
-pub const TURN_TABLE: [(WorkMaterial, TurnWindow, TurnWindow); 6] = [
+pub const TURN_TABLE: [(WorkMaterial, TurnWindow, TurnWindow); 12] = [
     (WorkMaterial::Aluminium6061, tw((90.0, 180.0), (0.10, 0.30)), tw((200.0, 450.0), (0.10, 0.35))),
     (WorkMaterial::MildSteel, tw((25.0, 40.0), (0.08, 0.25)), tw((120.0, 220.0), (0.10, 0.30))),
     (WorkMaterial::Stainless304, tw((12.0, 25.0), (0.05, 0.20)), tw((80.0, 150.0), (0.08, 0.25))),
     (WorkMaterial::GreyCastIron, tw((18.0, 30.0), (0.08, 0.25)), tw((80.0, 160.0), (0.10, 0.30))),
     (WorkMaterial::Brass, tw((60.0, 100.0), (0.08, 0.25)), tw((150.0, 300.0), (0.10, 0.30))),
     (WorkMaterial::Plastics, tw((80.0, 200.0), (0.08, 0.25)), tw((150.0, 350.0), (0.10, 0.30))),
+    // #3068: the router materials, at the low side of the woodturning
+    // and plastics turning ranges.
+    (WorkMaterial::Softwood, tw((200.0, 500.0), (0.10, 0.30)), tw((300.0, 700.0), (0.10, 0.30))),
+    (WorkMaterial::Hardwood, tw((150.0, 400.0), (0.10, 0.25)), tw((250.0, 600.0), (0.10, 0.25))),
+    (WorkMaterial::Mdf, tw((200.0, 500.0), (0.10, 0.30)), tw((300.0, 700.0), (0.10, 0.30))),
+    (WorkMaterial::Plywood, tw((150.0, 400.0), (0.10, 0.25)), tw((250.0, 600.0), (0.10, 0.25))),
+    (WorkMaterial::Acrylic, tw((60.0, 150.0), (0.05, 0.20)), tw((100.0, 250.0), (0.05, 0.20))),
+    (WorkMaterial::Hdpe, tw((80.0, 200.0), (0.08, 0.25)), tw((120.0, 300.0), (0.08, 0.25))),
 ];
 
 /// The turning window of `m` for edge material `tm`.

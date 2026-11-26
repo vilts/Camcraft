@@ -39,6 +39,7 @@ fn judged(h: f64, start: Point2, verify_tol: f64) -> WireVerdict {
         capture: true,
         taper: false,
         verify_tol,
+        taper_chord: false,
     })
 }
 

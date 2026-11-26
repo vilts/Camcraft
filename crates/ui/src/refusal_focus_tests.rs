@@ -34,6 +34,7 @@ fn refused() -> State {
     let tool = catalog().into_iter().find(|(n, _)| *n == TOOL).map(|(_, t)| t).expect("catalog entry");
     state.history.execute(&state.world, AddTool::new(&state.world, TOOL, tool).expect("tool"));
     let params = OpParams::Bore {
+        pass_start: camcraft_app::machining2d::PassStart::Auto,
         break_through: None,
         links: camcraft_app::links::Links::PLANAR,
         clearance_z: Height::fixed(25.0),
@@ -47,6 +48,7 @@ fn refused() -> State {
         climb: true,
         tolerance: 0.01,
         holes: vec![Hole { xy: Point2::new(40.0, 15.0), radius: 3.5, entry_z: 20.0, floor_z: 5.0, through: false, stepped: false }],
+        picks: Default::default(),
     };
     state.history.execute(&state.world, CreateOperation::new(&state.world, "BOR", TOOL, SrcRef::Stock, params).expect("create"));
     state.ui_target = UiTarget::Operation("BOR".into());

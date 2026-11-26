@@ -111,6 +111,7 @@ fn faced_on(tool: Tool, machine: Machine) -> (World, History) {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     let op = CreateOperation::new(&world, "F1", "TN", SrcRef::Entity("bar".into()), params);
     h.execute(&world, op.expect("create"));
@@ -133,6 +134,7 @@ fn then_constant_rpm(world: &World, h: &mut History) {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     let op = CreateOperation::new(world, "F2", "TP", SrcRef::Entity("bar".into()), params);
     h.execute(world, op.expect("create F2"));
@@ -282,6 +284,7 @@ fn a_tool_without_turning_data_posts_g97_and_threading_never_runs_css() {
         plunge_feed: 50.0,
         infeed_plan: Default::default(),
         hand: Default::default(),
+        picks: Default::default(),
     };
     assert!(!cutting_turn::css_op(&thread), "a synchronized pass needs a constant rpm");
     let css = Tool { turning: Some(TurningData { vc: 170.0, feed_per_rev: 0.2, max_rpm: None }), ..insert() };

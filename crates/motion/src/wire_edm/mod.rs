@@ -26,6 +26,10 @@
 //! missing or misplaced start hole, an inside corner or a neck the wire
 //! cannot cut - each is refused by name, never trimmed or rounded.
 //!
+//! A drawn line-and-arc profile (#3937, `arc_cut`) is cut on its own
+//! lines and arcs: the parallel is the analytic offset (`arc_offset`),
+//! the moves are true arcs, and the laws read the drawing itself.
+//!
 //! An OPEN run (#1109) - a cut-off line, a slot or a relief entered
 //! from the stock's edge - is cut by `open`: the kerf on the stated
 //! left or right of the run's travel, threaded outside the stock (no
@@ -39,9 +43,20 @@
 //! burnout of a pocket (#540) is `burnout`; the 4-axis cut between two
 //! profiles (#537) is `ruled`.
 
+mod arc_chain;
+mod arc_cut;
+mod arc_dist;
+mod arc_laws;
+mod arc_lead;
+mod arc_offset;
+mod arc_span;
 mod burnout;
+mod exit;
 mod laws;
+mod model_arcs;
+mod model_tangent;
 mod pairing;
+mod preimage;
 mod open;
 mod ring;
 mod ruled;
@@ -51,6 +66,11 @@ mod skims;
 mod tabs;
 mod taper;
 
+pub use arc_chain::{ArcChain, JOINT_TOL};
+pub use arc_cut::{wire_contour_arcs, wire_contour_arcs_led};
+pub use arc_lead::WireLead;
+pub use arc_span::Span as ArcSpan;
+pub use model_arcs::{model_arcs, wire_contour_facets, wire_contour_model_arcs, ModelArcs, FIT_TOL as MODEL_ARC_FIT_TOL, MODEL_ARCS_NOTE};
 pub use skims::{check_passes, wire_passes, WirePass};
 
 pub use ruled::{wire_contour_ruled, WirePairing, WireProfile, WireRuled, WireSync, WireWidening, SYNC_TOL};
@@ -59,6 +79,7 @@ pub use tabs::{cutoff_split, TabParams, MAX_TABS};
 pub use taper::{wire_contour_tapered, WireCorner, WireTaper};
 
 pub use burnout::{clearance_door, wire_burnout, CORE_AREA_TOL, RING_STEP};
+pub use exit::{wire_contour_exit, END_TIE};
 pub use open::{CLEARANCE_MAX, EDGE_TOL};
 
 use crate::cl::{MoveKind, PathBuilder, Toolpath};
@@ -76,6 +97,9 @@ pub const COVER_TOL: f64 = 0.002;
 /// before the kerf law refuses it: 10 nm, ten steps of the offsetter's
 /// lattice. The path is built to stand exactly at the offset.
 pub const PATH_TOL: f64 = 1e-5;
+/// How the note of a stated sharp inside corner (#3207) starts - the
+/// verify line finds it on the cached path by this.
+pub const SHARP_NOTE: &str = "wire EDM: sharp inside corners stated";
 /// The shortest lead (mm) that is a move at all.
 const MIN_LEAD: f64 = 1e-6;
 
@@ -140,6 +164,11 @@ pub struct WireParams {
     /// the kerf offset plus this off the stock. A closed profile never
     /// reads it.
     pub clearance: f64,
+    /// The operator accepts sharp inside corners at the wire's own
+    /// radius (#3207): the cover law then lets a corner keep an uncut
+    /// rest up to the kerf offset, said as a note. `false` - the
+    /// default - refuses any rest past [`COVER_TOL`].
+    pub sharp_corners: bool,
 }
 
 fn invalid(why: String) -> GenError {
@@ -225,7 +254,7 @@ pub(super) fn cut_pass(loops: &[Loop], chains: &[Vec<Point2>], p: &WireParams, r
     // The corner minimum (#290 D8): every point of the profile must be
     // touched by the kerf - judged before the start hole, so a profile
     // the wire cannot cut is refused whatever else is stated.
-    laws::cover(&given, &path_ring, p)?;
+    let corner_rest = laws::cover(&given, &path_ring, p)?;
     let Some(start) = p.start else {
         return Err(invalid(format!(
             "no start hole is stated - a closed profile is cut from a threading point ({}); the wire cannot be threaded through solid material",
@@ -282,6 +311,7 @@ pub(super) fn cut_pass(loops: &[Loop], chains: &[Vec<Point2>], p: &WireParams, r
     if let Some(tb) = tabbed {
         said.splice(1..2, tb.notes);
     }
+    said.extend(corner_rest.map(|r| laws::sharp_note(r, k)));
     path.notes.extend(said);
     Ok(path)
 }
@@ -350,10 +380,22 @@ fn pass_notes(p: &WireParams, start: Point2, lead: f64, reverse: bool) -> Vec<St
 }
 
 #[cfg(test)]
+mod arc_tests;
+#[cfg(test)]
+mod facet_tests;
+#[cfg(test)]
+mod model_arcs_tests;
+#[cfg(test)]
 mod open_tests;
+#[cfg(test)]
+mod preimage_tests;
+#[cfg(test)]
+mod ruled_heal_tests;
 #[cfg(test)]
 mod ruled_tests;
 #[cfg(test)]
 mod ruled_widen_tests;
+#[cfg(test)]
+mod sharp_tests;
 #[cfg(test)]
 mod tests;

@@ -111,8 +111,13 @@ pub fn agrees(tool: &Tool, spun: &SpunProfile) -> Result<(), CutterError> {
     // Above the flute top the laws judge the stated shank (`shank_d`), so
     // nothing drawn there may be wider; AT the flute top the step runs
     // between cutter and shank, so the larger of the two bounds it.
+    // #1444: an undercut head the laws read above the flute top (a
+    // lollipop's upper ball) may be drawn there, and no wider.
     let sr = tool.shank_d.max(0.0) * 0.5;
-    let limit_at = |z: f64| if z > zc + AGREE { sr } else { r.max(sr) };
+    let head = crate::undercut::Undercut::of(tool);
+    let limit_at = |z: f64| {
+        if z > zc + AGREE { sr.max(head.map_or(0.0, |u| u.rho(z))) } else { r.max(sr) }
+    };
     let over = |z: f64, rr: f64| z >= zc - AGREE && rr > limit_at(z) + AGREE;
     // Checked on the drawn points (named in the refusal) and on the
     // flattened outline (a convex arc between two in-limit points).

@@ -1,0 +1,42 @@
+// Provenance: original CamCraft chamfered step using public command verbs (#2865).
+// Run from this case directory: camcraft-cli script build.camscript
+cam.import("model/contour-blank.obj", "contour-blank");
+cam.call("set_model_link", { model: "contour-blank", path: null });
+cam.import("model/contour-finishes.obj", "contour-finishes");
+cam.call("set_model_link", { model: "contour-finishes", path: null });
+cam.call("set_stock", { from_model: "contour-blank" });
+cam.call("set_raw_stock_only", { on: true });
+cam.call("load_machine", { builtin: "Lathe" });
+cam.call("add_setup", { name: "Turning" });
+cam.call("set_setup_post", { post: "Fanuc Lathe" });
+cam.call("add_tool", { catalog: "TN-1600-0R8" });
+
+var z = function (v) { return { reference: "fixed", offset: v }; };
+
+// Cut the model's 45-degree bottom corner.
+cam.call("add_operation", {
+  kind: "Chamfering", name: "Chamfer bottom", tool: "TN-1600-0R8", source: "contour-finishes",
+  params: {
+    tolerance: 0.05, clearance_z: z(70.0), top_z: z(2.0), bottom_z: z(0.0),
+    angle_deg: 45.0, feed: 200.0, plunge_feed: 50.0
+  }
+});
+
+// Rough with 0.25 mm allowance, then take three finishing rides to model size.
+cam.call("add_operation", {
+  kind: "Multi-Pass Turning", name: "Step rough and finish", tool: "TN-1600-0R8", source: "contour-finishes",
+  params: {
+    tolerance: 0.05, clearance_z: z(70.0), top_z: z(60.0), bottom_z: z(0.0),
+    stepdown: 0.5, stock_to_leave: 0.25, passes: 3,
+    feed: 200.0, plunge_feed: 50.0
+  }
+});
+
+cam.generate();
+var verdict = cam.verify();
+if (!verdict.ok) {
+  throw new Error("catalog verify failed: " + JSON.stringify(verdict));
+}
+cam.save("contour-finishes.camproj");
+cam.post({ to: "contour-finishes.nc" });
+cam.report();

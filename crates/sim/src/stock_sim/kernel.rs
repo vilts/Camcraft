@@ -117,11 +117,9 @@ pub fn measure(dex: &Dexel, part: &[f64], footprint: &Region, tol: f64) -> Stock
                     rep.max_gouge_depth = rep.max_gouge_depth.max(ptop - sim);
                 }
             }
-            // Removed volume is gross: what stood between the stock
-            // surface and what the tool left standing, taken out by
-            // the path that cut it - air columns included, because
-            // the stock block had material there to take.
-            rep.removed_volume += (dex.stock_z - sim).max(0.0) * a2;
+            // Gross removal uses the initial surface. A laid cylinder
+            // also limits the depth to its rounded underside (#2758).
+            rep.removed_volume += dex.removed_depth(k) * a2;
         }
     }
     rep

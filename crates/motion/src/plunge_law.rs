@@ -71,7 +71,13 @@ pub fn column_cleared(moves: &[Move], xy: Point2, z: f64, tool_r: f64) -> bool {
 /// material's top `mat_top`, over a column the path has not cleared?
 #[must_use]
 pub fn into_solid(b: &PathBuilder, xy: Point2, z: f64, mat_top: f64, tool_r: f64) -> bool {
-    z < mat_top - Z_EPS && !column_cleared(b.moves(), xy, z, tool_r)
+    into_solid_at(b.moves(), xy, z, mat_top, tool_r)
+}
+
+/// [`into_solid`] read over the moves posted before the plunge.
+#[must_use]
+pub fn into_solid_at(moves: &[Move], xy: Point2, z: f64, mat_top: f64, tool_r: f64) -> bool {
+    z < mat_top - Z_EPS && !column_cleared(moves, xy, z, tool_r)
 }
 
 /// The check every axial descent posts through: for a tool that is not

@@ -28,7 +28,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             holes,
             cross,
             break_through,
-            break_through_from,
+            break_through_from, picks: _,
         } => {
             if tab == SEC_GEO {
                 field(ui, "Holes");
@@ -91,6 +91,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                 if c_idx != before {
                     *cycle = cycle_from_index(c_idx);
                 }
+                fine_bore_shift_rows(ui, u, cycle);
                 if let Some(note) = &cycle_note {
                     consequence(ui, note);
                 }
@@ -123,6 +124,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             tolerance,
             holes,
             break_through,
+            pass_start, picks: _,
         } => {
             if tab == SEC_LEADS {
                 // Each hole opens with the dive at its centre; the
@@ -159,6 +161,9 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
                 });
             }
             if tab == SEC_PASSES {
+                // #3360: the shared pass-order row; the rings of a level.
+                super::pass_start_row::pass_start_row(ui, "bore", pass_start);
+                hint(ui, super::pass_start_row::BORE_PASS_START_HINT);
                 prop_row(ui, "Stock to leave", |ui| num(ui, u, stock_to_leave));
                 prop_row(ui, "Tolerance", |ui| num(ui, u, tolerance));
                 hint(ui, "the ring is chords to this tolerance - the same fit law the pocket walls keep");
@@ -189,7 +194,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             hand,
             external,
             passes,
-            break_through,
+            break_through, picks: _,
         } => {
             if tab == SEC_GEO {
                 // #985: holes, or bosses for an external thread.
@@ -267,6 +272,24 @@ fn drill_default(u: Unit) -> String {
 fn break_through_row(ui: &mut Ui, u: Unit, v: &mut Option<f64>, default: &str) {
     auto_opt(ui, "Break-through", "Default", v, default, camcraft_app::drilling::THROUGH_CLEAR, |ui, x| num(ui, u, x));
     hint(ui, "how far a through hole runs past the part bottom; checked against the stock bottom");
+}
+
+/// #1445: the two shift fields of a fine-bore cycle, shown only for that
+/// cycle. The shift has no default: a new pick shows zero, and Apply
+/// refuses the cycle by name until a shift is stated. The fields write
+/// whole micrometres, the form the cycle choice stores.
+fn fine_bore_shift_rows(ui: &mut Ui, u: Unit, cycle: &mut camcraft_app::drilling::CycleChoice) {
+    let camcraft_app::drilling::CycleChoice::FineBore { shift_x_um, shift_y_um } = cycle else {
+        return;
+    };
+    for (label, um) in [("Shift X", shift_x_um), ("Shift Y", shift_y_um)] {
+        let mut mm = f64::from(*um) / 1000.0;
+        prop_row(ui, label, |ui| num(ui, u, &mut mm));
+        // A float cast saturates; the command refuses a shift out of range.
+        *um = (mm * 1000.0).round() as i32;
+    }
+    hint(ui, "how far the stopped tool moves off the wall before the rapid out, along the X and Y of the holes");
+    hint(ui, "give the direction that takes the tip away from the wall at the spindle's oriented stop; there is no default");
 }
 
 /// #2441: whether Drill's break-through is measured from the full cutting

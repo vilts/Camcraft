@@ -34,6 +34,7 @@ fn params() -> PlasmaParams {
         cut_height: None,
         pierce_delay: None,
         model_excess: 0.0,
+        file_tolerance: false,
     }
 }
 
@@ -396,12 +397,12 @@ fn the_cover_law_reads_the_tightened_tolerance_on_a_coarse_model() {
     // The bridged cut does not depend on the notch's depth (its floor is
     // far below the bridge); read its chords once.
     let path = cut_at(0.3, &plain).unwrap();
-    let chords: Vec<(Point2, Point2)> = path.moves.iter().flat_map(|m| m.chords(emit::FIT_TOL)).collect();
+    let chords: Vec<(Point2, Point2)> = path.moves.iter().flat_map(|m| m.chords(crate::sheet::laws::FIT_TOL)).collect();
     let far = |drop: f64| {
         let (x0, x1, y0) = (50.0 - w * 0.5, 50.0 + w * 0.5, 60.0 - drop);
         (0..=100)
             .map(|k| Point2::new(x0 + (x1 - x0) * f64::from(k) / 100.0, y0))
-            .map(|q| chords.iter().map(|(a, b)| laws::pt_seg(q, *a, *b)).fold(f64::INFINITY, f64::min))
+            .map(|q| chords.iter().map(|(a, b)| crate::sheet::laws::pt_seg(q, *a, *b)).fold(f64::INFINITY, f64::min))
             .fold(0.0, f64::max)
     };
     let target = plain.kerf + 0.5 * (KERF_TOL + coarse.kerf_tol());

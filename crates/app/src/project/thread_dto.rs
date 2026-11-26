@@ -63,6 +63,10 @@ pub struct ThreadCycleDto {
     /// #419: absent (and written only when set) is no chip-break dips.
     #[serde(default, skip_serializing_if = "is_false")]
     pub chip_break_dips: bool,
+    /// #2878: absent (and written only when set) is not proven clear for
+    /// a Fanuc G76 rapid infeed - older caches refuse G76 until regenerated.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub start_in_air: bool,
     pub first: u64,
     pub last: u64,
     /// The hand the passes cut (#629); absent reads right.
@@ -91,6 +95,7 @@ impl ThreadCycleDto {
             alternating: t.alternating,
             repeat_each_depth: t.repeat_each_depth,
             chip_break_dips: t.chip_break_dips,
+            start_in_air: t.start_in_air,
             first: t.first as u64,
             last: t.last as u64,
             hand: t.hand.into(),
@@ -117,6 +122,7 @@ impl ThreadCycleDto {
             alternating: self.alternating,
             repeat_each_depth: self.repeat_each_depth,
             chip_break_dips: self.chip_break_dips,
+            start_in_air: self.start_in_air,
             first: usize::try_from(self.first).unwrap_or(usize::MAX),
             last: usize::try_from(self.last).unwrap_or(usize::MAX),
             hand: self.hand.into(),

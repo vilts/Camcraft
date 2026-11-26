@@ -187,17 +187,32 @@ fn a_small_hole_factor_out_of_range_names_the_factor_range() {
 fn the_mills_posts_decline_a_plasma_stream_and_the_1300pl() {
     let stream = read("crates/app/tests/golden/plasma_plate_with_holes.cl");
     for (n, cps) in camcraft_app::posting::shipped_posts().expect("the shipped posts read").iter().filter(|(n, _)| *n != PLASMA) {
+        assert!(!posting::post_serves(n, Kind::Plasma), "{n} must not serve a plasma table");
+        if *n == posting::agie::POST {
+            let error = engine::run(cps, &pl1300(), &stream).expect_err("the native dispatcher must refuse a single-file post");
+            assert!(
+                matches!(&error, camcraft_app::post::PostError::Script(message) if message.contains(
+                    "Native wire EDM job files require the desktop or CLI One program post to a new job directory"
+                )),
+                "{n}: {error}"
+            );
+            continue;
+        }
         // #542: the sinker post refuses any machine not declared a
         // sinker by name (the app's serves door, #1232, refuses first).
+        if *n == "Heidenhain Klartext" {
+            let why = engine::run(cps, &pl1300(), &stream).expect_err("a Klartext controller is required");
+            assert!(why.to_string().contains("controller profile"), "{why}");
+            assert!(!posting::post_serves(n, Kind::Plasma));
+            continue;
+        }
         if posting::SINKER_POSTS.contains(n) {
             let w = warnings(cps, &pl1300(), &stream);
             assert!(w.iter().any(|m| m.contains("is not declared a sinker EDM")), "{n}: {w:?}");
-            assert!(!posting::post_serves(n, Kind::Plasma), "{n} must not serve a plasma table");
             continue;
         }
         let w = warnings(cps, &pl1300(), &stream);
         assert!(w.iter().any(|m| m.contains("does not define onTorchOn / onTorchOff")), "{n}: {w:?}");
-        assert!(!posting::post_serves(n, Kind::Plasma), "{n} must not serve a plasma table");
     }
 }
 

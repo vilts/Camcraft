@@ -47,7 +47,8 @@ fn volume(t: &[Triangle]) -> f64 {
 #[test]
 fn an_inward_closed_box_is_turned_outward_and_said() {
     let plain = parse_model_graded(read("box.step").as_bytes(), Format::Step).expect("plain box");
-    assert!(plain.notes.is_empty(), "nothing changed, nothing said: {:?}", plain.notes);
+    // #1874: the length unit is always the last note; nothing else is said.
+    assert_eq!(plain.notes, ["length unit: mm (stated by the file)"], "nothing changed, only the unit said");
     let v_plain = volume(&plain.mesh.facets);
     assert!(v_plain > 0.0, "the fixture is outward: {v_plain}");
 
@@ -56,7 +57,8 @@ fn an_inward_closed_box_is_turned_outward_and_said() {
     let got = parse_model_graded(inward.as_bytes(), Format::Step).expect("inward box imports");
     let v = volume(&got.mesh.facets);
     assert!((v - v_plain).abs() <= 1e-6 * v_plain.abs(), "turned outward: {v} vs {v_plain}");
-    assert_eq!(got.notes.len(), 1, "{:?}", got.notes);
+    assert_eq!(got.notes.len(), 2, "the turn and the unit (#1874): {:?}", got.notes);
+    assert_eq!(got.notes.last().map(String::as_str), Some("length unit: mm (stated by the file)"));
     let note = got.notes.first().map(String::as_str).unwrap_or_default();
     assert!(note.starts_with("1 closed solid(s) wound inward (negative volume) were turned outward"), "{note}");
     assert!(note.contains(&format!("{} facet(s) reversed", got.mesh.facets.len())), "{note}");
@@ -77,7 +79,7 @@ fn a_lone_curved_face_is_left_alone() {
     for (label, data) in [("as written", lone.clone()), ("reversed", reversed(&lone))] {
         let got = parse_model_graded(data.as_bytes(), Format::Step).expect("a lone face imports");
         assert!(!got.mesh.facets.is_empty(), "{label}: the face meshed");
-        assert!(got.notes.is_empty(), "{label}: an open face is never turned: {:?}", got.notes);
+        assert_eq!(got.notes, ["length unit: mm (stated by the file)"], "{label}: an open face is never turned");
     }
     let a = parse_model_graded(lone.as_bytes(), Format::Step).expect("as written");
     let b = parse_model_graded(reversed(&lone).as_bytes(), Format::Step).expect("reversed");
@@ -107,9 +109,9 @@ fn the_mcp_import_result_carries_the_note() {
     let mut server = Server::new();
     let got = call(&mut server, "import_model", json!({ "path": bad.display().to_string() }));
     let notes = got["notes"].as_array().cloned().unwrap_or_default();
-    assert_eq!(notes.len(), 1, "{got}");
+    assert_eq!(notes.len(), 2, "the turn and the unit (#1874): {got}");
     assert!(notes[0].as_str().unwrap_or_default().contains("turned outward"), "{got}");
     let plain = call(&mut server, "import_model", json!({ "path": good.display().to_string() }));
-    assert!(plain.get("notes").is_none(), "nothing changed, nothing said: {plain}");
+    assert_eq!(plain["notes"], json!(["length unit: mm (stated by the file)"]), "nothing changed, only the unit said: {plain}");
     let _ = std::fs::remove_dir_all(&dir);
 }

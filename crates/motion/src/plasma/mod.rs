@@ -25,19 +25,17 @@
 //! Nothing here guesses: a zero-length or self-crossing contour, a hole
 //! the kerf cannot enter, a lead with no room, a lit move whose kerf
 //! would reach the part, an edge the kerf never reaches (a slot or
-//! notch narrower than the kerf, bridged by the offset - `laws`, #672)
+//! notch narrower than the kerf, bridged by the offset - `crate::sheet::laws`, #672)
 //! - each is refused by name, never trimmed.
 
 mod emit;
-mod laws;
-mod nest;
-mod ring;
 
 use crate::cl::{PlasmaCut, Toolpath};
 use crate::geo2d::{Loop, Point2, Region};
 use crate::machining2d::GenError;
+use crate::sheet::{nest, Voice};
 
-pub use nest::Contour;
+pub use crate::sheet::Contour;
 
 /// The small-hole threshold when the op states none: 32 mm (the
 /// Primer's lower bound of the band where hole quality falls off).
@@ -93,6 +91,8 @@ pub struct PlasmaParams {
     /// for a model that met the promise, and for every plate drawn by
     /// hand - each law then reads exactly as it always did.
     pub model_excess: f64,
+    /// All reduced sources were made coarse only by file tolerance.
+    pub file_tolerance: bool,
 }
 
 impl PlasmaParams {
@@ -106,7 +106,7 @@ impl PlasmaParams {
     /// excess more than it could at full fidelity.
     #[must_use]
     pub fn kerf_tol(&self) -> f64 {
-        crate::verify::excess_floor(KERF_TOL, self.model_excess).unwrap_or(KERF_TOL)
+        crate::verify::excess_floor_for(KERF_TOL, self.model_excess, self.file_tolerance).unwrap_or(KERF_TOL)
     }
 
     /// The door: every refusal of the numbers by name, before any
@@ -180,7 +180,7 @@ pub fn plasma_profile(
     if loops.is_empty() && chains.is_empty() {
         return Err(GenError::Empty("plasma profile: no contour to cut".into()));
     }
-    let contours = nest::contours(loops, chains, part)?;
+    let contours = nest::contours(loops, chains, part, Voice::PLASMA)?;
     let order = nest::cut_order(&contours);
     emit::cut(&contours, &order, part, p)
 }

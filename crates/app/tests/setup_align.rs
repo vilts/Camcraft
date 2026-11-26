@@ -23,7 +23,7 @@ use camcraft_app::machine::parse_mch;
 use camcraft_app::geometry::{Mesh, Point3, Triangle, cube};
 use camcraft_app::machining2d::{Lead, Side};
 use camcraft_app::machining3d::Entry3D;
-use camcraft_app::operation::{self, Carried, FeatureSel, GeoSel, Height, KindInfo, OpParams, OpStatus, OpType, SrcRef};
+use camcraft_app::operation::{self, Carried, FeatureSel, GeoSel, Height, KindInfo, OpParams, OpStatus, OpType, SrcRef, Tilt};
 use camcraft_app::schema::Location;
 use camcraft_app::setup_align::{self, AlignPreset};
 use camcraft_app::stock::StockShape;
@@ -82,9 +82,11 @@ fn contour_params() -> OpParams {
         tab_height: 1.0,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -243,12 +245,14 @@ fn two_setups_hold_the_part_differently_without_touching_each_other() {
 fn unverified_kinds_are_refused_while_verified_picks_generate_aligned() {
     let (world, mut h) = document(60.0);
     // #2276 / #2283 / #2284: 2D Offset, Circular, 2D Chamfer and Deburr have proof;
-    // Probe stays unverified (the op keeps its old name).
-    let seed = (KindInfo::ALL[OpType::Probe.ordinal()].seed)(&Carried::of(&contour_params()));
-    let probe = catalog().into_iter().find(|(n, _)| *n == "PRB-0400").map(|(_, t)| t).expect("probe");
-    h.execute(&world, AddTool::new(&world, "PRB-0400", probe).expect("add probe"));
-    let op = CreateOperation::new(&world, "Circular", "PRB-0400", SrcRef::Entity("part".into()), seed);
-    h.execute(&world, op.expect("create the Probe"));
+    // #2285 adds Probe. The tilted plane of a verified kind keeps the
+    // refusal by name (the door the #1743 area law did not open).
+    let mut tilted = contour_params();
+    if let OpParams::Contour { tilt, .. } = &mut tilted {
+        *tilt = Some(Tilt { basis_version: 1, a_deg: 0.0, b_deg: 35.0, origin: [0.0; 3] });
+    }
+    let op = CreateOperation::new(&world, "Tilted", TOOL, SrcRef::Entity("part".into()), tilted);
+    h.execute(&world, op.expect("create the tilted contour"));
     // The modelled BOTTOM face (Z 0, the plain 40 x 40 square):
     // flipped over Y it is the setup's top, and Outside of its ring is
     // air at every level - the legal pick of an aligned face contour.
@@ -284,8 +288,8 @@ fn unverified_kinds_are_refused_while_verified_picks_generate_aligned() {
     h.execute(&world, control.expect("create the control contour"));
     generate(&world, &mut h, "InMaterial").expect("as modelled the hole ring trims its wall");
     align(&world, &mut h, AlignPreset::FlipY);
-    let err = generate(&world, &mut h, "Circular").expect_err("Probe is not verified aligned");
-    assert!(err.contains("part alignment") && err.contains("not supported yet"), "{err}");
+    let err = generate(&world, &mut h, "Tilted").expect_err("a tilted plane is not verified aligned");
+    assert!(err.contains("part alignment") && err.contains("tilted plane is not supported yet"), "{err}");
     generate(&world, &mut h, "Picked").expect("verified-kind picks generate aligned");
     let e = model::find_by_name(&world, "Picked").expect("picked op");
     let path = model::toolpath_of(&world, &e).expect("picked path");
@@ -365,7 +369,10 @@ fn the_pocket_and_face_kinds_cut_the_flipped_part_and_post() {
     let path = model::toolpath_of(&world, &e).expect("pocket path");
     // Z 12..20 of the flipped part is solid: the pocket clears the stock
     // around it and never enters where the hole stood as modelled.
-    let inside = path.path.moves.iter().filter(|m| m.to.z < 19.9).find(|m| m.to.x.abs().max(m.to.y.abs()) < 21.9);
+    // The 4 mm tool's center stays 2 mm from the 40 x 40 block. That
+    // is a rounded square: a closing ring at a corner is legal (#3021).
+    let from_block = |x: f64, y: f64| (x.abs() - 20.0).max(0.0).hypot((y.abs() - 20.0).max(0.0));
+    let inside = path.path.moves.iter().filter(|m| m.to.z < 19.9).find(|m| from_block(m.to.x, m.to.y) < 1.9);
     assert!(inside.is_none(), "{inside:?}");
     assert!(path.path.moves.iter().any(|m| m.to.z < 19.9), "the pocket cuts");
     post(&world, "kinds").expect("the flipped program posts");

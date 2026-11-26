@@ -288,7 +288,7 @@ fn is_lathe(k: ToolKind) -> bool {
 /// is its two ends; an arc of signed radius `a.arc` is its circumscribed
 /// tangent polygon when convex (the centre on the material side) and
 /// its inscribed chords when concave - never inside the drawn solid.
-fn flatten(a: SpunPoint, b: SpunPoint) -> Vec<(f64, f64)> {
+pub(crate) fn flatten(a: SpunPoint, b: SpunPoint) -> Vec<(f64, f64)> {
     let (dz, dr) = (b.z - a.z, b.r - a.r);
     let len = dz.hypot(dr);
     if a.arc == 0.0 || len.is_nan() || len <= 0.0 || a.arc.abs() < len * 0.5 - EPS {

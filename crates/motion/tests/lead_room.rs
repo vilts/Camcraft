@@ -64,8 +64,9 @@ fn params(tool: f64, side: Side, lead: Lead, climb: bool) -> ContourParams {
         tab_height: 0.0,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_motion::links::Links::PLANAR,
+        picks: Default::default(),
     }
 }
 

@@ -1,0 +1,3 @@
+kinds = ["Drill"]
+machine = "3-axis mill"
+expect = "refusal"

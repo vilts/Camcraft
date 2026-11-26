@@ -58,8 +58,11 @@ pub fn op_hits(
         .and_then(|m| m.spindle_d.zip(m.spindle_len))
         .map(|(d, l)| (d * 0.5, l));
     let wh = crate::verify::Workholding { turning, fixed, axis: fixture::rotary_axis_of(world, op) };
-    let geom = tool.geom();
-    let holder = crate::tool_body::stack(&geom, body.as_ref()).with_neck(neck);
+    // The holder stands where the real tool puts it; the steel laws
+    // sweep the head's whole envelope (#1444: a lollipop's ball runs on
+    // above its neck start).
+    let holder = crate::tool_body::stack(&tool.geom(), body.as_ref()).with_neck(neck);
+    let geom = crate::undercut::fixture_geom(&tool);
     let mut hits = path_hits(path, (&geom, &holder), &wh, spindle, meshes);
     // #1037: a lathe holder body against the same steel - the chuck
     // revolved, the tailstock standing - by generation's own law.

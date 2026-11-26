@@ -25,7 +25,7 @@ fn fp(stepover: f64, stepdown: Option<f64>) -> FaceParams {
         feed: 1000.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         stock_top: None,
     }
 }
@@ -50,8 +50,9 @@ fn cp(stepdown: f64) -> ContourParams {
         tab_height: 0.0,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_motion::links::Links::PLANAR,
+        picks: Default::default(),
     }
 }
 

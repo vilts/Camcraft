@@ -114,6 +114,10 @@ impl FieldPlay {
             return Ok(());
         }
         let at = self.at;
+        // #2629: the layer cuts its own move in flight (`layer_frame`).
+        if self.layer_holds_move(at) {
+            return Ok(());
+        }
         let Some(op) = self.ops.iter().find(|o| at >= o.start && at - o.start < o.moves.len()) else {
             return Ok(());
         };
@@ -123,8 +127,14 @@ impl FieldPlay {
         let Some(m) = op.moves.get(at - op.start) else {
             return Ok(());
         };
-        let sim = SimOp { moves: &[], radius: op.radius, ball: op.ball, cone: op.cone, corner: op.corner };
-        let cut = self.cur.with_partial(&sim, m, f).map_err(|e| format!("playback could not cut {}: {e}", op.name))?;
+        let cut = match &op.undercut {
+            Some((cutter, neck_len)) => self.cur.with_partial_undercut(cutter, *neck_len, m, f),
+            None => {
+                let sim = SimOp { moves: &[], radius: op.radius, ball: op.ball, cone: op.cone, corner: op.corner };
+                self.cur.with_partial(&sim, m, f)
+            }
+        }
+        .map_err(|e| format!("playback could not cut {}: {e}", op.name))?;
         if let Some((stock, bricks)) = cut {
             self.partial = Some(stock);
             self.partial_bricks = bricks;

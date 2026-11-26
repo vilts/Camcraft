@@ -21,9 +21,10 @@ const MILL: &str = "EM-0600-4FL";
 
 fn face(z: f64) -> OpParams {
     OpParams::Face {
-        holes: Default::default(), tilt: None, blend_turns: false, stepover: 3.0,
+        holes: Default::default(), tilt: None, blend_turns: false, blend_radius: None, stepover: 3.0,
         clearance_z: Height::fixed(50.0), cut_z: Height::fixed(z), top_z: None,
         stepdown: None, feed: 1200.0, plunge_feed: 300.0, climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -33,11 +34,13 @@ fn params(kind: OpType) -> OpParams {
             clearance_z: Height::fixed(50.0), retract_z: None,
             top_z: Height::fixed(16.0), bottom_z: Height::fixed(15.7),
             stepdown: 1.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None,
+            picks: Default::default(),
         },
         OpType::Trace => OpParams::Trace {
             clearance_z: Height::fixed(50.0), retract_z: None,
             top_z: Height::fixed(16.0), bottom_z: Height::fixed(15.7),
             stepdown: 1.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None,
+            picks: Default::default(),
         },
         _ => operation::retype_params(&face(16.0), kind.ordinal()),
     }

@@ -329,11 +329,13 @@ fn full_xy_circles_and_helices_split_without_losing_direction_or_depth() {
 }
 
 #[test]
-fn rounded_coincident_xy_arc_endpoints_are_refused() {
+fn rounded_coincident_xy_arc_endpoints_post_no_arc_block() {
     // 1 micron separates the endpoints in mm, but both round to zero in inches.
+    // #3442: an arc block there is a full circle; the short arc posts no block.
     let stream = "PARAM ClearancePlane 20\nPARAM SpindleSpeed 8000\nRapid X 1 Y 0 Z 5000\nArc CCW X 0 Y 1 Z 5000 F 100000 I 0 J 0\n";
     let out = engine::run_with(&cps(), &json!({"safeRetractZ": 0.0}), stream, &json!({"Units": "inch"})).expect("runs");
-    assert!(out.warnings.iter().any(|w| w.contains("too small to distinguish")), "{:?}", out.warnings);
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+    assert!(!out.program.lines().any(|l| l.starts_with("G2 ") || l.starts_with("G3 ")), "{}", out.program);
 }
 
 #[test]

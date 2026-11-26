@@ -90,6 +90,23 @@ pub struct ThreadParams {
     pub hand: ThreadHand,
 }
 
+/// The refusal for a model whose thread is HELICAL (issue #3023), or
+/// `None`. The phase law reads a modelled thread as a revolved V
+/// section; a helical one has no such section (and a STEP helix may
+/// not even slice), so it is refused by name before the axis fit and
+/// the slice can refuse it for a reason that names something else.
+pub fn helical_refusal(facets: &[Triangle]) -> Option<GenError> {
+    let hx = crate::multiaxis::axis_helix::helix(facets)?;
+    let hand = if hx.pitch >= 0.0 { "right" } else { "left" };
+    Some(GenError::Invalid(format!(
+        "the model's thread is HELICAL (about a {:.2} pitch, {hand}-hand helix about the \
+         bar's axis) - Threading does not read a helical thread yet; it reads a \
+         modelled thread as a revolved V section. Model the thread as revolved V \
+         grooves at its pitch (no helix) for this operation",
+        hx.pitch.abs()
+    )))
+}
+
 /// Threading: ladder the V from a hair under the blank's crest
 /// down to the root, one helical pass per rung, each pass a full
 /// turn per pitch across the window's lattice of turns.
@@ -138,6 +155,9 @@ pub fn thread_planned_in(
     }
     if let Some(why) = plan.refusal(p.depth, p.infeed, p.form_angle) {
         return Err(GenError::Invalid(why));
+    }
+    if let Some(e) = helical_refusal(facets) {
+        return Err(e);
     }
     let (f, pts, sg, win, _dom, rho_clear) = blade::setup(
         facets,
@@ -238,10 +258,13 @@ pub fn thread_planned_in(
     };
     let c0 = (v_lo + v_hi) * 0.5;
     // The lattice whose footprints reach the window: every center
-    // whose band (center +- half) overlaps it. The valley itself is
-    // such a center, so the run never comes up empty.
+    // whose band (center +- half) overlaps it. When `top_z` extends
+    // past the bar's free end, the pass may start in free air in front
+    // of the end face (issue #2878). The valley itself is in the
+    // window, so the run never comes up empty.
+    let s_hi_pass = f.station_of(p.top_z).max(s_hi);
     let k_lo = ((s_lo - half - c0) / p.pitch).ceil();
-    let k_hi = ((s_hi + half - c0) / p.pitch).floor();
+    let k_hi = ((s_hi_pass + half - c0) / p.pitch).floor();
     if k_hi - k_lo > blade::MAX_RUNGS {
         return Err(GenError::Invalid(format!(
             "the thread would run more than {:.0} turns - the pitch is far too fine for \
@@ -297,7 +320,7 @@ pub fn thread_planned_in(
     let last = b.moves_len().saturating_sub(1);
     b.push(MoveKind::Rapid, f.point(rho_clear, s_out), None);
     let mut path = b.finish();
-    thread_cycle::attach_cycle(&mut path, first, last, ref_top, root, p, plan, &passes);
+    thread_cycle::attach_cycle(&mut path, first, last, ref_top, root, p, plan, &passes, &f, &sg, stock);
     thread_dips::require_record(&plan.dips, &path)?;
     Ok(path)
 }

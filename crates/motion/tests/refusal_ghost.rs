@@ -66,7 +66,7 @@ fn refusals() -> Vec<GenError> {
                     plunge_feed: 100.0,
                     climb: true,
                     entry,
-                    helix_radius: 1.5,
+                    helix_radius: 1.5, blend_turns: false, blend_radius: None,
                 };
                 out.extend(slot(Point2::new(0.0, 0.0), Point2::new(40.0, 10.0), &p).err());
             }

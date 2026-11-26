@@ -99,13 +99,18 @@ mod descent;
 mod descent_place;
 mod entry;
 mod feed;
+mod floor_levels;
 mod hsm;
+mod level_side;
 mod ladder;
 mod level_ctx;
 mod open_side;
 mod params;
+mod reentry;
 mod rest;
 mod shell;
+mod short_moves;
+mod troch;
 
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -114,12 +119,14 @@ use {entry::*, feed::*, ladder::*, params::*, rest::*};
 mod tests;
 
 pub use entry::{
-    pocket3d, pocket3d_air_split, pocket3d_offset, pocket3d_offset_prev, pocket3d_offset_with_rest,
-    pocket3d_offset_with_rest_prev, pocket3d_open_prev, pocket3d_prev, pocket3d_with_rest,
-    pocket3d_with_rest_prev,
+    pocket3d, pocket3d_air_split, pocket3d_avoid, pocket3d_offset, pocket3d_offset_prev,
+    pocket3d_offset_with_rest, pocket3d_offset_with_rest_prev, pocket3d_open_avoid,
+    pocket3d_open_prev, pocket3d_prev, pocket3d_with_rest, pocket3d_with_rest_prev,
 };
 pub use feed::{engagement_on, optimize_feed, FFO_FLOOR};
 pub use open_side::{open_sides, stock_band, ADAPTIVE_BAND_PER_R, OPEN_SLACK};
 pub use hsm::{AIR_ENTRY, NARROW_HELIX, REST_RINGS, SHELL_RINGS};
+pub use level_side::PASS_START_ADAPTIVE_NOTE;
 pub use params::{engagement_step, Entry3D, Pocket3DParams};
 pub use rest::material_above;
+pub use troch::{TROCH_SETTINGS, pocket3d_trochoidal};

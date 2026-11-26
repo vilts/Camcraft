@@ -90,6 +90,7 @@ fn run_pocket3d(tool: Tool, holder: Vec<SpunPoint>, depth: f64) -> Result<(Toolp
     history.execute(&world, AddTool::new(&world, T31, tool).expect("tool"));
     history.execute(&world, SetToolBody::spun(&world, T31, Some(holder)).expect("holder"));
     let params = OpParams::Pocket3D {
+        pass_start: Default::default(),
         links: camcraft_app::links::Links::ROUGH3D,
         stepover: 2.0,
         stock_to_leave: 0.0,
@@ -108,6 +109,8 @@ fn run_pocket3d(tool: Tool, holder: Vec<SpunPoint>, depth: f64) -> Result<(Toolp
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         feed_opt: false,
         shell: false,
+        method: camcraft_app::machining2d::AdaptiveMethod::Spiral,
+        picks: Default::default(),
     };
     let mut o = op(SrcRef::Entity("cavity".into()), params, AreaControls::default());
     o.tool = T31.into();

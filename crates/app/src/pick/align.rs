@@ -63,7 +63,7 @@ pub fn align_321(world: &World, picks: &[GeoSel]) -> Result<Alignment, String> {
     let mut edge: Option<([f64; 3], [f64; 3])> = None; // (start, end)
     let mut origin: Option<[f64; 3]> = None;
     for g in picks {
-        match g.feature {
+        match &g.feature {
             FeatureSel::Face(_) => {
                 if let Some(p) = flat_face(world, g, crate::setup_align::view_pose)? {
                     if plane.replace(p).is_some() {
@@ -80,6 +80,12 @@ pub fn align_321(world: &World, picks: &[GeoSel]) -> Result<Alignment, String> {
                 }
             }
             FeatureSel::Vertex(_) => set_origin(&mut origin, vertex(world, g)?)?,
+            FeatureSel::SketchChain(_) | FeatureSel::SketchLayer(_) => {
+                return Err(format!(
+                    "{} is a DXF sketch feature and cannot set a 3-2-1 datum",
+                    super::geo_label(world, g)
+                ));
+            }
         }
     }
     let (p0, z) = plane.ok_or("pick a flat face - it sets the Z axis")?;
@@ -137,7 +143,7 @@ fn set_origin(slot: &mut Option<[f64; 3]>, p: [f64; 3]) -> Result<(), String> {
 /// own outside), not the feature's winding-free normal.
 fn flat_face(world: &World, g: &GeoSel, pose: PoseOf) -> Result<Option<Plane>, String> {
     let Some(n) = outward_normal(world, g, pose)? else { return Ok(None) };
-    let c = face_origin(world, &g.entity, g.feature).map_err(|why| why.to_owned())?;
+    let c = face_origin(world, &g.entity, g.feature.clone()).map_err(|why| why.to_owned())?;
     Ok(Some((c.centroid, n)))
 }
 
@@ -188,7 +194,7 @@ pub(crate) fn outward_normal(
 
 /// A curved face's centre (a full bore: its axis at mid-height).
 fn curved_center(world: &World, g: &GeoSel) -> Result<[f64; 3], String> {
-    face_origin(world, &g.entity, g.feature)
+    face_origin(world, &g.entity, g.feature.clone())
         .map(|c| c.centroid)
         .map_err(|why| format!("{}: {why}", super::geo_label(world, g)))
 }

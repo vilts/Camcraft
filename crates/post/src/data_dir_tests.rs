@@ -168,3 +168,59 @@ fn a_file_over_the_size_cap_is_refused_by_name() {
     assert!(why.starts_with("over.cps in ") && why.contains("byte limit - refused"), "{why}");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+/// #3028: an install folder with the exe and `assets/posts`, and a
+/// `bin` folder beside it, for the link and the copy.
+fn install_tree(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let root = scratch(tag);
+    let install = root.join("install");
+    std::fs::create_dir_all(install.join("assets").join("posts")).expect("assets/posts");
+    let exe = install.join("camcraft-cli");
+    std::fs::write(&exe, b"exe").expect("exe file");
+    let bin = root.join("bin");
+    std::fs::create_dir_all(&bin).expect("bin dir");
+    (root, exe, bin)
+}
+
+/// #3028: `camcraft-cli` on the PATH through a symbolic link finds the
+/// posts beside the real file, not beside the link.
+#[cfg(unix)]
+#[test]
+fn a_symlinked_exe_finds_the_assets_beside_the_real_file() {
+    let (root, exe, bin) = install_tree("symlink");
+    let link = bin.join("camcraft-cli");
+    std::os::unix::fs::symlink(&exe, &link).expect("symlink");
+    let real = real_exe(link.clone());
+    assert_eq!(real, std::fs::canonicalize(&exe).expect("real exe"), "the link resolves to the installed file");
+    let want = std::fs::canonicalize(exe.with_file_name("assets").join("posts")).expect("assets/posts");
+    assert_eq!(resolve("posts", Some(&real), None, Path::is_dir), Ok(want));
+    // Before the fix: the link path itself looks only beside the link.
+    let why = resolve("posts", Some(&link), None, Path::is_dir).expect_err("nothing beside the link");
+    assert!(why.contains(&bin.join("assets").join("posts").display().to_string()), "{why}");
+    // A chain of links resolves to the end.
+    let link2 = root.join("camcraft-cli-2");
+    std::os::unix::fs::symlink(&link, &link2).expect("second symlink");
+    assert_eq!(real_exe(link2), real);
+    // A link that does not resolve stays the link path: the refusal names its folder.
+    let dangling = bin.join("gone");
+    std::os::unix::fs::symlink(root.join("no-such-exe"), &dangling).expect("dangling symlink");
+    assert_eq!(real_exe(dangling.clone()), dangling);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// #3028: a plain copy of the exe is not a link, finds no assets, and the
+/// refusal says how to start the program instead.
+#[test]
+fn a_copied_exe_is_refused_with_the_fix() {
+    let (root, exe, bin) = install_tree("copy");
+    let copy = bin.join("camcraft-cli");
+    std::fs::copy(&exe, &copy).expect("copy exe");
+    assert_eq!(real_exe(copy.clone()), copy, "a plain file stays as it is");
+    assert_eq!(real_exe(exe.clone()), exe, "the installed file stays as it is");
+    let why = resolve("posts", Some(&copy), None, Path::is_dir).expect_err("no assets beside the copy");
+    assert!(why.starts_with("no posts folder found"), "{why}");
+    assert!(why.contains(&bin.join("assets").join("posts").display().to_string()), "{why}");
+    assert!(why.ends_with(COPY_HINT), "{why}");
+    assert!(COPY_HINT.contains("install folder") && COPY_HINT.contains("symbolic link"), "{COPY_HINT}");
+    let _ = std::fs::remove_dir_all(root);
+}

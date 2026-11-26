@@ -64,6 +64,7 @@ fn a_trace_under_stock_over_top_z_keeps_the_level_at_top_z() {
         plunge_feed: 200.0,
         climb: true,
         tilt: None,
+        picks: Default::default(),
     });
     assert_eq!(levels(&t), vec![18.0, 15.0, 12.0], "the first bite is 2 mm, not 5 mm");
 }
@@ -89,6 +90,7 @@ fn a_trochoidal_slot_under_stock_over_top_z_keeps_the_level_at_top_z() {
         return_feed: 2000.0,
         plunge_feed: 200.0,
         climb: true,
+        picks: Default::default(),
     });
     assert_eq!(levels(&t), vec![18.0, 15.0, 12.0], "the first bite is 2 mm, not 5 mm");
 }
@@ -99,7 +101,7 @@ fn a_trochoidal_slot_under_stock_over_top_z_keeps_the_level_at_top_z() {
 fn a_staged_face_under_stock_over_top_z_keeps_the_level_at_top_z() {
     let t = generated(OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 4.0,
         clearance_z: Height::fixed(30.0),
@@ -109,6 +111,7 @@ fn a_staged_face_under_stock_over_top_z_keeps_the_level_at_top_z() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     });
     assert_eq!(levels(&t), vec![18.0, 15.0, 12.0], "the first bite is 2 mm, not 5 mm");
 }
@@ -118,6 +121,7 @@ fn a_staged_face_under_stock_over_top_z_keeps_the_level_at_top_z() {
 #[test]
 fn a_vault_under_stock_over_top_z_cuts_its_rim_ring_at_top_z() {
     let t = generated(OpParams::Circular {
+        pass_start: Default::default(),
         links: camcraft_app::links::Links::PLANAR,
         center: Point2::new(0.0, 0.0),
         radius: 12.0,
@@ -135,6 +139,7 @@ fn a_vault_under_stock_over_top_z_cuts_its_rim_ring_at_top_z() {
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
         tilt: None,
+        picks: Default::default(),
     });
     assert_eq!(levels(&t).first().copied(), Some(18.0), "the rim ring cuts at Top Z");
 }
@@ -145,7 +150,7 @@ fn indexed_face(tilt: camcraft_app::operation::Tilt, stock_top: f64) {
     let top = stock_top - 2.0;
     let t = generated(OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: Some(tilt),
         stepover: 4.0,
         clearance_z: Height::fixed(70.0),
@@ -155,6 +160,7 @@ fn indexed_face(tilt: camcraft_app::operation::Tilt, stock_top: f64) {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     });
     let mut zs: Vec<f64> = t
         .moves

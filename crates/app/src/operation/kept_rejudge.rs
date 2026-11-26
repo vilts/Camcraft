@@ -62,10 +62,23 @@ fn part_problem(world: &World, name: &str, op: &Operation, path: &Toolpath, know
         Ok(job) => job,
         Err(e) => return Some(format!("{name}: the parts beside its source cannot be read again ({e}); regenerate it")),
     };
+    if matches!(op.params, super::OpParams::MultiAxisDeburr { .. }) {
+        // Posed moves have no column-stock verdict. Re-read the stock
+        // before accepting a cache, including stock changed after generation.
+        if let Err(e) = super::multiaxis_deburr_op::audit_stock(job.stock_facets.as_deref(), &job.material, job.frame.as_ref()) {
+            return Some(format!("{name}: {e}"));
+        }
+    }
     if job.keep_parts.is_empty() && job.neighbour_parts.is_empty() {
         return None;
     }
     let parts = keep_law::kept_parts_named(world, op.setup.as_deref(), &op.params, &op.src, job.part_solid);
+    // A cached posed deburr has no verdict for other parts imported or
+    // moved after generation. The upright solid judge cannot supply it.
+    if matches!(op.params, super::OpParams::MultiAxisDeburr { .. }) {
+        let part = parts.first().map_or("other kept parts", |(name, _)| name.as_str());
+        return Some(format!("{name}: Multi-Axis Deburr cannot judge the posed cutter against '{part}'; use a document with only the source part"));
+    }
     let geom = job.tool.geom();
     let holder = crate::tool_body::stack(&geom, job.body.as_ref()).with_neck(job.neck.clone());
     let cutter = verify::Cutter::of(&job.tool).with_body(&geom, &holder);
@@ -90,7 +103,7 @@ fn part_problem(world: &World, name: &str, op: &Operation, path: &Toolpath, know
     } else {
         Law::Keep
     };
-    let budget = job.hs.top.zip(job.hs.bottom).map_or(0.0, |(t, b)| mark_law::budget(t, b, job.tool.diameter * 0.5));
+    let budget = job.hs.top.zip(job.hs.bottom).map_or(0.0, |(t, b)| mark_law::budget(t, b, mark_law::cutter_depth_limit(&job.params, &job.tool)));
     // The thread grant generation gave (#1071 x #1205): only over round walls.
     let thread_bores = if law == Law::Hole { super::thread_op::bores(&job.tool, &job.params, thread_round(&job)) } else { Vec::new() };
     // The laws run in the frame generation judged in: a 3+2 op's local one.
@@ -105,11 +118,11 @@ fn part_problem(world: &World, name: &str, op: &Operation, path: &Toolpath, know
                     let mut w = Vec::new();
                     match law {
                         Law::Mark => {
-                            mark_law::mark_into(&mut w, judged, &facets, c, budget, excess);
+                            mark_law::mark_into(&mut w, judged, &facets, c, budget, excess, job.material.file_tolerance);
                         }
-                        Law::Hole => contain_into(&mut w, judged, &facets, c, DepthLaw::Contain, stl, excess, &job.params, bores),
+                        Law::Hole => contain_into(&mut w, judged, &facets, c, DepthLaw::Contain, stl, excess, job.material.file_tolerance, &job.params, bores),
                         _ => {
-                            contain_into(&mut w, judged, &facets, c, DepthLaw::Keep, stl, excess, &job.params, &[]);
+                            contain_into(&mut w, judged, &facets, c, DepthLaw::Keep, stl, excess, job.material.file_tolerance, &job.params, &[]);
                             super::keep_law::note_stock_chamfer_gouges(&job.params, job.part_solid, &mut w);
                         }
                     }

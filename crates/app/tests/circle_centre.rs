@@ -144,7 +144,7 @@ fn an_elliptical_rim_and_a_face_are_refused_never_guessed() {
     let why = circle_of_edge(&g, edge).expect_err("an ellipse is not a circle");
     assert_eq!(why, CircleRefusal::NotCircular, "{why}");
 
-    let face = g.faces.iter().find_map(|f| f.sel).expect("a face key");
+    let face = g.faces.iter().find_map(|f| f.sel.clone()).expect("a face key");
     let pick = GeoSel { entity: "plate".into(), feature: face };
     let why = circle_centre(&world, &pick).expect_err("a face is no edge");
     assert!(matches!(why, CircleRefusal::NotAnEdge(_)) && why.to_string().contains("not an edge"), "{why}");
@@ -175,7 +175,7 @@ fn the_anchor_command_places_the_origin_and_undo_restores_the_previous_one() {
 
     // A refusal never builds a command, so nothing lands in the history.
     let g = pick::graph_of(&world, "plate").expect("graph");
-    let face = g.faces.iter().find_map(|f| f.sel).expect("a face key");
+    let face = g.faces.iter().find_map(|f| f.sel.clone()).expect("a face key");
     let refused = SetWcsAtCircleCentre::new(&world, &GeoSel { entity: "plate".into(), feature: face }, IDENTITY_Q);
     assert!(refused.is_err_and(|e| e.to_string().contains("not an edge")));
 }

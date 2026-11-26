@@ -42,10 +42,11 @@ pub struct WireContourDto {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub condition: String,
     pub side: WireSideDto,
-    /// The start hole / threading point, `[x, y]` mm; absent is not
-    /// stated.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Legacy pre-#3339 start hole, read on load and migrated into `picks`.
+    #[serde(default, skip_serializing)]
     pub start: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+    pub picks: PathPicksDto,
     /// The tabs (#539); absent is off. Each key inside is optional in
     /// the file so a missing one is refused by name at generation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -53,6 +54,10 @@ pub struct WireContourDto {
     /// The operator states the slug is caught; absent is not (#539).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub capture: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub both_pieces_restrained: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub stock_centered_in_xy_travel: bool,
     /// The constant taper, degrees (#536); absent is a vertical cut, so
     /// every file written before it reads unchanged.
     #[serde(default, skip_serializing_if = "is_zero")]
@@ -73,6 +78,14 @@ pub struct WireContourDto {
     /// file written before it reads unchanged.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub four_axis: Option<WireFourAxisDto>,
+    /// Sharp inside corners at the wire's radius (#3207); absent is
+    /// off, so every file written before it reads unchanged.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sharp_corners: bool,
+    /// The tangent arc lead's radius, mm (#3991); absent is the straight
+    /// lead, so every file written before it reads unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lead_arc_radius: Option<f64>,
 }
 
 /// One skim: its condition id (stated - no default) and whether it
@@ -164,7 +177,8 @@ impl WireContourDto {
                 WireSide::Left => WireSideDto::Left,
                 WireSide::Right => WireSideDto::Right,
             },
-            start: p.start,
+            start: None,
+            picks: PathPicksDto::from_picks(&p.picks),
             tabs: p.tabs.as_ref().map(|t| WireTabsDto {
                 count: t.count,
                 width: t.width,
@@ -172,6 +186,8 @@ impl WireContourDto {
                 cutoff_condition: t.cutoff_condition.clone(),
             }),
             capture: p.capture,
+            both_pieces_restrained: p.both_pieces_restrained,
+            stock_centered_in_xy_travel: p.stock_centered_in_xy_travel,
             taper_deg: p.taper_deg,
             four_axis: p.four_axis.as_ref().map(|f| WireFourAxisDto {
                 pairing: match f.pairing {
@@ -189,6 +205,8 @@ impl WireContourDto {
             burnout_clearance: p.burnout,
             clearance: p.clearance,
             skims: p.skims.iter().map(|s| WireSkimDto { condition: s.condition.clone(), reverse: s.reverse }).collect(),
+            sharp_corners: p.sharp_corners,
+            lead_arc_radius: p.lead_arc_radius,
         }
     }
 
@@ -203,7 +221,7 @@ impl WireContourDto {
                 WireSideDto::Left => WireSide::Left,
                 WireSideDto::Right => WireSide::Right,
             },
-            start: self.start,
+            picks: self.picks.with_legacy(self.start, None),
             tabs: self.tabs.as_ref().map(|t| WireTabs {
                 count: t.count,
                 width: t.width,
@@ -211,6 +229,8 @@ impl WireContourDto {
                 cutoff_condition: t.cutoff_condition.clone(),
             }),
             capture: self.capture,
+            both_pieces_restrained: self.both_pieces_restrained,
+            stock_centered_in_xy_travel: self.stock_centered_in_xy_travel,
             taper_deg: self.taper_deg,
             four_axis: self.four_axis.as_ref().map(|f| WireFourAxis {
                 pairing: match f.pairing {
@@ -228,6 +248,8 @@ impl WireContourDto {
             burnout: self.burnout_clearance,
             clearance: self.clearance,
             skims: self.skims.iter().map(|s| WireSkim { condition: s.condition.clone(), reverse: s.reverse }).collect(),
+            sharp_corners: self.sharp_corners,
+            lead_arc_radius: self.lead_arc_radius,
         })
     }
 }
@@ -239,18 +261,25 @@ mod tests {
 
     fn op(tabs: Option<WireTabs>, capture: bool) -> WireContourOp {
         WireContourOp {
+            lead_arc_radius: None,
             top_z: Height::fixed(12.0),
             bottom_z: Height::fixed(0.0),
             condition: "C110".into(),
             side: WireSide::Die,
-            start: Some([0.0, 0.0]),
+            picks: crate::path_picks::PathPicks {
+                start: vec![crate::path_picks::PathPick::xy(Point2::new(0.0, 0.0))],
+                exit: Vec::new(),
+            },
             tabs,
             capture,
+            both_pieces_restrained: false,
+            stock_centered_in_xy_travel: false,
             taper_deg: 0.0,
             four_axis: None,
             burnout: None,
             clearance: crate::operation::DEFAULT_CLEARANCE,
             skims: Vec::new(),
+            sharp_corners: false,
         }
     }
 
@@ -274,5 +303,35 @@ mod tests {
         .expect("a partial tab statement loads");
         let OpParams::WireContour(p) = partial.to_params() else { unreachable!() };
         assert!(p.tabs.is_some_and(|t| t.width.is_none()));
+    }
+
+    #[test]
+    fn cutoff_setup_statements_round_trip_and_old_files_have_neither() {
+        let mut original = op(None, false);
+        original.side = WireSide::Right;
+        original.picks.start.clear();
+        let old = serde_json::to_string(&WireContourDto::from_op(&original)).unwrap();
+        assert!(!old.contains("both_pieces_restrained"));
+        assert!(!old.contains("stock_centered_in_xy_travel"));
+        assert_eq!(serde_json::from_str::<WireContourDto>(&old).unwrap().to_params(), OpParams::WireContour(original.clone()));
+        original.both_pieces_restrained = true;
+        original.stock_centered_in_xy_travel = true;
+        let saved = serde_json::to_string(&WireContourDto::from_op(&original)).unwrap();
+        assert_eq!(serde_json::from_str::<WireContourDto>(&saved).unwrap().to_params(), OpParams::WireContour(original));
+    }
+
+    /// #3991: the straight lead writes no key (no existing file changes),
+    /// a file without the key reads the straight lead, and a stated arc
+    /// lead radius round-trips.
+    #[test]
+    fn the_arc_lead_radius_round_trips_and_is_absent_for_the_straight_lead() {
+        let straight = op(None, true);
+        let text = serde_json::to_string(&WireContourDto::from_op(&straight)).unwrap();
+        assert!(!text.contains("lead_arc_radius"), "{text}");
+        assert_eq!(serde_json::from_str::<WireContourDto>(&text).unwrap().to_params(), OpParams::WireContour(straight.clone()));
+        let arc = WireContourOp { lead_arc_radius: Some(0.75), ..straight };
+        let text = serde_json::to_string(&WireContourDto::from_op(&arc)).unwrap();
+        assert!(text.contains(r#""lead_arc_radius":0.75"#), "{text}");
+        assert_eq!(serde_json::from_str::<WireContourDto>(&text).unwrap().to_params(), OpParams::WireContour(arc));
     }
 }

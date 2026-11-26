@@ -1,0 +1,6 @@
+; waterjet-iso.cps refused css_then_live: 5 warning(s), the program is never released
+warning: operation Cross mill: is C-axis live-tool work (the spindle turns as C under a radial live tool), but this post script does not declare liveTooling - use a lathe post that voices the C axis
+warning: operation Face CSS: states 1200 rpm - a waterjet turns no spindle (no S word, no G95 feed per revolution)
+warning: operation Face CSS: states a constant surface speed - a waterjet turns no spindle (no G96)
+warning: the generic waterjet post writes jet words (water and abrasive M-codes) only a waterjet table reads - TESTBENCH MILL-TURN LIVE is not declared a waterjet machine
+warning: operation Cross mill: states 3000 rpm - a waterjet turns no spindle (no S word, no G95 feed per revolution)

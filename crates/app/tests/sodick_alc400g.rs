@@ -35,10 +35,34 @@ fn the_machine_file_states_only_the_published_figures() {
     }
     let raw: serde_json::Value = serde_json::from_str(text()).expect("json");
     assert_eq!(raw["edm"]["max_taper_deg"].as_f64(), Some(25.0));
-    // What no public source gives is left out, never guessed.
-    for key in ["lower_guide_z", "upper_guide_z", "awt", "conditions", "wire_diameters", "codes"] {
+    // What no public source gives and no first cut needs is left out.
+    for key in ["wire_diameters", "codes"] {
         assert!(raw["edm"].get(key).is_none(), "edm.{key} has no public source");
     }
+}
+
+/// #3214: the file ships a starter set so that a first Wire Contour can
+/// generate and post. Each value is marked as an example to replace.
+#[test]
+fn the_shipped_starter_set_is_marked_as_examples_to_replace() {
+    let raw: serde_json::Value = serde_json::from_str(text()).expect("json");
+    let edm = &raw["edm"];
+    let conds = edm["conditions"].as_array().expect("edm.conditions is stated");
+    assert!(conds.len() >= 2, "{conds:?}");
+    for c in conds {
+        let id = c["id"].as_str().expect("id");
+        // The Sodick post reads C and three digits only.
+        assert!(id.len() == 4 && id.starts_with('C') && id[1..].chars().all(|d| d.is_ascii_digit()), "{id}");
+        let notes = c["notes"].as_str().unwrap_or_default();
+        assert!(notes.contains("EXAMPLE") && notes.contains("replace"), "{id}: {notes}");
+        assert!(c["gap"].as_f64().is_some() && c["wire_diameter"].as_f64().is_some(), "{id}");
+    }
+    let roles: Vec<&str> = conds.iter().filter_map(|c| c["role"].as_str()).collect();
+    assert!(roles.contains(&"rough") && roles.contains(&"skim"), "{roles:?}");
+    assert!(edm["lower_guide_z"].as_f64().is_some() && edm["upper_guide_z"].as_f64().is_some());
+    assert_eq!(edm["awt"].as_bool(), Some(true));
+    let about = raw["general"]["description"].as_str().expect("description");
+    assert!(about.contains("EXAMPLE") && about.contains("replace"), "{about}");
 }
 
 fn find_axis<'a>(parts: &'a serde_json::Value, id: &str) -> Option<&'a serde_json::Value> {
@@ -89,18 +113,22 @@ fn punch_world(machine_text: &str, condition: &str, taper_deg: f64) -> Result<fl
     );
     h.execute(&world, ImportModel::from_mesh("slug", slug()));
     let op = WireContourOp {
+        lead_arc_radius: None,
         top_z: Height::fixed(12.0),
         bottom_z: Height::fixed(0.0),
         condition: condition.into(),
         side: WireSide::Punch,
-        start: Some([-30.0, 0.0]),
+        picks: camcraft_app::path_picks::PathPicks { start: vec![camcraft_app::path_picks::PathPick::xy(camcraft_app::geo2d::Point2::new(-30.0, 0.0))], exit: Vec::new() },
         tabs: None,
         capture: true,
+        both_pieces_restrained: false,
+        stock_centered_in_xy_travel: false,
         taper_deg,
         four_axis: None,
         burnout: None,
         clearance: operation::DEFAULT_CLEARANCE,
         skims: Vec::new(),
+        sharp_corners: false,
     };
     let c = CreateOperation::new(&world, "Punch1", "EDM-W025", SrcRef::Entity("slug".into()), OpParams::WireContour(op)).map_err(|e| format!("{e:?}"))?;
     h.execute(&world, c);
@@ -108,32 +136,51 @@ fn punch_world(machine_text: &str, condition: &str, taper_deg: f64) -> Result<fl
     Ok(world)
 }
 
-/// No public source gives a cutting condition, so the shipped file states
-/// none and the app refuses a wire cut by name until the user adds theirs.
-#[test]
-fn the_shipped_file_refuses_a_cut_until_the_user_states_a_condition() {
-    let e = punch_world(text(), "C110", 0.0).expect_err("no condition is stated");
-    assert!(e.contains("states no EDM condition") && e.contains("edm.conditions"), "{e}");
+fn post_sodick(world: &flecs_ecs::prelude::World, tag: &str) -> Result<String, String> {
+    let cps = camcraft_app::posting::builtin_post_text(SODICK).expect("registered");
+    let out = std::env::temp_dir().join(format!("camcraft-alc400g-{tag}-{}.nc", std::process::id()));
+    let posted = posting::post_script(world, &out, cps);
+    let _ = std::fs::remove_file(&out);
+    posted.map(|p| p.program).map_err(|e| format!("{e:?}"))
 }
 
-/// Done means: a punch posts through the Sodick post on this machine,
-/// once the user adds a condition from their control's table.
+/// #3214: the shipped file as it is - no edit by the user - lets a first
+/// Wire Contour generate and post, on an example condition.
+#[test]
+fn a_first_wire_contour_generates_and_posts_on_the_shipped_file() {
+    let world = punch_world(text(), "C110", 0.0).expect("the shipped example condition admits the punch");
+    let text = post_sodick(&world, "shipped").expect("the punch posts");
+    let has = |w: &str| text.lines().any(|l| l == w);
+    assert!(has("G21") && has("C110") && has("M02"), "{text}");
+    // The file states AWT, so the post threads and cuts the wire.
+    assert!(has("T91") && has("T90"), "{text}");
+    // The kerf offset used the example row's gap: the program says so,
+    // so a user who did not edit the file cannot cut it unwarned.
+    assert!(
+        has("(WARNING CONDITION C110 IS AN EXAMPLE ROW - THE KERF USES AN EXAMPLE GAP OF 0.040 MM - REPLACE IT BEFORE CUTTING)"),
+        "{text}"
+    );
+}
+
+/// The guide's procedure: the user replaces the example table with the
+/// rows of their own control. Their condition posts; an example id that
+/// is gone from the table is refused by name.
 #[test]
 fn a_punch_posts_through_the_sodick_post_on_it() {
     let mut raw: serde_json::Value = serde_json::from_str(text()).expect("json");
     raw["edm"]["conditions"] = serde_json::json!([
-        { "id": "C110", "name": "test row", "gap": 0.04, "wire_diameter": 0.25, "role": "rough", "notes": "TEST ONLY - not a Sodick figure" }
+        { "id": "C210", "name": "test row", "gap": 0.04, "wire_diameter": 0.25, "role": "rough", "notes": "TEST ONLY - not a Sodick figure" }
     ]);
-    let world = punch_world(&raw.to_string(), "C110", 0.0).expect("the user's condition lets the punch generate");
-    let cps = camcraft_app::posting::builtin_post_text(SODICK).expect("registered");
-    let out = std::env::temp_dir().join(format!("camcraft-alc400g-{}.nc", std::process::id()));
-    let posted = posting::post_script(&world, &out, cps);
-    let _ = std::fs::remove_file(&out);
-    let text = posted.expect("the punch posts").program;
+    let world = punch_world(&raw.to_string(), "C210", 0.0).expect("the user's condition lets the punch generate");
+    let text = post_sodick(&world, "own").expect("the punch posts");
     let has = |w: &str| text.lines().any(|l| l == w);
-    assert!(has("G21") && has("C110") && has("M02"), "{text}");
-    // No AWT is stated for this model, so no thread / cut words are written.
-    assert!(!has("T91") && !has("T90"), "{text}");
+    assert!(has("G21") && has("C210") && has("M02"), "{text}");
+    // The user's own row: its gap is stated to compare with the control,
+    // and no example warning is written.
+    assert!(has("(CONDITION C210 KERF GAP 0.040 MM - COMPARE WITH THE CONTROL ROW)"), "{text}");
+    assert!(!text.contains("EXAMPLE"), "{text}");
+    let e = punch_world(&raw.to_string(), "C110", 0.0).expect_err("the example row was replaced");
+    assert!(e.contains("C110"), "{e}");
 }
 
 /// Refs #1800: the file states a taper limit (`edm.max_taper_deg`) but no
@@ -142,30 +189,30 @@ fn a_punch_posts_through_the_sodick_post_on_it() {
 /// defence in depth (`wire_edm.rs`: no guide heights, no taper limit, or a
 /// lean over the limit). The Sodick post also writes a vertical 2-axis cut
 /// only (#1800). This pins the two guide-height refusals (#1856).
+/// #3214: the shipped file now states example guide heights, so the door
+/// admits a taper inside the limit and the Sodick post's own 2-axis
+/// refusal still blocks it; a file with the guide heights taken out keeps
+/// the two guide-height refusals.
 #[test]
 fn a_tapered_punch_is_refused_at_post_while_the_file_states_no_guide_heights() {
     const NO_GUIDES: &str = "states no edm.lower_guide_z and edm.upper_guide_z";
+    // The shipped file: the door admits 5 deg, the Sodick post refuses it.
+    let world = punch_world(text(), "C110", 5.0).expect("the example guide heights admit the taper");
+    let err = post_sodick(&world, "taper-shipped").expect_err("the Sodick post writes a vertical cut only");
+    assert!(err.contains("is tapered") && err.contains("vertical 2-axis cut only"), "{err}");
     let mut raw: serde_json::Value = serde_json::from_str(text()).expect("json");
-    raw["edm"]["conditions"] = serde_json::json!([
-        { "id": "C110", "name": "test row", "gap": 0.04, "wire_diameter": 0.25, "role": "rough", "notes": "TEST ONLY - not a Sodick figure" }
-    ]);
-    let shipped = raw.to_string();
+    let edm = raw["edm"].as_object_mut().expect("edm");
+    edm.remove("lower_guide_z");
+    edm.remove("upper_guide_z");
+    let unguided = raw.to_string();
     // The door: 5 deg is inside the 25 deg limit, but no guide heights are stated.
-    let e = punch_world(&shipped, "C110", 5.0).expect_err("the door refuses a taper on this file");
+    let e = punch_world(&unguided, "C110", 5.0).expect_err("the door refuses a taper on this file");
     assert!(e.contains(NO_GUIDES) && e.contains("set the taper to 0"), "{e}");
-    // The post: the op is made where guide heights are stated (TEST ONLY
-    // figures), then the shipped file is mounted. The post must refuse.
-    let mut guided = raw.clone();
-    guided["edm"]["lower_guide_z"] = serde_json::json!(-5.0);
-    guided["edm"]["upper_guide_z"] = serde_json::json!(25.0);
-    let world = punch_world(&guided.to_string(), "C110", 5.0).expect("stated guide heights admit the taper");
+    // The post: the op is made on the shipped file (guide heights stated),
+    // then the file without them is mounted. The post must refuse.
     let mut h = History::default();
-    let m = parse_mch(&shipped).expect("parses");
+    let m = parse_mch(&unguided).expect("parses");
     h.execute(&world, LoadMachine::new(&world, "alc400g.mch".into(), Some(m)).expect("remount"));
-    let cps = camcraft_app::posting::builtin_post_text(SODICK).expect("registered");
-    let out = std::env::temp_dir().join(format!("camcraft-alc400g-taper-{}.nc", std::process::id()));
-    let posted = posting::post_script(&world, &out, cps);
-    let _ = std::fs::remove_file(&out);
-    let err = format!("{:?}", posted.expect_err("a taper cannot post on this file"));
+    let err = post_sodick(&world, "taper-unguided").expect_err("a taper cannot post on this file");
     assert!(err.contains(NO_GUIDES), "{err}");
 }

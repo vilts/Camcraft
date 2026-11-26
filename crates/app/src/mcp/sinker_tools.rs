@@ -83,6 +83,9 @@ fn electrode_from_faces(env: &mut Env, a: &Map<String, Value>) -> Result<Value, 
         "burn": {
             "x": fnum(e.center.0), "y": fnum(e.center.1),
             "cavity_x": fnum(e.cavity.0), "cavity_y": fnum(e.cavity.1),
+            "cavity_outline": e.body.then(|| {
+                e.ring.iter().map(|p| [p.x - e.center.0, p.y - e.center.1]).collect::<Vec<_>>()
+            }),
             "depth": fnum(e.depth),
             "top_z": { "reference": "fixed", "offset": fnum(e.top_z) },
             "floor_z": { "reference": "fixed", "offset": fnum(e.floor_z) },

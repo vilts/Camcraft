@@ -51,7 +51,7 @@ impl LoadMachine {
     /// the file: a machine that loads from nowhere is the silent wrong
     /// answer wearing a setup change.
     pub fn from_file(world: &World, path: &std::path::Path) -> Result<Self, CommandError> {
-        let text = std::fs::read_to_string(path)
+        let text = crate::session_files::read_machine(path)
             .map_err(|e| CommandError::Invalid(format!("machine file {}: {e}", path.display())))?;
         let m = crate::machine::parse_mch(&text).map_err(|e| CommandError::Invalid(format!("{}: {e}", path.display())))?;
         Self::new(world, path.display().to_string(), Some(m))

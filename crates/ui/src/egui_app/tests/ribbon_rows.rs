@@ -11,7 +11,7 @@ use crate::egui_app::theme::{Tokens, ribbon_h};
 
 /// Text height of one line: the egui line box is about 1.2 to 1.3 times
 /// the font size, so 1.3 is the estimate here.
-fn line_h(px: f32) -> f32 {
+pub(super) fn line_h(px: f32) -> f32 {
     px * 1.3
 }
 
@@ -23,7 +23,7 @@ fn theme_tokens(file: &str) -> Tokens {
     }
 }
 
-fn each_theme() -> [(&'static str, Tokens); 2] {
+pub(super) fn each_theme() -> [(&'static str, Tokens); 2] {
     [("horizon-day", theme_tokens("horizon-day.json")), ("teal-night", theme_tokens("teal-night.json"))]
 }
 

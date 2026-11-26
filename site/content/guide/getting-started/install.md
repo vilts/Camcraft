@@ -8,7 +8,7 @@ aliases = ["guide/install/"]
 Releases are published on the
 [GitHub releases page](https://github.com/NeoTech/Camcraft/releases). Each
 release carries builds for Windows x64, Linux x86_64, macOS (universal, Apple
-Silicon and Intel), FreeBSD amd64 and Arch Linux.
+Silicon and Intel) and Arch Linux.
 
 ## Windows
 
@@ -36,18 +36,17 @@ problem, see [Windows troubleshooting](@/guide/reference/windows-troubleshooting
 ## macOS
 
 Open the DMG and drag `CamCraft.app` to Applications, or extract the ZIP.
-The app is ad-hoc signed and not notarized, so the first launch may need
-Control-click, then **Open**.
+Releases built with Developer ID credentials are signed and notarized.
+Other builds use ad hoc signing. If macOS 15 or later blocks an ad hoc
+release, first try to open the app. If you trust the download, go to
+**System Settings → Privacy & Security** and choose **Open Anyway**.
+See [Apple's first-launch instructions](https://support.apple.com/en-us/102445).
 
 The app runs from `CamCraft.app/Contents/MacOS/camcraft-ui`. The
 command-line tool (`camcraft-cli`) and the post processor (`post`) sit in
 the same `MacOS` folder. The release files are `camcraft-<version>-macos-universal.dmg`
 (the disk image) and `camcraft-<version>-macos-universal.zip` (the portable
 archive, which holds `CamCraft.app`).
-
-## FreeBSD
-
-Extract the `freebsd-amd64.tar.gz` archive and run `camcraft-ui` from it.
 
 ## What is in the archives
 

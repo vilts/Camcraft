@@ -38,7 +38,7 @@ fn tilted_face_world() -> (World, History) {
     let params = OpParams::Face {
         holes: Default::default(),
         tilt: Some(tilt),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
         cut_z: Height::fixed(19.5),
@@ -47,6 +47,7 @@ fn tilted_face_world() -> (World, History) {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     let op = CreateOperation::new(&world, "Face1", "EM-0400-2FL", SrcRef::Stock, params);
     history.execute(&world, op.expect("tilted face op"));

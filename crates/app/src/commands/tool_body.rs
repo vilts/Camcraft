@@ -79,9 +79,10 @@ pub(crate) fn library_body(
     let e = holder_library::resolve(entry, tool.shank_d).map_err(invalid)?;
     e.fits_shank(tool.shank_d).map_err(invalid)?;
     let nose = projection.unwrap_or(tool.flute_len + tool.shank_len);
-    let points = e.points(nose, gauge_len.unwrap_or(e.gauge_len)).map_err(invalid)?;
-    let spun = SpunProfile::new(points).map_err(|e| CommandError::Invalid(format!("tool '{name}': holder profile: {e}")))?;
-    let body = tool_body::build_spun(spun);
+    // #2016: the tool keeps the reference (the entry's exact name and
+    // the two lengths, stated in full); the body is drawn from it.
+    let reference = holder_library::HolderRef::to(&e, gauge_len.unwrap_or(e.gauge_len), nose);
+    let body = tool_body::build_library(&reference).map_err(|e| CommandError::Invalid(format!("tool '{name}': {e}")))?;
     tool_body::fits(tool, &body).map_err(|e| CommandError::Invalid(format!("tool '{name}': {e}")))?;
     Ok(body)
 }
@@ -132,22 +133,35 @@ impl SetToolBody {
         };
         let tool = model::tool_of(world, &entity)
             .ok_or_else(|| CommandError::Invalid(format!("'{name}' is not a tool")))?;
+        let prev = tool_body::body_of(world, &entity);
         let next = match points {
             None => None,
             Some(p) => {
                 let spun = SpunProfile::new(p)
                     .map_err(|e| CommandError::Invalid(format!("tool '{name}': holder profile: {e}")))?;
-                let body = tool_body::build_spun(spun);
+                let mut body = tool_body::build_spun(spun);
                 tool_body::fits(&tool, &body).map_err(|e| CommandError::Invalid(format!("tool '{name}': {e}")))?;
+                // #2016: the outline of the library holder the tool
+                // already sits in, applied unchanged, is still that
+                // holder: the reference stays. Any edit of a point
+                // makes it a custom holder (a drawn copy).
+                if let Some(held) = &prev
+                    && held.library.is_some()
+                    && held.spun == body.spun
+                {
+                    body.library = held.library.clone();
+                }
                 Some(body)
             }
         };
-        Ok(SetToolBody { name: name.to_string(), prev: tool_body::body_of(world, &entity), next })
+        Ok(SetToolBody { name: name.to_string(), prev, next })
     }
 
-    /// #793: drop a built-in library holder (`camcraft_tools::
-    /// holder_library`, "BT30 ER20") into tool `name`'s holder as a
-    /// drawn spun profile - one undo step, editable afterwards like any
+    /// #793: set a built-in library holder (`camcraft_tools::
+    /// holder_library`, "BT30 ER20") as tool `name`'s holder - one undo
+    /// step. #2016: the tool keeps the reference to the entry (its
+    /// name, the gauge length and the projection), not a copy of its
+    /// outline; editing the outline afterwards makes it a custom
     /// drawn profile. `gauge_len` (gauge line to nose face) defaults to
     /// the entry's; `projection` (nose face above the tip) to the
     /// tool's flute plus shank length. Refused by name: no such tool or

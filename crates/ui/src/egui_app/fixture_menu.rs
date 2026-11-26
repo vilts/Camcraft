@@ -42,7 +42,27 @@ pub(crate) fn menu_rows(state: &State, target: &TreeMenuTarget) -> Vec<(String, 
                 };
                 (label, CommandKind::TagFixture { name: name.clone(), setup })
             };
-            vec![("Fixture".to_owned(), None), (verb.0, Some(verb.1))]
+            let mut rows = vec![
+                ("Fixture".to_owned(), None),
+                (verb.0, Some(verb.1)),
+                ("Delete".to_owned(), Some(CommandKind::DeleteByName(name.clone()))),
+            ];
+            // #2463: a linked model offers Unlink.
+            if let Some(src) = camcraft_app::model_source::of(w, &e) {
+                let file = std::path::Path::new(&src.path).file_name().map_or(src.path.clone(), |f| f.to_string_lossy().into_owned());
+                rows.push(("Source".to_owned(), None));
+                rows.push((format!("Unlink from {file}"), Some(CommandKind::UnlinkModel(name.clone()))));
+            }
+            rows
+        }
+        TreeMenuTarget::Tool { name, .. } => {
+            if model::find_by_name(w, name).and_then(|e| model::tool_of(w, &e)).is_none() {
+                return Vec::new();
+            }
+            vec![
+                ("Tool".to_owned(), None),
+                ("Delete".to_owned(), Some(CommandKind::DeleteTool(name.clone()))),
+            ]
         }
         TreeMenuTarget::Fixtures(s) => vec![
             ("Fixtures".to_owned(), None),
@@ -70,11 +90,16 @@ fn anchor_row(target: &TreeMenuTarget, leaves: &[Leaf]) -> Option<usize> {
             })
         }
         TreeMenuTarget::Fixtures(s) => leaves.iter().position(|l| *l == Leaf::Page(s.clone(), SetupPage::Fixtures)),
+        TreeMenuTarget::Tool { name, row } => {
+            (leaves.get(*row) == Some(&Leaf::Tool(name.clone()))).then_some(*row).or_else(|| {
+                leaves.iter().position(|l| *l == Leaf::Tool(name.clone()))
+            })
+        }
         TreeMenuTarget::Operation(_) | TreeMenuTarget::Operations | TreeMenuTarget::Entry(_) => None,
     }
 }
 
-/// Draw the menu for a model or Fixtures target; a click queues its
+/// Draw the menu for a model, tool or Fixtures target; a click queues its
 /// command and closes the menu.
 pub(super) fn fixture_menu(ui: &mut Ui, state: &mut State, pal: &Tokens, rect: Rect, leaves: &[Leaf], target: &TreeMenuTarget) {
     let lines = menu_rows(state, target);

@@ -84,7 +84,7 @@ fn the_setup_machine_page_picks_its_own_machine_from_the_library() {
 fn face() -> OpParams {
     OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(45.0),
@@ -94,6 +94,7 @@ fn face() -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 

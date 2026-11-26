@@ -120,6 +120,7 @@ fn facing_params(facing_z: f64) -> OpParams {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     }
 }
 
@@ -199,8 +200,10 @@ fn a_lathe_shuts_the_mill_door_and_a_millturn_opens_both() {
         tab_height: 0.0,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     };
     let Err(err) = CreateOperation::new(&world, "C1", "EM-0400-2FL", SrcRef::Stock, contour.clone())
     else {

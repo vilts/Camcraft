@@ -1,0 +1,20 @@
+// Original straight cutoff. The retained part and the offcut are clamped separately.
+cam.call("load_machine", {builtin: "AGIECUT Classic 2S (template)"});
+cam.call("edit_machine", {patch: {edm: {conditions: [{
+  id: "AGIE_QN2", role: "rough", gap: 0.005, wire_diameter: 0.25
+}]}}});
+cam.call("add_tool", {catalog: "EDM-W025"});
+cam.import("examples/agie/cutoff-upper.obj", "part");
+cam.call("set_stock", {box: {dx: 80, dy: 60, dz: 20}});
+cam.call("set_wcs", {origin: [0, 0, 20]});
+const chains = cam.call("list_features", {model: "part", kinds: ["chains"]}).chains;
+const edge = chains.find(c => c.start[1] === 6 && c.end[1] === 6 &&
+    c.start[2] === 20 && c.end[2] === 20);
+const forward = edge.end[0] > edge.start[0];
+cam.call("add_operation", {kind: "Wire Contour", name: "Cutoff1", source: "part", tool: "EDM-W025",
+  params: {side: forward ? "right" : "left", condition: "AGIE_QN2", top_z: 20, bottom_z: 0,
+    both_pieces_restrained: true, stock_centered_in_xy_travel: true}
+});
+cam.call("set_operation_geometry", {operation: "Cutoff1", picks: [{model: "part", id: edge.id}]});
+cam.generate();
+cam.post({to: "UPPER20", cps: "Native wire EDM job files", options: {separationLengthMm: 0}});

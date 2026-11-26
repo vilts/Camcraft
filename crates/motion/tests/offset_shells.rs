@@ -120,6 +120,7 @@ fn dome() -> Vec<Triangle> {
 
 fn params(entry: Entry3D, helix_radius: f64) -> Pocket3DParams {
     Pocket3DParams {
+        pass_start: Default::default(),
         links: camcraft_motion::links::Links::ROUGH3D,
         tool_diameter: 8.0,
         stepover: 3.0,

@@ -47,7 +47,8 @@ pub(super) fn trochoid_params(b: f64, p: &PocketParams, t: &AdaptiveTrochParams)
         retract_z: p.retract_z,
         top_z: p.top_z,
         bottom_z: p.bottom_z,
-        stepdown: p.stepdown,
+        // #2012: the lane's own ladder walks the pocket's ladder mode.
+        stepdown: super::equal_steps::ladder_stepdown(&p.links.approach, p.top_z, p.bottom_z, p.stepdown),
         feed: p.feed,
         return_feed: t.return_feed.unwrap_or(p.feed),
         plunge_feed: p.plunge_feed,

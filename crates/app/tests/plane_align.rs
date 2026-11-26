@@ -219,7 +219,7 @@ fn every_pick_that_sets_no_plane_is_refused_by_name() {
     let at = Location { pos: Point3::new(10.0, 10.0, -1.0), ..Default::default() };
     h.execute(&w, SetStock::new(&w, StockShape::Box { dx: 30.0, dy: 30.0, dz: 12.0 }, at).expect("stock"));
     let stock = camcraft_app::setup::stock_entity_name(&w, Some("Setup1"));
-    let on_stock = GeoSel { entity: stock, feature: top.feature };
+    let on_stock = GeoSel { entity: stock, feature: top.feature.clone() };
     says(&w, &[on_stock], "is not the part");
     says(&w, &[GeoSel { entity: "nothing".into(), feature: top.feature }], "no longer in the model");
 }

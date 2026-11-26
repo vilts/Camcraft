@@ -15,8 +15,9 @@ use super::transport::{
 };
 #[cfg(not(target_arch = "wasm32"))]
 use super::worker_mcp::{ConfirmOutcome, dispatch_mcp_call, parse_step_calls, wait_confirmation};
+#[cfg(not(target_arch = "wasm32"))]
+use super::budget::{MAX_TOOL_ROUNDS, tool_set_for};
 
-const MAX_TURN_STEPS: usize = 12;
 pub(super) const POLL_STEP: Duration = Duration::from_millis(20);
 
 /// Event-loop wake callback invoked whenever worker events or MCP requests are queued.
@@ -211,13 +212,18 @@ fn run_turn_steps(
     let mut messages = input.initial_messages.clone();
     let mut rpc_seq = 1u64;
 
-    for step in 0..MAX_TURN_STEPS {
+    for step in 0..MAX_TOOL_ROUNDS {
         if cancel.load(Ordering::Relaxed) {
             return Ok(true);
         }
         let configured_mode = input.preset.fallback_mode;
-        let tools_payload =
-            build_tools_payload(input.preset.provider, configured_mode, &input.project_snapshot);
+        // #1944: a local model gets the core tool set.
+        let tools_payload = build_tools_payload(
+            input.preset.provider,
+            configured_mode,
+            tool_set_for(input.preset.endpoint_kind),
+            &input.project_snapshot,
+        );
         let req = TransportRequest {
             preset: input.preset.clone(),
             model: input.model.clone(),
@@ -351,6 +357,6 @@ fn run_turn_steps(
         }
     }
     Err(format!(
-        "stopped after {MAX_TURN_STEPS} tool steps without a final answer"
+        "stopped after {MAX_TOOL_ROUNDS} tool steps without a final answer"
     ))
 }

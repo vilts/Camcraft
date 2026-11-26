@@ -52,7 +52,15 @@ fn material(center: &Region) -> Region {
     m
 }
 
-fn ring_plan() -> (Region, Region, AirPlan) {
+/// The ring plan, computed one time for the test binary (#3515): the three
+/// pins and the probe read it, and none changes it.
+static RING_PLAN: std::sync::LazyLock<(Region, Region, AirPlan)> = std::sync::LazyLock::new(compute_ring_plan);
+
+fn ring_plan() -> &'static (Region, Region, AirPlan) {
+    &RING_PLAN
+}
+
+fn compute_ring_plan() -> (Region, Region, AirPlan) {
     let (ring, _) = level();
     let mat = material(&ring);
     let t = std::time::Instant::now();
@@ -88,11 +96,11 @@ fn every_air_ring_pass_stays_in_the_centre_area() {
     let (ring, _, p) = ring_plan();
     for pass in &p.plan.passes {
         for (i, &q) in pass.iter().enumerate() {
-            assert!(ring.contains(q) || boundary_dist(&ring, q) < 1e-6, "{q:?} outside the centre area");
+            assert!(ring.contains(q) || boundary_dist(ring, q) < 1e-6, "{q:?} outside the centre area");
             // The midpoint of each move too.
             if let Some(&n) = pass.get(i + 1) {
                 let m = Point2::new(0.5 * (q.x + n.x), 0.5 * (q.y + n.y));
-                assert!(ring.contains(m) || boundary_dist(&ring, m) < 1e-6, "move {q:?} -> {n:?} leaves the centre area");
+                assert!(ring.contains(m) || boundary_dist(ring, m) < 1e-6, "move {q:?} -> {n:?} leaves the centre area");
             }
         }
     }

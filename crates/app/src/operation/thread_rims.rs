@@ -90,6 +90,12 @@ pub(super) fn thread_bores(params: &OpParams, pitch: f64) -> Vec<crate::verify::
     let depth = crate::machining2d::THREAD_DEPTH_PER_PITCH * pitch;
     holes
         .iter()
-        .map(|h| crate::verify::ThreadBore { xy: h.xy, minor: h.radius, major: h.radius + depth, top: h.entry_z })
+        .map(|h| crate::verify::ThreadBore {
+            xy: h.xy,
+            minor: h.radius,
+            major: h.radius + depth,
+            top: h.entry_z,
+            exit: h.through.then_some(h.floor_z),
+        })
         .collect()
 }

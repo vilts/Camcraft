@@ -135,8 +135,10 @@ fn contour() -> OpParams {
         tab_height: 0.0,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -144,7 +146,7 @@ fn face_op(cut_z: f64) -> OpParams {
     OpParams::Face {
         holes: Default::default(),
         tilt: None,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         stepover: 4.0,
         clearance_z: Height::fixed(30.0),
         cut_z: Height::fixed(cut_z),
@@ -153,6 +155,7 @@ fn face_op(cut_z: f64) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 

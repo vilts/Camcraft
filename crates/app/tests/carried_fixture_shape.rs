@@ -62,8 +62,10 @@ fn contour() -> OpParams {
         tab_height: 0.0,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -71,7 +73,7 @@ fn face(cut_z: f64) -> OpParams {
     OpParams::Face {
         holes: Default::default(),
         tilt: None,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         stepover: 4.0,
         clearance_z: Height::fixed(30.0),
         cut_z: Height::fixed(cut_z),
@@ -80,6 +82,7 @@ fn face(cut_z: f64) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -106,7 +109,7 @@ fn flipped_hat() -> (World, History) {
 
 fn mesh_of(boxes: &[(Point3, Point3)]) -> Mesh {
     let tris: Vec<Triangle> = boxes.iter().flat_map(|(a, b)| cube(*a, *b).facets.iter().copied().collect::<Vec<_>>()).collect();
-    Mesh { facets: tris.into() }
+    Mesh::from_facets(tris)
 }
 
 /// One-piece soft jaws (80 x 80, Z -10..5) with a square nest pocket

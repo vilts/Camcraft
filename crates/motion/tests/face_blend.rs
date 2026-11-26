@@ -32,7 +32,7 @@ fn p(stepover: f64, blend: bool) -> FaceParams {
         feed: 500.0,
         plunge_feed: 100.0,
         climb: true,
-        blend_turns: blend,
+        blend_turns: blend, blend_radius: None,
         stock_top: None,
     }
 }

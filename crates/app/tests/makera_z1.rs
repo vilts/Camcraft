@@ -30,7 +30,7 @@ fn z1() -> Machine {
 fn face(cut_z: f64) -> OpParams {
     OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -40,6 +40,7 @@ fn face(cut_z: f64) -> OpParams {
         feed: 1000.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 

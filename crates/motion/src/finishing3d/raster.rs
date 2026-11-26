@@ -6,13 +6,17 @@ use crate::geometry::{Point3, Triangle};
 use crate::machining2d::GenError;
 
 use super::ladder::levels;
-use super::params::{Finish3DParams, FinishPattern, dirs, refinement_floor, scallop_stepdown, scallop_stepover, validate};
-use super::support::{Sup, build_sups, plunge_support};
+use super::params::{
+    Finish3DParams, FinishPattern, SPLIT_MZ, WATERLINES_OFF_NOTE, dirs, refinement_floor,
+    scallop_stepdown, scallop_stepover, validate,
+};
+use super::grid::SupSet;
+use super::support::{build_sups, plunge_support};
 use super::march::{emit_runs, march_curve};
 use super::raster_bridge::bridge_line;
 use super::rim::rim_rows;
 use super::rings::emit_rings_with_trim;
-/// One Z-following raster pass: lines perpendicular to `(ux, uy)`
+/// One Z-following raster pass: lines along the unit vector `(ux, uy)`
 /// across the shallow facets' padded bounds, stepped by the cos-law
 /// (or an explicit `stepover`), each walked by `march_curve`'s laws
 /// and delivered by `emit_runs`' choreography. Serpentine within
@@ -23,7 +27,7 @@ pub(super) fn raster_pass(
     b: &mut PathBuilder,
     p: &Finish3DParams,
     r: f64,
-    sups: &[Sup],
+    sups: &SupSet,
     ux: f64,
     uy: f64,
     continuing: bool,
@@ -41,7 +45,7 @@ pub(super) fn raster_pass_spaced(
     b: &mut PathBuilder,
     p: &Finish3DParams,
     r: f64,
-    sups: &[Sup],
+    sups: &SupSet,
     (ux, uy): (f64, f64),
     continuing: bool,
     spacing_tol: f64,
@@ -145,6 +149,17 @@ pub(super) fn raster_pass_spaced(
         // #2431: a hole the ball cannot enter is crossed, not hopped.
         let mut pieces = bridge_line(pieces, r, p.tolerance, eps_chord, sups);
         if back {
+            // The line runs back WHOLE: the pieces too. Reversing
+            // only each piece's points made the chain run one piece
+            // backwards and then hop back across the whole field to
+            // the next piece's far end - every break a backwards
+            // long traverse instead of a crossing of the gap. Under
+            // the plain jump that mis-pairing hid inside a high
+            // rapid; a gap link authors the same line at the cut,
+            // where it shows. Pieces in order and points in order
+            // is what makes the serpentine cross each gap once,
+            // between the facing edges.
+            pieces.reverse();
             for pc in pieces.iter_mut() {
                 pc.reverse();
             }
@@ -164,6 +179,13 @@ pub(super) fn raster_pass_spaced(
     Ok(true)
 }
 
+/// Return the input diagnostic for an angle outside one turn.
+#[must_use]
+pub fn parallel_angle_refusal(direction_angle: f64) -> Option<&'static str> {
+    (!(0.0..360.0).contains(&direction_angle))
+        .then_some("Parallel direction angle must be at least 0 and less than 360 degrees")
+}
+
 /// The raster strategies (Parallel, ParallelMulti, Scallop): the
 /// shallow terrain cut Z-following in each direction the pattern
 /// asks for - once (Parallel), across the axes (ParallelMulti), or
@@ -172,6 +194,20 @@ pub(super) fn raster_pass_spaced(
 /// toolpath, with the two strategies meeting at the shared 45°
 /// jurisdiction line.
 pub fn parallel(facets: &[Triangle], p: &Finish3DParams) -> Result<Toolpath, GenError> {
+    parallel_with_angle(facets, p, 0.0)
+}
+
+/// Generate a raster with the Parallel pass directed counterclockwise from
+/// +X in the supplied facets' XY frame. The angle is in degrees, in [0, 360).
+/// The crossing patterns and the waterline rings keep their own directions.
+pub fn parallel_with_angle(
+    facets: &[Triangle],
+    p: &Finish3DParams,
+    direction_angle: f64,
+) -> Result<Toolpath, GenError> {
+    if let Some(why) = parallel_angle_refusal(direction_angle) {
+        return Err(GenError::Invalid(why.into()));
+    }
     validate(p, facets)?;
     let r = p.tool_diameter * 0.5;
     let sups = build_sups(facets, r);
@@ -185,6 +221,19 @@ pub fn parallel(facets: &[Triangle], p: &Finish3DParams) -> Result<Toolpath, Gen
     let (ax, ay, bx, by) = match p.pattern {
         FinishPattern::Scallop => (d, d, d, -d),
         FinishPattern::ParallelMulti => (1.0, 0.0, 0.0, 1.0),
+        FinishPattern::Parallel => {
+            let (ux, uy) = match direction_angle {
+                0.0 => (1.0, 0.0),
+                90.0 => (0.0, 1.0),
+                180.0 => (-1.0, 0.0),
+                270.0 => (0.0, -1.0),
+                _ => {
+                    let (sin, cos) = direction_angle.to_radians().sin_cos();
+                    (cos, sin)
+                }
+            };
+            (ux, uy, 0.0, 0.0)
+        }
         _ => (1.0, 0.0, 0.0, 0.0),
     };
     let mut emitted = raster_pass(&mut b, p, r, &sups, ax, ay, false)?;
@@ -212,11 +261,53 @@ pub fn parallel(facets: &[Triangle], p: &Finish3DParams) -> Result<Toolpath, Gen
 /// rides a loop that touches nothing past the band.
 pub fn blend(facets: &[Triangle], p: &Finish3DParams) -> Result<Toolpath, GenError> {
     validate(p, facets)?;
+    if !p.waterlines {
+        return Err(GenError::Invalid(
+            "Blend 3D finish needs the waterline ring pass across the 30-45 deg band - enable waterlines or pick Parallel".into(),
+        ));
+    }
     let r = p.tool_diameter * 0.5;
     let sups = build_sups(facets, r);
     let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
     let emitted = raster_pass(&mut b, p, r, &sups, 1.0, 0.0, false)?;
     rings_and_tail(b, p, r, facets, emitted)
+}
+
+/// Steep facets (`|m_z| < SPLIT_MZ`, >45 deg off horizontal) whose Z range
+/// enters `[bottom_z, top_z + 2r]`, left uncut when `waterlines` is off.
+pub(super) fn count_steep_flanks(facets: &[Triangle], bottom_z: f64, top_z: f64, r: f64) -> usize {
+    facets
+        .iter()
+        .filter(|f| {
+            let m = f.normal();
+            if !m.is_finite() {
+                return false;
+            }
+            let len2 = m.x * m.x + m.y * m.y + m.z * m.z;
+            if len2 <= 0.5 || m.z.abs() >= SPLIT_MZ {
+                return false;
+            }
+            let zmin = f.a.z.min(f.b.z).min(f.c.z);
+            let zmax = f.a.z.max(f.b.z).max(f.c.z);
+            zmax > bottom_z + 1e-6 && zmin <= top_z + 2.0 * r + 1e-6
+        })
+        .count()
+}
+
+/// Emit a visible path note when `waterlines` is off and steep flanks stand
+/// uncut inside the requested depth window (#2811).
+pub(super) fn note_waterlines_off(
+    b: &mut PathBuilder,
+    p: &Finish3DParams,
+    r: f64,
+    facets: &[Triangle],
+) {
+    let steep = count_steep_flanks(facets, p.bottom_z, p.top_z, r);
+    if steep > 0 {
+        b.note(format!(
+            "{WATERLINES_OFF_NOTE} {steep} steep flank facet(s) (>45 deg) left uncut - raster passes only, leaving steep material or large scallops for downstream rest or a waterline pass"
+        ));
+    }
 }
 
 /// The shared close of every raster-family strategy: the steep
@@ -242,17 +333,30 @@ pub(super) fn rings_and_tail_with_trim(
     emitted: bool,
     trim_columns: bool,
 ) -> Result<Toolpath, GenError> {
-    // #1015: the rings refuse with the shallow pass (and any rings) built.
-    let zs = levels(p, r, facets).map_err(|e| e.with_ghost_moves(b.moves()))?;
-    let ds = dirs(r, p.tolerance);
-    let mut last = Some(p.clearance_z);
     let mut emitted = emitted;
-    emitted |= emit_rings_with_trim(&mut b, p, facets, &zs, &ds, &mut last, trim_columns)
-        .map_err(|e| e.with_ghost_moves(b.moves()))?;
+    if p.waterlines {
+        // #1015: the rings refuse with the shallow pass (and any rings) built.
+        let zs = levels(p, r, facets).map_err(|e| e.with_ghost_moves(b.moves()))?;
+        let ds = dirs(r, p.tolerance);
+        let mut last = Some(p.clearance_z);
+        emitted |= emit_rings_with_trim(&mut b, p, facets, &zs, &ds, &mut last, trim_columns)
+            .map_err(|e| e.with_ghost_moves(b.moves()))?;
+    } else if p.top_z < p.bottom_z {
+        return Err(
+            GenError::Invalid("waterline bottom is above its top".into())
+                .with_ghost_moves(b.moves()),
+        );
+    }
     if !emitted {
-        return Err(GenError::Empty(
-            "no surface reaches within one ball radius of the requested depths".into(),
-        ));
+        let msg = if p.waterlines {
+            "no surface reaches within one ball radius of the requested depths"
+        } else {
+            "no shallow surface inside the requested depths, and the waterline ring pass is off - enable waterlines to cut steep flanks"
+        };
+        return Err(GenError::Empty(msg.into()));
+    }
+    if !p.waterlines {
+        note_waterlines_off(&mut b, p, r, facets);
     }
     let cur = b.at();
     b.push(MoveKind::Rapid, Point3::new(cur.x, cur.y, p.clearance_z), None);
@@ -269,7 +373,7 @@ pub(super) fn rings_and_tail_with_trim(
 /// and the smallest shallow tilt - the cos-law's `m_z`. `None`
 /// when every facet is steep: the rings alone carry the model,
 /// exactly as the raster answers to that case.
-pub(super) fn shallow_footprint(sups: &[Sup]) -> Option<(Point2, f64, f64)> {
+pub(super) fn shallow_footprint(sups: &SupSet) -> Option<(Point2, f64, f64)> {
     let (mut x0, mut x1, mut y0, mut y1) =
         (f64::INFINITY, f64::NEG_INFINITY, f64::INFINITY, f64::NEG_INFINITY);
     let mut mz = 1.0f64;

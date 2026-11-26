@@ -16,7 +16,8 @@ use camcraft_app::tool_body_lathe_view::{self, FrameChoice};
 use camcraft_app::tool_body_view::{self, AXIS_CHOICES};
 use camcraft_app::units::{self, Unit};
 
-use super::fields::{field, num_narrow};
+use super::fields::num_narrow;
+use super::layout::prop_row;
 use crate::state::{BodyPickMode, State, ToolBodyUi};
 
 /// A boring bar's frame switch; nothing for any other kind (a lathe
@@ -26,14 +27,15 @@ pub(super) fn frame_row(ui: &mut Ui, state: &mut State) {
         return;
     }
     let lathe = state.tool_body_ui.lathe.is_some();
-    field(ui, "Body frame");
     let mut pick = lathe;
-    ComboBox::from_id_salt("tool_body_frame")
-        .selected_text(if lathe { "Lathe (turning tool frame)" } else { "Mill (spindle axis)" })
-        .show_ui(ui, |ui| {
-            ui.selectable_value(&mut pick, false, "Mill (spindle axis)");
-            ui.selectable_value(&mut pick, true, "Lathe (turning tool frame)");
-        });
+    prop_row(ui, "Body frame", |ui| {
+        ComboBox::from_id_salt("tool_body_frame")
+            .selected_text(if lathe { "Lathe (turning tool frame)" } else { "Mill (spindle axis)" })
+            .show_ui(ui, |ui| {
+                ui.selectable_value(&mut pick, false, "Mill (spindle axis)");
+                ui.selectable_value(&mut pick, true, "Lathe (turning tool frame)");
+            });
+    });
     if pick != lathe {
         state.set_body_draft_frame(pick);
     }
@@ -71,12 +73,12 @@ pub(super) fn section(ui: &mut Ui, state: &mut State, u: Unit) {
             }
         }
     });
-    super::tool_body_page::preview_3d(ui, state);
+    super::tool_body_page::placement_view(ui, state);
     zone_rows(ui, state, u);
     let note = match state.lathe_body_preview() {
         Some(Ok(b)) => tool_body_lathe_view::extent(b).map_or_else(String::new, |(lo, hi)| {
             format!(
-                "placed: radial {} to {}, spindle {} to {} {} from the tip",
+                "Placed: radial {} to {}, spindle {} to {} {} from the tip",
                 units::len(lo[0], u, 1),
                 units::len(hi[0], u, 1),
                 units::len(lo[2], u, 1),
@@ -84,10 +86,12 @@ pub(super) fn section(ui: &mut Ui, state: &mut State, u: Unit) {
                 u.suffix()
             )
         }),
-        Some(Err(e)) => format!("placement: {e}"),
+        Some(Err(e)) => format!("Placement error: {e}"),
         None => String::new(),
     };
-    ui.label(note);
+    if !note.is_empty() {
+        ui.label(note);
+    }
     if ui.button("Apply body").on_hover_text("attach the holder with this placement (one undo step)").clicked() {
         state.queue_apply_tool_body();
     }

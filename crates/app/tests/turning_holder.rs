@@ -86,6 +86,7 @@ fn finish() -> OpParams {
         bottom_z: Height::fixed(2.0),
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     }
 }
 
@@ -190,6 +191,7 @@ fn uncut_stock_under_the_holder_is_named_and_a_rough_ahead_clears_it() {
         stock_to_leave: 0.25,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     op(&world, &mut history, "R1", INSERT, "step", rough);
     let r = cache(&world, "R1").expect("cached");
@@ -257,6 +259,7 @@ fn a_grooving_blade_holder_is_judged_by_its_band_and_a_fat_one_rubs_the_groove_w
         stock_to_leave: 0.0,
         feed: 150.0,
         plunge_feed: 60.0,
+        picks: Default::default(),
     };
     history.execute(&world, SetToolBody::lathe(&world, "GT-0200", Some(body("blade.stp", cuboid([5.0, -0.9, -0.95], [40.0, 0.9, 0.95])))).expect("a blade holder"));
     op(&world, &mut history, "G1", "GT-0200", "bar", params);
@@ -339,6 +342,7 @@ fn a_lathe_body_on_a_bar_refuses_a_milling_op_by_name() {
         plunge_feed: 80.0,
         holes: vec![hole],
         cross: vec![],
+        picks: Default::default(),
     };
     history.execute(&world, CreateOperation::new(&world, "D1", "BR-1000", SrcRef::Entity("bar".into()), params).expect("create"));
     match GenerateOperation::new(&world, "D1") {

@@ -1,0 +1,42 @@
+// Provenance: original CamCraft bushing using public command verbs (#2865).
+// Run from this case directory: camcraft-cli script build.camscript
+cam.import("model/bushing-blank.obj", "bushing-blank");
+cam.call("set_model_link", { model: "bushing-blank", path: null });
+cam.import("model/bushing.obj", "bushing");
+cam.call("set_model_link", { model: "bushing", path: null });
+cam.call("set_stock", { from_model: "bushing-blank" });
+cam.call("set_raw_stock_only", { on: true });
+cam.call("load_machine", { builtin: "Lathe" });
+cam.call("add_setup", { name: "Turning" });
+cam.call("set_setup_post", { post: "Fanuc Lathe" });
+cam.call("add_tool", { catalog: "BR-1000" });
+cam.call("add_tool", { catalog: "FG-0600-04" });
+
+var z = function (v) { return { reference: "fixed", offset: v }; };
+
+// The pilot hole clears the boring bar. Finish only the upper 16 mm.
+cam.call("add_operation", {
+  kind: "Boring", name: "Bore finish", tool: "BR-1000", source: "bushing",
+  params: {
+    tolerance: 0.05, clearance_z: z(70.0), top_z: z(58.0), bottom_z: z(42.0),
+    feed: 120.0, plunge_feed: 40.0
+  }
+});
+
+// The 6 mm crown gauge plunges into the original rounded groove.
+cam.call("add_operation", {
+  kind: "Form Turning", name: "Form groove", tool: "FG-0600-04", source: "bushing",
+  params: {
+    tolerance: 0.05, clearance_z: z(70.0), top_z: z(33.0), bottom_z: z(27.0),
+    feed: 40.0, plunge_feed: 20.0
+  }
+});
+
+cam.generate();
+var verdict = cam.verify();
+if (!verdict.ok) {
+  throw new Error("catalog verify failed: " + JSON.stringify(verdict));
+}
+cam.save("bushing.camproj");
+cam.post({ to: "bushing.nc" });
+cam.report();

@@ -36,6 +36,7 @@ const STEEL: CuttingRow = CuttingRow {
     stepdown: Some(1.5),
     stepover: None,
     waterjet: None,
+    plasma: None,
 };
 const BRASS: CuttingRow = CuttingRow::plain(Some(WorkMaterial::Brass), 8200.0, 950.0);
 

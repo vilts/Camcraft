@@ -122,7 +122,7 @@ fn fidelity_lines(world: &World) -> Vec<String> {
 }
 
 fn refusal(op: &str, mm: &str) -> String {
-    format!("{op}: model 'bar' was imported too coarsely to verify; re-import with a larger STEP facet budget (surfaces are approximated to within {mm} mm)")
+    format!("{op}: model 'bar' was imported too coarsely to verify; re-import with a larger STEP facet budget, or export the file again with a tighter tolerance (surfaces are approximated to within {mm} mm)")
 }
 
 fn groove_finish(tolerance: f64) -> OpParams {
@@ -133,6 +133,7 @@ fn groove_finish(tolerance: f64) -> OpParams {
         bottom_z: Height::fixed(-6.8),
         feed: 150.0,
         plunge_feed: 60.0,
+        picks: Default::default(),
     }
 }
 
@@ -149,6 +150,7 @@ fn threading(depth: f64) -> OpParams {
         plunge_feed: 40.0,
         infeed_plan: Default::default(),
         hand: camcraft_app::cl::ThreadHand::Right,
+        picks: Default::default(),
     }
 }
 
@@ -219,7 +221,8 @@ fn probed(coarse: Option<f64>, ask: f64, sink: f64) -> World {
         bar_advance: 0.0,
         bar_unload: true,
         bar_transfer: true,
-        inspect_tol: ask,
+        inspect_tol: ask, kerf: Default::default(),
+        picks: Default::default(),
     };
     create(&world, &mut h, "P1", "GT-0300", part);
     let e = model::find_by_name(&world, "G2").expect("op");
@@ -281,6 +284,8 @@ fn rotary(coarse: Option<f64>, clearance: f64) -> World {
         lead_deg: 0.0,
         lag_deg: 0.0,
         max_tilt_deg: 60.0,
+        stated_axis: None,
+        picks: Default::default(),
     };
     create(&world, &mut h, "OP", "BN-0600", params);
     world
@@ -296,6 +301,10 @@ fn a_rotary_contour_on_a_reduced_model_is_judged_and_past_the_bound_refused_by_n
     let low = rotary(Some(TIGHT), 10.0);
     assert!(blocking(&low, "OP").iter().any(|w| matches!(w, Warning::RapidInStock { .. })), "{:?}", blocking(&low, "OP"));
     assert_eq!(fidelity_lines(&rotary(Some(TOO_COARSE), 25.0)), vec![refusal("OP", "0.030")]);
+    // #2996: the rotary field's allowance also guards the shank, so the
+    // kind never takes the widening: a 0.019 mm model, which a mill kind
+    // posts against, still refuses it by name.
+    assert_eq!(fidelity_lines(&rotary(Some(0.019), 25.0)), vec![refusal("OP", "0.019")]);
 }
 
 // ---- the registry ----------------------------------------------------------
@@ -312,7 +321,8 @@ fn face() -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
+        picks: Default::default(),
     }
 }
 
@@ -346,7 +356,9 @@ fn every_kind_is_either_judged_or_refused_for_a_stated_reason_on_a_reduced_model
     // walls, so a reduced model is refused until it reads the excess.
     // SinkerSideBurn (#545): its lateral move is judged against the same
     // walls - refused on a reduced model for the same reason.
-    let refused = [Swarf, AdvancedSwarf, Trace, Engrave, Chamfer2D, Deburr, WireContour, SinkerBurn, SinkerSideBurn];
+    // VCarve (#1443): a cone ride like the engrave; refused the same way.
+    // SlotUndercut (#1444): its undercut law does not read the excess yet.
+    let refused = [Swarf, AdvancedSwarf, Trace, Engrave, Chamfer2D, Deburr, WireContour, SinkerBurn, SinkerSideBurn, SlotUndercut, VCarve];
     for row in KindInfo::ALL {
         assert_eq!(problem(row.ty, None, None), None, "{:?}: full fidelity is untouched", row.ty);
         let said = problem(row.ty, Some(TIGHT), None);

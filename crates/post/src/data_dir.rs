@@ -15,6 +15,11 @@
 //! 4. `<this crate>/../../assets/<kind>` - the source tree, for the test
 //!    binaries in `target/*/deps/` (a path, not a compiled-in copy).
 //!
+//! The exe path is the real file: a symbolic link to the exe (a
+//! `camcraft-cli` on the PATH, the usual macOS set-up) is resolved first,
+//! so the walk starts in the install folder, not in the link's folder
+//! (#3028). A copy of the exe is not a link and finds nothing.
+//!
 //! Candidates 3 and 4 apply only when the exe is in a cargo build tree
 //! of the old or the new cargo build-dir layout ([`cargo_profile_dir`]).
 //! An installed exe without its `assets/<kind>` folder
@@ -100,9 +105,31 @@ pub fn resolve(kind: &str, exe: Option<&Path>, manifest: Option<&Path>, is_dir: 
     }
     let looked: Vec<String> = all.iter().map(|p| p.display().to_string()).collect();
     Err(format!(
-        "no {kind} folder found - the program needs its assets/{kind} directory beside the executable (looked in: {})",
+        "no {kind} folder found - the program needs its assets/{kind} directory beside the executable (looked in: {}). {COPY_HINT}",
         if looked.is_empty() { "nowhere: no executable path".to_owned() } else { looked.join(", ") }
     ))
+}
+
+/// The fix that the refusal names (#3028). No setting or environment
+/// variable points at an assets folder: a copy of the exe does not take
+/// its assets with it.
+pub const COPY_HINT: &str = "Start the program from its install folder, or through a symbolic link to the \
+     installed executable: a copy of the executable has no assets beside it.";
+
+/// The real file of `exe` (#3028). A symbolic link is resolved, so the
+/// lookup starts beside the installed exe and not beside the link.
+/// `current_exe` gives the link path on macOS and Windows; Linux reads
+/// `/proc/self/exe`, which is already the real file. Only a link is
+/// resolved: a plain path stays as it is (on Windows `canonicalize` would
+/// add the `\\?\` prefix to each message). A link that does not resolve
+/// stays the link path, and the refusal names its folder.
+#[must_use]
+pub fn real_exe(exe: PathBuf) -> PathBuf {
+    let is_link = std::fs::symlink_metadata(&exe).is_ok_and(|m| m.file_type().is_symlink());
+    if !is_link {
+        return exe;
+    }
+    std::fs::canonicalize(&exe).unwrap_or(exe)
 }
 
 /// One kind's directory and its read cache. A file is read once; later
@@ -120,11 +147,12 @@ impl DataFiles {
         Self { dir, cache: Mutex::new(HashMap::new()) }
     }
 
-    /// [`resolve`] wired to the running process: the real exe path, and
-    /// this crate's source tree as the last resort of a cargo build tree.
+    /// [`resolve`] wired to the running process: the real exe path (a
+    /// link resolved, [`real_exe`]), and this crate's source tree as the
+    /// last resort of a cargo build tree.
     #[must_use]
     pub fn from_process(kind: &str) -> Self {
-        let exe = std::env::current_exe().ok();
+        let exe = std::env::current_exe().ok().map(real_exe);
         let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
         Self::new(resolve(kind, exe.as_deref(), Some(manifest), Path::is_dir))
     }

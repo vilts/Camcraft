@@ -28,6 +28,7 @@ use std::path::{Path, PathBuf};
 const POSTS: &[(&str, &str)] = &[
     ("assets/posts/grblhal.cps", "assets/machines/sienci-altmill-2x4.mch"),
     ("assets/posts/tinyg.cps", "assets/machines/tinyg-3axis.mch"),
+    ("assets/posts/grbl.cps", "assets/machines/grbl-3axis.mch"),
     ("assets/posts/carvera.cps", "assets/machines/makera-carvera.mch"),
 ];
 
@@ -70,6 +71,13 @@ ENDSECTION
     )
 }
 
+/// A tool change: the `M6` block, or (#2481) the comment that names the
+/// tool to load on Grbl 1.1, which has no M6 (the first tool is loaded
+/// before the start, the next ones at an M0 stop).
+fn is_tool_change(l: &str) -> bool {
+    l.split_whitespace().any(|w| w == "M6") || l.starts_with("(LOAD T") || l.starts_with("(TOOL CHANGE - LOAD T")
+}
+
 fn is_motion(l: &str) -> bool {
     l.split_whitespace().any(|w| matches!(w, "G0" | "G1" | "G2" | "G3"))
 }
@@ -80,7 +88,7 @@ fn is_motion(l: &str) -> bool {
 fn motions_after_tool_change(program: &str) -> Vec<&str> {
     program
         .lines()
-        .skip_while(|l| !l.split_whitespace().any(|w| w == "M6"))
+        .skip_while(|l| !is_tool_change(l))
         .filter(|l| is_motion(l) && !l.starts_with("G53 "))
         .collect()
 }
@@ -92,7 +100,7 @@ fn assert_clearance_first(cps: &str, program: &str, want_z: &str) {
     let changes: Vec<usize> = lines
         .iter()
         .enumerate()
-        .filter(|(_, l)| l.split_whitespace().any(|w| w == "M6"))
+        .filter(|(_, l)| is_tool_change(l))
         .map(|(i, _)| i)
         .collect();
     assert_eq!(changes.len(), 2, "{cps}: two tool changes\n{program}");

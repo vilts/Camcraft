@@ -13,9 +13,10 @@
 // `edm.codes` (main's `Machine.edm_codes`, its names and texts held to
 // one law by `post::machine::edm_codes`). A missing code refuses the post
 // by name; none is invented here. A condition the machine's
-// `edm.conditions` does not list, an orbit (#544, expanded into explicit
-// moves the stock sim judged) and a Sinker Side Burn (#545) are refused
-// by name: this post writes a straight burn down Z only. Decision record:
+// `edm.conditions` does not list and an orbit (#544, expanded into explicit
+// moves the stock sim judged) are refused by name. A Sinker Side Burn
+// (#3001) needs an explicit lateral servo template, edm.codes.side.
+// Decision record:
 // docs/decisions/542-sinker-iso-post.md. Not exercised on a real EDM
 // control.
 description = "Generic ISO-style sinker EDM (every EDM code from the machine's edm.codes)";
@@ -29,6 +30,7 @@ capabilities = 1;          // reference contract: integer feature mask
 coolantModes = true;       // reads PARAM Coolant - to refuse every ask but Off
 serves = ["sinker_edm"];   // posts for sinker EDMs only (#1266 manifest; the app's serves door, #1232)
 programUnits = "mm inch"; // #902, #1382: writes the document's unit (postOptions.Units) with edm.codes.metric / edm.codes.inch
+explains = "paren"; // #1389: explain ISO words; emit() leaves machine EDM codes unchanged
 
 // Determinism law: no timestamps, no randomness - the same stream always
 // posts to the same text (golden files depend on it).
@@ -66,7 +68,11 @@ function block(words) {
   for (var i = 0; i < words.length; i++) {
     if (words[i] !== "" && words[i] !== null && words[i] !== undefined) a.push(words[i]);
   }
-  if (a.length > 0) writeln(a.join(" "));
+  if (a.length > 0) {
+    var line = a.join(" "), c = explain(a);
+    if (c && line.length + 1 + c.length <= 80) line += " " + c;
+    writeln(line);
+  }
 }
 function msg(s) { if (typeof message === "function") message(s); else writeln("(" + s + ")"); }
 function refuse(key, s) {
@@ -83,6 +89,8 @@ function clean(s) {
   return t.length > 40 ? t.substring(0, 40).trim() : t;
 }
 function note(s) { if (s) block(["(" + s + ")"]); }
+// Program notes use this dialect without truncating the stated bound.
+function onComment(s) { note(commentText(s)); }
 function machineName() {
   var m = typeof machine !== "undefined" ? machine : null;
   return (m && (m.name || m.model)) || "the machine";
@@ -98,6 +106,7 @@ var ROLES = {
   reference: "the block that states the electrode's pickup offset, {offset}",
   condition: "the block that selects a generator condition, {id}",
   depth: "the servo burn to a depth, {z} the tip's Z (and {f} the feed)",
+  side: "the lateral servo burn, {x} {y} {z} the absolute endpoint and {f} the feed",
   end: "the program end"
 };
 // The template of `role` from machine.edm.codes with its {placeholders}
@@ -138,6 +147,19 @@ function fill(what, t, vals) {
   return out;
 }
 function emit(line) { if (line !== null) writeln(line); return line !== null; }
+
+function isSide() { return opKind === "Sinker Side Burn"; }
+// Side burns must state the whole endpoint and feed. No default code or
+// modal omission can replace a move the generator and simulation judged.
+function sideCodeOk() {
+  if (code("side", { x: "0.", y: "0.", z: "0.", f: "1." }) === null) return false;
+  var t = machine.edm.codes.side;
+  if (["x", "y", "z", "f"].some(function (k) { return t.indexOf("{" + k + "}") < 0; })) {
+    refuse("side-template" + opName, who() + "edm.codes.side must state {x}, {y}, {z}, and {f}");
+    return false;
+  }
+  return true;
+}
 
 // ------------------------------------------------------------- machine
 // This post writes a sinker's program: a machine not declared
@@ -198,7 +220,7 @@ function startPreamble() {
     refuse("tool" + opName, who() + "a " + toolKind + " is not an electrode - this post writes sinker burns only");
     return;
   }
-  if (/side/i.test(opKind)) {
+  if (/side/i.test(opKind) && !isSide()) {
     refuse("side" + opName, who() + "a Sinker Side Burn moves the electrode sideways - this post writes a straight burn down Z only");
     return;
   }
@@ -220,6 +242,7 @@ function startPreamble() {
       "and this post writes a straight burn down Z only (it never swaps them for the control's orbit word); burn without an orbit");
     return;
   }
+  if (isSide() && !sideCodeOk()) return;
   if (setupName && setupName !== setupSaid) { note("SETUP: " + setupName); setupSaid = setupName; }
   if (opName) note("OPERATION: " + opName + (opKind ? " - " + opKind.toUpperCase() : ""));
   note("T" + toolNumber + (toolName ? " " + toolName : "") + " - ELECTRODE - CONDITION " + clean(condition));
@@ -276,13 +299,21 @@ function onRapid() {
   block(["G0", axis("X", p.X, orgX), axis("Y", p.Y, orgY), axis("Z", p.Z, orgZ)]);
 }
 
-// A feed is the burn: straight down Z, X and Y where the rapid left
-// them, written as the machine's edm.codes.depth. Anything else - a feed
-// with X/Y travel, a feed up, an arc, a cycle - is not a sinker burn
-// this post can state, and is refused by name.
+// A depth feed goes straight down Z. A Side Burn also permits explicit
+// lateral feeds at constant Z, through the machine's side template.
 function onLinear() {
   var p = properties;
   if (!moveOk(p)) return;
+  if (isSide()) {
+    if (![p.StartX, p.StartY, p.StartZ, p.X, p.Y, p.Z].every(has)) {
+      refuse("side-coordinates" + opName, who() + "a Sinker Side Burn needs complete XYZ start and end coordinates");
+      return;
+    }
+    if (p.X !== p.StartX || p.Y !== p.StartY) {
+      sideFeed(p);
+      return;
+    }
+  }
   var dx = has(p.StartX) && has(p.X) ? Math.abs(p.X - p.StartX) : 0;
   var dy = has(p.StartY) && has(p.Y) ? Math.abs(p.Y - p.StartY) : 0;
   if (dx > 0.0005 || dy > 0.0005) {
@@ -296,6 +327,25 @@ function onLinear() {
   var z = fu(p.Z - orgZ);
   var f = has(p.FeedRate) && p.FeedRate > 0 ? ff(p.FeedRate) : null;
   if (emit(code("depth", { z: z, f: f }))) last.Z = z;
+}
+
+function sideFeed(p) {
+  if (p.Z !== p.StartZ || (p.X !== p.StartX && p.Y !== p.StartY)) {
+    refuse("side-direction" + opName, who() + "a Sinker Side Burn needs an axis-aligned lateral feed at constant Z");
+    return;
+  }
+  if (!has(p.FeedRate) || p.FeedRate <= 0 || Number(ff(p.FeedRate)) <= 0) {
+    refuse("side-feed" + opName, who() + "a Sinker Side Burn needs a positive feed");
+    return;
+  }
+  var x = fu(p.X - orgX), y = fu(p.Y - orgY), z = fu(p.Z - orgZ);
+  if (x === fu(p.StartX - orgX) && y === fu(p.StartY - orgY)) {
+    refuse("side-resolution" + opName, who() + "a Sinker Side Burn lateral move is below the program resolution");
+    return;
+  }
+  if (emit(code("side", { x: x, y: y, z: z, f: ff(p.FeedRate) }))) {
+    last = { X: x, Y: y, Z: z };
+  }
 }
 
 function onCircular() {

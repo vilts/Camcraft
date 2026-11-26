@@ -98,6 +98,13 @@ fn dist_to_island(x: f64, y: f64) -> f64 {
     }
 }
 
+/// The verify findings other than the advisory Adaptive fallback to the
+/// Offset rings (#3035): what "verify is clean" means here.
+fn binding(ver: &Value) -> Vec<&Value> {
+    let all = ver["findings"].as_array().expect("verify lists its findings");
+    all.iter().filter(|x| x["kind"] != json!("strategy_fallback")).collect()
+}
+
 #[test]
 fn zero_margin_adaptive_around_island_names_uncut_stock_corners() {
     let (mut s, mut id, dir) = setup_mcp("default");
@@ -105,7 +112,7 @@ fn zero_margin_adaptive_around_island_names_uncut_stock_corners() {
     let generated = call(&mut s, &mut id, "generate", json!({}));
     let ver = call(&mut s, &mut id, "verify", json!({}));
     assert_eq!(ver["ok"], json!(true), "{ver}");
-    assert_eq!(ver["findings"], json!([]), "{ver}");
+    assert_eq!(binding(&ver), Vec::<&Value>::new(), "{ver}");
 
     let rendered = call(&mut s, &mut id, "render_stock", json!({ "width": 160, "height": 120 }));
     assert!(
@@ -138,7 +145,7 @@ fn check_extension_clears_corners(tag: &str, source: &str) {
     let generated = call(&mut s, &mut id, "generate", json!({}));
     let ver = call(&mut s, &mut id, "verify", json!({}));
     assert_eq!(ver["ok"], json!(true), "{tag}: verify must be clean: {ver}");
-    assert_eq!(ver["findings"], json!([]), "{tag}: no findings: {ver}");
+    assert_eq!(binding(&ver), Vec::<&Value>::new(), "{tag}: no findings: {ver}");
 
     // Extension cleared all stock corners: no corner/narrow-band note emitted.
     if let Some(notes) = generated["generated"][0]["notes"].as_array() {
@@ -199,7 +206,12 @@ fn extension_with_top_allowance_keeps_island_untouched_and_clears_corners() {
 
     let op_e = model::find_by_name(&world, "Rough").expect("op");
     let tp = model::toolpath_of(&world, &op_e).expect("cached");
-    assert!(tp.warnings.is_empty(), "verify must be clean: {:?}", tp.warnings);
+    // #3035: only the advisory fallback to the rings.
+    assert!(
+        tp.warnings.iter().all(|w| matches!(w, camcraft_app::verify::Warning::StrategyFallback { .. })),
+        "verify must be clean: {:?}",
+        tp.warnings
+    );
     assert!(
         tp.path.notes.iter().all(|n| !n.contains("corner") && !n.contains("narrower")),
         "extension cleared corners: {:?}",

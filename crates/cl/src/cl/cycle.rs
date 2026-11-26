@@ -39,6 +39,13 @@ pub enum CycleKind {
     /// LinuxCNC's G-code reference, G85). A rapid out would score the finished
     /// wall, so the retract is a feed move in the chain too.
     Ream,
+    /// Fine boring (#1445, #1479): feed in, dwell, stop the spindle at
+    /// its orientation, shift the tip off the wall, rapid out, shift
+    /// back at R (Haas Mill Operator's Manual, G76 Fine Boring Canned
+    /// Cycle). The shift is the chain's own lateral rapid at the bottom:
+    /// a post reads its I and J from that move, so the canned word and
+    /// the chain cannot disagree.
+    FineBore,
 }
 
 /// One hole's machining intent, standing beside the expanded chain:

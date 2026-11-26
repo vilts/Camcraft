@@ -8,7 +8,9 @@
 //! Lazoglu 2007; Rauch, Duc & Hascoet 2009); no vendor material or text.
 
 use super::fields::*;
+use super::pass_start_row::no_pass_order_row;
 use camcraft_app::machining2d::{DEFAULT_MICROLIFT, TrochoidReturn};
+use camcraft_app::operation::TROCHOIDAL_SLOT_NO_PASS_ORDER;
 
 const RETURNS: [&str; 2] = ["Microlift", "Retract"];
 
@@ -32,7 +34,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
         feed,
         return_feed,
         plunge_feed,
-        climb,
+        climb, picks: _,
     } = params
     else {
         return;
@@ -72,6 +74,7 @@ pub(super) fn fields(ui: &mut Ui, world: &World, params: &mut OpParams, cx: &mut
             prop_row(ui, "Microlift height", |ui| num(ui, u, height));
         }
         prop_row(ui, "Smoothing radius", |ui| num(ui, u, smoothing));
+        no_pass_order_row(ui, "trochoid", TROCHOIDAL_SLOT_NO_PASS_ORDER);
     }
     if tab == SEC_FEEDS {
         prop_row(ui, "Cutting feed", |ui| num_feed(ui, u, feed));

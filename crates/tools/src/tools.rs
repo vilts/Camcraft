@@ -20,6 +20,8 @@
 pub use crate::cutting::{ToolMaterial, WorkMaterial};
 pub use crate::turning_data::TurningData;
 pub use crate::thread_hand::ThreadHand;
+pub use crate::taper::TaperTip;
+pub use crate::form_mill::{FormPreset, FormSpec};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolKind {
@@ -117,6 +119,29 @@ pub enum ToolKind {
     /// (`[0.02, 1.0]`), `material_group` the wire material (e.g. `"brass"`).
     /// Turns no spindle (`rpm` must be 0) and has no corner radius.
     Wire,
+    /// T-slot cutter (#1444, [`crate::undercut`]): a flat disc head on a
+    /// narrower neck. `diameter` is the head's, `flute_len` the head's
+    /// height, `shank_d` the neck's diameter (under the head's) and
+    /// `shank_len` the neck's length. It cuts sideways only: only the
+    /// Slot Undercut operation mounts it.
+    TSlot,
+    /// Keyseat (Woodruff) cutter (#1444): the same disc-on-a-neck solid
+    /// as the T-slot cutter, thinner, read the same way.
+    Keyseat,
+    /// Dovetail cutter (#1444): a head widest at the tip that narrows
+    /// upward. `tip_angle` is the angle between the bottom face and the
+    /// flank in degrees (60 for a 60 degree dovetail), `diameter` the
+    /// head's at the tip, `flute_len` the head's height.
+    Dovetail,
+    /// Lollipop (undercut ball) cutter (#1444): a ball of `diameter` on
+    /// a narrower neck. `flute_len` is the height above the tip where
+    /// the neck leaves the ball (from the ball's centre up).
+    Lollipop,
+    /// Form mill (#3369, [`crate::form_mill`]): a router-style cutter
+    /// whose edge is the drawn outline in `form`, with an optional pilot
+    /// bearing at the tip. `diameter` and `flute_len` are the outline's
+    /// widest cut and its top. No operation cuts with it yet.
+    FormMill,
 }
 
 impl core::fmt::Display for ToolKind {
@@ -140,6 +165,11 @@ impl core::fmt::Display for ToolKind {
             ToolKind::ThreadMill => "thread mill",
             ToolKind::ThreadMillSingle => "single-form thread mill",
             ToolKind::Wire => "wire",
+            ToolKind::TSlot => "T-slot cutter",
+            ToolKind::Keyseat => "keyseat cutter",
+            ToolKind::Dovetail => "dovetail cutter",
+            ToolKind::Lollipop => "lollipop cutter",
+            ToolKind::FormMill => "form mill",
         };
         f.write_str(s)
     }
@@ -258,6 +288,15 @@ pub struct Tool {
     /// stated - the turning ops then post the constant `rpm` (G97) as
     /// before. Read only by the turning operations (threading aside).
     pub turning: Option<crate::turning_data::TurningData>,
+    /// #3368: a chamfer mill's tip ([`crate::taper`]) - sharp (the
+    /// default), flat or ball. Sharp on every other kind.
+    pub tip_form: TaperTip,
+    /// #3368: a flat tip's diameter in mm (the cone extended down to the
+    /// tip face); 0 for a sharp tip.
+    pub tip_diameter: f64,
+    /// #3369: a form mill's outline and pilot ([`crate::form_mill`]);
+    /// `None` on every other kind.
+    pub form: Option<FormSpec>,
 }
 
 impl Tool {
@@ -370,6 +409,9 @@ impl Tool {
         let cr = self.corner_r.clamp(0.0, r).min(zc);
         let mut p: Vec<(f64, f64)> = Vec::new();
         add_pt(&mut p, 0.0, 0.0);
+        // Where the neck step starts: the flute top, or (#1444) above it
+        // where a lollipop ball meets its neck.
+        let mut neck_from = zc;
         match self.kind {
             ToolKind::BallNose | ToolKind::Probe => {
                 let steps = 24;
@@ -401,7 +443,19 @@ impl Tool {
             | ToolKind::Electrode | ToolKind::Waterjet | ToolKind::Wire
             // A thread mill draws as the cylinder its tooth crests
             // sweep (#894) - the envelope the reach laws read.
-            | ToolKind::ThreadMill | ToolKind::ThreadMillSingle => add_pt(&mut p, 0.0, r),
+            | ToolKind::ThreadMill | ToolKind::ThreadMillSingle
+            // A T-slot or keyseat head is a flat disc (#1444); the
+            // narrower neck above it is the shared shank step.
+            | ToolKind::TSlot | ToolKind::Keyseat => add_pt(&mut p, 0.0, r),
+            // A dovetail narrows upward and a lollipop is a ball
+            // (#1444): the head draws its own flute top.
+            ToolKind::Dovetail | ToolKind::Lollipop => neck_from = crate::undercut::head_outline(self, &mut p),
+            // #3369: a form mill draws its outline, arcs flattened outside.
+            ToolKind::FormMill => {
+                if !crate::form_mill::outline(self, &mut p) {
+                    add_pt(&mut p, 0.0, r);
+                }
+            }
             // The chamfer mill's cone is the same picture read the
             // other way in purpose - apex at the tip center opening
             // upward to the full radius - so it shares the drill's
@@ -412,17 +466,20 @@ impl Tool {
                 // z = r / tan(tip/2) - or the flute top first, clamped,
                 // with the straight land above drawn by the shared band
                 // step. Nonsense angles (0, negative) read as a flat.
+                // #3368: a flat or ball taper tip draws its own face first.
                 let tan_half = (self.tip_angle.to_radians() * 0.5).tan();
-                if tan_half > 0.0 && tan_half.is_finite() {
+                if !crate::taper::outline(self, r, zc, &mut p) && tan_half > 0.0 && tan_half.is_finite() {
                     let zr = (r / tan_half).min(zc);
                     add_pt(&mut p, zr, (zr * tan_half).min(r));
                 }
             }
         }
-        add_pt(&mut p, zc, r);
+        if !matches!(self.kind, ToolKind::Dovetail | ToolKind::Lollipop) {
+            add_pt(&mut p, zc, r);
+        }
         let sr = self.shank_d.max(0.0) * 0.5;
-        if zs > zc {
-            add_pt(&mut p, zc, sr);
+        if zs > neck_from {
+            add_pt(&mut p, neck_from, sr);
             add_pt(&mut p, zs, sr);
         }
         let hr = self.holder_d.max(0.0) * 0.5;
@@ -437,7 +494,7 @@ impl Tool {
 
 /// Append unless it equals the previous point: the band steps share a z
 /// with the wall's top, and duplicates only thicken the polyline.
-fn add_pt(p: &mut Vec<(f64, f64)>, z: f64, r: f64) {
+pub(crate) fn add_pt(p: &mut Vec<(f64, f64)>, z: f64, r: f64) {
     if p.last().copied() != Some((z, r)) {
         p.push((z, r));
     }
@@ -447,7 +504,7 @@ fn add_pt(p: &mut Vec<(f64, f64)>, z: f64, r: f64) {
 /// radius at height z. The `max(0.0)` before the sqrt is the clamped
 /// half-typed-draft guard (rounding at the pole cannot go negative;
 /// nonsense z can, and the Prime Directive says it renders short, not NaN).
-fn dome_radius(rad: f64, z: f64) -> f64 {
+pub(crate) fn dome_radius(rad: f64, z: f64) -> f64 {
     (2.0 * rad * z - z * z).max(0.0).sqrt()
 }
 
@@ -495,6 +552,9 @@ pub fn probe_tool(ball_d: f64, stylus_len: f64) -> Tool {
         cutting: Vec::new(),
         outline: Vec::new(),
         turning: None,
+        tip_form: Default::default(),
+        tip_diameter: 0.0,
+        form: None,
     }
 }
 
@@ -530,6 +590,9 @@ pub fn torch_tool(kerf: f64) -> Tool {
         cutting: Vec::new(),
         outline: Vec::new(),
         turning: None,
+        tip_form: Default::default(),
+        tip_diameter: 0.0,
+        form: None,
     }
 }
 
@@ -594,8 +657,14 @@ mod tests {
             let p = t.profile();
             assert!(p.len() >= 3, "{name}: an outline needs vertices");
             assert_eq!(p[0], (0.0, 0.0), "{name}: tip center first");
+            // #1444: a lollipop's neck starts inside its ball; the union
+            // draws the neck from where the ball narrows to it.
+            let neck_z = match crate::undercut::Undercut::of(&t) {
+                Some(u) if u.head == crate::undercut::Head::Ball => u.r + (u.r * u.r - u.neck_r * u.neck_r).sqrt(),
+                _ => g.flute_len,
+            };
             assert!(
-                near(&p, g.flute_len, g.shank_radius),
+                p.iter().any(|&(pz, pr)| (pz - neck_z).abs() < 1e-9 && (pr - g.shank_radius).abs() < 1e-6),
                 "{name}: the shank band must start where verify says"
             );
             assert!(

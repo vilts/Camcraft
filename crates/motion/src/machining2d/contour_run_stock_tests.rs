@@ -27,8 +27,9 @@ fn params() -> ContourParams {
         tab_height: 0.0,
         entry: crate::entry::Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: crate::links::Links::PLANAR,
+        picks: crate::path_picks::PathPicks::default(),
     }
 }
 

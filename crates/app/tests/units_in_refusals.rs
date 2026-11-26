@@ -66,6 +66,7 @@ fn drill_op(src: &str, top: f64, clear: f64, holes: Vec<Hole>, cross: Vec<CrossH
             plunge_feed: 80.0,
             holes,
             cross,
+            picks: Default::default(),
         },
         stamp: None,
         setup: None,
@@ -238,6 +239,7 @@ fn params(radius: f64, cycle: CycleChoice) -> OpParams {
         plunge_feed: 80.0,
         holes: vec![hole],
         cross: vec![],
+        picks: Default::default(),
     }
 }
 
@@ -334,6 +336,7 @@ fn disc_world(mesh: Mesh, c: Point2) -> (World, History) {
 
 fn circular(bottom: f64) -> OpParams {
     OpParams::Circular {
+        pass_start: Default::default(),
         links: camcraft_app::links::Links::PLANAR,
         center: Point2::new(-3.0, 7.0),
         radius: 12.0,
@@ -351,6 +354,7 @@ fn circular(bottom: f64) -> OpParams {
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
         tilt: None,
+        picks: Default::default(),
     }
 }
 
@@ -490,7 +494,7 @@ fn picks_of(world: &World, name: &str, fits: impl Fn(f64, f64, f64, f64) -> bool
 }
 
 fn pocket(top: f64, bottom: f64) -> OpParams {
-    OpParams::Pocket { rest: None,
+    OpParams::Pocket { pass_start: Default::default(), rest: None,
         blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
         stepover: 4.0,
@@ -509,6 +513,8 @@ fn pocket(top: f64, bottom: f64) -> OpParams {
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         blend_turns: false,
         tilt: None,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     }
 }
 
@@ -518,7 +524,7 @@ fn a_part_fills_the_selection_refusal_speaks_the_document_unit() {
     // names the Z plane it checked.
     let (world, name) = boss_world();
     let top = picks_of(&world, &name, |r, z, _, _| (r - 18f64.sqrt()).abs() < 0.01 && (z - 12.0).abs() < 1e-9);
-    let face = top.iter().find(|(l, _)| l.starts_with("face")).map(|(_, s)| *s).expect("boss top face");
+    let face = top.iter().find(|(l, _)| l.starts_with("face")).map(|(_, s)| s.clone()).expect("boss top face");
     let op = Operation {
         tool: "EM-1000-4FL".into(),
         src: SrcRef::Selection(vec![GeoSel { entity: name.clone(), feature: face }]),

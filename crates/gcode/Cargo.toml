@@ -1,0 +1,11 @@
+[package]
+name = "camcraft-gcode"
+description = "Pure-Rust RS-274/NGC and ISO 6983 3-axis milling G-code parser into camcraft-cl Toolpath sections and 1-based line maps. Clean-room implementation, public sources only."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+camcraft-cl = { workspace = true }
+camcraft-geometry = { workspace = true }
+thiserror = { workspace = true }

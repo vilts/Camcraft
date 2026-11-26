@@ -166,6 +166,9 @@ fn run(args: RunArgs<'_>) -> ExitCode {
                 }
                 Err(e) => return die(format!("{path}: {e}")),
             };
+            if let Err(why) = camcraft_post::machine::reservations::check_stream(&parsed, &stream) {
+                return die(format!("{path}: {why}"));
+            }
             let raw = match post::machine::from_json(&text) {
                 Ok(v) => v,
                 Err(e) => return die(format!("cannot parse {path}: {e}")),

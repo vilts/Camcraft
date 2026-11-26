@@ -1,13 +1,16 @@
-//! Split from `finishing3d.rs` by M5.0.1; structure only.
+//! Split from `finishing3d.rs` by M5.0.1; structure only. #3362 adds
+//! the start side of the nested offset loops (our own design, the
+//! shared "Pass starts at" law of #3316).
 
 use crate::cl::{PathBuilder, Toolpath};
 use crate::geo2d::{Loop, Point2, Region};
 use crate::geometry::{Point3, Triangle};
-use crate::machining2d::GenError;
+use crate::machining2d::{GenError, PassStart};
 
 use super::drape;
-use super::params::{Finish3DParams, refinement_floor, scallop_stepdown, scallop_stepover, validate};
-use super::support::{Sup, build_sups, plunge_support};
+use super::params::{Finish3DParams, FinishPattern, refinement_floor, scallop_stepdown, scallop_stepover, validate};
+use super::grid::SupSet;
+use super::support::{build_sups, plunge_support};
 use super::march::{emit_runs, march_curve};
 use super::raster::{placement_guard, rings_and_tail};
 /// The center-shadow of the shallow terrain: the union of every
@@ -21,7 +24,7 @@ use super::raster::{placement_guard, rings_and_tail};
 /// are genuine islands (or air the tool sees from above); a lifted
 /// sample there answers through `support_at`'s own ball-clear law,
 /// so a wavefront that cannot be cut simply breaks - never a lie.
-pub(super) fn shadow_region(sups: &[Sup], r: f64) -> Result<Region, GenError> {
+pub(super) fn shadow_region(sups: &SupSet, r: f64) -> Result<Region, GenError> {
     let mut loops: Vec<Loop> = Vec::new();
     for s in sups.iter().filter(|s| s.shallow) {
         let pts: Vec<Point2> = s
@@ -126,15 +129,21 @@ pub(super) fn march_loop(
 /// until the region collapses, `None`). Loops march outermost-first
 /// (then by entry point, so the order is a fact about the model,
 /// not about clipper's memory), and the rings take the flanks at
-/// the close, as in every family.
+/// the close, as in every family. `start` (#3362) orders the offset
+/// passes: `Auto` and `Outside` cut the outermost pass first (the
+/// order of every earlier file), `Inside` cuts the innermost pass
+/// first. Inside one pass the loop order does not change, and no
+/// loop is added or dropped: only the sequence of the passes moves.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn shadow_pass(
     b: &mut PathBuilder,
     p: &Finish3DParams,
     r: f64,
-    sups: &[Sup],
+    sups: &SupSet,
     shadow: &Region,
     max_rings: Option<usize>,
     family: &str,
+    start: PassStart,
 ) -> Result<bool, GenError> {
     if shadow.is_empty() {
         return Ok(false); // all-steep model: the rings alone carry it
@@ -175,7 +184,8 @@ pub(super) fn shadow_pass(
         }
         c
     };
-    let mut runs: Vec<Vec<(Point2, f64)>> = Vec::new();
+    // One entry per offset pass, outermost first.
+    let mut passes: Vec<Vec<Vec<(Point2, f64)>>> = Vec::new();
     let mut reg = shadow.clone();
     let mut k = 0usize;
     while !reg.is_empty() {
@@ -186,6 +196,7 @@ pub(super) fn shadow_pass(
                 pa.x.total_cmp(&pb.x).then_with(|| pa.y.total_cmp(&pb.y))
             })
         });
+        let mut runs: Vec<Vec<(Point2, f64)>> = Vec::new();
         for l in loops {
             let stored: &[Point2] = l.points();
             if stored.len() < 3 {
@@ -205,6 +216,7 @@ pub(super) fn shadow_pass(
                 refinement_floor(delta0, p.min_step),
             ));
         }
+        passes.push(runs);
         k += 1;
         // The guard above already refused a family needing more than
         // the cap; this bound is the belt - geometry that refuses to
@@ -221,6 +233,10 @@ pub(super) fn shadow_pass(
             trimmed.get()
         ));
     }
+    if start == PassStart::Inside {
+        passes.reverse();
+    }
+    let runs: Vec<Vec<(Point2, f64)>> = passes.into_iter().flatten().collect();
     if runs.is_empty() {
         return Ok(false);
     }
@@ -237,12 +253,32 @@ pub(super) fn shadow_pass(
 /// re-enter at the hop, never a chord dragged through an edge.
 /// Then the rings take the flanks, as in every family close.
 pub fn contour(facets: &[Triangle], p: &Finish3DParams) -> Result<Toolpath, GenError> {
+    contour_from(facets, p, PassStart::Auto)
+}
+
+/// Does this pattern read "Pass starts at" (#3362)? Only the two
+/// families of nested offset loops do: Contour and Flat. The others
+/// have no inside or outside order (disjoint rings at one Z, rows,
+/// chords, one curve, crease chains), and a saved value there moves
+/// nothing.
+#[must_use]
+pub fn reads_pass_start(pattern: FinishPattern) -> bool {
+    matches!(pattern, FinishPattern::Contour | FinishPattern::Flat)
+}
+
+/// [`contour`] with the start side of its offset passes (#3362).
+/// `Auto` is [`contour`] byte for byte.
+pub fn contour_from(
+    facets: &[Triangle],
+    p: &Finish3DParams,
+    start: PassStart,
+) -> Result<Toolpath, GenError> {
     validate(p, facets)?;
     let r = p.tool_diameter * 0.5;
     let sups = build_sups(facets, r);
     let shadow = shadow_region(&sups, r)?;
     let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
-    let emitted = shadow_pass(&mut b, p, r, &sups, &shadow, None, "contour")?;
+    let emitted = shadow_pass(&mut b, p, r, &sups, &shadow, None, "contour", start)?;
     rings_and_tail(b, p, r, facets, emitted)
 }
 
@@ -262,7 +298,7 @@ pub fn project(facets: &[Triangle], p: &Finish3DParams) -> Result<Toolpath, GenE
     let sups = build_sups(facets, r);
     let shadow = shadow_region(&sups, r)?;
     let mut b = PathBuilder::approached(Point3::new(0.0, 0.0, p.clearance_z));
-    let mut emitted = shadow_pass(&mut b, p, r, &sups, &shadow, Some(0), "project")?;
+    let mut emitted = shadow_pass(&mut b, p, r, &sups, &shadow, Some(0), "project", PassStart::Auto)?;
     emitted |= drape::drape_pass(&mut b, p, r, &sups, facets, emitted);
     rings_and_tail(b, p, r, facets, emitted)
 }

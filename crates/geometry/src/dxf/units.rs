@@ -38,7 +38,17 @@ pub enum Unit {
 }
 
 impl Units {
-    pub(super) fn from_code(code: i32) -> Self {
+    /// The `$INSUNITS` code this value reads back as: 0 for missing or unitless.
+    pub fn code(self) -> i32 {
+        match self {
+            Self::Known(unit) => unit.code(),
+            Self::MissingOrUnitless => 0,
+            Self::Unsupported(code) => code,
+        }
+    }
+
+    /// The value of a `$INSUNITS` code (the DXF reference's table).
+    pub fn from_code(code: i32) -> Self {
         let unit = match code {
             0 => return Self::MissingOrUnitless,
             1 => Unit::Inches,

@@ -152,3 +152,51 @@ fn the_hand_of_a_turn_is_the_screw_law() {
         assert_eq!(ThreadHand::of_turn(h.ccw_for(false), 1.0), Some(h));
     }
 }
+
+#[test]
+fn start_in_air_distinguishes_solid_bar_from_free_end_start() {
+    // #2878: on the bar continuing to Z=40, the start point at Z=14
+    // stands above solid material.
+    let solid_path = thread(&threaded(), &params(ThreadHand::Right)).expect("solid bar threads");
+    assert!(!solid_path.threads[0].start_in_air, "start inside solid bar must not be marked in air");
+
+    // On a free-end bar ending right after the last groove (14 + half),
+    // starting at Z=16 puts the entire insert band [15.134, 16.866] in
+    // free air in front of the end face.
+    let half = DEPTH * (30.0_f64).to_radians().tan();
+    let mut m = vec![(0.0, -26.0), (MAJOR, -26.0), (MAJOR, 8.0 - half)];
+    let mut c = 8.0;
+    while c <= 14.0 + 1e-9 {
+        m.push((MAJOR - DEPTH, c));
+        m.push((MAJOR, c + half));
+        if c + 2.0 <= 14.0 + 1e-9 {
+            m.push((MAJOR, c + 2.0 - half));
+        }
+        c += 2.0;
+    }
+    m.push((0.0, 14.0 + half));
+    let v = |j: usize, r: f64, z: f64| {
+        let th = TAU * j as f64 / 16.0;
+        Point3::new(r * th.cos(), r * th.sin(), z)
+    };
+    let mut free_end = Vec::new();
+    for seg in m.windows(2) {
+        let ((ra, za), (rb, zb)) = (seg[0], seg[1]);
+        for j in 0..16 {
+            let (a1, a2, b1, b2) = (v(j, ra, za), v(j + 1, ra, za), v(j, rb, zb), v(j + 1, rb, zb));
+            if ra <= 1e-12 {
+                free_end.push(Triangle::new(a1, b2, b1));
+            } else if rb <= 1e-12 {
+                free_end.push(Triangle::new(a1, a2, b2));
+            } else {
+                free_end.push(Triangle::new(a1, a2, b2));
+                free_end.push(Triangle::new(a1, b2, b1));
+            }
+        }
+    }
+    let mut p = params(ThreadHand::Right);
+    p.top_z = 16.3;
+    let air_path = thread(&free_end, &p).expect("free-end bar threads");
+    assert!((air_path.threads[0].start.z - 16.0).abs() < 1e-9, "{:?}", air_path.threads[0]);
+    assert!(air_path.threads[0].start_in_air, "free-end start in front of face must be marked in air");
+}

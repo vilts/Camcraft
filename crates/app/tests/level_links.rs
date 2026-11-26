@@ -47,9 +47,11 @@ fn contour_op(links: Links) -> OpParams {
         tab_height: 1.0,
         entry: Entry3D::Arc,
         helix_radius: 1.0,
-        blend_turns: true,
+        blend_turns: true, blend_radius: None,
         tilt: None,
         links,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 
@@ -57,6 +59,7 @@ fn contour_op(links: Links) -> OpParams {
 /// standing above each level - the blind bore, cleared to its floor.
 fn pocket_op(entry: Entry3D, links: Links) -> OpParams {
     OpParams::Pocket3D {
+        pass_start: Default::default(),
         links,
         stepover: 4.0,
         stock_to_leave: 0.0,
@@ -77,6 +80,8 @@ fn pocket_op(entry: Entry3D, links: Links) -> OpParams {
         optimal_load: camcraft_app::load::DEFAULT_OPTIMAL_LOAD,
         feed_opt: false,
         shell: false,
+        method: camcraft_app::machining2d::AdaptiveMethod::Spiral,
+        picks: Default::default(),
     }
 }
 

@@ -1,7 +1,12 @@
 //! Provenance: malformed hand-built ASCII DXF records and deterministic byte mutations.
-//! Gate map (M4.4): covers camcraft_geometry::dxf.
+//! Gate map (M4.4): covers camcraft_geometry::dxf, camcraft_geometry::sketch_data.
 
 use camcraft_geometry::dxf::{Limits, parse, parse_with_limits};
+
+#[path = "dxf/curve_bounds.rs"]
+mod curve_bounds;
+#[path = "dxf/curve_refusals.rs"]
+mod curve_refusals;
 
 fn drawing(entities: &str) -> String {
     format!("0\nSECTION\n2\nENTITIES\n{entities}0\nENDSEC\n0\nEOF\n")
@@ -36,9 +41,12 @@ fn dxf_binary_and_malformed_streams_are_named() {
 
 #[test]
 fn dxf_unsupported_entities_are_refused_by_name() {
-    for kind in ["SPLINE", "ELLIPSE", "INSERT", "BLOCK", "3DFACE", "UNKNOWN"] {
+    for kind in ["SPLINE", "ELLIPSE", "BLOCK", "3DFACE", "UNKNOWN"] {
         refuses(drawing(&format!("0\n{kind}\n")).as_bytes(), kind);
     }
+    // #1865: a block reference is skipped and counted; the rest of the drawing reads.
+    let insert = parse(drawing("0\nINSERT\n").as_bytes()).expect("INSERT is skipped");
+    assert_eq!(insert.summary.skipped.get("INSERT"), Some(&1));
     refuses(
         b"0\nSECTION\n2\nBLOCKS\n0\nBLOCK\n2\nb\n0\nENDBLK\n0\nENDSEC\n0\nEOF\n",
         "BLOCK",

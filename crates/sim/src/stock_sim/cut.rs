@@ -155,12 +155,25 @@ pub fn simulate(dex: &mut Dexel, ops: &[SimOp]) -> Result<(), StockError> {
     // stock being removed. The VERDICT scan (`envelope_scan`) keeps
     // the stricter quarter-tolerance law, because a measurement may
     // never be coarser than the promise it measures.
-    let mut history = dex.history.as_deref().cloned();
-    if let Some(h) = &mut history {
-        h.add_ops(ops).map_err(StockError::Invalid)?;
-        if h.active {
-            *dex = h.read(false).map_err(StockError::Invalid)?.dex;
-            return Ok(());
+    // The history is taken out and grown in place (`Arc::make_mut` copies it only when another stock shares it):
+    // copying it on every call made a program cut one move per call quadratic in its moves. On any refusal the
+    // history goes back exactly as it was (add_ops only appends cuts).
+    let mut history = dex.history.take();
+    if let Some(arc) = &mut history {
+        let h = std::sync::Arc::make_mut(arc);
+        let n = h.cuts.len();
+        let read = h.add_ops(ops).and_then(|()| if h.active { h.read(false).map(Some) } else { Ok(None) });
+        match read {
+            Ok(Some(r)) => {
+                *dex = r.dex;
+                return Ok(());
+            }
+            Ok(None) => {}
+            Err(e) => {
+                h.cuts.truncate(n);
+                dex.history = history;
+                return Err(StockError::Invalid(e));
+            }
         }
     }
     let chord_tol = (dex.cell * 0.25).max(1e-9);
@@ -174,7 +187,7 @@ pub fn simulate(dex: &mut Dexel, ops: &[SimOp]) -> Result<(), StockError> {
             }
         }
     }
-    dex.history = history.map(std::sync::Arc::new);
+    dex.history = history;
     Ok(())
 }
 
@@ -243,3 +256,7 @@ pub(crate) fn check_ops(ops: &[SimOp]) -> Result<(), StockError> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "cut_history_tests.rs"]
+mod history_tests;

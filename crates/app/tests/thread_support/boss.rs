@@ -80,6 +80,7 @@ pub fn external(bosses: Vec<Hole>, pitch: Option<f64>, hand: ThreadHand, climb: 
         hand,
         external: true,
         passes: camcraft_app::machining2d::ThreadPasses::default(),
+        picks: Default::default(),
     }
 }
 
@@ -106,8 +107,10 @@ pub fn clearing(bottom: f64, leave: f64) -> OpParams {
         tab_height: 0.0,
         entry: camcraft_app::machining3d::Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_app::links::Links::PLANAR,
+        chain_overrides: Vec::new(),
+        picks: Default::default(),
     }
 }
 

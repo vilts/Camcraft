@@ -81,10 +81,15 @@ pub fn wire_clause(world: &World) -> WireClause {
                     (Some(why), _) => why.to_owned(),
                     (None, _) => format!("{how}{}{tail}", slugs_said(&v.slugs)),
                 };
-                judged.push(match v.tolerance_said() {
+                let mut said = match v.tolerance_said() {
                     Some(tol) => format!("{name} {what}; {tol}"),
                     None => format!("{name} {what}"),
-                });
+                };
+                // #3207: a stated sharp inside corner's leftover, a note.
+                if let Some(note) = crate::operation::wire_verify::sharp_corner_said(world, &e) {
+                    said = format!("{said}; {note}");
+                }
+                judged.push(said);
             }
         }
     }

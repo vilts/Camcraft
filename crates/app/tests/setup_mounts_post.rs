@@ -99,7 +99,7 @@ fn generate(world: &World, h: &mut History, name: &str) {
 fn face() -> OpParams {
     OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -109,6 +109,7 @@ fn face() -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -125,6 +126,7 @@ fn facing_by(stepdown: f64) -> OpParams {
         stepdown,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     }
 }
 

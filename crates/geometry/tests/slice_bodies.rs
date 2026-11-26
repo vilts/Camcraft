@@ -54,6 +54,16 @@ fn solids_touching_along_a_face_slice_as_one_outline() {
     assert!(close(slice::project(&f, 8).expect("projects").area(), 200.0));
 }
 
+/// All four boundary edges of each contact face are shared by four facets.
+#[test]
+fn solids_sharing_a_whole_face_slice_as_one_outline() {
+    let mut f = boxed(0.0, 0.0, 0.0, 10.0, 10.0, 5.0);
+    f.extend(boxed(10.0, 0.0, 0.0, 20.0, 10.0, 5.0));
+    let r = slice::slice(&f, 2.5).expect("the whole contact face belongs to its solids");
+    assert!(close(r.area(), 200.0), "{}", r.area());
+    assert!(r.contains(Point2::new(10.0, 5.0)), "the contact wall is interior");
+}
+
 /// Real non-manifold geometry: two blocks WELDED along a vertical edge
 /// (the very same corner vertices). They share that edge four ways, so
 /// they are one non-manifold shell - refused, never guessed apart.

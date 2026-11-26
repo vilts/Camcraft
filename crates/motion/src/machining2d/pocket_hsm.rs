@@ -16,6 +16,8 @@ use crate::geo2d::{Loop, Point2, Region};
 
 use super::adaptive::{AdaptiveSpec, Return, Travel, boundary_dist, central_point, corner_radius, first_crossing, plan, preferred_seed};
 use super::face::GenError;
+use super::level_rings::ring_plan;
+use super::pass_start::{PassStart, StartSide};
 use super::pocket::{PocketParams, PocketStrategy, plan_passes};
 
 /// Where the plan put the entry: the spot, the radius of the disc
@@ -44,12 +46,25 @@ pub(crate) struct EntryRoom {
 /// piece of `center` that reaches past it is cut from the air
 /// (`adaptive::plan_from_air`) on the material clipped to the stock.
 pub(crate) fn adaptive_passes(center: &Region, p: &PocketParams, what: &str, trochoid: bool, stock: Option<&Region>) -> Result<Planned, GenError> {
-    let (passes, notes, rest, room, joins, travel, refused) = hsm_passes(center, p, stock)?;
+    adaptive_ordered(None, center, p, what, trochoid, stock, PassStart::Auto, false)
+}
+
+/// [`adaptive_passes`] under a pass start (#3355). `Auto` is that
+/// function, byte for byte. `Outside` plans every piece from the air
+/// (`air_plan`) or refuses the HSM plan; the fallback rings take
+/// `start`, so the forced order holds on every path
+/// (`pocket_hsm_start`). `region` is the material area: the fallback
+/// rings read it for [`ring_plan`]'s order and completeness guard, and
+/// the Auto callers pass `None`. `around_part` says the area surrounds
+/// the part (an Outside band), which names the start wall.
+#[allow(clippy::too_many_arguments)] // the HSM plan, its stock, and the #3316/#3355 start drawn from both
+pub(super) fn adaptive_ordered(region: Option<&Region>, center: &Region, p: &PocketParams, what: &str, trochoid: bool, stock: Option<&Region>, start: PassStart, around_part: bool) -> Result<Planned, GenError> {
+    let (passes, notes, rest, room, joins, travel, refused) = hsm_passes(center, p, stock, start == PassStart::Outside)?;
     // A plan that would cross itself is never posted (the verifier's
     // crossing law, asked of the plan first); one refused past its
     // planning budget (issue #13) has no passes to judge.
     let cross = if refused.is_some() { None } else { first_crossing(&passes) };
-    let levels = super::levels::cut_levels_under(p.top_z, p.links.approach.stock_top, p.bottom_z, p.stepdown)?.len();
+    let levels = super::equal_steps::cut_levels_for(p.top_z, &p.links.approach,p.bottom_z, p.stepdown)?.len();
     let budget = refused.or_else(|| over_budget(&travel, levels));
     if rest <= HSM_REST_MAX && cross.is_none() && budget.is_none() {
         return Ok((passes, notes, PocketStrategy::Adaptive, room, joins));
@@ -67,11 +82,38 @@ pub(crate) fn adaptive_passes(center: &Region, p: &PocketParams, what: &str, tro
             notes.extend(tnotes);
             return Ok((passes, notes, PocketStrategy::Adaptive, Some(room), joins));
         }
-        Err(t) if trochoid => format!("adaptive: the HSM plan {why}; a trochoid {t} - Offset rings cut {what} instead"),
-        Err(_) => format!("adaptive: the HSM plan {why} - Offset rings cut {what} instead"),
+        Err(t) if trochoid => format!("adaptive: the HSM plan {why}; a trochoid {t}{RINGS_FALLBACK}{what} instead"),
+        Err(_) if start == PassStart::Auto => format!("adaptive: the HSM plan {why}{RINGS_FALLBACK}{what} instead"),
+        Err(_) => format!(
+            "adaptive: Pass starts at {} - the HSM plan {why}{RINGS_FALLBACK}{what} in that order instead",
+            start.label()
+        ),
     };
-    let step = crate::load::load_step(p.tool_diameter, p.optimal_load);
-    Ok((plan_passes(center, step, p.climb, s)?, vec![note], s, None, Vec::new()))
+    let (passes, ring_notes) = match (region, start != PassStart::Auto) {
+        (Some(reg), true) => {
+            let side = StartSide { start, stock: stock.cloned(), around_part };
+            ring_plan(reg, center, p, s, &side)?
+        }
+        _ => {
+            let step = crate::load::load_step(p.tool_diameter, p.optimal_load);
+            (plan_passes(center, step, p.climb, s)?, Vec::new())
+        }
+    };
+    let mut notes = vec![note];
+    notes.extend(ring_notes);
+    Ok((passes, notes, s, None, Vec::new()))
+}
+
+/// The words of each note that says the Offset rings cut an area in
+/// place of the Adaptive plan, before the area's name (issue #3035).
+pub const RINGS_FALLBACK: &str = " - Offset rings cut ";
+
+/// How many areas (a pocket, a 3-D level) the notes say the Offset rings
+/// cut in place of the Adaptive plan (issue #3035: the op raises a
+/// warning for them, not only the notes).
+#[must_use]
+pub fn rings_fallbacks(notes: &[String]) -> usize {
+    notes.iter().filter(|n| n.contains(RINGS_FALLBACK) && n.ends_with(" instead")).count()
 }
 
 /// Cutter-center walks, one per pass.
@@ -199,8 +241,11 @@ pub(crate) fn choose_entry(center: &Region, p: &PocketParams, notes: &mut Vec<St
 }
 
 /// Cutter-center walks for an Adaptive pocket, the plan's notes, the
-/// share of the reachable stock it leaves standing and its entry.
-fn hsm_passes(center: &Region, p: &PocketParams, stock: Option<&Region>) -> Result<HsmPlanned, GenError> {
+/// share of the reachable stock it leaves standing and its entry. With
+/// `air_only` (#3355, Pass starts at Outside) a piece that the air plan
+/// cannot start refuses the plan by name: the growth spiral would start
+/// it inside, not at its outer edge.
+fn hsm_passes(center: &Region, p: &PocketParams, stock: Option<&Region>, air_only: bool) -> Result<HsmPlanned, GenError> {
     let r = p.tool_diameter * 0.5;
     let mut notes = Vec::new();
     let mut passes = Vec::new();
@@ -265,6 +310,10 @@ fn hsm_passes(center: &Region, p: &PocketParams, stock: Option<&Region>) -> Resu
             // Over the load bound: no pass of it is posted, the level is
             // refused by name (the Offset rings cut it, said).
             Some(Err(why)) => return Ok((Vec::new(), notes, 1.0, room, Vec::new(), travel, Some(why))),
+            None if air_only => {
+                let why = "cannot start a piece of the area in the air past the stock edge".to_owned();
+                return Ok((Vec::new(), notes, 1.0, room, Vec::new(), travel, Some(why)));
+            }
             None => (plan(&reach, comp, &spec)?, reach.area()),
         };
         if let Some(why) = pl.refused {

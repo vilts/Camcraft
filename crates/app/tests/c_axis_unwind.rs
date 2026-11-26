@@ -174,6 +174,8 @@ fn contour() -> Operation {
             lead_deg: 0.0,
             lag_deg: 0.0,
             max_tilt_deg: 60.0,
+            stated_axis: None,
+            picks: Default::default(),
         },
         stamp: None,
         setup: None,
@@ -236,13 +238,27 @@ fn a_rotary_contour_on_a_stated_c_travel_unwinds_at_its_links_and_posts() {
 /// inside the box stock (z 25), the orbit chords are rapids through
 /// stock, and the verifier convicts them by index - so the post gate
 /// refuses what it would otherwise rewind blind.
+///
+/// #3096: on the mill-turn the first rapid stands on that plane too
+/// (r 2, Z28, inside the stock), so the live-tool law refuses the op by
+/// name before the verifier reads it - asserted first. No mill-turn
+/// stock can hold the orbit and clear the first rapid, so the orbit's
+/// conviction is read on the same bench declared a mill (C still along
+/// Z), where #2965's swept law reports the low first traverse instead.
 #[test]
 fn a_rewind_through_stock_is_convicted_by_the_verifier() {
     let mut op = contour();
     if let OpParams::RotaryContour { clearance_z, .. } = &mut op.params {
         *clearance_z = Height::fixed(25.0);
     }
-    let (path, warns) = operation::generate(&world(Some((-360.0, 360.0))), &op, "C wrap").expect("generates, judged");
+    let refused = operation::generate(&world(Some((-360.0, 360.0))), &op, "C wrap").map(|_| ()).expect_err("the mill-turn refuses the first rapid");
+    let refused = refused.to_string();
+    assert!(refused.contains("Rotary Contour: the first rapid comes from the turret's index position"), "{refused}");
+    let mut mill = mill_turn(Some((-360.0, 360.0)));
+    mill.kind = Some("mill".into());
+    let (path, warns) = operation::generate(&world_on(mill), &op, "C wrap").expect("generates, judged");
+    let low = warns.iter().any(|w| matches!(w, camcraft_app::verify::Warning::FirstTraverseLow { at: 0, .. }));
+    assert!(low, "the swept law reports the low first traverse: {warns:?}");
     let orbit_at = |i: usize| path.moves.get(i).is_some_and(|m| m.kind == MoveKind::Rapid && m.from.z >= 25.0 - 1e-6 && m.to.z >= 25.0 - 1e-6 && m.from != m.to);
     let convicted = warns.iter().filter(|w| matches!(w, camcraft_app::verify::Warning::RapidInStock { at } if orbit_at(*at))).count();
     assert!(convicted > 0, "the orbit chords in stock are convicted: {warns:?}");

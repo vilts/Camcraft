@@ -95,7 +95,7 @@ fn tree_rows_badges_and_actions_are_svg_mastered() {
         (Icon::Fixture, "tree-"), (Icon::Machine, "tree-"), (Icon::OpGroup, "tree-"),
         (Icon::BadgeNever, "badge-"), (Icon::BadgeOk, "badge-"), (Icon::BadgeStale, "badge-"), (Icon::BadgeWarning, "badge-"),
         (Icon::Generate, "act-"), (Icon::Post, "act-"), (Icon::Simulate, "act-"), (Icon::Toolpaths, "act-"),
-        (Icon::EyeOff, "act-"), (Icon::FrameAll, "act-"), (Icon::DebugInfo, "act-"),
+        (Icon::EyeOff, "act-"), (Icon::FrameAll, "act-"), (Icon::DebugInfo, "act-"), (Icon::Report, "act-"),
     ];
     for (icon, prefix) in ours {
         let file = icon.file();

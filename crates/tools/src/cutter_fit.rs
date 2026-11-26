@@ -18,8 +18,11 @@ use crate::tools::Tool;
 /// `Tool::profile` draws the cutter, neck and shank from)?
 #[must_use]
 pub fn same_shape(a: &Tool, b: &Tool) -> bool {
-    let n = |t: &Tool| [t.diameter, t.corner_r, t.tip_angle, t.flute_len, t.shank_d, t.shank_len];
-    a.kind == b.kind && n(a) == n(b)
+    // #3368: a taper's tip form and tip diameter draw its tip too.
+    let n = |t: &Tool| [t.diameter, t.corner_r, t.tip_angle, t.flute_len, t.shank_d, t.shank_len, t.tip_diameter];
+    // #3369: a form mill's drawn outline is its cutter; a number edit
+    // that keeps it keeps the drawn points.
+    a.kind == b.kind && a.tip_form == b.tip_form && a.form == b.form && n(a) == n(b)
 }
 
 /// A drawn cutter `points` (drawn to `old`'s numbers) carried onto

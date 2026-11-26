@@ -1,17 +1,18 @@
 //! Split from `machining3d.rs` by M5.0.1; structure only.
 
+use camcraft_sim::verify::AvoidSpec;
+
 use super::params::Pocket3DParams;
 use super::rest::EPS;
 use super::feed::{guard_input, home, sim_of, subtract_upright};
+use super::floor_levels::{coarse_step, cut_levels};
 use super::hsm::Seam;
 use super::ladder::ladder;
 
 use crate::cl::Toolpath;
 use crate::geo2d::Region;
 use crate::geometry::Triangle;
-use crate::machining2d::{
-    cut_levels_under, GenError,
-};
+use crate::machining2d::{AdaptiveMethod, GenError, cut_levels_for};
 use crate::stock_sim::{Columns, StockReport};
 /// The per-level cutter plan and its walk, level after level - the 3-D
 /// sibling of `machining2d::pocket`'s run, with the passes recomputed
@@ -91,9 +92,7 @@ pub fn pocket3d_open_prev(
     p: &Pocket3DParams,
     mask: Option<&Columns<'_>>,
 ) -> Result<Toolpath, GenError> {
-    guard_input(facets, footprint, p)?;
-    let zs = cut_levels_under(p.top_z, p.links.approach.stock_top, p.bottom_z, p.stepdown)?;
-    ladder(facets, footprint, p, &zs, None, mask, home(p), false, None, stock)
+    run_plain_with(facets, footprint, p, false, mask, stock, None, AdaptiveMethod::Spiral)
 }
 
 fn run_plain(
@@ -103,9 +102,75 @@ fn run_plain(
     shell: bool,
     mask: Option<&Columns<'_>>,
 ) -> Result<Toolpath, GenError> {
+    run_plain_with(facets, footprint, p, shell, mask, None, None, AdaptiveMethod::Spiral)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn run_plain_with(
+    facets: &[Triangle],
+    footprint: &Region,
+    p: &Pocket3DParams,
+    shell: bool,
+    mask: Option<&Columns<'_>>,
+    stock: Option<&Region>,
+    avoid: Option<&AvoidSpec>,
+    method: AdaptiveMethod,
+) -> Result<Toolpath, GenError> {
     guard_input(facets, footprint, p)?;
-    let zs = cut_levels_under(p.top_z, p.links.approach.stock_top, p.bottom_z, p.stepdown)?;
-    ladder(facets, footprint, p, &zs, None, mask, home(p), shell, None, None)
+    // #2012: the regular ladder walks the stepdown of the approach's mode;
+    // #2088's flat floors join it as before.
+    let zs = cut_levels(facets, p, coarse_step(p))?;
+    ladder(facets, footprint, p, &zs, None, mask, home(p), shell, None, stock, avoid, method, p.stock_to_leave)
+}
+
+/// 3D Pocket with "Do not touch" protected items (#2055), covering plain,
+/// offset-shell, and rest-roughing ladders uniformly.
+pub fn pocket3d_avoid(
+    facets: &[Triangle],
+    footprint: &Region,
+    p: &Pocket3DParams,
+    rest: bool,
+    shell: bool,
+    mask: Option<&Columns<'_>>,
+    avoid: &AvoidSpec,
+) -> Result<Toolpath, GenError> {
+    let av = (!avoid.is_empty()).then_some(avoid);
+    let mut path = match rest {
+        false => run_plain_with(facets, footprint, p, shell, mask, None, av, AdaptiveMethod::Spiral),
+        true => run_rest_with(facets, footprint, p, shell, mask, av, AdaptiveMethod::Spiral).map(|(t, _)| t),
+    }?;
+    if !avoid.is_empty() {
+        let _ = camcraft_sim::verify::elevate_rapid_links(
+            &mut path,
+            avoid,
+            None,
+            camcraft_sim::verify::AVOID_PAD,
+        );
+    }
+    Ok(path)
+}
+
+/// Whole-model Adaptive sibling of [`pocket3d_avoid`] that plans the
+/// stock ring from the air past `stock` (#1950) while obeying `avoid` (#2055).
+pub fn pocket3d_open_avoid(
+    facets: &[Triangle],
+    footprint: &Region,
+    stock: Option<&Region>,
+    p: &Pocket3DParams,
+    mask: Option<&Columns<'_>>,
+    avoid: &AvoidSpec,
+) -> Result<Toolpath, GenError> {
+    let av = (!avoid.is_empty()).then_some(avoid);
+    let mut path = run_plain_with(facets, footprint, p, false, mask, stock, av, AdaptiveMethod::Spiral)?;
+    if !avoid.is_empty() {
+        let _ = camcraft_sim::verify::elevate_rapid_links(
+            &mut path,
+            avoid,
+            None,
+            camcraft_sim::verify::AVOID_PAD,
+        );
+    }
+    Ok(path)
 }
 
 /// The plain ladder with a second, smaller footprint for its AIR
@@ -113,11 +178,13 @@ fn run_plain(
 /// above `air_above` - where no part material can stand, so the
 /// level's target is its whole footprint - is cleared over
 /// `air_footprint`; every plane at or below it over `footprint`, exactly
-/// as [`pocket3d`] would. The planes are the one `cut_levels` ladder
-/// either way, and the second leg starts where the first ended (the
-/// rest ladder's chaining law), so the program differs from
-/// [`pocket3d`]'s only in what the air levels sweep. With no plane
-/// above `air_above` it IS [`pocket3d`], move for move.
+/// as [`pocket3d`] would. The planes are the one `cut_levels_under`
+/// ladder either way, and the second leg starts where the first ended
+/// (the rest ladder's chaining law). NO shallow-floor discovery (#2088):
+/// in the rotary wrap a flat face is a turned skin, not a blind floor,
+/// and a window whose only open level is the wrap top stays air. So with no plane above
+/// `air_above` it is [`pocket3d`] move for move only on a model with no
+/// flat floor between Top Z and the first level.
 pub fn pocket3d_air_split(
     facets: &[Triangle],
     air_footprint: &Region,
@@ -138,19 +205,19 @@ pub fn pocket3d_air_split(
         Some(Seam { lo: lo.x, hi: hi.x, period, reach })
     };
     let (sm_air, sm_cut) = (seam_of(air_footprint), seam_of(footprint));
-    let zs = cut_levels_under(p.top_z, p.links.approach.stock_top, p.bottom_z, p.stepdown)?;
+    let zs = cut_levels_for(p.top_z, &p.links.approach, p.bottom_z, p.stepdown)?;
     let k = air_levels(&zs, air_above);
     if k == 0 || air_footprint.is_empty() {
-        return ladder(facets, footprint, p, &zs, None, None, home(p), false, sm_cut.as_ref(), None);
+        return ladder(facets, footprint, p, &zs, None, None, home(p), false, sm_cut.as_ref(), None, None, AdaptiveMethod::Spiral, 0.0);
     }
-    let air = ladder(facets, air_footprint, p, &zs[..k], None, None, home(p), false, sm_air.as_ref(), None)?;
+    let air = ladder(facets, air_footprint, p, &zs[..k], None, None, home(p), false, sm_air.as_ref(), None, None, AdaptiveMethod::Spiral, 0.0)?;
     if k == zs.len() {
         return Ok(air);
     }
     let start = air.moves.last().map_or_else(|| home(p), |m| m.to);
     let mut moves = air.moves;
     let mut notes = air.notes;
-    match ladder(facets, footprint, p, &zs[k..], None, None, start, false, sm_cut.as_ref(), None) {
+    match ladder(facets, footprint, p, &zs[k..], None, None, start, false, sm_cut.as_ref(), None, None, AdaptiveMethod::Spiral, 0.0) {
         Ok(rest) => {
             moves.extend(rest.moves);
             notes.extend(rest.notes);
@@ -249,10 +316,24 @@ fn run_rest(
     shell: bool,
     mask: Option<&Columns<'_>>,
 ) -> Result<(Toolpath, StockReport), GenError> {
+    run_rest_with(facets, footprint, p, shell, mask, None, AdaptiveMethod::Spiral)
+}
+
+pub(super) fn run_rest_with(
+    facets: &[Triangle],
+    footprint: &Region,
+    p: &Pocket3DParams,
+    shell: bool,
+    mask: Option<&Columns<'_>>,
+    avoid: Option<&AvoidSpec>,
+    method: AdaptiveMethod,
+) -> Result<(Toolpath, StockReport), GenError> {
     guard_input(facets, footprint, p)?;
     let r = p.tool_diameter * 0.5;
-    let zs = cut_levels_under(p.top_z, p.links.approach.stock_top, p.bottom_z, p.stepdown)?;
-    let coarse = ladder(facets, footprint, p, &zs, None, mask, home(p), shell, None, None)?;
+    // #2012: the regular ladder walks the stepdown of the approach's mode;
+    // #2088's flat floors join it as before.
+    let zs = cut_levels(facets, p, coarse_step(p))?;
+    let coarse = ladder(facets, footprint, p, &zs, None, mask, home(p), shell, None, None, avoid, method, p.stock_to_leave)?;
 
     // What the coarse ladder leaves standing, column by column: the
     // op-frame grid simulated from raw stock, or - when the program
@@ -273,14 +354,16 @@ fn run_rest(
     let rest = dex.columns()?;
 
     // The rest ladder: same laws, half the step, rest-shaped targets.
-    let zs_r = cut_levels_under(p.top_z, p.links.approach.stock_top, p.bottom_z, p.stepdown * 0.5)?;
+    // #2012: half the step of the coarse ladder's own mode, so the rest
+    // planes fall on and between the coarse planes in either mode.
+    let zs_r = cut_levels(facets, p, coarse_step(p) * 0.5)?;
     let start = coarse.moves.last().map_or_else(|| home(p), |m| m.to);
     let mut moves = coarse.moves;
     // The coarse leg's notes join the rest leg's below, in program
     // order (M8.1): the status line reads the substitutions as the
     // machine lived them.
     let mut notes = coarse.notes;
-    match ladder(facets, footprint, p, &zs_r, Some(&rest), None, start, shell, None, None) {
+    match ladder(facets, footprint, p, &zs_r, Some(&rest), None, start, shell, None, None, avoid, method, p.stock_to_leave) {
         Ok(rp) => {
             moves.extend(rp.moves);
             notes.extend(rp.notes);
@@ -288,6 +371,9 @@ fn run_rest(
         // Nothing stood above any rest plane: the coarse path was
         // already clean at lattice scale. A success, not a refusal.
         Err(GenError::Empty(_)) => {}
+        Err(GenError::Invalid(ref why)) if avoid.is_some() && why.contains("no safe cutting room") => {
+            notes.push("Do not touch: rest pass skipped (no safe room outside protected items)".into());
+        }
         // #1015: the coarse ladder stands in front of the rest leg's ghost.
         Err(e) => return Err(e.after_moves(&moves)),
     }

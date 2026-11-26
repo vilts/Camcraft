@@ -173,8 +173,9 @@ const RINGS: usize = 8;
 /// with `RIM k / RINGS` points, read at `d (k - 1) / RINGS`. A `d`
 /// that is not a finite positive radius (a tool no wider than the
 /// gouge tolerance) is the centre alone - the column reading the law
-/// had before #106.
-fn footprint(c: Point2, d: f64) -> impl Iterator<Item = (Point2, f64)> {
+/// had before #106. Shared with law (d3) (#3679's plunge depth law
+/// reads the same disc).
+pub(super) fn footprint(c: Point2, d: f64) -> impl Iterator<Item = (Point2, f64)> {
     let d = if d.is_finite() && d > 0.0 { d } else { 0.0 };
     let rings = if d > 0.0 { RINGS } else { 0 };
     std::iter::once((c, 0.0)).chain((1..=rings).flat_map(move |k| {

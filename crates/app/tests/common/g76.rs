@@ -55,11 +55,12 @@ pub fn revolve(meridian: &[(f64, f64)]) -> Mesh {
     Mesh::from_facets(facets)
 }
 
-/// Wall r 6, a 60-degree V every 2.0 from z 8 to z 14, 1.2 deep.
+/// Wall r 6, a 60-degree V every 2.0 from z 8 to z 14, 1.2 deep, ending
+/// at the free face z 14 + half so G76 starts at z 16 in free air (#2878).
 pub fn threaded() -> Mesh {
     let half = DEPTH * (30.0_f64).to_radians().tan();
     let root = MAJOR - DEPTH;
-    let mut m = vec![(0.0, -16.0), (MAJOR, -16.0), (MAJOR, 8.0 - half)];
+    let mut m = vec![(0.0, -26.0), (MAJOR, -26.0), (MAJOR, 8.0 - half)];
     let mut c = 8.0;
     while c <= 14.0 + 1e-9 {
         m.push((root, c));
@@ -69,7 +70,7 @@ pub fn threaded() -> Mesh {
         }
         c += PITCH;
     }
-    m.extend([(MAJOR, 14.0 + half), (MAJOR, 40.0), (0.0, 40.0)]);
+    m.push((0.0, 14.0 + half));
     revolve(&m)
 }
 
@@ -78,8 +79,9 @@ pub fn threaded() -> Mesh {
 pub fn g76_world(infeed: f64, plan: ThreadInfeed) -> World {
     let world = new_world();
     let mut history = History::default();
-    let at = Location { pos: Point3::new(0.0, 0.0, -16.0), ..Location::default() };
-    let cmd = SetStock::new(&world, camcraft_app::stock::StockShape::Cylinder { diameter: 12.0, height: 56.0 }, at);
+    let end_z = 14.0 + DEPTH * (30.0_f64).to_radians().tan();
+    let at = Location { pos: Point3::new(0.0, 0.0, -26.0), ..Location::default() };
+    let cmd = SetStock::new(&world, camcraft_app::stock::StockShape::Cylinder { diameter: 12.0, height: end_z + 26.0 }, at);
     history.execute(&world, cmd.expect("bar stock"));
     let lathe = Machine {
         model: "TestBench lathe".into(),
@@ -97,7 +99,7 @@ pub fn g76_world(infeed: f64, plan: ThreadInfeed) -> World {
     let params = OpParams::Threading {
         tolerance: 0.05,
         clearance_z: Height::fixed(24.0),
-        top_z: Height::fixed(14.3),
+        top_z: Height::fixed(16.3),
         bottom_z: Height::fixed(7.7),
         pitch: PITCH,
         depth: DEPTH,
@@ -106,6 +108,7 @@ pub fn g76_world(infeed: f64, plan: ThreadInfeed) -> World {
         plunge_feed: 40.0,
         infeed_plan: plan,
         hand: camcraft_app::cl::ThreadHand::Right,
+        picks: Default::default(),
     };
     let cmd = CreateOperation::new(&world, "TH1", "TD-1732-60", SrcRef::Entity("bar".into()), params);
     history.execute(&world, cmd.expect("create"));

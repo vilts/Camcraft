@@ -176,6 +176,15 @@ pub fn wire_contour_tapered(loops: &[Loop], chains: &[Vec<Point2>], p: &WirePara
             d.abs()
         ));
     }
+    // The corner rest that a stated sharp inside corner keeps (#3207) was
+    // measured on the top-plane path, where the cover law ran: carry it
+    // over, so the verify line still says it.
+    said.extend(
+        flat.notes
+            .iter()
+            .filter(|n| n.starts_with(super::SHARP_NOTE))
+            .map(|n| format!("{n} (measured on the top plane Z{:.3})", t.top_z)),
+    );
     path.notes.extend(said);
     Ok(path)
 }

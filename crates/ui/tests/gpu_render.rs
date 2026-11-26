@@ -31,6 +31,13 @@ use camcraft_ui::interact;
 use camcraft_ui::state::{CommandKind, DisplayMode, State};
 use camcraft_ui::viewport::{Camera, GpuPart, ProjectionMode, View3D};
 
+/// #2958: the wide overlay lines and MSAA, on this binary's device.
+#[path = "gpu_render/wide_lines.rs"]
+mod wide_lines;
+/// #2834 + #2958: the shade passes follow the 3D pass's sample count.
+#[path = "gpu_render/shade_msaa.rs"]
+mod shade_msaa;
+
 const SIDE: u32 = 256;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 // Concurrent fallback-device creation and teardown can crash in software
@@ -284,7 +291,8 @@ fn machined_mesh_paints_as_stock() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
+        picks: Default::default(),
     };
     history.execute(&world, CreateOperation::new(&world, "Face1", "EM-0400-2FL", SrcRef::Stock, params).expect("create"));
     history.execute(&world, GenerateOperation::new(&world, "Face1").expect("generate"));
@@ -332,6 +340,170 @@ fn wireframe_paints_wire_not_faces() {
     assert!(s > total / 16, "shaded should flood the silhouette: {s}/{total}");
     assert!(t > 100, "wireframe must still draw its (brightened) wire: {t} px");
     assert!(t * 3 < s, "wireframe paints lines, not faces: {t} vs {s}");
+}
+
+/// #2818: the two new display modes on a real GPU. "Shaded" fills the same
+/// silhouette as "Shaded, with edges" but draws no model wire. "Shaded,
+/// with hidden edges" fills it too and adds the wire behind the faces, so
+/// it differs from the two others inside the silhouette.
+#[test]
+fn shaded_drops_the_wire_and_hidden_edges_add_the_far_wire() {
+    let cube = [model_part(60.0)];
+    let Some((edges, _, _)) = render(&cube, &test_cam()) else {
+        eprintln!("gpu test skipped: no usable adapter");
+        return;
+    };
+    let Some((plain, _, _)) = render_mode(&cube, &test_cam(), DisplayMode::Shaded) else {
+        return;
+    };
+    let Some((hidden, _, _)) = render_mode(&cube, &test_cam(), DisplayMode::ShadedHiddenEdges) else {
+        return;
+    };
+    let differ = |a: &[u8], b: &[u8]| a.chunks(4).zip(b.chunks(4)).filter(|(p, q)| p != q).count();
+    let fill = changed_pixels(&edges);
+    for (name, img) in [("Shaded", &plain), ("Shaded, with hidden edges", &hidden)] {
+        let n = changed_pixels(img);
+        assert!(n * 10 > fill * 9 && n * 9 < fill * 10, "{name} fills the same silhouette: {n} vs {fill}");
+    }
+    let wire = differ(&edges, &plain);
+    assert!(wire > 100, "the front wire is gone in Shaded: {wire} px differ");
+    let far = differ(&edges, &hidden);
+    assert!(far > 50, "the hidden edges add wire behind the faces: {far} px differ");
+    assert!(far < fill / 4, "the hidden edges are lines, not faces: {far} of {fill}");
+    assert!(differ(&plain, &hidden) > wire, "hidden edges keep the front wire and add the far wire");
+}
+
+/// One frame of `parts` with the shade data of #2834 uploaded and the
+/// shading switches `fx`.
+fn render_shade(
+    parts: &[GpuPart],
+    cam: &Camera,
+    display: DisplayMode,
+    shade: &camcraft_ui::shade_pass::Shade,
+    fx: camcraft_ui::draw_list::Effects,
+) -> Option<(Vec<u8>, u32, u32)> {
+    let _gpu_guard = GPU_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (device, queue) = shared_device()?;
+    let (device, queue) = (device.as_ref(), queue.as_ref());
+    let mut view = View3D::new(device, FORMAT, SIDE, SIDE);
+    view.set_document(device, queue, parts);
+    view.set_shade(device, queue, shade);
+    view.set_effects(fx);
+    let mut enc = device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("gpu-test-shade") });
+    view.render(queue, &mut enc, &cam.mvp(1.0), cam.eye_f32(), display);
+    queue.submit([enc.finish()]);
+    view.snapshot_rgba(device, queue)
+}
+
+/// The sum of the colour channels of pixel `ix`.
+fn brightness(img: &[u8], ix: usize) -> i32 {
+    img[ix * 4..ix * 4 + 3].iter().map(|c| i32::from(*c)).sum()
+}
+
+/// #2834: the ground shadow pass on a real GPU. The shadow darkens the
+/// ground beside the model, the model hides the part below it, and the
+/// pass draws only while its switch is on and the mode is shaded.
+#[test]
+fn the_ground_shadow_darkens_the_ground_and_not_the_model() {
+    use camcraft_ui::draw_list::Effects;
+    let cube = [model_part(40.0)];
+    let floor = cube[0].verts.iter().map(|v| v[2]).fold(f32::INFINITY, f32::min);
+    let shade = camcraft_ui::shade_pass::Shade {
+        shadow: Arc::new(camcraft_ui::ground_shadow::mesh(&[&cube[0].verts], floor)),
+        ..Default::default()
+    };
+    assert!(!shade.shadow.is_empty(), "the cube has a shadow mesh");
+    let on = Effects { ground_shadow: true, ambient_occlusion: false };
+    let Some((plain, w, h)) = render(&cube, &test_cam()) else {
+        eprintln!("gpu test skipped: no usable adapter");
+        return;
+    };
+    let Some((shadowed, _, _)) = render_shade(&cube, &test_cam(), DisplayMode::ShadedEdges, &shade, on) else {
+        return;
+    };
+    let total = (w * h) as usize;
+    let (mut ground, mut model, mut lighter) = (0usize, 0usize, 0usize);
+    for i in 0..total {
+        if plain[i * 4..i * 4 + 4] == shadowed[i * 4..i * 4 + 4] {
+            continue;
+        }
+        if off_background(&plain, i) { model += 1 } else { ground += 1 }
+        if brightness(&shadowed, i) > brightness(&plain, i) {
+            lighter += 1;
+        }
+    }
+    assert!(ground > 100, "the shadow paints a rim on the ground beside the model: {ground} px");
+    assert_eq!(lighter, 0, "a shadow never makes a pixel lighter");
+    let silhouette = changed_pixels(&plain);
+    assert!(model * 50 < silhouette, "the model hides the shadow below it: {model} of {silhouette} px changed");
+    // The switch gates the pass: the same buffers, the switch off.
+    let Some((off, _, _)) = render_shade(&cube, &test_cam(), DisplayMode::ShadedEdges, &shade, Effects::default()) else {
+        return;
+    };
+    assert!(off == plain, "the shadow pass does not draw while its switch is off");
+    // Wireframe draws no shadow.
+    let Some((wire, _, _)) = render_mode(&cube, &test_cam(), DisplayMode::Wireframe) else { return };
+    let Some((wire_on, _, _)) = render_shade(&cube, &test_cam(), DisplayMode::Wireframe, &shade, on) else { return };
+    assert!(wire == wire_on, "wireframe draws no ground shadow");
+}
+
+/// #2834: the occlusion pass on a real GPU. A slab with a wall: the baked
+/// values darken faces of the model and change nothing outside it; the
+/// pass draws only while its switch is on.
+#[test]
+fn the_occlusion_pass_darkens_model_faces_only() {
+    use camcraft_app::geometry::{Point3, Triangle};
+    use camcraft_ui::draw_list::Effects;
+    let mut verts = soup_of(&StockShape::Box { dx: 60.0, dy: 60.0, dz: 8.0 });
+    let mut wall = soup_of(&StockShape::Box { dx: 8.0, dy: 60.0, dz: 40.0 });
+    for v in &mut wall {
+        v[0] -= 26.0;
+        v[2] += 8.0;
+    }
+    verts.extend(wall);
+    let point = |v: &[f32; 3]| Point3::new(f64::from(v[0]), f64::from(v[1]), f64::from(v[2]));
+    let tris: Vec<Triangle> = verts.as_chunks::<3>().0.iter().map(|t| Triangle::new(point(&t[0]), point(&t[1]), point(&t[2]))).collect();
+    let values = camcraft_ui::occlusion::vertex_occlusion(&tris);
+    assert_eq!(values.len(), verts.len());
+    assert!(values.iter().any(|v| *v < 0.9), "the foot of the wall is in a corner");
+    let part = [GpuPart { verts, selected: false, stock: false, fill: false, classes: Vec::new() }];
+    let shade = camcraft_ui::shade_pass::Shade { occlusion: Arc::new(values), ..Default::default() };
+    let on = Effects { ground_shadow: false, ambient_occlusion: true };
+    let Some((plain, w, h)) = render(&part, &test_cam()) else {
+        eprintln!("gpu test skipped: no usable adapter");
+        return;
+    };
+    let Some((occluded, _, _)) = render_shade(&part, &test_cam(), DisplayMode::ShadedEdges, &shade, on) else {
+        return;
+    };
+    let total = (w * h) as usize;
+    let (mut ground, mut darker, mut lighter) = (0usize, 0usize, 0usize);
+    for i in 0..total {
+        if plain[i * 4..i * 4 + 4] == occluded[i * 4..i * 4 + 4] {
+            continue;
+        }
+        if !off_background(&plain, i) {
+            ground += 1;
+        }
+        match brightness(&occluded, i) - brightness(&plain, i) {
+            d if d < 0 => darker += 1,
+            d if d > 0 => lighter += 1,
+            _ => {}
+        }
+    }
+    assert_eq!(ground, 0, "occlusion changes no pixel outside the model");
+    assert!(darker > 300, "the corner faces are darker: {darker} px");
+    assert_eq!(lighter, 0, "occlusion never makes a pixel lighter");
+    let Some((off, _, _)) = render_shade(&part, &test_cam(), DisplayMode::ShadedEdges, &shade, Effects::default()) else {
+        return;
+    };
+    assert!(off == plain, "the occlusion pass does not draw while its switch is off");
+    // Values that do not fit the model vertices are never read.
+    let short = camcraft_ui::shade_pass::Shade { occlusion: Arc::new(vec![0.5; 9]), ..Default::default() };
+    let Some((unread, _, _)) = render_shade(&part, &test_cam(), DisplayMode::ShadedEdges, &short, on) else {
+        return;
+    };
+    assert!(unread == plain, "a buffer of the wrong length is not drawn");
 }
 
 #[test]

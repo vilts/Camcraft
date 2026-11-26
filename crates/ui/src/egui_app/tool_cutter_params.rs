@@ -23,8 +23,12 @@ use crate::state::State;
 pub(super) fn params_block(ui: &mut Ui, state: &mut State, u: Unit) {
     egui::Grid::new("tool_cutter_params").num_columns(4).spacing([6.0, 2.0]).show(ui, |ui| {
         let t = &mut state.tool_ui;
+        // #3369: a form mill's outline sets its diameter and flute length
+        // (`ToolUi::to_tool` writes them over the draft), so they are
+        // shown here, never typed - as on the Tool tab.
+        let form = t.tool_kind() == ToolKind::FormMill;
         ui.label("cutter Ø");
-        len_cell(ui, u, &mut t.diameter);
+        size_cell(ui, u, &mut t.diameter, form);
         match t.tool_kind() {
             // #263: a ball's corner IS its ball - shown, never edited.
             ToolKind::BallNose | ToolKind::Probe => {
@@ -37,6 +41,12 @@ pub(super) fn params_block(ui: &mut Ui, state: &mut State, u: Unit) {
             }
             ToolKind::Drill => angle(ui, "point angle °", &mut t.tip_angle),
             ToolKind::Taper => angle(ui, "cone angle °", &mut t.tip_angle),
+            ToolKind::Dovetail => angle(ui, "flank angle °", &mut t.tip_angle),
+            // #3369: a form mill's tip is its form, edited on the Tool tab.
+            ToolKind::FormMill => {
+                ui.label("form");
+                ui.label(t.form.as_ref().and_then(|f| f.preset).map_or("drawn outline", |p| p.name()));
+            }
             _ => {
                 ui.label("");
                 ui.label("");
@@ -44,7 +54,7 @@ pub(super) fn params_block(ui: &mut Ui, state: &mut State, u: Unit) {
         }
         ui.end_row();
         ui.label("flutes");
-        len_cell(ui, u, &mut t.flute_len);
+        size_cell(ui, u, &mut t.flute_len, form);
         ui.label("");
         ui.label("");
         ui.end_row();
@@ -84,6 +94,15 @@ fn neck_row(ui: &mut Ui, state: &mut State, u: Unit) {
     });
     if let Some(why) = &state.tool_cutter_ui.neck_refusal {
         ui.colored_label(BAD, why);
+    }
+}
+
+/// A length cell, or the length as a label when the form outline sets it.
+fn size_cell(ui: &mut Ui, u: Unit, v: &mut f64, shown_only: bool) {
+    if shown_only {
+        ui.label(units::len(*v, u, 3)).on_hover_text("set by the form outline; edit the form on the Tool tab");
+    } else {
+        len_cell(ui, u, v);
     }
 }
 

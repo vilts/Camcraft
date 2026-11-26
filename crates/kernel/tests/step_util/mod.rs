@@ -1,16 +1,12 @@
-//! Shared helpers of the STEP bench (step_agreement.rs, step_corrupt.rs):
-//! the truck-stepio reading of a file as crates/app does it today, the
-//! solidcore mesher over the same file, mesh measures, and a time bound
-//! that cancels the import it bounds.
-//! Provenance: our own bench design (M12.1 retirement gate). The truck
-//! calls are the ones crates/app/src/geometry/import/step.rs makes
-//! (ruststep parse, `Table::from_data_section`, `to_compressed_shell`,
-//! `robust_triangulation`), at the same chord target; mesh volume is the
-//! divergence theorem, mesh area the sum of triangle areas.
+//! Shared helpers of the STEP bench (step_agreement.rs, step_import.rs):
+//! the solidcore mesher over a file (with the kernel's pcurves, #917),
+//! mesh measures, and a time bound that cancels the import it bounds.
+//! The truck reader that stood beside them left the workspace with #2790;
+//! its readings are recorded in step_agreement/rows.rs.
+//! Provenance: our own bench design (M12.1 retirement gate); mesh volume is
+//! the divergence theorem, mesh area the sum of triangle areas.
 
 #![allow(dead_code)] // each bench binary uses its own part
-
-pub mod truck_guard;
 
 use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -19,8 +15,6 @@ use std::time::Duration;
 
 use camcraft_kernel::{P3, mesh_signed_volume};
 use solidcore::kernel::CancelToken;
-use truck_meshalgo::prelude::*;
-use truck_stepio::r#in::Table;
 
 /// No single file may take longer than this (release). At the bound the
 /// import's token is cancelled; a case that still does not answer in
@@ -32,8 +26,6 @@ pub const GRACE: Duration = Duration::from_secs(30);
 /// The coarsest chord a STEP mesh is made at, in millimetres: the app's
 /// `MAX_CHORD` (half the sim's verdict tolerance, #689).
 pub const CHORD_MM: f64 = 0.005;
-/// truck's least meshing tolerance in the file's unit (the app's `MIN_TOL`).
-pub const TRUCK_MIN_TOL: f64 = 1e-5;
 
 /// Runs `f` on its own thread with a token it must poll. At `limit` the
 /// token is cancelled; the test fails if `f` still has not answered after
@@ -83,8 +75,7 @@ pub fn mesh_measure(positions: &[P3], tris: &[[usize; 3]], k: f64) -> Option<Mes
     let mut weld: HashMap<[u64; 3], usize> = HashMap::new();
     let mut sides: HashMap<(usize, usize), usize> = HashMap::new();
     for t in tris {
-        // `as_slice`: truck's prelude brings a `get` of its own onto `Vec`.
-        let at = |i: usize| pos.as_slice().get(i).copied();
+        let at = |i: usize| pos.get(i).copied();
         let (a, b, c): (P3, P3, P3) = (at(t[0])?, at(t[1])?, at(t[2])?);
         let (u, v) = (sub(b, a), sub(c, a));
         let n = [
@@ -126,100 +117,6 @@ fn sub(a: P3, b: P3) -> P3 {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
 
-/// What truck-stepio makes of a file, as the app's importer reads it.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TruckStep {
-    /// Shells in the file's table (the app meshes each one).
-    pub shells: usize,
-    /// All shells' meshes together, scaled to millimetres. The volume is
-    /// the sum of each shell's absolute mesh volume.
-    pub mesh: MeshMeasure,
-    /// The chord the meshes were made at, in millimetres.
-    pub chord_mm: f64,
-}
-
-/// Reads `bytes` with ruststep + truck-stepio and meshes every shell at
-/// the app's chord target. `mm_per_unit` is the file's length unit (the
-/// bench table states it; truck meshes in the file's unit). Every refusal
-/// and every truck panic is an `Err` with its reason. Every face is metered
-/// ([`truck_guard`], #1697): a face whose subdivision does not converge is
-/// refused by name, and `stop` ends the meshing when the bench cancels it.
-pub fn truck_read(bytes: &[u8], mm_per_unit: f64, stop: &CancelToken) -> Result<TruckStep, String> {
-    let text = std::str::from_utf8(bytes).map_err(|_| "not valid UTF-8".to_string())?;
-    let read = catch_unwind(AssertUnwindSafe(|| truck_read_text(text, mm_per_unit, stop)));
-    read.unwrap_or_else(|_| Err("truck panicked on this file".into()))
-}
-
-fn truck_read_text(text: &str, k: f64, stop: &CancelToken) -> Result<TruckStep, String> {
-    let exchange = ruststep::parser::parse(text).map_err(|e| format!("syntax error: {e}"))?;
-    let section = exchange.data.first().ok_or("no DATA section")?;
-    let table = Table::from_data_section(section);
-    if table.shell.is_empty() {
-        return Err("no shells found".into());
-    }
-    let mut ids: Vec<&u64> = table.shell.keys().collect();
-    ids.sort_unstable();
-    let (mut volume, mut area, mut triangles, mut open_edges) = (0.0_f64, 0.0_f64, 0usize, 0usize);
-    let (mut min, mut max) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
-    let mut chord_mm = 0.0_f64;
-    for id in ids {
-        let Some(shell) = table.shell.get(id) else {
-            continue;
-        };
-        let cshell = table
-            .to_compressed_shell(shell)
-            .map_err(|e| format!("shell conversion failed: {e}"))?;
-        let extent = cshell
-            .vertices
-            .iter()
-            .flat_map(|p| [p.x.abs(), p.y.abs(), p.z.abs()])
-            .fold(0.0_f64, f64::max);
-        if !extent.is_finite() {
-            return Err("shell vertices are not finite".into());
-        }
-        // The app's target: 0.1% of the extent, never coarser than the mm
-        // cap, never under truck's floor (all in the file's unit).
-        let tol = (extent * 1e-3).min(CHORD_MM / k).max(TRUCK_MIN_TOL);
-        chord_mm = chord_mm.max(tol * k);
-        let guarded = truck_guard::Guarded::new(cshell, truck_guard::FACE_EVAL_CAP, stop);
-        let meshed = guarded.shell.robust_triangulation(tol).to_polygon();
-        if let Some(why) = guarded.refusal() {
-            return Err(format!("shell #{id}: {why}"));
-        }
-        let positions: Vec<P3> = meshed.positions().iter().map(|p| [p.x, p.y, p.z]).collect();
-        let mut tris: Vec<[usize; 3]> = Vec::new();
-        for face in meshed.face_iter() {
-            let Some(a) = face.first() else { continue };
-            for w in face.get(1..).unwrap_or_default().windows(2) {
-                if let [b, c] = w {
-                    tris.push([a.pos, b.pos, c.pos]);
-                }
-            }
-        }
-        let m = mesh_measure(&positions, &tris, k).ok_or("a shell's mesh is not finite")?;
-        volume += m.volume.abs();
-        area += m.area;
-        triangles += m.triangles;
-        open_edges += m.open_edges;
-        for i in 0..3 {
-            min[i] = min[i].min(m.min[i]);
-            max[i] = max[i].max(m.max[i]);
-        }
-    }
-    Ok(TruckStep {
-        shells: table.shell.len(),
-        mesh: MeshMeasure {
-            volume,
-            area,
-            min,
-            max,
-            triangles,
-            open_edges,
-        },
-        chord_mm,
-    })
-}
-
 /// What solidcore's mesher makes of a file's solids.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SolidcoreMesh {
@@ -241,7 +138,11 @@ pub fn solidcore_mesh(bytes: &[u8]) -> Result<SolidcoreMesh, String> {
 
 fn solidcore_mesh_text(text: &str) -> Result<SolidcoreMesh, String> {
     let ex = solidcore_step::p21::parse(text).map_err(|e| e.to_string())?;
-    let read = solidcore_step::topology::read_solids(&ex);
+    // The pcurves with no closed form come from the kernel, as in the
+    // import (`read_step`, #917): the mesh is judged on the same record.
+    let mut kernel = solidcore::Kernel::default();
+    let trims = camcraft_kernel::solidcore_trims::KernelTrims::new(&mut kernel);
+    let read = solidcore_step::topology::read_solids_with(&ex, &trims);
     if let Some(f) = read.failures.first() {
         return Err(format!("solid #{} not read: {}", f.item, f.message));
     }

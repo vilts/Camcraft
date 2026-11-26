@@ -100,7 +100,7 @@ fn a_rim_click_anchors_the_origin_on_its_centre_and_undo_restores_it() {
 fn a_face_is_refused_by_name_and_lands_nothing() {
     let mut state = with_boss();
     let g = camcraft_app::pick::graph_of(&state.world, "boss").expect("graph");
-    let face = g.faces.iter().find_map(|f| f.sel).expect("a face key");
+    let face = g.faces.iter().find_map(|f| f.sel.clone()).expect("a face key");
     crate::wcs_circle_pick::queue_circle(&mut state, GeoSel { entity: "boss".into(), feature: face });
     state.drain_actions();
     assert!(near(g54(&state), [1.0, 2.0, 3.0]));

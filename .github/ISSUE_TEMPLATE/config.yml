@@ -1,0 +1,8 @@
+# Blank issues stay open: the in-app report button (#1696) prefills a
+# blank issue, and GitHub's prefill query works only on a blank template,
+# not on the forms above.
+blank_issues_enabled: true
+contact_links:
+  - name: Questions
+    url: https://github.com/NeoTech/Camcraft/discussions
+    about: Ask how to do something in CamCraft.

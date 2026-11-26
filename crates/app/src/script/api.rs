@@ -23,11 +23,15 @@ pub(crate) fn v_load(env: &mut Env, args: Vec<Value>) -> Result<Value, String> {
     let path = PathBuf::from(arg_str(&args, 0, "a project path")?);
     // Load in isolation: refusal leaves the current document and its undo/redo intact.
     let world = crate::world::new_world();
+    // #3608: stamped before the read, so a write during the load refuses the next save.
+    let stamp = crate::project::DiskStamp::of(&path);
     let notes = crate::project::load_noted(&world, &path).map_err(|e| e.to_string())?;
     env.history = History::default();
     env.world = world;
     env.posted = None;
     env.doc_path = Some(path.clone());
+    env.doc_read_only = false;
+    env.doc_stamp = stamp;
     let mut out = json!({ "path": path.display().to_string(), "operations": ops_view(env) });
     if !notes.is_empty() {
         out["notes"] = json!(notes);
@@ -35,19 +39,26 @@ pub(crate) fn v_load(env: &mut Env, args: Vec<Value>) -> Result<Value, String> {
     Ok(out)
 }
 
-/// `cam.save(path?)` - write the document. With no path this saves
+/// `cam.save(path?, options?)` - write the document. With no path this saves
 /// over the file `cam.load` opened; with neither, it refuses - a
-/// document that silently goes nowhere is the silent-wrong answer.
+/// document that silently goes nowhere is the silent-wrong answer. A
+/// document open read-only is not saved over its own file (#3609).
+/// #3608: a save over the file loaded or saved here is refused when another
+/// program changed it since, unless `options.overwrite` is true.
 pub(crate) fn v_save(env: &mut Env, args: Vec<Value>) -> Result<Value, String> {
-    if args.len() > 1 {
-        return Err(format!("save takes at most one path, got {}", args.len()));
+    if args.len() > 2 {
+        return Err(format!("save takes a path and one options object, got {} arguments", args.len()));
     }
     let path = match arg_opt(&args, 0, "a project path")? {
         Some(p) => PathBuf::from(p),
         None => env.doc_path.clone().ok_or("no document was loaded to save over - pass a path")?,
     };
+    crate::project::refuse_read_only_save(env.doc_path.as_deref(), env.doc_read_only, &path)?;
+    super::save_guard::check(env.doc_stamp.as_ref(), &path, args.get(1))?;
     crate::project::save(&env.world, &path).map_err(|e| e.to_string())?;
+    env.doc_stamp = crate::project::DiskStamp::of(&path);
     env.doc_path = Some(path.clone());
+    env.doc_read_only = false;
     Ok(json!({ "path": path.display().to_string() }))
 }
 
@@ -55,7 +66,9 @@ pub(crate) fn v_save(env: &mut Env, args: Vec<Value>) -> Result<Value, String> {
 /// it as a model entity, by its file stem unless named otherwise (a null
 /// name keeps the stem). `facetBudget` is the STEP facet budget (#1054):
 /// absent or null is the default; out of bounds, or given for a file that
-/// is not STEP, refuses by name. A name that
+/// is not STEP, refuses by name. `units` (#1874) is the length unit,
+/// `"mm"` or `"in"`, for a STEP file that states none: such a file is
+/// refused without it, never read in a guessed unit. A name that
 /// already wears a model updates it (the revision counts, the stale
 /// marks follow); a name that belongs to setup furniture refuses -
 /// an import never overwrites the stock solid by accident.
@@ -68,11 +81,15 @@ pub(crate) fn v_import(env: &mut Env, args: Vec<Value>) -> Result<Value, String>
     // #1185: no budget given -> a re-import keeps the model's recorded one.
     let given_name = arg_opt(&args, 1, "a model name")?;
     let budget = explicit.or_else(|| crate::model_fidelity::reimport_budget(&env.world, &path, given_name.as_deref()));
-    let imp = ImportModel::within(&path, budget).map_err(|e| e.to_string())?;
+    let units = match arg_opt(&args, 3, "a length unit")? {
+        None => None,
+        Some(u) => Some(crate::units::Unit::parse(&u).ok_or_else(|| format!("the length unit must be \"mm\" or \"in\", got \"{u}\""))?),
+    };
+    let imp = ImportModel::within_in(&path, budget, units).map_err(|e| e.to_string())?;
     let name = given_name.unwrap_or_else(|| imp.name.clone());
     let notes = imp.notes.clone();
     if model::find_by_name(&env.world, &name).is_some() {
-        let cmd = UpdateModel::new(&env.world, &name, imp.mesh).map_err(|e| e.to_string())?.with_fidelity(imp.coarse_mm).with_hole(imp.hole.clone()).with_budget(imp.facet_budget).with_step_source(imp.step_source);
+        let cmd = UpdateModel::new(&env.world, &name, imp.mesh).map_err(|e| e.to_string())?.with_fidelity(imp.coarse_mm).with_file_tolerance(imp.file_tolerance).with_hole(imp.hole.clone()).with_budget(imp.facet_budget).with_step_source(imp.step_source).with_source(imp.source);
         env.history.execute(&env.world, cmd);
     } else {
         env.history.execute(&env.world, imp.renamed(&name));
@@ -96,28 +113,57 @@ pub(crate) fn v_import(env: &mut Env, args: Vec<Value>) -> Result<Value, String>
     Ok(out)
 }
 
-/// `cam.exportTools(path)` - write the document's tools as a tool
-/// library file, the very text the Tool library page's Export writes
-/// (`tool_library::export_tool_library`, #300). A document with no
-/// tools refuses, and so does a path that cannot be written.
+/// `cam.exportTools(path, format?, units?)` - write the document's tools
+/// as a CamCraft `.camtools` library, a Tormach PathPilot `.csv` tool
+/// table, or a Hurco WinMax `.TCM` tool library (#300, #2566).
 pub(crate) fn v_export_tools(env: &mut Env, args: Vec<Value>) -> Result<Value, String> {
+    if args.is_empty() || args.len() > 3 {
+        return Err(format!("exportTools takes 1 to 3 arguments, got {}", args.len()));
+    }
     let path = PathBuf::from(arg_str(&args, 0, "a tool library path")?);
-    let text = crate::tool_library::export_tool_library(&env.world)?;
-    let count = model::named_entities(&env.world).iter().filter(|(_, e)| model::tool_of(&env.world, e).is_some()).count();
-    std::fs::write(&path, text).map_err(|e| format!("tool library not written to {}: {e}", path.display()))?;
-    Ok(json!({ "path": path.display().to_string(), "tools": count }))
+    let explicit_format = match arg_opt(&args, 1, "format")? {
+        None => None,
+        Some(f) => crate::tool_table::ToolTableFormat::parse_opt(&f)?,
+    };
+    let explicit_unit = match arg_opt(&args, 2, "units")? {
+        None => None,
+        Some(u) => Some(crate::tool_table::parse_unit(&u)?),
+    };
+    export_tools(env, &path, explicit_format, explicit_unit)
 }
 
-/// `cam.importTools(path, mode?)` - read a tool library file into the
-/// document through `ImportTools`, the GUI's own command: the whole
-/// file is checked first (a malformed or insane file refuses by name),
-/// an identical tool is skipped, a clashing name arrives as "Name (2)",
-/// and the import is one undo step. #899: `mode` is `add` (default),
-/// `update` (same-named tools take the file's definition in place) or
-/// `replace` (update, and tools the file lacks are removed unless an
-/// operation uses them).
-/// #889: `holders` (default true) takes the file's tool bodies.
+/// Shared export helper behind `cam.exportTools` and MCP `export_tool_library`.
+pub(crate) fn export_tools(
+    env: &Env,
+    path: &Path,
+    explicit_format: Option<crate::tool_table::ToolTableFormat>,
+    explicit_unit: Option<crate::units::Unit>,
+) -> Result<Value, String> {
+    use crate::tool_table::ToolTableFormat;
+    let format = explicit_format
+        .or_else(|| crate::tool_table::detect_format(path, None))
+        .unwrap_or(ToolTableFormat::CamTools);
+    let unit = explicit_unit.unwrap_or_else(|| match format {
+        ToolTableFormat::CamTools => crate::units::Unit::Millimeters,
+        ToolTableFormat::PathPilot | ToolTableFormat::Hurco => crate::units::of(&env.world),
+    });
+    let text = crate::tool_table::export(&env.world, format, unit)?;
+    let count = model::named_entities(&env.world)
+        .iter()
+        .filter(|(_, e)| model::tool_of(&env.world, e).is_some())
+        .count();
+    std::fs::write(path, text)
+        .map_err(|e| format!("tool library not written to {}: {e}", path.display()))?;
+    Ok(json!({ "path": path.display().to_string(), "tools": count, "format": format.label() }))
+}
+
+/// `cam.importTools(path, mode?, holders?, format?, units?)` - read a
+/// tool library or machine tool table into the document through
+/// `ImportTools`, one undo step (#300, #889, #899, #2566).
 pub(crate) fn v_import_tools(env: &mut Env, args: Vec<Value>) -> Result<Value, String> {
+    if args.is_empty() || args.len() > 5 {
+        return Err(format!("importTools takes 1 to 5 arguments, got {}", args.len()));
+    }
     let path = PathBuf::from(arg_str(&args, 0, "a tool library path")?);
     let mode = match args.get(1) {
         None | Some(Value::Null) => ImportMode::Add,
@@ -128,20 +174,48 @@ pub(crate) fn v_import_tools(env: &mut Env, args: Vec<Value>) -> Result<Value, S
         Some(Value::Bool(b)) => *b,
         Some(other) => return Err(format!("holders must be true or false, got {other}")),
     };
-    import_tools(env, &path, mode, holders)
+    let explicit_format = match arg_opt(&args, 3, "format")? {
+        None => None,
+        Some(f) => crate::tool_table::ToolTableFormat::parse_opt(&f)?,
+    };
+    let explicit_unit = match arg_opt(&args, 4, "units")? {
+        None => None,
+        Some(u) => Some(crate::tool_table::parse_unit(&u)?),
+    };
+    import_tools(env, &path, mode, holders, explicit_format, explicit_unit)
 }
 
-/// The import behind `cam.importTools` and MCP's `import_tool_library`
-/// (#889: `holders` takes the file's tool bodies, or leaves them out).
-pub(crate) fn import_tools(env: &mut Env, path: &Path, mode: ImportMode, holders: bool) -> Result<Value, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-    let library = crate::tool_library::parse_tool_library(&text)?;
-    let cmd = ImportTools::with_options(&env.world, library, mode, holders).map_err(|e| e.to_string())?;
+/// The import behind `cam.importTools` and MCP's `import_tool_library`.
+pub(crate) fn import_tools(
+    env: &mut Env,
+    path: &Path,
+    mode: ImportMode,
+    holders: bool,
+    explicit_format: Option<crate::tool_table::ToolTableFormat>,
+    explicit_unit: Option<crate::units::Unit>,
+) -> Result<Value, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let unit = explicit_unit.unwrap_or_else(|| crate::units::of(&env.world));
+    let (format, library) = crate::tool_table::parse_import(
+        &text,
+        explicit_format,
+        path,
+        unit,
+        explicit_unit.is_some(),
+    )?;
+    let cmd = ImportTools::with_options(&env.world, library, mode, holders)
+        .map_err(|e| e.to_string())?;
     let report = cmd.report().clone();
     env.history.execute(&env.world, cmd);
-    let renamed: Vec<Value> = report.renamed.iter().map(|(from, to)| json!({ "from": from, "to": to })).collect();
+    let renamed: Vec<Value> = report
+        .renamed
+        .iter()
+        .map(|(from, to)| json!({ "from": from, "to": to }))
+        .collect();
     Ok(json!({
         "path": path.display().to_string(),
+        "format": format.label(),
         "added": report.added,
         "renamed": renamed,
         "skipped": report.skipped,
@@ -169,22 +243,7 @@ pub(crate) fn v_operations(env: &mut Env, _args: Vec<Value>) -> Result<Value, St
 /// and leaves the generations before it real and undoable, exactly as
 /// in the app.
 pub(crate) fn v_generate(env: &mut Env, args: Vec<Value>) -> Result<Value, String> {
-    let all = inventory(env);
-    let targets: Vec<(String, Entity)> = if args.is_empty() {
-        all.iter()
-            .map(|(n, e, _)| (n.clone(), *e))
-            .collect()
-    } else {
-        let mut out = Vec::with_capacity(args.len());
-        for i in 0..args.len() {
-            let name = arg_str(&args, i, "an operation name")?;
-            match all.iter().find(|(n, e, _)| *n == name || model::operation_label(&env.world, n, e) == name) {
-                Some((key, e, _)) => out.push((key.clone(), *e)),
-                None => return Err(format!("no operation named '{name}'")),
-            }
-        }
-        out
-    };
+    let targets = generate_targets(env, &args)?;
     let mut done = Vec::with_capacity(targets.len());
     for (name, entity) in targets {
         if args.is_empty() && crate::operation::status_of(&env.world, &entity) == OpStatus::Ok {
@@ -195,6 +254,29 @@ pub(crate) fn v_generate(env: &mut Env, args: Vec<Value>) -> Result<Value, Strin
         done.push(op_view(env, &name, &entity, false));
     }
     Ok(Value::Array(done))
+}
+
+/// The operations a `generate` call runs, in program order: every one
+/// for no names (the caller skips the Ok ones as it reaches them), or
+/// each named one. #3035: the MCP server's background generate reads
+/// the same list, so the two paths cannot disagree on what runs.
+pub(crate) fn generate_targets(env: &Env, args: &[Value]) -> Result<Vec<(String, Entity)>, String> {
+    let all = inventory(env);
+    Ok(if args.is_empty() {
+        all.iter()
+            .map(|(n, e, _)| (n.clone(), *e))
+            .collect()
+    } else {
+        let mut out = Vec::with_capacity(args.len());
+        for i in 0..args.len() {
+            let name = arg_str(args, i, "an operation name")?;
+            match all.iter().find(|(n, e, _)| *n == name || model::operation_label(&env.world, n, e) == name) {
+                Some((key, e, _)) => out.push((key.clone(), *e)),
+                None => return Err(format!("no operation named '{name}'")),
+            }
+        }
+        out
+    })
 }
 
 /// A refused generation as the script's (and MCP's) error: the refusal,
@@ -251,7 +333,7 @@ pub(crate) fn v_verify(env: &mut Env, args: Vec<Value>) -> Result<Value, String>
         }
         out
     };
-    let operations: Vec<Value> = scope.iter().map(|(n, e, _)| op_view(env, n, e, true)).collect();
+    let mut operations: Vec<Value> = scope.iter().map(|(n, e, _)| op_view(env, n, e, true)).collect();
     // The gate judges the PROGRAM, which is the whole document - so it
     // runs (or not) on the document's freshness, whatever slice the
     // caller named. A judgment that could not run never reads as passed.
@@ -263,6 +345,9 @@ pub(crate) fn v_verify(env: &mut Env, args: Vec<Value>) -> Result<Value, String>
         let mut g = json!({ "ok": r.problems.is_empty(), "problems": r.problems });
         if let Some(line) = r.not_judged {
             g["not_judged"] = json!(line);
+        }
+        if !r.warnings.is_empty() {
+            g["warnings"] = gate_warnings(env, &r.warnings, &mut operations);
         }
         g
     } else {
@@ -276,6 +361,28 @@ pub(crate) fn v_verify(env: &mut Env, args: Vec<Value>) -> Result<Value, String>
         .collect();
     let ok = ops_ok && fresh && gate["ok"] == json!(true) && held_by.is_empty();
     Ok(json!({ "ok": ok, "operations": operations, "gate": gate, "held_by": held_by }))
+}
+
+/// #3456: the program laws' non-blocking findings (a plasma tip-up or
+/// kerf crossing) as data: each joins its op's `warnings` row (when the
+/// op is in scope) and the gate's `warnings` list, op named by label.
+/// They hold nothing - the law that found them warns, and `ok` follows
+/// the problems and `held_by` alone.
+fn gate_warnings(env: &Env, warnings: &[posting::GateWarning], operations: &mut [Value]) -> Value {
+    let mut out = Vec::with_capacity(warnings.len());
+    for w in warnings {
+        if let Some(list) = operations
+            .iter_mut()
+            .find(|o| o["key"] == json!(w.op))
+            .and_then(|o| o["warnings"].as_array_mut())
+        {
+            list.push(json!(w.message));
+        }
+        let label = model::find_by_name(&env.world, &w.op)
+            .map_or_else(|| w.op.clone(), |e| model::operation_label(&env.world, &w.op, &e));
+        out.push(json!({ "op": label, "kind": w.kind, "message": w.message }));
+    }
+    Value::Array(out)
 }
 
 /// `cam.check()` - the whole document's `verify`, the way the post
@@ -411,7 +518,7 @@ pub(crate) fn ops_view(env: &Env) -> Value {
 
 /// One operation as the script sees it: the tree row, plus the cached
 /// path's warnings when the caller is asking for a verdict.
-fn op_view(env: &Env, name: &str, entity: &Entity, warnings: bool) -> Value {
+pub(crate) fn op_view(env: &Env, name: &str, entity: &Entity, warnings: bool) -> Value {
     let op = model::operation_of(&env.world, entity);
     let status = crate::operation::status_of(&env.world, entity);
     let mut row = json!({

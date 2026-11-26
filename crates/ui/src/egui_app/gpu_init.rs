@@ -148,7 +148,13 @@ fn try_adapter<T, F>(
 where
     F: FnMut(&wgpu::Device, &wgpu::Queue, &wgpu::SurfaceConfiguration) -> Result<T, String>,
 {
-    let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
+    // #2958: the adapter's own sample counts (2x) need this feature; an
+    // adapter without it keeps WebGPU's guaranteed counts.
+    let desc = wgpu::DeviceDescriptor {
+        required_features: adapter.features() & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES,
+        ..wgpu::DeviceDescriptor::default()
+    };
+    let (device, queue) = pollster::block_on(adapter.request_device(&desc))
         .map_err(|e| format!("device request refused ({e})"))?;
     let lost = Arc::new(AtomicBool::new(false));
     {

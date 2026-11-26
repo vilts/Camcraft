@@ -73,6 +73,7 @@ fn drilled(coarse_mm: Option<f64>, bottom: f64) -> Vec<Warning> {
         plunge_feed: 100.0,
         holes: vec![Hole { xy: Point2::new(0.0, 0.0), radius: 2.0, entry_z: 20.0, floor_z: 10.0, through: false, stepped: false }],
         cross: Vec::new(),
+        picks: Default::default(),
     };
     h.execute(&world, CreateOperation::new(&world, "D1", "DR-0400", SrcRef::Entity("part".into()), params).expect("create"));
     h.execute(&world, GenerateOperation::new(&world, "D1").expect("generate"));

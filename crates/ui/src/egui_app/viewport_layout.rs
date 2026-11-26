@@ -10,6 +10,7 @@
 //! measures the text with the frame's fonts (the same call the paint makes)
 //! and places it, so the shell and the tests read one set of rects.
 
+#[cfg(test)]
 use super::viewport_bar::bar_rect;
 
 /// The control legend the shell paints at the pane's bottom-right while the
@@ -86,13 +87,13 @@ fn lift_above(r: egui::Rect, obstacle: egui::Rect) -> egui::Rect {
 ///    and it meets that too - so the line moves up by the legend's lift.
 /// 4. A piece that would meet the view cube, or leave the pane, is not drawn.
 #[must_use]
-pub(crate) fn place(
+pub(crate) fn place_with_bar(
     pane: egui::Rect,
     cube: Option<egui::Rect>,
     legend: egui::Vec2,
     empty: Option<egui::Vec2>,
+    bar: egui::Rect,
 ) -> Placed {
-    let bar = bar_rect(pane);
     let anchor = legend_anchor(pane);
     let bottom_line = egui::Rect::from_min_size(
         egui::pos2(anchor.x - legend.x, anchor.y - legend.y),
@@ -132,6 +133,7 @@ pub(crate) struct Furniture {
     pub empty_text: Option<std::sync::Arc<egui::Galley>>,
 }
 
+#[cfg(test)]
 #[must_use]
 pub(crate) fn furniture(
     ctx: &egui::Context,
@@ -140,14 +142,27 @@ pub(crate) fn furniture(
     cube: Option<egui::Rect>,
     small: &egui::FontId,
 ) -> Furniture {
+    furniture_with_bar(ctx, pane, has_model, cube, small, bar_rect(pane))
+}
+
+#[must_use]
+pub(crate) fn furniture_with_bar(
+    ctx: &egui::Context,
+    pane: egui::Rect,
+    has_model: bool,
+    cube: Option<egui::Rect>,
+    small: &egui::FontId,
+    bar: egui::Rect,
+) -> Furniture {
     let wrap = wrap_width(pane);
     let legend_text = galley(ctx, LEGEND, small.clone(), wrap);
     let empty_text = (!has_model).then(|| galley(ctx, EMPTY_LINE, empty_font(small), wrap));
-    let placed = place(
+    let placed = place_with_bar(
         pane,
         cube,
         legend_text.size(),
         empty_text.as_ref().map(|g| g.size()),
+        bar,
     );
     Furniture {
         placed,
@@ -233,6 +248,22 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn legend_clears_the_expanded_ribbon() {
+        let ctx = frame_ctx();
+        let font = small_font();
+        let pane = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(700.0, 600.0));
+        let cube = viewcube::Hud::with_controls(pane, true).map(|hud| hud.cube);
+        let expanded = super::super::viewport_bar::panel_rect(pane, true);
+        let f = furniture_with_bar(&ctx, pane, false, cube, &font, expanded);
+        if let Some(r) = f.placed.legend {
+            assert!(!r.intersects(expanded), "legend {r:?} clears expanded bar {expanded:?}");
+        }
+        if let Some(r) = f.placed.empty {
+            assert!(!r.intersects(expanded), "empty {r:?} clears expanded bar {expanded:?}");
         }
     }
 }

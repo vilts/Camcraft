@@ -9,9 +9,10 @@
 use crate::state::CommandKind;
 
 /// Opening this file needs a picker the browser build does not have yet:
-/// its async picker opens models and projects only (#31).
+/// its async picker opens models, projects, machines and posts only (#31,
+/// #2950).
 pub const NEEDS_PICKER: &str =
-    "Not available in the browser yet: the browser file picker opens models and projects only (#31)";
+    "Not available in the browser yet: the browser file picker opens models, projects, machines and posts only (#31)";
 /// The browser keeps no list of files it opened.
 pub const NO_RECENT: &str = "Not available in the browser: it keeps no list of recent files";
 /// The fixture library lives in a folder on disk.
@@ -27,14 +28,12 @@ pub const NO_FOLDER: &str =
 #[must_use]
 pub fn refusal(action: &CommandKind, per_op: bool) -> Option<&'static str> {
     match action {
-        // Open model and Open project run the browser's async picker (#31).
-        CommandKind::ImportFixtureDialog
-        | CommandKind::LoadMachineDialog
-        | CommandKind::SelectPostDialog
-        | CommandKind::SelectThemeDialog => Some(NEEDS_PICKER),
+        // Open model and Open project run the browser's async picker (#31);
+        // Load machine, Load post and Load folder run it too (#2950).
+        CommandKind::ImportAgieDrawing | CommandKind::ImportFixtureDialog | CommandKind::SelectThemeDialog => Some(NEEDS_PICKER),
         CommandKind::OpenRecent(..) => Some(NO_RECENT),
         CommandKind::FixtureLibrarySaveDialog(_) | CommandKind::FixtureLibraryInsertDialog(_) => Some(NO_LIBRARY),
-        CommandKind::SetupSheetDialog | CommandKind::ExportStockDialog | CommandKind::ToolListExportDialog(_) => {
+        CommandKind::ExportAgieInspection(_) | CommandKind::SetupSheetDialog | CommandKind::ExportStockDialog | CommandKind::ToolListExportDialog(_) => {
             Some(NO_EXPORT)
         }
         CommandKind::PostProgramDialog if per_op => Some(NO_FOLDER),
@@ -201,8 +200,6 @@ mod tests {
     fn every_picker_and_folder_command_is_refused_by_name_in_the_browser() {
         for (action, why) in [
             (CommandKind::ImportFixtureDialog, NEEDS_PICKER),
-            (CommandKind::LoadMachineDialog, NEEDS_PICKER),
-            (CommandKind::SelectPostDialog, NEEDS_PICKER),
             (CommandKind::SelectThemeDialog, NEEDS_PICKER),
             (CommandKind::OpenRecent(camcraft_app::recent::RecentKind::Project, PathBuf::from("a.camproj")), NO_RECENT),
             (CommandKind::FixtureLibrarySaveDialog("S".into()), NO_LIBRARY),
@@ -217,8 +214,14 @@ mod tests {
         for action in [CommandKind::SaveProjectDialog, CommandKind::SaveProjectAsDialog, CommandKind::PostProgramDialog] {
             assert_eq!(refusal(&action, false), None, "{action:?} downloads in the browser");
         }
-        for action in [CommandKind::OpenModelDialog, CommandKind::OpenProjectDialog] {
-            assert_eq!(refusal(&action, false), None, "{action:?} runs the browser's picker (#31)");
+        for action in [
+            CommandKind::OpenModelDialog,
+            CommandKind::OpenProjectDialog,
+            CommandKind::LoadMachineDialog,
+            CommandKind::SelectPostDialog,
+            CommandKind::LoadSetupFolderDialog,
+        ] {
+            assert_eq!(refusal(&action, false), None, "{action:?} runs the browser's picker (#31, #2950)");
         }
     }
 

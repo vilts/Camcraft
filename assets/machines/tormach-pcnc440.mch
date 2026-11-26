@@ -20,7 +20,7 @@
             ] } }
       ] }
     ] } },
-  "controller": { "synced_configuration": { "parts": {
+  "controller": { "post": "Tormach PathPilot", "synced_configuration": { "parts": {
     "X": { "coordinate": 0, "max_normal_speed": 135.0, "max_rapid_speed": 135.0 },
     "Y": { "coordinate": 1, "max_normal_speed": 135.0, "max_rapid_speed": 135.0 },
     "Z": { "coordinate": 2, "max_normal_speed": 110.0, "max_rapid_speed": 110.0 }

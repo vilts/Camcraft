@@ -43,7 +43,7 @@ pub const R: f64 = 5.0;
 pub const EPS: f64 = 1e-3;
 
 pub fn pocket(top: f64, bottom: f64) -> OpParams {
-    OpParams::Pocket { rest: None,
+    OpParams::Pocket { pass_start: Default::default(), rest: None,
         blend_radius: None,
         stepover: 4.0,
         stock_to_leave: 0.0,
@@ -62,6 +62,8 @@ pub fn pocket(top: f64, bottom: f64) -> OpParams {
         blend_turns: false,
         tilt: None,
         links: camcraft_app::links::Links::PLANAR,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     }
 }
 
@@ -85,7 +87,7 @@ pub fn contour(top: f64, bottom: f64, want: Side) -> OpParams {
 
 pub fn face(cut: f64) -> OpParams {
     OpParams::Face { holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 6.0,
         clearance_z: Height::fixed(40.0),
@@ -95,6 +97,7 @@ pub fn face(cut: f64) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -154,7 +157,7 @@ pub fn top_face(world: &World, name: &str, z: f64) -> FeatureSel {
             continue;
         }
         let ext = pts.iter().map(|p| p[0].abs().max(p[1].abs())).fold(0.0, f64::max);
-        if best.is_none_or(|(b, _)| ext > b) {
+        if best.as_ref().is_none_or(|(b, _)| ext > *b) {
             best = Some((ext, FeatureSel::Face(face.id)));
         }
     }

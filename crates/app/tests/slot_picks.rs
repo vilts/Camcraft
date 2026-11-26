@@ -68,10 +68,11 @@ fn slot(a: (f64, f64), b: (f64, f64), width: f64, bottom: f64) -> OpParams {
         plunge_feed: 300.0,
         climb: true,
         entry: Entry3D::Plunge,
-        helix_radius: 1.0,
+        helix_radius: 1.0, blend_turns: false, blend_radius: None,
         tilt: None,
         extend_start: 0.0,
         extend_end: 0.0,
+        picks: Default::default(),
     }
 }
 

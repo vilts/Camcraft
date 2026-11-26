@@ -204,7 +204,8 @@ fn milling_test_finish_band(
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
+        picks: Default::default(),
     };
     let mut params = operation::retype_params(&seed, kind);
     let tol = match &mut params {

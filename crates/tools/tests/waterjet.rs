@@ -13,7 +13,7 @@ fn recipe() -> WaterjetCutData {
 }
 
 fn row() -> CuttingRow {
-    CuttingRow { material: Some(WorkMaterial::MildSteel), rpm: 0.0, feed: 100.0, stepdown: None, stepover: None, waterjet: Some(recipe()) }
+    CuttingRow { material: Some(WorkMaterial::MildSteel), rpm: 0.0, feed: 100.0, stepdown: None, stepover: None, waterjet: Some(recipe()), plasma: None }
 }
 
 #[test]

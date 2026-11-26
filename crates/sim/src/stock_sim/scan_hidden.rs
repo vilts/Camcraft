@@ -293,9 +293,6 @@ fn judge_rows(
     let mut best = 0.0;
     let mut at = Point2::new(0.0, 0.0);
     let mut hint = None;
-    // The band's reach (#1408): the ball, the floor, and the most an
-    // arc piece stands off the chord whose ends set the band.
-    let reach = f.r + f.floor + super::scan_arc::max_bulge(f.arcs);
     for iy in ja..jb {
         for ix in 0..nx {
             let bin = &bins[ix + (iy - ja) * nx];
@@ -324,11 +321,11 @@ fn judge_rows(
                 }
                 let (cx, cy) = f.center(ix, iy);
                 let p = Point3::new(cx, cy, hi);
-                // #1408: a top out of every turning nose's reach, in a
-                // recess the pass never stood level with, is another
-                // op's floor (`scan_turned`); one the pass went into
-                // and stopped short of is its rest (PR #1429 review).
-                if f.band.is_some_and(|b| b.excuses(p, roof, reach)) {
+                // #1408, #2880: a top whose open recess the pass never
+                // entered is another op's floor (`scan_turned`); one
+                // the pass entered (or bridged) and stopped short of is
+                // its rest (PR #1429 review).
+                if f.band.is_some_and(|b| b.excuses(p, roof)) {
                     continue;
                 }
                 // The nearest ball center, exact (`scan_near`); a top

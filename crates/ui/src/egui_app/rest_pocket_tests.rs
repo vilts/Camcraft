@@ -39,7 +39,7 @@ fn sec_index(name: &str) -> usize {
 }
 
 fn pocket(strategy: PocketStrategy, rest: Option<RestParams>) -> OpParams {
-    OpParams::Pocket {
+    OpParams::Pocket { pass_start: Default::default(),
         links: camcraft_app::links::Links::PLANAR,
         stepover: 1.5,
         stock_to_leave: 0.0,
@@ -59,6 +59,8 @@ fn pocket(strategy: PocketStrategy, rest: Option<RestParams>) -> OpParams {
         blend_radius: None,
         rest,
         tilt: None,
+        corner_relief: Default::default(),
+        picks: Default::default(),
     }
 }
 
@@ -216,6 +218,7 @@ fn rest_group_toggles_edits_draft_commits_via_apply_and_undoes() {
     set_row_number(&mut h, "Rest allowance", "0.1");
 
     let want = RestParams {
+        source: Default::default(),
         previous_tool_diameter: 10.0,
         previous_corner_radius: 1.5,
         previous_stock_to_leave: 0.25,
@@ -386,6 +389,7 @@ fn rest_group_auto_note_shows_waterline_when_rest_is_on() {
     let mut h_saved = page(opened_pocket(
         PocketStrategy::Auto,
         Some(RestParams {
+            source: Default::default(),
             previous_tool_diameter: 8.0,
             previous_corner_radius: 0.0,
             previous_stock_to_leave: 0.0,
@@ -399,3 +403,6 @@ fn rest_group_auto_note_shows_waterline_when_rest_is_on() {
     );
     assert!(h_saved.query_by_label_contains("Auto -> Zigzag").is_none());
 }
+
+#[path = "rest_source_tests.rs"]
+mod source;

@@ -130,6 +130,24 @@ pub fn rotary_offset_in(
     wrap_exit::wrap_exit(&base, &d.ax, &d.e1, &d.e2, d.rho_ref, d.r, c, cap)
 }
 
+/// [`rotary_offset_in`] about an axis the caller STATES and has judged
+/// (#2772 parts 1-2, `axis_stated::judged_any`) - the machine's rotary
+/// line or the operation's own direction, anchored through the work
+/// offset's origin. The same development the plain entry wraps about
+/// its fit; the fit stays inside the plain entry.
+pub fn rotary_offset_stated(
+    facets: &[Triangle],
+    stock: Option<&[Triangle]>,
+    ax: axis::Axis,
+    p: &Pocket3DParams,
+    c: &AxisControl,
+) -> Result<Toolpath, GenError> {
+    let (base, d) = develop_about(facets, stock, ax, p)?;
+    let cap = (p.strategy == crate::machining2d::PocketStrategy::Adaptive)
+        .then(|| wrap_exit::ADAPTIVE_TURN_DEG.to_radians());
+    wrap_exit::wrap_exit(&base, &d.ax, &d.e1, &d.e2, d.rho_ref, d.r, c, cap)
+}
+
 /// The DEVELOPED program [`rotary_offset_in`] wraps (issue #9): the
 /// ladder's own path in wrap space - s the arc length at the stock's
 /// radius, v the station, height the radius - before the world exit
@@ -161,6 +179,21 @@ fn develop(
     }
     rotary_seam::refuse_open(facets)?;
     let ax = axis::fit(facets)?;
+    develop_about(facets, stock, ax, p)
+}
+
+/// The development about a stated axis: the fit's own body, the axis
+/// a caller that judged it hands in (#2772 parts 1-2).
+fn develop_about(
+    facets: &[Triangle],
+    stock: Option<&[Triangle]>,
+    ax: axis::Axis,
+    p: &Pocket3DParams,
+) -> Result<(Toolpath, Developed), GenError> {
+    if facets.is_empty() {
+        return Err(GenError::Invalid("no facets to wrap".into()));
+    }
+    rotary_seam::refuse_open(facets)?;
     let u = ax.dir;
     // The axis.rs basis law, verbatim: any vector off the axis, then
     // the right-handed pair it completes.

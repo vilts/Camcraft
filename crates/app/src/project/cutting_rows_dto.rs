@@ -71,6 +71,9 @@ pub struct CuttingRowDto {
     pub stepover: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waterjet: Option<camcraft_tools::waterjet::WaterjetCutData>,
+    /// #1521: a torch's recipe for this material and one plate thickness.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub plasma: Option<camcraft_tools::plasma_cut::PlasmaCutData>,
 }
 
 impl CuttingRowDto {
@@ -83,6 +86,7 @@ impl CuttingRowDto {
             stepdown: r.stepdown,
             stepover: r.stepover,
             waterjet: r.waterjet,
+            plasma: r.plasma,
         }
     }
 
@@ -95,6 +99,7 @@ impl CuttingRowDto {
             stepdown: self.stepdown,
             stepover: self.stepover,
             waterjet: self.waterjet,
+            plasma: self.plasma,
         }
     }
 }

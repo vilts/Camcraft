@@ -1,0 +1,3 @@
+; waterjet-iso.cps refused full_circle: 2 warning(s), the program is never released
+warning: operation Ring: states 8000 rpm - a waterjet turns no spindle (no S word, no G95 feed per revolution)
+warning: the generic waterjet post writes jet words (water and abrasive M-codes) only a waterjet table reads - no machine is stated, so none is declared a waterjet machine

@@ -29,7 +29,7 @@ use thiserror::Error;
 use crate::geo2d::{COORD_LIMIT, GeoError, Loop, Point2, Region};
 use crate::geometry::{Point3, Triangle};
 
-pub use super::slice_bodies::{material_above_of, material_overhead_of};
+pub use super::slice_bodies::{material_above_of, material_overhead_of, slice_of};
 
 /// Cap on `project`'s Z samples - a silhouette converges on far fewer.
 pub const MAX_SAMPLES: usize = 64;

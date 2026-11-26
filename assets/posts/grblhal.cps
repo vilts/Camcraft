@@ -17,12 +17,14 @@ minimumRevision = 1;
 extension = "nc";
 setCodePage = "utf-8";
 capabilities = 1; // reference contract: integer feature mask (bit 1 = milling)
+axisInversion = true; // verified on the engine's mirrored stream for a flipped WCS X/Y and an inverted machine X/Y (#2475): trace equivalence test + golden
 workOffsetIndex = true; // reads the 1-based WorkOffset number (#1385)
 workOffsetMax = 6;      // G54..G59, per the public control documentation cited above
 coolantModes = true; // reads PARAM Coolant (#112/#150)
 afterModes = true;   // reads PARAM AfterOperation (#110)
 programUnits = "mm inch"; // #902: writes the document's unit (postOptions.Units), G21 / G20
 endUnits = "G20 G21";     // #2189: switches end units before M30 when asked
+explains = "paren"; // #1389: trailing RS-274 comments; shared helper guards their text
 
 declaredOptions = {
   showSequenceNumbers: {
@@ -57,6 +59,7 @@ var sRpm = 0;              // spindle/T order follows the stream: PARAMs,
 var spindleWait = false;   // TOOL, SECTION - the preamble writes them
 var toolWait = false;      // when the first motion needs them legal
 var tNo = 0;
+var loadedTool = null;     // #3445: the tool this program wrote M6 for; null = unknown
 var inCycle = false;       // a cycle group is open; its chain is suppressed
 var cycleSig = "";         // g|Z|R|Q of the open group (modal X Y holes)
 var retractSet = false;    // G98 written once per program
@@ -66,6 +69,7 @@ var afterAsk = "";         // the section's PARAM AfterOperation (#110), none wh
 var setupNext = null;      // #1647: null means no marker; a cleaned name may be empty
 var coolantOp = "";        // the section's OperationName, for refusals (#150)
 var sectionOpen = false;   // preamble written (a legacy .cl carries no SECTION)
+var wcsFlip = "";          // #1649: the flipped WCS axes ("X", "Y", "XY") - the engine mirrored the section
 var orgX = 0, orgY = 0, orgZ = 0; // the WCS slot origin (OriginX/Y/Z PARAMs)
 var inch = false;          // the document's unit is inch (onOpen, #902: postOptions.Units)
 var smoothTol = 0;         // #616: the section's PARAM Smoothing, mm (0: none asked)
@@ -130,7 +134,9 @@ function block(words) {  // join the non-empty words onto one line
         seqNextForce = false;
       }
     }
-    writeln(prefix + body);
+    var line = prefix + body, c = explain(a);
+    if (c && line.length + 1 + c.length <= 80) line += " " + c;
+    writeln(line);
   }
 }
 function writeHeaderExtras() {
@@ -150,6 +156,7 @@ function writeHeaderExtras() {
 }
 function xyz(p) { return [wo("X", p.X, orgX), wo("Y", p.Y, orgY), wo("Z", p.Z, orgZ)]; }
 function wo(letter, v, o) { return has(v) ? letter + fu(v - o) : ""; }  // axis word, origin-relative
+function arcWord(k, v) { return wo(k, v, k === "X" ? orgX : (k === "Y" ? orgY : orgZ)); }  // #3442: a position word as written, for arcFate
 function msg(s) {  // counted warning where the host offers message()
   if (typeof message === "function") message(s); else writeln("(" + s + ")");
 }
@@ -282,6 +289,8 @@ function joinDash(parts) {  // the non-empty parts, " - " between
 // so user text stays inert.
 var ACTIVE = /^\s*(MSG|DEBUG|PRINT|LOG|LOGOPEN|LOGAPPEND|LOGCLOSE|PROBEOPEN|PROBECLOSE|ABORT|AXIS|PY|PYRUN)\b/i;
 function note(s) { block(["(" + (ACTIVE.test(s) ? "- " + s : s) + ")"]); }
+// Program notes use this dialect without truncating the stated bound.
+function onComment(s) { note(commentText(s)); }
 function commentParam(name, value) {
   if (name === "SetupName") setupName = clean(value);
   else if (name === "OperationName") opName = clean(value);
@@ -320,8 +329,20 @@ function onOpen() {
   inch = typeof postOptions !== "undefined" && postOptions && postOptions.Units === "inch"; // #902: the document's unit, never the machine file's
   var nm = (typeof machine !== "undefined" && machine.name) || "CAMCRAFT";
   note(clean(nm) || "CAMCRAFT");
+  invertedNotes();
   writeHeaderExtras();
   block([inch ? "G20" : "G21", "G17", "G90", "G91.1", "G94", "G40", "G80"]);
+}
+// The machine's inverted linear axes (#375): the engine has mirrored the
+// stream into the controller's frame, and the header says so, one note
+// for each axis. A standard machine lists none.
+function invertedNotes() {
+  var a = (typeof machine !== "undefined" && machine && machine.invertedAxes) || [];
+  var where = { X: "LEFT", Y: "TOWARD THE FRONT", Z: "DOWN" };
+  for (var i = 0; i < a.length; i++) {
+    var l = String(a[i]);
+    note("MACHINE " + l + "+ MOVES " + (where[l] || "THE OTHER WAY") + " - INVERTED AXIS");
+  }
 }
 
 // #495 / #710: where "straight up" is. On grblHAL machine Z0 is only a
@@ -384,6 +405,7 @@ function onParameter(name, value) {
   else if (name === "OriginX" && has(value)) orgX = Number(value);
   else if (name === "OriginY" && has(value)) orgY = Number(value);
   else if (name === "OriginZ" && has(value)) orgZ = Number(value);
+  else if (name === "WcsFlip") wcsFlip = String(value || "");
   else if (name === "ClearancePlane") { seeZ(value); clearZ = has(value) ? Number(value) : null; }  // #1616
   else if (name === "RetractPlane") hopZ = has(value) ? Number(value) : null;  // #1616
   else if (name === "StockZTop" && has(value)) stockTop = Number(value);
@@ -431,15 +453,22 @@ function startPreamble() {
   secStarted += 1;
   if (optStr("showSequenceNumbers", "off") === "op-start") seqNextForce = true;
   opNotes();
+  // #1649: the operator reads why every sign on a flipped axis is the other one.
+  if (wcsFlip) note("WCS " + wcsFlip.split("").join(" AND ") + " FLIPPED - PROGRAM MIRRORED");
   block(["G17", "G90", wcsWord, "G40", "G80"]);
   planeG = 17;              // the preamble states the plane
   if (toolWait) {
     toolNote();
     retract();
-    if (secIdx > 0 && optBool("optionalStop", false)) block(["M1"]);
+    // #3445: a tool this program loaded, with no stop since, is still in
+    // the spindle: no M6 (a pause and maybe a probe run on grblHAL).
+    if (loadedTool !== tNo) {
+      if (secIdx > 0 && optBool("optionalStop", false)) block(["M1"]);
+      if (optStr("showSequenceNumbers", "off") === "tool-change") seqNextForce = true;
+      block(["T" + ni(tNo), "M6"]);
+      loadedTool = tNo;
+    }
     xyUnknown = true;        // a manual change may have jogged X and Y
-    if (optStr("showSequenceNumbers", "off") === "tool-change") seqNextForce = true;
-    block(["T" + ni(tNo), "M6"]);
     toolWait = false;
   }
   // A touch probe states 0 rpm: no spindle start and no cutting fluid.
@@ -467,8 +496,9 @@ function afterOp() {
     retract();
     note("SETUP CHANGE - NEXT: " + (next || "UNNAMED SETUP"));
   }
-  if (ask === "optional-stop") { block(["M1"]); return; }
-  if (ask === "stop") { block(["M0"]); return; }
+  // The operator may take the tool out at either stop (#3445).
+  if (ask === "optional-stop") { block(["M1"]); loadedTool = null; return; }
+  if (ask === "stop") { block(["M0"]); loadedTool = null; return; }
   if (ask === "home") {
     msg(coolantWho() + "going home after an operation is not posted by the grblHAL post - the G28/G30 positions are controller settings it cannot see; pick Optional stop or Program stop");
     return;
@@ -494,7 +524,7 @@ function endPreamble() {
 }
 
 function onSection() { startPreamble(); }
-function onSectionEnd() { endPreamble(); clearZ = null; hopZ = null; }  // #1616: the next section states its own planes
+function onSectionEnd() { endPreamble(); wcsFlip = ""; clearZ = null; hopZ = null; }  // #1616: the next section states its own planes
 
 // ------------------------------------------------------------- motions
 // X and Y are unknown at the program's start and after every tool change
@@ -582,6 +612,9 @@ function onLinear() {
 }
 function onCircular() {
   startPreamble();
+  // #3442: an arc whose written ends coincide is no arc block (arcFate, PRELUDE).
+  var fate = arcFate(arcWord, arcIncOf(fu));  // #3474: I J K are increments from the start
+  if (fate !== "arc") { if (fate === "linear") onLinear(); return; }
   if (!tiltOk(properties) || inCycle) return;
   if (spindleStopped("arc move " + (properties.CircularDirection === "CW" ? "G2" : "G3"))) return;
   var p = properties;
@@ -708,6 +741,12 @@ function onCycle() {
   // feed), so a cycle the stream gives no positive feed is refused by name.
   if (!(has(p.FeedRate) && p.FeedRate > 0)) {
     msg("canned cycle " + g + " has no feed rate - refused: without F the control drills at whatever feed was last modal");
+    return;
+  }
+  // #2609: grblHAL follows LinuxCNC's G73 and G85 formats, with no P word.
+  if ((g === "G73" || g === "G85") && dwell > 0) {
+    var cycleName = g === "G73" ? "peck" : "ream";
+    msg("canned cycle " + g + " (" + cycleName + ") dwell is not supported by this post - a " + dwell + " s dwell is refused, not dropped; set the dwell to 0");
     return;
   }
   // #2348: grblHAL's code list and the LinuxCNC reference it follows

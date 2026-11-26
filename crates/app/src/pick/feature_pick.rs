@@ -88,6 +88,8 @@ pub enum PickTarget {
     Centre { arc: usize },
     /// Index into `features.edges` (one of [`FeatureGraph::edges`]).
     Edge { edge: u32 },
+    /// #1864: a joined chain (closed or open) on a DXF sketch profile.
+    SketchChain { id: crate::geometry::sketch_chains::ChainId },
     /// The facet the ray hit and the welded face it belongs to (index into
     /// [`FeatureGraph::faces`]), with that face's selection key.
     Face { facet: usize, face: u32, sel: Option<FeatureSel> },
@@ -166,7 +168,7 @@ pub(super) fn world_of(b: &PickBody, p: [f64; 3]) -> [f64; 3] {
 }
 
 /// (depth along the unit ray, perpendicular distance) of world point `w`.
-fn ray_measure(o: [f64; 3], d: [f64; 3], w: [f64; 3]) -> Option<(f64, f64)> {
+pub(super) fn ray_measure(o: [f64; 3], d: [f64; 3], w: [f64; 3]) -> Option<(f64, f64)> {
     let rel = sub(w, o);
     let depth = dot(rel, d);
     let foot = sub(rel, [d[0] * depth, d[1] * depth, d[2] * depth]);
@@ -175,7 +177,7 @@ fn ray_measure(o: [f64; 3], d: [f64; 3], w: [f64; 3]) -> Option<(f64, f64)> {
 }
 
 /// The point of segment `a`-`b` nearest the ray's line (world frame).
-fn segment_near_ray(o: [f64; 3], d: [f64; 3], a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
+pub(super) fn segment_near_ray(o: [f64; 3], d: [f64; 3], a: [f64; 3], b: [f64; 3]) -> [f64; 3] {
     let e = sub(b, a);
     let w0 = sub(a, o);
     let (ee, ed) = (dot(e, e), dot(e, d));
@@ -327,7 +329,7 @@ pub fn pick_bodies(bodies: &[PickBody], q: &PickQuery) -> Option<FeaturePick> {
     let (bi, facet, _) = hit?;
     let b = bodies.get(bi)?;
     let face = *b.graph.face_of_facet.get(facet)?;
-    let sel = b.graph.faces.get(face as usize)?.sel;
+    let sel = b.graph.faces.get(face as usize)?.sel.clone();
     Some(FeaturePick { entity: b.name.clone(), target: PickTarget::Face { facet, face, sel }, at: surface?, surface })
 }
 
@@ -356,8 +358,39 @@ pub fn pick_bodies_of(world: &World, skip: impl Fn(&str) -> bool) -> Vec<PickBod
     out
 }
 
-/// The app-wide pick: [`pick_bodies`] over the world's entities.
+/// The app-wide pick: [`pick_bodies`] over the world's entities plus DXF sketch curves.
 #[must_use]
 pub fn pick_feature(world: &World, q: &PickQuery, skip: impl Fn(&str) -> bool) -> Option<FeaturePick> {
-    pick_bodies(&pick_bodies_of(world, skip), q)
+    let bodies = pick_bodies_of(world, &skip);
+    let body_pick = pick_bodies(&bodies, q);
+    let (o, d0) = (q.ray.origin, q.ray.dir);
+    let len = dot(d0, d0).sqrt();
+    if !(o.iter().all(|v| v.is_finite()) && len.is_finite() && len > 1e-12) {
+        return body_pick;
+    }
+    let d = [d0[0] / len, d0[1] / len, d0[2] / len];
+    let hit = front_hit(&bodies, o, d);
+    let surface = hit.map(|(_, _, t)| along(o, d, t));
+    let radius = if q.radius.is_finite() && q.radius > 0.0 { q.radius } else { 0.0 };
+    let per_depth = if q.radius_per_depth.is_finite() && q.radius_per_depth > 0.0 { q.radius_per_depth } else { 0.0 };
+    let reach = |depth: f64| match (q.ray.projection, hit) {
+        (Projection::Perspective, _) if per_depth > 0.0 => per_depth * depth,
+        (Projection::Perspective, Some((_, _, t))) if t > 0.0 => radius * depth / t,
+        _ => radius,
+    };
+    let Some(sketch_cand) = super::sketch_pick::pick_sketches(world, &bodies, q, d, surface, reach, &skip) else {
+        return body_pick;
+    };
+    match &body_pick {
+        Some(bp) if !matches!(bp.target, PickTarget::Face { .. }) => {
+            if let Some((b_depth, b_perp)) = ray_measure(o, d, bp.at) {
+                let nm = |p: f64| (p * 1e6).round();
+                if (nm(b_perp), b_depth) <= (nm(sketch_cand.perp), sketch_cand.depth) {
+                    return body_pick;
+                }
+            }
+            Some(sketch_cand.pick)
+        }
+        _ => Some(sketch_cand.pick),
+    }
 }

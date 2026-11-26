@@ -87,11 +87,16 @@ pub struct Document {
     /// Common Z of the extracted geometry, in drawing units.
     pub elevation: Option<f64>,
     pub summary: ImportSummary,
+    /// The largest distance between a SPLINE or ELLIPSE and the arcs it was read as, in
+    /// drawing units (#1865). `None` when the drawing has no such curve.
+    pub curve_tolerance: Option<f64>,
 }
 
 pub(super) struct State {
     pub doc: Document,
     pub limits: Limits,
+    /// Curve evaluations left for this drawing's SPLINE and ELLIPSE fits.
+    pub curve_work: usize,
 }
 
 impl State {

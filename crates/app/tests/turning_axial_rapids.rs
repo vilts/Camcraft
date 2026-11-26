@@ -94,6 +94,7 @@ fn rough_in(diameter: f64, bar_top: f64) -> (World, Vec<Warning>, Vec<camcraft_a
         stock_to_leave: 0.25,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     let cmd = CreateOperation::new(&world, "R1", name, SrcRef::Entity("bar".into()), rough);
     history.execute(&world, cmd.expect("create"));

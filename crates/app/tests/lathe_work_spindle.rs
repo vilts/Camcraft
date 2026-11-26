@@ -127,6 +127,7 @@ fn drill(x: f64, y: f64) -> OpParams {
         plunge_feed: 80.0,
         holes: vec![Hole { xy: Point2::new(x, y), radius: 2.05, entry_z: 20.0, floor_z: 10.0, through: false, stepped: false }],
         cross: vec![],
+        picks: Default::default(),
     }
 }
 
@@ -143,7 +144,7 @@ fn faced() -> (World, History) {
     let (world, mut h) = world_with(StockShape::Box { dx: 20.0, dy: 2.0, dz: 8.0 }, -4.0, false);
     let params = OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(30.0),
@@ -153,6 +154,7 @@ fn faced() -> (World, History) {
         feed: 300.0,
         plunge_feed: 100.0,
         climb: true,
+        picks: Default::default(),
     };
     create(&world, &mut h, "F1", "EM-0400-2FL", SrcRef::Stock, params);
     (world, h)
@@ -323,7 +325,7 @@ fn live_tool_and_turning_sections_pass_the_lathe_door() {
     h.execute(&world, ImportModel::from_mesh("bar", bar));
     let wrap = OpParams::RotaryContour {
         tolerance: 0.05,
-        clearance_z: Height::fixed(25.0),
+        clearance_z: Height::fixed(40.0),
         retract_z: None,
         top_z: Height::fixed(6.0),
         bottom_z: Height::fixed(-8.0),
@@ -333,6 +335,8 @@ fn live_tool_and_turning_sections_pass_the_lathe_door() {
         lead_deg: 0.0,
         lag_deg: 0.0,
         max_tilt_deg: 60.0,
+        stated_axis: None,
+        picks: Default::default(),
     };
     create(&world, &mut h, "C1", "BN-0600", SrcRef::Entity("bar".into()), wrap);
     assert_eq!(voice(&world, "C1"), Some(LatheVoice::LiveTool));
@@ -368,6 +372,7 @@ fn live_tool_and_turning_sections_pass_the_lathe_door() {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     create(&world, &mut h, "T1", "TN", SrcRef::Entity("bar".into()), facing);
     let dir = scratch("admitted-turn");

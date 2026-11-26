@@ -1,18 +1,24 @@
-# Release build (M1.7e, M13.3): a v* tag builds Windows, Linux, macOS,
-# and FreeBSD.
+# Release build (M1.7e, M13.3): a v* tag builds Windows, Linux and macOS.
 # Linux packages TAR.GZ, DEB, RPM, AppImage, Snap, and Flatpak; macOS packages
-# a universal app as ZIP and DMG; FreeBSD an amd64 tarball; Windows assembles
+# a universal app as ZIP and DMG; Windows assembles
 # its zip (cargo xtask package) and installer.
-# Signing is optional and secret-gated (scripts/sign.ps1): with no
-# CAMCRAFT_SIGN_* secret the binaries ship unsigned, as every release so
-# far has. The decision is logged in RECOMMENDED.md ("M13.3").
+# Windows signing (scripts/sign.ps1) and macOS Developer ID signing and
+# notarization (scripts/package-macos.sh) are optional and secret-gated.
 # Only MAJOR and MINOR tags build (vX.Y.0): a patch tag (vX.Y.Z, Z > 0) is
 # pushed as a marker and builds nothing - the Actions budget is spent on
 # releases that carry features (AGENTS.md "Versioning is semantic").
 # workflow_dispatch builds any ref by hand (it builds every platform but
 # publishes nothing: only a tag run reaches the publish job).
-# Graph (#125): windows, linux, macos and freebsd start at once; AUR, snap
-# and flatpak follow Linux; publish waits for all seven with !cancelled(),
+# Site redeploy (#3276): workflow_dispatch with `site_only: true` runs only
+# `site` and `pages`, from the dispatched ref. `pages` deploys it only when
+# that ref is a `site/*` branch (a past release's tree plus its site fixes,
+# docs/decisions/3276-site-redeploy.md). No platform, wasm or publish job
+# runs; the site goes out with app/ as its "not part of this copy" page,
+# unless `app_run_id` names an earlier run (the tag run of that release):
+# then `site` downloads that run's wasm-app artifact and serves it at app/
+# (docs/decisions/3276-site-app-artifact.md).
+# Graph (#125): windows, linux and macos start at once; AUR, snap
+# and flatpak follow Linux; publish waits for all six with !cancelled(),
 # puts every asset that was built on the release page and names any
 # platform whose build failed, so one broken package never withholds the rest.
 # Docs site (#688): `site` builds the Zola site in site/ from the same tree
@@ -28,6 +34,15 @@ on:
   push:
     tags: ['v[0-9]+.[0-9]+.0']
   workflow_dispatch:
+    inputs:
+      site_only:
+        description: Build and deploy only the documentation site (from a site/* branch)
+        type: boolean
+        default: false
+      app_run_id:
+        description: With site_only, the id of an earlier run whose wasm-app artifact goes to app/ (empty for none)
+        type: string
+        default: ''
 
 env:
   CARGO_TERM_COLOR: always
@@ -41,6 +56,7 @@ permissions:
 
 jobs:
   linux:
+    if: ${{ !inputs.site_only }}
     runs-on: ubuntu-22.04
     permissions:
       contents: read
@@ -93,6 +109,7 @@ jobs:
           if-no-files-found: error
 
   macos:
+    if: ${{ !inputs.site_only }}
     runs-on: macos-15
     permissions:
       contents: read
@@ -106,6 +123,12 @@ jobs:
           cargo build --locked --release --target aarch64-apple-darwin -p camcraft-ui -p camcraft-app -p camcraft-post
           cargo build --locked --release --target x86_64-apple-darwin -p camcraft-ui -p camcraft-app -p camcraft-post
       - name: Assemble macOS app and disk image
+        env:
+          CAMCRAFT_MACOS_CERT_P12_BASE64: ${{ secrets.CAMCRAFT_MACOS_CERT_P12_BASE64 }}
+          CAMCRAFT_MACOS_CERT_PASSWORD: ${{ secrets.CAMCRAFT_MACOS_CERT_PASSWORD }}
+          CAMCRAFT_MACOS_NOTARY_KEY_BASE64: ${{ secrets.CAMCRAFT_MACOS_NOTARY_KEY_BASE64 }}
+          CAMCRAFT_MACOS_NOTARY_KEY_ID: ${{ secrets.CAMCRAFT_MACOS_NOTARY_KEY_ID }}
+          CAMCRAFT_MACOS_NOTARY_ISSUER_ID: ${{ secrets.CAMCRAFT_MACOS_NOTARY_ISSUER_ID }}
         run: scripts/package-macos.sh
       - name: Check macOS package contents
         run: |
@@ -120,40 +143,8 @@ jobs:
             dist/*-macos-universal.dmg
           if-no-files-found: error
 
-  freebsd:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build and package in FreeBSD
-        uses: vmactions/freebsd-vm@v1
-        with:
-          release: '14'
-          cpu: 3
-          # #2378: 5120 MB ran out of memory in boa_ast (exit 137). The hosted
-          # runner has 16 GB; 12288 MB leaves room for the host. -j 2 keeps
-          # the peak memory of rustc low.
-          mem: 12288
-          run: |
-            pkg install -y bash rust pkgconf libxkbcommon libX11 wayland vulkan-loader mesa-libs
-            export CARGO_TARGET_DIR=/tmp/camcraft-target
-            cargo build -j 2 --locked --release -p camcraft-ui -p camcraft-app -p camcraft-post
-            "$CARGO_TARGET_DIR/release/camcraft-cli" --version
-            "$CARGO_TARGET_DIR/release/post" --version
-            CAMCRAFT_BIN_DIR="$CARGO_TARGET_DIR/release" bash scripts/package-freebsd.sh
-            tar -tzf dist/*-freebsd-amd64.tar.gz | grep '/camcraft-ui$'
-            tar -tzf dist/*-freebsd-amd64.tar.gz | grep '/examples/first-part.camproj$'
-      - name: Check copied archive
-        run: test -s dist/*-freebsd-amd64.tar.gz
-      - uses: actions/upload-artifact@v4
-        with:
-          name: freebsd-package
-          path: dist/*-freebsd-amd64.tar.gz
-          if-no-files-found: error
-
   aur:
+    # #3773: packages the linux-packages binaries of this run; no cargo build.
     needs: linux
     uses: ./.github/workflows/aur-package.yml
     permissions:
@@ -216,6 +207,7 @@ jobs:
           if-no-files-found: error
 
   windows:
+    if: ${{ !inputs.site_only }}
     runs-on: windows-latest
     permissions:
       contents: read
@@ -293,9 +285,10 @@ jobs:
   publish:
     # Runs after every build job whatever their result (but not on a
     # cancelled run), and only for a tag: a workflow_dispatch run builds
-    # everything and publishes nothing.
-    needs: [windows, linux, macos, freebsd, aur, snap, flatpak]
-    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') }}
+    # everything and publishes nothing. A `site_only` run (#3276) never
+    # publishes, whatever its ref.
+    needs: [windows, linux, macos, aur, snap, flatpak]
+    if: ${{ !cancelled() && !inputs.site_only && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -350,7 +343,6 @@ jobs:
           RESULT_WINDOWS: ${{ needs.windows.result }}
           RESULT_LINUX: ${{ needs.linux.result }}
           RESULT_MACOS: ${{ needs.macos.result }}
-          RESULT_FREEBSD: ${{ needs.freebsd.result }}
           RESULT_AUR: ${{ needs.aur.result }}
           RESULT_SNAP: ${{ needs.snap.result }}
           RESULT_FLATPAK: ${{ needs.flatpak.result }}
@@ -410,7 +402,6 @@ jobs:
             'Windows (zip, installer)' = $env:RESULT_WINDOWS
             'Linux (tar.gz, deb, rpm, AppImage)' = $env:RESULT_LINUX
             'macOS (zip, dmg)' = $env:RESULT_MACOS
-            'FreeBSD (tar.gz)' = $env:RESULT_FREEBSD
             'Arch (pkg.tar.zst)' = $env:RESULT_AUR
             'Snap' = $env:RESULT_SNAP
             'Flatpak' = $env:RESULT_FLATPAK
@@ -434,6 +425,21 @@ jobs:
             exit 1
           fi
           printf '%s\n' "${assets[@]}"
+      - name: Generate SHA256SUMS.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd dist
+            shopt -s nullglob
+            assets=(*.zip *-setup.exe *.tar.gz *.deb *.rpm *.dmg *.AppImage *.snap *.flatpak *.pkg.tar.zst)
+            if [ ${#assets[@]} -eq 0 ]; then
+              echo "::error::no release assets found in dist/ for SHA256SUMS.txt"
+              exit 1
+            fi
+            sha256sum "${assets[@]}" > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -448,6 +454,7 @@ jobs:
             dist/*.snap
             dist/*.flatpak
             dist/*.pkg.tar.zst
+            dist/SHA256SUMS.txt
           body_path: dist/release-body.md
           # A failed platform leaves its globs empty; the step above already
           # refused a release with no asset at all.
@@ -459,6 +466,7 @@ jobs:
     # rewrites for its flecs patch (#949) never reaches another job: only
     # target/web/ leaves it, as the wasm-app artifact. No rust-cache: tags
     # come weeks apart and an unused cache is evicted after 7 days.
+    if: ${{ !inputs.site_only }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -498,16 +506,23 @@ jobs:
 
   site:
     # #688: the documentation site, built with Zola from this run's tree
-    # (the tagged tree on a tag run). Read-only; a workflow_dispatch run
-    # builds it as a check and deploys nothing.
+    # (the tagged tree on a tag run). Read-only; a plain workflow_dispatch
+    # run builds it as a check and deploys nothing (a `site_only` run from a
+    # `site/*` branch deploys it, #3276).
     # #1103: waits for `wasm` whatever its result (but not on a cancelled
     # run), like `publish` waits for the platforms: a failed browser build
     # never withholds the docs.
+    # #3276: a `site_only` dispatch skips `wasm`; the site then goes out
+    # with app/ as its "not part of this copy" page, unless `app_run_id`
+    # names an earlier run: then that run's wasm-app artifact is the app,
+    # and a missing or bad artifact fails this job (nothing deploys).
+    # `actions: read` lets the job token read that run's artifacts.
     needs: [wasm]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
       - name: Install pinned Zola
@@ -516,6 +531,16 @@ jobs:
           echo '7d77a4220a4f699cba2fc0e0c7859f780e887e269159ad4fab90e11ea16c906f  /tmp/zola.tar.gz' | sha256sum -c -
           tar -xzf /tmp/zola.tar.gz -C /tmp zola
           /tmp/zola --version
+      - name: Site tests
+        # #1832: the Python site tests (site/tests) pin the operation
+        # reference pictures against OpType, the guide navigation, links
+        # and images. Nothing else runs them: a missing section or picture
+        # view fails the site here. They run before version.toml exists, on
+        # the same tree as a local run (site/README.md), and build into
+        # their own temporary folders with this Zola.
+        env:
+          ZOLA: /tmp/zola
+        run: python3 -m unittest discover -s site/tests -v
       - name: Version the site is built from
         # The workspace version is the release's version (the publish job
         # checks the tag names it too); the site's templates read it from
@@ -537,17 +562,45 @@ jobs:
         with:
           name: wasm-app
           path: /tmp/wasm-app
+      - name: Earlier run of the browser build
+        # #3276: a site_only dispatch with app_run_id takes the app from that
+        # run. The id must be a run number; anything else stops the job.
+        if: ${{ inputs.site_only && inputs.app_run_id != '' }}
+        shell: bash
+        env:
+          APP_RUN_ID: ${{ inputs.app_run_id }}
+        run: |
+          if ! [[ "$APP_RUN_ID" =~ ^[0-9]+$ ]]; then
+            echo "::error::app_run_id must be a workflow run id (digits only), not '$APP_RUN_ID'"; exit 1
+          fi
+          echo "Browser build from run $APP_RUN_ID"
+      - uses: actions/download-artifact@v4
+        # #3276: no continue-on-error: the dispatch asked for this app, so a
+        # failed download fails the site and nothing deploys.
+        if: ${{ inputs.site_only && inputs.app_run_id != '' }}
+        with:
+          name: wasm-app
+          path: /tmp/wasm-app
+          run-id: ${{ inputs.app_run_id }}
+          github-token: ${{ github.token }}
       - name: Is there a browser build to publish
         # The front page claims the browser build only when it is deployed:
         # `app = true|false` in site/version.toml tells the templates. No
         # browser build (wasm job failed, nothing downloaded, or the page
-        # check fails) is a warning by name, never a failed site.
+        # check fails) is a warning by name, never a failed site. An app
+        # from app_run_id (#3276) that fails the page check is an error.
         shell: bash
         env:
           WASM_RESULT: ${{ needs.wasm.result }}
+          APP_RUN_ID: ${{ inputs.site_only && inputs.app_run_id || '' }}
         run: |
           app=false
-          if [ "$WASM_RESULT" != success ]; then
+          if [ -n "$APP_RUN_ID" ]; then
+            if ! bash web/check-app-page.sh /tmp/wasm-app; then
+              echo "::error::the wasm-app artifact of run $APP_RUN_ID failed web/check-app-page.sh"; exit 1
+            fi
+            app=true
+          elif [ "$WASM_RESULT" != success ]; then
             echo "::warning::Browser build missing: the wasm job did not succeed (result: $WASM_RESULT); the site goes out with app/ saying so"
           elif ! bash web/check-app-page.sh /tmp/wasm-app; then
             echo "::warning::Browser build missing: the wasm-app artifact did not download or failed web/check-app-page.sh; the site goes out with app/ saying so"
@@ -563,8 +616,11 @@ jobs:
         # Zola writes app/ as the "not part of this copy" page; with a
         # browser build, the build's folder replaces it and is checked again
         # where it will be served. A copy that fails is dropped and the site
-        # is built again saying the browser build is missing.
+        # is built again saying the browser build is missing (an app from
+        # app_run_id, #3276, fails the job instead).
         shell: bash
+        env:
+          APP_RUN_ID: ${{ inputs.site_only && inputs.app_run_id || '' }}
         run: |
           owner="${GITHUB_REPOSITORY_OWNER,,}"
           repo="${GITHUB_REPOSITORY#*/}"
@@ -572,6 +628,9 @@ jobs:
           build
           if [ "$CAMCRAFT_APP" = true ]; then
             if ! { rm -rf site/public/app && cp -r /tmp/wasm-app site/public/app && bash web/check-app-page.sh site/public/app; }; then
+              if [ -n "$APP_RUN_ID" ]; then
+                echo "::error::the app of run $APP_RUN_ID failed web/check-app-page.sh at app/"; exit 1
+              fi
               echo "::warning::Browser build missing: its copy at app/ failed web/check-app-page.sh; the site goes out with app/ saying so"
               sed -i 's/^app = true$/app = false/' site/version.toml
               build
@@ -587,8 +646,11 @@ jobs:
     # source "GitHub Actions"). Only on a tag, only when the site built and
     # the release page was published. The Pages write and OIDC token are
     # scoped to this job alone.
+    # #3276: a `site_only` dispatch deploys too, but only from a `site/*`
+    # branch (publish is skipped there; the environment's branch policy
+    # must permit `site/*`).
     needs: [site, publish]
-    if: ${{ !cancelled() && startsWith(github.ref, 'refs/tags/') && needs.site.result == 'success' && needs.publish.result == 'success' }}
+    if: ${{ !cancelled() && needs.site.result == 'success' && ((startsWith(github.ref, 'refs/tags/') && needs.publish.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.site_only && startsWith(github.ref, 'refs/heads/site/'))) }}
     runs-on: ubuntu-latest
     permissions:
       pages: write

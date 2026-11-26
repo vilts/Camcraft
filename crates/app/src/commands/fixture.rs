@@ -284,6 +284,7 @@ pub struct AddFixtureModel {
     facets: std::sync::Arc<[Triangle]>,
     /// #864: the chord error of a mesh imported coarser than promised.
     coarse_mm: Option<f64>,
+    file_tolerance: bool,
     step_source: Option<String>,
 }
 
@@ -311,6 +312,7 @@ impl AddFixtureModel {
             name: name.to_string(),
             facets: graded.mesh.facets,
             coarse_mm: graded.coarse_mm,
+            file_tolerance: graded.file_tolerance,
             step_source: graded.step_source,
         })
     }
@@ -329,7 +331,7 @@ impl Command for AddFixtureModel {
         let entity = model::spawn(world, &self.name);
         model::set_facets(world, &entity, self.facets.clone());
         model::set_rev(world, &entity, 1);
-        crate::model_fidelity::set(world, &entity, self.coarse_mm);
+        crate::model_fidelity::set_with_cause(world, &entity, self.coarse_mm, self.file_tolerance);
         crate::step_source::set(world, &entity, self.step_source.as_deref());
         entity.entity_view(world).set(FixtureDef::default());
     }

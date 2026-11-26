@@ -109,6 +109,20 @@ pub fn voices_wcs_rotation(cps: &str) -> Result<bool, PostError> {
     Ok(Script::load(cps)?.voices_wcs_rotation())
 }
 
+/// Whether the script's manifest declares `rotariesBeforeTraverse =
+/// true` (#3100): at each section's first motion it turns the rotaries to
+/// the section's pose at the machine's safe Z, and only then makes the
+/// first X/Y traverse - so that traverse never runs at a pose the
+/// previous program left. A script that does not declare it is read the
+/// strict way (the rotary words after the X/Y traverse).
+///
+/// # Errors
+/// A script that does not load is a clean refusal, as everywhere.
+pub fn turns_rotaries_first(cps: &str) -> Result<bool, PostError> {
+    let v = Script::load(cps)?.eval_src("typeof rotariesBeforeTraverse !== \"undefined\" && rotariesBeforeTraverse === true")?;
+    Ok(v.as_boolean() == Some(true))
+}
+
 /// Whether the script's manifest declares `axisInversion = true` - it is
 /// verified on the mirrored stream, which a flipped WCS axis also needs
 /// (#374, #1649).

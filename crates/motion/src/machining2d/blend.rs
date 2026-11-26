@@ -74,29 +74,71 @@ pub(super) fn reversal_radius(stride: f64, r: f64) -> Result<f64, Sharp> {
     Ok(rho)
 }
 
+/// How a blended reversal turns.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) enum Turn {
+    /// One semicircle of half the stride on the step's own endpoints.
+    Semicircle,
+    /// Two quarter arcs of this radius joined by a straight step (#1759).
+    Corners(f64),
+}
+
+/// The corner-arc law for one reversal under a user radius `rho`
+/// (#1759, held to `rho <= r` by `corner_arc_radius`). A stride with
+/// room for two quarter arcs (`stride > 2 rho`) turns on them: the step
+/// stands `rho` past the sharp one, every center at least `xe` (the
+/// footprint law of the module doc, unchanged), the reach `rho <= r`
+/// (the tool-radius law) - so a stride wider than the tool rounds too.
+/// A stride without that room turns on its semicircle, the largest
+/// tangent arc it holds: the radius shrinks, never grows.
+///
+/// The radius never grows past `rho` (review of #2831): a stride whose
+/// half exceeds `rho` by less than the straight-step floor turns on
+/// corner arcs shrunk to keep that floor, not on its larger semicircle;
+/// below [`MIN_BLEND_RADIUS`] it stays sharp (`Tiny`).
+pub(super) fn corner_turn(stride: f64, r: f64, rho: f64) -> Result<Turn, Sharp> {
+    let ok = rho.is_finite() && rho >= MIN_BLEND_RADIUS && rho <= r && stride.is_finite();
+    let gap = stride * 0.5 - rho;
+    if ok && gap > MIN_BLEND_RADIUS * 0.5 {
+        return Ok(Turn::Corners(rho));
+    }
+    // Float noise only: a semicircle within this of `rho` is `rho`.
+    const SAME: f64 = 1e-9;
+    if ok && gap > SAME {
+        let shrunk = stride * 0.5 - MIN_BLEND_RADIUS * 0.5;
+        return if shrunk >= MIN_BLEND_RADIUS { Ok(Turn::Corners(shrunk)) } else { Err(Sharp::Tiny) };
+    }
+    reversal_radius(stride, r).map(|_| Turn::Semicircle)
+}
+
 /// The reversal plan for sorted row centers `ys`: entry `i` is the turn
-/// from row `i` to row `i + 1` - `true` blends it, `false` keeps it
+/// from row `i` to row `i + 1` - `Some` blends it, `None` keeps it
 /// sharp. With `enabled == false` every turn is sharp and nothing is
-/// said: the legacy serpentine, byte-for-byte. The notes name every
+/// said: the legacy serpentine, byte-for-byte. `radius` is the user's
+/// corner-arc radius (`None`: the semicircle). The notes name every
 /// sharp corner the law refused (counted per reason), so a facing that
 /// asked for blends and got fewer says so on the status line.
-pub(super) fn plan_reversals(ys: &[f64], r: f64, enabled: bool) -> (Vec<bool>, Vec<String>) {
+pub(super) fn plan_reversals(ys: &[f64], r: f64, enabled: bool, radius: Option<f64>) -> (Vec<Option<Turn>>, Vec<String>) {
     let turns = ys.len().saturating_sub(1);
     if !enabled {
-        return (vec![false; turns], Vec::new());
+        return (vec![None; turns], Vec::new());
     }
     let mut plan = Vec::with_capacity(turns);
     let (mut wide, mut tiny) = (0usize, 0usize);
     for w in ys.windows(2) {
-        match reversal_radius(w[1] - w[0], r) {
-            Ok(_) => plan.push(true),
+        let turn = match radius {
+            Some(rho) => corner_turn(w[1] - w[0], r, rho),
+            None => reversal_radius(w[1] - w[0], r).map(|_| Turn::Semicircle),
+        };
+        match turn {
+            Ok(t) => plan.push(Some(t)),
             Err(Sharp::Wide) => {
                 wide += 1;
-                plan.push(false);
+                plan.push(None);
             }
             Err(Sharp::Tiny) => {
                 tiny += 1;
-                plan.push(false);
+                plan.push(None);
             }
         }
     }
@@ -120,6 +162,34 @@ mod law {
     use super::*;
 
     #[test]
+    fn a_user_radius_turns_on_corner_arcs_where_the_stride_has_room() {
+        assert_eq!(corner_turn(8.0, 5.0, 2.0), Ok(Turn::Corners(2.0)));
+        // No room for two quarter arcs: the semicircle, never a larger arc.
+        assert_eq!(corner_turn(8.0, 5.0, 4.0), Ok(Turn::Semicircle));
+        assert_eq!(corner_turn(8.0, 5.0, 5.0), Ok(Turn::Semicircle));
+        // A stride wider than the tool rounds at a radius, not without one.
+        assert_eq!(corner_turn(12.0, 5.0, 3.0), Ok(Turn::Corners(3.0)));
+        assert_eq!(corner_turn(12.0, 5.0, f64::NAN), Err(Sharp::Wide));
+        assert_eq!(corner_turn(0.001, 5.0, 2.0), Err(Sharp::Tiny));
+        let (plan, notes) = plan_reversals(&[0.0, 12.0, 20.0, 20.001], 5.0, true, Some(3.0));
+        assert_eq!(plan, vec![Some(Turn::Corners(3.0)), Some(Turn::Corners(3.0)), None]);
+        assert_eq!(notes.len(), 1, "{notes:?}");
+    }
+
+    #[test]
+    fn a_short_step_never_turns_on_an_arc_larger_than_the_radius() {
+        // Half the stride is 0.0025 mm past rho: no semicircle of 0.0125.
+        assert_eq!(corner_turn(0.025, 5.0, 0.01), Err(Sharp::Tiny));
+        // Room to shrink: corner arcs below rho, keeping the step floor.
+        match corner_turn(8.004, 5.0, 4.0) {
+            Ok(Turn::Corners(s)) => assert!(s < 4.0 && (s - 3.997).abs() < 1e-9, "{s}"),
+            other => panic!("{other:?}"),
+        }
+        // Exactly half the stride: the semicircle, radius == rho.
+        assert_eq!(corner_turn(8.0, 5.0, 4.0), Ok(Turn::Semicircle));
+    }
+
+    #[test]
     fn radius_is_half_the_stride_up_to_the_tool_radius() {
         assert_eq!(reversal_radius(8.0, 5.0), Ok(4.0));
         assert_eq!(reversal_radius(10.0, 5.0), Ok(5.0));
@@ -131,17 +201,17 @@ mod law {
 
     #[test]
     fn disabled_plans_nothing_and_says_nothing() {
-        let (plan, notes) = plan_reversals(&[5.0, 13.0, 21.0], 5.0, false);
-        assert_eq!(plan, vec![false, false]);
+        let (plan, notes) = plan_reversals(&[5.0, 13.0, 21.0], 5.0, false, Some(1.0));
+        assert_eq!(plan, vec![None, None]);
         assert!(notes.is_empty());
-        let (plan, notes) = plan_reversals(&[20.0], 5.0, true);
+        let (plan, notes) = plan_reversals(&[20.0], 5.0, true, None);
         assert!(plan.is_empty() && notes.is_empty(), "one row, no turn");
     }
 
     #[test]
     fn refusals_are_counted_and_named() {
-        let (plan, notes) = plan_reversals(&[0.0, 12.0, 20.0, 20.001], 5.0, true);
-        assert_eq!(plan, vec![false, true, false]);
+        let (plan, notes) = plan_reversals(&[0.0, 12.0, 20.0, 20.001], 5.0, true, None);
+        assert_eq!(plan, vec![None, Some(Turn::Semicircle), None]);
         assert_eq!(notes.len(), 2, "{notes:?}");
         assert!(notes[0].contains("1 of 3") && notes[0].contains("wider"));
         assert!(notes[1].contains("1 of 3") && notes[1].contains("resolution"));

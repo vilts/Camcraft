@@ -165,6 +165,7 @@ fn a_multipass_in_a_longer_bar_exits_at_feed_and_posts() {
             passes: 3,
             feed: 200.0,
             plunge_feed: 50.0,
+            picks: Default::default(),
         },
         40.0,
     );
@@ -191,6 +192,7 @@ fn a_chamfer_in_a_longer_bar_exits_at_feed_and_posts() {
             angle_deg: 45.0,
             feed: 200.0,
             plunge_feed: 50.0,
+            picks: Default::default(),
         },
         40.0,
     );
@@ -212,6 +214,7 @@ fn a_taper_in_a_longer_bar_exits_at_feed_and_posts() {
             top_dia: 16.0,
             feed: 200.0,
             plunge_feed: 50.0,
+            picks: Default::default(),
         },
         40.0,
     );

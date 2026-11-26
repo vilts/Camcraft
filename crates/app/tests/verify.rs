@@ -229,8 +229,9 @@ fn clean_contour_verifies_silent() {
             tab_height: 0.0,
             entry: camcraft_app::machining3d::Entry3D::Plunge,
             helix_radius: 1.0,
-            blend_turns: false,
+            blend_turns: false, blend_radius: None,
             links: camcraft_app::links::Links::PLANAR,
+            picks: Default::default(),
         },
     )
     .unwrap();
@@ -673,6 +674,7 @@ fn cone_waterline() -> Toolpath {
     finishing3d::waterline(
         &cone_facets(96),
         &Finish3DParams {
+            gap_link: finishing3d::GapLink::Jump,
             pattern: finishing3d::FinishPattern::Waterline,
             stepover: None,
             tool_diameter: 6.0,
@@ -690,6 +692,7 @@ fn cone_waterline() -> Toolpath {
             entry_ramp: false,
             steep_stepover: None,
             pencil_reference: None,
+            waterlines: true,
         },
     )
     .expect("cone waterline")

@@ -1,4 +1,7 @@
 //! The selected tool's to-scale preview (#2002).
+//! #3894: `paint` draws into a given rect, so the tool library window's
+//! larger side view (`tool_library_dialog::side_view`) adds its dimension
+//! lines over the same drawing.
 //! Provenance: our own preview extracted from pages.rs.
 
 use camcraft_app::{
@@ -16,18 +19,69 @@ const NOTE: Color32 = Color32::from_rgb(0x9E, 0xA8, 0xB8);
 /// the fields beside it are editing. Tip at the bottom (z = 0 upward),
 /// equal aspect both axes - "to scale" means to scale. A half-typed draft
 /// renders a stub and a word, never a NaN.
-pub(super) fn draw(ui: &mut Ui, t: &tools::Tool, u: Unit, body: Option<&[(f64, f64, f64)]>, wide: bool) {
+///
+/// #2007: `steel` replaces the cutter, neck and shank outline - the drawn
+/// cutter of the Profile tab, while it validates. It does not hold the
+/// holder, so it comes with the holder as `body` bands.
+pub(super) fn draw(ui: &mut Ui, t: &tools::Tool, u: Unit, body: Option<&[(f64, f64, f64)]>, steel: Option<&[(f64, f64)]>, wide: bool) {
     const SIDE: f32 = 260.0;
-    const PAD: f32 = 18.0;
     let (resp, painter) = ui.allocate_painter(
         Vec2::splat(if wide { SIDE } else { ui.available_width().clamp(1.0, SIDE) }),
         Sense::hover(),
     );
     let rect = resp.rect;
+    painter.rect_filled(rect, 4.0, super::tool_model_view::BG);
+    if let Some(s) = paint(&painter, rect, t, body, steel) {
+        painter.text(
+            Pos2::new(s.axis_x, rect.max.y - 4.0),
+            Align2::CENTER_BOTTOM,
+            format!("Ø {}", units::len(t.diameter, u, 2)),
+            FontId::proportional(10.0),
+            NOTE,
+        );
+        painter.text(
+            Pos2::new(rect.min.x + 6.0, rect.min.y + 6.0),
+            Align2::LEFT_TOP,
+            format!("{} {} overall", units::len(s.z_max, u, 1), u.suffix()),
+            FontId::proportional(10.0),
+            NOTE,
+        );
+    }
+}
+
+/// #3894: where `paint` put the tool - the axis, the tip line and the
+/// scale (px per model unit) - so a caller can draw dimension lines over
+/// it. `z_max` is the drawing's overall height.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct Scale {
+    pub axis_x: f32,
+    pub base_y: f32,
+    pub scale: f32,
+    pub z_max: f64,
+}
+
+impl Scale {
+    /// The screen point of model height `z` at radius `r` (negative: left).
+    pub(super) fn at(&self, z: f64, r: f64) -> Pos2 {
+        Pos2::new(self.axis_x + (r as f32 * self.scale), self.base_y - (z as f32 * self.scale))
+    }
+}
+
+/// The tool to scale inside `rect` (the background is the caller's). A
+/// half-typed draft paints a stub and a word and gives `None`, never a NaN.
+pub(super) fn paint(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    t: &tools::Tool,
+    body: Option<&[(f64, f64, f64)]>,
+    steel: Option<&[(f64, f64)]>,
+) -> Option<Scale> {
+    const PAD: f32 = 18.0;
     let axis_x = rect.center().x;
-    painter.rect_filled(rect, 4.0, Color32::from_rgb(24, 26, 31));
     // A body replaces the parameter holder, as in the collision band stack.
-    let outline = if body.is_some() {
+    let outline = if let Some(s) = steel {
+        s.to_vec()
+    } else if body.is_some() {
         tools::Tool { holder_len: 0.0, ..t.clone() }.profile()
     } else {
         t.profile()
@@ -59,7 +113,7 @@ pub(super) fn draw(ui: &mut Ui, t: &tools::Tool, u: Unit, body: Option<&[(f64, f
             FontId::proportional(11.0),
             NOTE,
         );
-        return;
+        return None;
     }
     let base_y = rect.max.y - PAD;
     let scale = (((rect.width() - 2.0 * PAD) / (r_max as f32 * 2.0))
@@ -129,26 +183,13 @@ pub(super) fn draw(ui: &mut Ui, t: &tools::Tool, u: Unit, body: Option<&[(f64, f
         pts,
         Stroke::new(1.0, Color32::from_rgb(214, 220, 228)),
     ));
-    painter.text(
-        Pos2::new(axis_x, rect.max.y - 4.0),
-        Align2::CENTER_BOTTOM,
-        format!("Ø {}", units::len(t.diameter, u, 2)),
-        FontId::proportional(10.0),
-        NOTE,
-    );
-    painter.text(
-        Pos2::new(rect.min.x + 6.0, rect.min.y + 6.0),
-        Align2::LEFT_TOP,
-        format!("{} {} overall", units::len(z_max, u, 1), u.suffix()),
-        FontId::proportional(10.0),
-        NOTE,
-    );
+    Some(Scale { axis_x, base_y, scale, z_max })
 }
 
 /// The name main's preview tests (#2005) call: the full-width editor preview.
 #[cfg(test)]
 fn draw_tool_preview(ui: &mut Ui, t: &tools::Tool, u: Unit, body: Option<&[(f64, f64, f64)]>) {
-    draw(ui, t, u, body, true);
+    draw(ui, t, u, body, None, true);
 }
 
 #[cfg(test)]

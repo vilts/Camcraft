@@ -28,7 +28,7 @@ pub(super) fn part_solid_of(world: &World, setup: Option<&str>, src: &SrcRef, ma
 /// [`area_ctx`] for a caller holding only the operation (the preview):
 /// tool and material read here, the same reads generation makes.
 pub(super) fn area_ctx_of(world: &World, op: &Operation) -> Option<Result<AreaCtx, GenError>> {
-    if op.area.is_default() {
+    if !op.area.has_boundary_edits() {
         return None;
     }
     let tool = model::find_by_name(world, &op.tool).and_then(|e| model::tool_of(world, &e));
@@ -53,7 +53,7 @@ pub(super) fn area_ctx(
     material: &Material,
     part_solid: bool,
 ) -> Option<Result<AreaCtx, GenError>> {
-    if op.area.is_default() {
+    if !op.area.has_boundary_edits() {
         return None;
     }
     Some(build(world, op, tool_r, material, part_solid))
@@ -136,7 +136,7 @@ fn build(world: &World, op: &Operation, tool_r: f64, material: &Material, part_s
                 let t = fold_height(world, setup, Some(&op.src), frame.as_ref(), *top_z)?;
                 let b = fold_height(world, setup, Some(&op.src), frame.as_ref(), *bottom_z)?;
                 let mt = super::area::stock_top(world, setup, parts, init_top, frame.as_ref());
-                Some(super::area::ladder_planes(t - oz, mt, b - oz, *stepdown))
+                Some(super::area::ladder_planes(t - oz, mt, b - oz, op.params.ladder_stepdown(t, b, *stepdown)))
             };
             match &op.src {
                 SrcRef::Selection(items) => match pocket_ladder(world, setup, items, &op.params)? {
@@ -253,19 +253,43 @@ pub fn op_stamp(world: &World, op: &Operation, op_name: &str) -> Option<GenStamp
         Some(Containment::Outside) => 3,
     });
     w(&mut h, a.offset);
+    // #3338: hashed only when it differs, so an old project's stamp holds.
+    if a.outer_offset != a.offset {
+        h.write(b"outer");
+        w(&mut h, a.outer_offset);
+    }
     h.write_u8(u8::from(a.corner == CornerStyle::Sharp));
     w(&mut h, a.extension);
     let picks = |h: &mut std::hash::DefaultHasher, items: &[GeoSel]| -> Option<()> {
         h.write_usize(items.len());
         for g in items {
-            let (tag, id) = match g.feature {
-                FeatureSel::Face(id) => (0u8, id),
-                FeatureSel::Chain(id) => (1, id),
-                FeatureSel::Patch(id) => (2, id),
-                FeatureSel::Vertex(id) => (3, id),
-            };
-            h.write_u8(tag);
-            h.write_u64(id);
+            match &g.feature {
+                FeatureSel::Face(id) => {
+                    h.write_u8(0);
+                    h.write_u64(*id);
+                }
+                FeatureSel::Chain(id) => {
+                    h.write_u8(1);
+                    h.write_u64(*id);
+                }
+                FeatureSel::Patch(id) => {
+                    h.write_u8(2);
+                    h.write_u64(*id);
+                }
+                FeatureSel::Vertex(id) => {
+                    h.write_u8(3);
+                    h.write_u64(*id);
+                }
+                FeatureSel::SketchChain(id) => {
+                    h.write_u8(4);
+                    h.write_u128(id.0);
+                }
+                FeatureSel::SketchLayer(layer) => {
+                    h.write_u8(5);
+                    h.write_usize(layer.len());
+                    h.write(layer.as_bytes());
+                }
+            }
             h.write_usize(g.entity.len());
             h.write(g.entity.as_bytes());
             let e = model::find_by_name(world, &g.entity)?;
@@ -300,6 +324,35 @@ pub fn op_stamp(world: &World, op: &Operation, op_name: &str) -> Option<GenStamp
     if let Some(b) = model::stock_world_aabb_for(world, op.setup.as_deref()) {
         for v in [b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z] {
             w(&mut h, v);
+        }
+    }
+    if !a.do_not_touch.is_default() {
+        h.write(b"camcraft-do-not-touch-v1");
+        w(&mut h, a.do_not_touch.clearance);
+        h.write_usize(a.do_not_touch.picks.len());
+        for g in &a.do_not_touch.picks {
+            let (tag, id) = match &g.feature {
+                FeatureSel::Face(id) => (0u8, *id),
+                FeatureSel::Chain(id) => (1, *id),
+                FeatureSel::Patch(id) => (2, *id),
+                FeatureSel::Vertex(id) => (3, *id),
+                FeatureSel::SketchChain(_) => (4, g.feature.id()),
+                FeatureSel::SketchLayer(layer) => {
+                    h.write_usize(layer.len());
+                    h.write(layer.as_bytes());
+                    (5, 0)
+                }
+            };
+            h.write_u8(tag);
+            h.write_u64(id);
+            h.write_usize(g.entity.len());
+            h.write(g.entity.as_bytes());
+            let e = model::find_by_name(world, &g.entity)?;
+            let loc = crate::setup_align::pose_in(world, &e, op.setup.as_deref()).unwrap_or_default();
+            for v in [loc.pos.x, loc.pos.y, loc.pos.z, loc.rot[0], loc.rot[1], loc.rot[2], loc.rot[3]] {
+                h.write(&v.to_bits().to_le_bytes());
+            }
+            h.write_u64(model::geometry_signature(world, &e)?);
         }
     }
     Some(GenStamp(h.finish()))

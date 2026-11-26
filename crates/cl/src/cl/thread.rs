@@ -145,6 +145,13 @@ pub struct ThreadCycle {
     /// in the span lays it ([`Self::is_sane`] holds them to it), so a
     /// post never has to infer it.
     pub hand: ThreadHand,
+    /// Whether the cycle's rapid infeed stands completely in free air
+    /// (issue #2878): in front of the end face, or in a relief groove
+    /// wider than the insert, clear of both part and remaining stock.
+    /// A Fanuc-type G76 moves the insert to pass depth at rapid
+    /// traverse, so a post that writes G76 refuses a record when this
+    /// is false.
+    pub start_in_air: bool,
 }
 
 impl ThreadCycle {

@@ -102,6 +102,7 @@ fn drill_of(h: CrossHole) -> OpParams {
         plunge_feed: 80.0,
         holes: vec![],
         cross: vec![h],
+        picks: Default::default(),
     }
 }
 

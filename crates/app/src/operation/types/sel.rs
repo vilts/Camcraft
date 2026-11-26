@@ -39,7 +39,7 @@ pub struct GeoSel {
 ///
 /// [`FaceId`]: crate::geometry::feature::FaceId
 /// [`ChainId`]: crate::geometry::feature::ChainId
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum FeatureSel {
     Face(crate::geometry::feature::FaceId),
     Chain(crate::geometry::feature::ChainId),
@@ -57,26 +57,49 @@ pub enum FeatureSel {
     ///
     /// [`VertexId`]: crate::geometry::feature::VertexId
     Vertex(crate::geometry::feature::VertexId),
+    /// #1864: one closed loop or open chain of a DXF sketch profile, keyed by
+    /// its canonical content hash ([`sketch_chains::ChainId`]).
+    SketchChain(crate::geometry::sketch_chains::ChainId),
+    /// #1864: every cuttable chain on the named layer of a DXF sketch profile.
+    SketchLayer(String),
+}
+
+/// #1864: additive per-chain side and direction override on a contour
+/// operation. When `side` is `None`, the operation's `Side` applies (`Auto`
+/// resolves outer vs hole from sketch nesting); `reverse` flips direction
+/// relative to the operation's `climb` flag.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct ChainOverride {
+    pub entity: String,
+    pub chain: crate::geometry::sketch_chains::ChainId,
+    pub side: Option<super::area::ChainSide>,
+    pub reverse: bool,
 }
 
 impl FeatureSel {
-    /// The raw geometry hash, whatever the kind.
+    /// The raw 64-bit geometry hash for mesh features (`0` for sketch variants).
     #[must_use]
-    pub fn id(self) -> u64 {
-        match self {
-            FeatureSel::Face(id) | FeatureSel::Chain(id) | FeatureSel::Patch(id) | FeatureSel::Vertex(id) => id,
+    pub fn id(&self) -> u64 {
+        match *self {
+            FeatureSel::Face(id)
+            | FeatureSel::Chain(id)
+            | FeatureSel::Patch(id)
+            | FeatureSel::Vertex(id) => id,
+            FeatureSel::SketchChain(id) => (id.0 ^ (id.0 >> 64)) as u64,
+            FeatureSel::SketchLayer(_) => 0,
         }
     }
 
     /// Hash-domain discriminator for [`crate::geometry::feature::FeatureNames`].
     #[must_use]
-    pub const fn name_kind(self) -> crate::geometry::feature::NameKind {
+    pub const fn name_kind(&self) -> Option<crate::geometry::feature::NameKind> {
         use crate::geometry::feature::NameKind;
         match self {
-            FeatureSel::Face(_) => NameKind::Face,
-            FeatureSel::Chain(_) => NameKind::Chain,
-            FeatureSel::Patch(_) => NameKind::Patch,
-            FeatureSel::Vertex(_) => NameKind::Vertex,
+            FeatureSel::Face(_) => Some(NameKind::Face),
+            FeatureSel::Chain(_) => Some(NameKind::Chain),
+            FeatureSel::Patch(_) => Some(NameKind::Patch),
+            FeatureSel::Vertex(_) => Some(NameKind::Vertex),
+            FeatureSel::SketchChain(_) | FeatureSel::SketchLayer(_) => None,
         }
     }
 }
@@ -88,6 +111,8 @@ impl core::fmt::Display for FeatureSel {
             FeatureSel::Chain(_) => "edge",
             FeatureSel::Patch(_) => "curved face",
             FeatureSel::Vertex(_) => "vertex",
+            FeatureSel::SketchChain(_) => "sketch chain",
+            FeatureSel::SketchLayer(_) => "sketch layer",
         };
         f.write_str(noun)
     }
@@ -311,6 +336,32 @@ pub enum OpType {
     /// one wall out by a stated amount (see [`crate::sinker_side`]).
     /// Appended: stored kind ids never move.
     SinkerSideBurn,
+    /// Slot undercut (#1444): side-entry passes of a T-slot, keyseat,
+    /// dovetail or lollipop cutter along a slot (see
+    /// [`crate::machining2d::undercut`]). Appended: stored kind ids
+    /// never move.
+    SlotUndercut,
+    /// V-carve (#1443): a V-bit's tip on the medial axis of a closed
+    /// region, the depth set by the region's width (see
+    /// [`crate::machining2d::v_carve`]). Appended: the declaration order
+    /// is the table order (`OpType as usize` is the row everywhere).
+    VCarve,
+    /// Waterjet profile (#1883): the abrasive jet's 2D through-cut of
+    /// picked contours - the waterjet's family (see
+    /// [`crate::waterjet`]). Appended: stored kind ids never move.
+    WaterjetProfile,
+    /// Multi-axis deburr (#1894): the Deburr's edge break with the tool
+    /// axis tilted onto the break, around the holder (see
+    /// [`crate::multiaxis::deburr_axis`]). Appended: stored kind ids
+    /// never move.
+    MultiAxisDeburr,
+    /// Rotary Flow (#2826, the second slice of #2804): the 4-axis
+    /// cylindrical flow-line finish - the caller PICKS the guide
+    /// chains (the edges of a helical band on a rotor) and the kind
+    /// blends flow passes between each adjacent pair about a STATED
+    /// rotation axis (see [`crate::multiaxis::rotary_flow`]).
+    /// Appended: stored kind ids never move.
+    RotaryFlow,
 }
 
 impl core::fmt::Display for OpType {

@@ -61,10 +61,11 @@ fn the_ribbon_keeps_open_live_in_the_browser() {
 
 #[test]
 fn a_picker_the_browser_lacks_is_refused_by_name_not_ignored() {
-    // Open model / Open project are not here: they run the browser's
-    // picker (#31; natively they would open rfd's dialog in the test).
+    // Open model / Open project and Load machine / Load post are not here:
+    // they run the browser's picker (#31, #2950; natively they would open
+    // rfd's dialog in the test).
     let mut h = browser_harness();
-    for action in [CommandKind::LoadMachineDialog, CommandKind::SelectPostDialog] {
+    for action in [CommandKind::ImportFixtureDialog, CommandKind::SelectThemeDialog] {
         h.state_mut().state.status.clear();
         h.state_mut().state.pending.push_back(action);
         h.run();
@@ -149,11 +150,12 @@ fn a_per_op_post_is_refused_in_the_browser_and_the_cell_says_why() {
 #[test]
 fn a_file_button_is_greyed_with_its_reason_in_the_browser() {
     let mut h = Harness::new_ui(|ui| {
-        let _ = browser_files::button(ui, Some(NEEDS_PICKER), "Load machine (.mch)", "");
+        // #2950: Load machine is live in the browser now; Import fixture is not.
+        let _ = browser_files::button(ui, Some(NEEDS_PICKER), "Import fixture…", "");
         let _ = browser_files::button(ui, None, "Built-in", "");
     });
     h.run();
-    assert!(h.get_by_label("Load machine (.mch)").accesskit_node().is_disabled(), "greyed in the browser");
+    assert!(h.get_by_label("Import fixture…").accesskit_node().is_disabled(), "greyed in the browser");
     assert!(!h.get_by_label("Built-in").accesskit_node().is_disabled(), "a live button stays live");
 }
 

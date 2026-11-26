@@ -1,7 +1,13 @@
-//! Laws (f) and (f2), the measured finish-envelope verdict and the posed-contact law of ball-rolling paths - our own measurement on the swept-ball envelope (`stock_sim::envelope_scan`), stated in `verify`'s module law (split from `engine.rs` by M13.7; structure only).
+//! Laws (f) and (f2), the finish-envelope verdict and posed contact.
+//! Ball-rolling paths use `stock_sim::envelope_scan`. Upright, straight
+//! bull-nose cuts use the solid sweep for gouge and leave rest unjudged.
 
 use super::laws::dist2_seg;
+use super::midpose;
+use super::probe::{Cutter, Frame};
+use super::solid_index::SolidIndex;
 use super::types::{Mode, VerifyContext, Warning};
+use super::upright::is_upright;
 
 use crate::cl::{MoveKind, Toolpath};
 
@@ -55,6 +61,22 @@ pub(super) fn finish_envelope(
             .iter()
             .position(|m| m.kind != MoveKind::Rapid)
             .unwrap_or(0);
+        if cx.mode == Mode::Envelope
+            && !nose_centers
+            && let Some(cutter) = cx.cutter.filter(|c| {
+                c.corner_r > 0.0 && c.corner_r < c.radius && c.tip_angle == 0.0 && c.undercut.is_none()
+            })
+        {
+            match bullnose_gouge(path, cx, cutter, first_cut) {
+                Ok(gouge) => {
+                    warns.extend(gouge.map(|at| Warning::Gouge { at }));
+                    warns.push(Warning::RestUnjudged { at: first_cut, cells: 0, claims: 0 });
+                }
+                // Law (f) holds the post when the geometry cannot be judged.
+                Err(at) => warns.push(Warning::Gouge { at }),
+            }
+            return;
+        }
         let verdict = match cx.model.zip(cx.finish_tol) {
             Some((facets, tol)) => match if nose_centers {
                 // #1408: the work turns under the nose - the hidden
@@ -136,4 +158,46 @@ pub(super) fn finish_envelope(
             warns.extend(super::contact::posed_contact(path, facets, cx.tool, r, tol, cx.stock_to_leave));
         }
     }
+}
+
+/// First gouging move of an upright, straight bull-nose cut. An error
+/// locates a cut we cannot judge. The cutting atoms intersect the model
+/// solid; they carry no evidence about remaining stock.
+fn bullnose_gouge(
+    path: &Toolpath,
+    cx: &VerifyContext,
+    cutter: Cutter,
+    first_cut: usize,
+) -> Result<Option<usize>, usize> {
+    let (facets, tol) = cx
+        .model
+        .zip(cx.finish_tol)
+        .filter(|(facets, tol)| !facets.is_empty() && tol.is_finite() && *tol > 0.0)
+        .ok_or(first_cut)?;
+    let judged = Cutter::judged(cx.tool, Some(cutter));
+    if judged.corner_r != cutter.corner_r {
+        return Err(first_cut);
+    }
+    let mut atoms = judged.atoms();
+    atoms.retain(|a| a.z0 < judged.flute_len);
+    if atoms.is_empty() {
+        return Err(first_cut);
+    }
+    let mut model = SolidIndex::build(facets).ok_or(first_cut)?;
+    let allow = cx.tightened(tol);
+    for (at, (m, (from, to))) in path.moves.iter().zip(midpose::poses(path)).enumerate() {
+        if m.kind == MoveKind::Rapid {
+            continue;
+        }
+        if m.arc.is_some() || !m.from.is_finite() || !m.to.is_finite()
+            || !from.as_ref().is_none_or(is_upright) || !to.as_ref().is_none_or(is_upright)
+        {
+            return Err(at);
+        }
+        let frame = Frame::new(m.from, None);
+        if model.hits(&frame, frame.local(m.to), &atoms, allow, 0.0, &[], &[], &[]) {
+            return Ok(Some(at));
+        }
+    }
+    Ok(None)
 }

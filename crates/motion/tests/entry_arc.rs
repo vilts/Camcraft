@@ -237,8 +237,9 @@ fn cp() -> ContourParams {
         tab_height: 0.0,
         entry: Entry3D::Arc,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: camcraft_motion::links::Links::PLANAR,
+        picks: Default::default(),
     }
 }
 
@@ -428,7 +429,7 @@ fn a_slot_arc_entry_stays_inside_the_channel_stadium() {
         plunge_feed: 100.0,
         climb: true,
         entry: Entry3D::Arc,
-        helix_radius: 1.0,
+        helix_radius: 1.0, blend_turns: false, blend_radius: None,
     };
     let (a, b) = (Point2::new(0.0, 0.0), Point2::new(50.0, 0.0));
     let t = slot(a, b, &p).expect("arc slot valid");

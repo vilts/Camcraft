@@ -18,7 +18,9 @@
 //! - Its hole is kept beside the sentinel ([`MeshOpen`]) and saved with
 //!   the project, so each refusal and the model page name the hole, not
 //!   "saved before CamCraft recorded mesh fidelity". A stock copied from
-//!   the model is refused naming its source, whose hole it reads by name.
+//!   the model carries the hole itself, beside the sentinel it carries
+//!   (#1700): the copy's refusal names its source and that hole, also once
+//!   the source is deleted - through undo, setup clones and save/load.
 //! - A hole is read only beside the sentinel, and every command that
 //!   lands facets on a model lands their hole (or none) with them, so a
 //!   stale hole never speaks for a whole mesh.
@@ -43,9 +45,10 @@ pub fn hole_of(world: &World, entity: &Entity) -> Option<String> {
 }
 
 /// Land or clear a hole. `Some` also marks the mesh fidelity unknown, so
-/// the refusal rides with the facets. For the import, update and delete
-/// commands, their undo and the project loader only; call it after
-/// `model_fidelity::set`.
+/// the refusal rides with the facets. For the commands that land facets
+/// on a model or a stock copied from one (import, update, delete, set
+/// stock, setup clone and delete), their undo and the project loader
+/// only; call it after `model_fidelity::set`.
 pub fn set(world: &World, entity: &Entity, hole: Option<&str>) {
     let view = entity.entity_view(world);
     match hole.filter(|h| !h.is_empty()) {
@@ -59,13 +62,29 @@ pub fn set(world: &World, entity: &Entity, hole: Option<&str>) {
     }
 }
 
+/// The hole a stock copied from `source` lands with (#1700): the one
+/// `source` carries - its own when it is an incomplete model, the one it
+/// was copied with when it is itself a copy. `model_fidelity::chord_behind`
+/// is the sentinel's twin.
+#[must_use]
+pub fn hole_behind(world: &World, source: &str) -> Option<String> {
+    model::find_by_name(world, source).and_then(|e| hole_of(world, &e))
+}
+
 /// What a refusal says follows "model 'X' was" for a mesh of unknown
 /// fidelity: the hole of the model named `name` when it was imported
 /// incomplete, else the pre-v59 note.
 #[must_use]
 pub fn unknown_note(world: &World, name: &str) -> String {
-    match model::find_by_name(world, name).and_then(|e| hole_of(world, &e)) {
-        Some(hole) => incomplete(&hole),
+    note_for(hole_behind(world, name).as_deref())
+}
+
+/// The same words for a hole already in hand (#1700): a stock copy's own,
+/// when the model it names is gone.
+#[must_use]
+pub fn note_for(hole: Option<&str>) -> String {
+    match hole {
+        Some(hole) => incomplete(hole),
         None => UNKNOWN_NOTE.to_string(),
     }
 }
@@ -83,7 +102,7 @@ fn incomplete(hole: &str) -> String {
 pub fn summary(world: &World, entity: &Entity, chord_mm: f64) -> String {
     match hole_of(world, entity) {
         Some(hole) => format!("Incomplete: {hole}. Its operations are refused at the post; {ADVICE}."),
-        None => crate::model_fidelity::summary(world, chord_mm),
+        None => crate::model_fidelity::summary_with_cause(world, chord_mm, crate::model_fidelity::file_tolerance_of(world, entity)),
     }
 }
 
@@ -98,6 +117,6 @@ pub fn facts(world: &World, entity: &Entity, chord_mm: f64) -> serde_json::Value
             "hole": hole,
             "note": summary(world, entity, chord_mm),
         }),
-        None => crate::model_fidelity::facts(world, chord_mm),
+        None => crate::model_fidelity::facts_with_cause(world, chord_mm, crate::model_fidelity::file_tolerance_of(world, entity)),
     }
 }

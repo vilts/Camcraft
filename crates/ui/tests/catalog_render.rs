@@ -122,7 +122,9 @@ fn open_and_frame(project: &Path) -> State {
         project.display(),
         state.status
     );
-    state.show_all_paths = true;
+    state.show_all_paths = false;
+    state.pending.push_back(CommandKind::Select(None));
+    state.drain_actions();
     state
 }
 
@@ -166,12 +168,27 @@ fn render_png(
 }
 
 #[test]
+fn catalog_capture_starts_blank_and_selects_one_operation() {
+    let mut state = open_and_frame(&repo_root().join("examples/catalog/2d/first-part/first-part.camproj"));
+    assert!(!state.show_all_paths, "catalog captures must show only the selected operation");
+    state.pending.push_back(CommandKind::Select(None));
+    state.drain_actions();
+    assert!(interact::toolpath_lines(&state).is_empty());
+    for (name, _) in setup::operation_order(&state.world) {
+        state.pending.push_back(CommandKind::Select(Some(name.clone())));
+        state.drain_actions();
+        assert!(!interact::toolpath_lines(&state).is_empty(), "missing path for {name}");
+    }
+}
+
+#[test]
 fn catalog_cases_open_and_frame_cleanly() {
     let root = repo_root();
     let cases = discover_projects(&root);
     assert!(!cases.is_empty(), "expected at least one catalog project under examples/catalog/");
     for case in &cases {
-        let state = open_and_frame(&case.project);
+        let mut state = open_and_frame(&case.project);
+        state.show_all_paths = true;
         assert!(state.cam.dist.is_finite() && state.cam.dist > 0.0, "{}/{}: invalid cam", case.family, case.name);
         assert!(!scene_parts(&state).is_empty(), "{}/{}: empty scene parts", case.family, case.name);
         assert!(!interact::toolpath_lines(&state).is_empty(), "{}/{}: empty toolpath overlay", case.family, case.name);
@@ -197,16 +214,26 @@ fn render_all_catalog_screenshots() {
     };
 
     for case in &cases {
-        let state = open_and_frame(&case.project);
+        let mut state = open_and_frame(&case.project);
         let parts = scene_parts(&state);
-        let overlay = interact::toolpath_lines(&state);
-        let bytes = render_png(&gpu.device, &gpu.queue, &parts, &overlay, &state.cam)
-            .unwrap_or_else(|| panic!("readback failed for {}/{}", case.family, case.name));
-        let dest = out_dir.join(&case.family).join(&case.name).join(format!("{}.png", case.name));
-        if let Some(parent) = dest.parent() {
-            fs::create_dir_all(parent).expect("create screenshot output dir");
+        let mut shots = vec![("0-blank".to_owned(), None)];
+        for (index, (name, _)) in setup::operation_order(&state.world).into_iter().enumerate() {
+            let slug: String = name.chars()
+                .map(|c| if c.is_ascii_alphanumeric() { c } else { '-' })
+                .collect();
+            shots.push((format!("{}-{slug}", index + 1), Some(name)));
         }
-        fs::write(&dest, bytes).unwrap_or_else(|e| panic!("write {}: {e}", dest.display()));
-        println!("rendered {}/{} -> {}", case.family, case.name, dest.display());
+        let dir = out_dir.join(&case.family).join(&case.name);
+        fs::create_dir_all(&dir).expect("create screenshot output dir");
+        for (shot, operation) in shots {
+            state.pending.push_back(CommandKind::Select(operation));
+            state.drain_actions();
+            let overlay = interact::toolpath_lines(&state);
+            let bytes = render_png(&gpu.device, &gpu.queue, &parts, &overlay, &state.cam)
+                .unwrap_or_else(|| panic!("readback failed for {}/{}: {shot}", case.family, case.name));
+            let dest = dir.join(format!("{shot}.png"));
+            fs::write(&dest, bytes).unwrap_or_else(|e| panic!("write {}: {e}", dest.display()));
+            println!("rendered {}/{} -> {}", case.family, case.name, dest.display());
+        }
     }
 }

@@ -29,6 +29,14 @@ use super::wcs_page::{cell_w, even_row};
 
 /// A button row's height (the WCS page's).
 const BUTTON_H: f32 = 24.0;
+/// #2105: the page's own vertical rhythm. The shell's item spacing leaves
+/// the action row below the visible bottom of a 720 px window: the page
+/// draws three titled groups, two radios, two help lines and eight
+/// overview rows in a 274 px pane, so its rows sit one px closer.
+const ROW_GAP: f32 = 2.0;
+/// #2105: the row gap of the machine overview readout (its own, not the
+/// form grid's: eight rows in a short pane).
+const OVERVIEW_GAP: f32 = 2.0;
 /// The group titles (the structural twin reads them).
 pub(super) const GROUPS: [&str; 3] = ["Which machine", "Machine file", "Change machine"];
 /// The one line under "Machine file" saying what the group does.
@@ -41,6 +49,13 @@ pub(super) const REFRESH_MACHINES: &str = "Refresh machine list";
 
 /// The page body for setup `ctx` (`None` - the implicit context).
 pub(super) fn machine_page(ui: &mut Ui, state: &mut State, ctx: Option<&str>) {
+    // #2105: the page draws its rows at its own rhythm (see ROW_GAP). The
+    // shell default leaves the "Change machine" row under the visible
+    // bottom of a 720 px window: `pages.rs` takes 40 px of the leaf for
+    // the separator and the Close footer, so the page body must fit above
+    // it. The rhythm is local to this page: the `ui` here is the page's
+    // own, rebuilt with the scroll area in each frame.
+    ui.spacing_mut().item_spacing.y = ROW_GAP;
     group(ui, GROUPS[0], None, |ui| ownership(ui, state, ctx, Mount::Machine));
     let (path, m) = machine::of(&state.world);
     let names: Vec<&str> = posting::MACHINES.iter().map(|(n, _)| *n).collect();
@@ -57,7 +72,7 @@ pub(super) fn machine_page(ui: &mut Ui, state: &mut State, ctx: Option<&str>) {
                         None => path.clone(),
                     }
                 };
-                super::machine_grid::machine_grid(ui, "machine_overview", m, state.units(), &[("Source", source)]);
+                super::machine_grid::machine_grid(ui, "machine_overview", m, state.units(), &[("Source", source)], OVERVIEW_GAP);
             }
             None => {
                 ui.label(NO_MACHINE);
@@ -92,35 +107,43 @@ fn library_row(ui: &mut Ui, state: &mut State, path: &str) {
     let text = current.map_or_else(|| "other".to_owned(), library_label);
     let mut pick: Option<MachineSource> = None;
     let mut reread = false;
+    // #2105: the Refresh button shares the Library row instead of taking a
+    // row of its own. One row on this page is worth ~28 px: with the taller
+    // ribbon of #2027 the action row sat 8 px under the fold of a 720 px
+    // window. Refresh belongs on the combo's row anyway - it re-reads the
+    // same folder the combo lists. The row lays out right to left: the
+    // button first, so the combo (which fills the remaining width) cannot
+    // push the button out of the cell.
     prop_grid(ui, "machine_library_grid", |ui| {
         ui.label("Library");
-        let cb = egui::ComboBox::from_id_salt("machine_library").selected_text(text).show_ui(ui, |ui| {
-            for (i, group) in [&mine, &shipped].into_iter().enumerate() {
-                if i == 1 && !mine.is_empty() && !shipped.is_empty() {
-                    ui.separator();
-                }
-                for e in group {
-                    let on = current.is_some_and(|c| c.source == e.source);
-                    let r = ui.add_enabled(e.is_valid(), egui::Button::selectable(on, library_label(e)));
-                    if r.clicked() && !on {
-                        pick = Some(e.source.clone());
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let refresh = ui.button("Refresh").on_hover_text("Read the machine folder again");
+            if super::fields::named(refresh, REFRESH_MACHINES).clicked() {
+                // #2380: read the shipped folder again, then list the
+                // catalogue again (its shipped part is that scan).
+                posting::rescan();
+                reread = true;
+            }
+            let cb = egui::ComboBox::from_id_salt("machine_library").selected_text(text).show_ui(ui, |ui| {
+                for (i, group) in [&mine, &shipped].into_iter().enumerate() {
+                    if i == 1 && !mine.is_empty() && !shipped.is_empty() {
+                        ui.separator();
+                    }
+                    for e in group {
+                        let on = current.is_some_and(|c| c.source == e.source);
+                        let r = ui.add_enabled(e.is_valid(), egui::Button::selectable(on, library_label(e)));
+                        if r.clicked() && !on {
+                            pick = Some(e.source.clone());
+                        }
                     }
                 }
-            }
+            });
+            // Opening the list reads the folder again: a file saved outside
+            // the app shows up without a remount. Keep (never overwrite)
+            // the `true` the Refresh button just set.
+            reread |= cb.response.clicked();
+            super::fields::named(cb.response, "Machine library");
         });
-        // Opening the list reads the folder again: a file saved outside
-        // the app shows up without a remount.
-        reread = cb.response.clicked();
-        super::fields::named(cb.response, "Machine library");
-        ui.end_row();
-        ui.label("");
-        let refresh = ui.button("Refresh").on_hover_text("Read the machine folder again");
-        if super::fields::named(refresh, REFRESH_MACHINES).clicked() {
-            // #2380: read the shipped folder again, then list the catalogue
-            // again (its shipped part is that scan).
-            posting::rescan();
-            reread = true;
-        }
         ui.end_row();
     });
     if reread {
@@ -134,9 +157,9 @@ fn library_row(ui: &mut Ui, state: &mut State, path: &str) {
 }
 
 /// Load other / Edit / Clear as equal buttons; with no machine, the one
-/// load button. #1431: in the browser build the `.mch` load slot greys
-/// with its refusal reason (a page has no file picker yet); the rows
-/// lay out exactly as on the desktop while nothing is refused.
+/// load button. #1431: a refused `.mch` load slot greys with its reason;
+/// since #2950 the browser's picker loads one, so nothing is refused, and
+/// the browser adds a folder button under the row.
 fn actions(ui: &mut Ui, state: &mut State, has_machine: bool) {
     let avail = ui.available_width();
     let why = state.browser_refusal_of(&CommandKind::LoadMachineDialog);
@@ -175,4 +198,15 @@ fn actions(ui: &mut Ui, state: &mut State, has_machine: bool) {
             state.pending.push_back(CommandKind::LoadMachineDialog);
         }
     }
+    // #2950: a page has no machine or post folder; the browser picks one.
+    if state.browser_build {
+        let size = Vec2::new(cell_w(ui, avail, 1), BUTTON_H);
+        if crate::browser_files::button_sized(ui, None, LOAD_FOLDER, FOLDER_HELP, size) {
+            state.pending.push_back(CommandKind::LoadSetupFolderDialog);
+        }
+    }
 }
+
+/// The browser's folder button (#2950).
+pub(crate) const LOAD_FOLDER: &str = "Load folder (.mch, .cps)";
+const FOLDER_HELP: &str = "Add every machine and post file of one folder to this session's lists";

@@ -1,6 +1,7 @@
 //! The dielectric a wire EDM job runs in (#1499, part of #617): the
 //! `.mch` file's `edm.tank` (the work submerged in the tank or not) and
-//! `edm.flushing` (high or low pressure flushing). Each is an enumerated
+//! `edm.flushing` (high or low pressure flushing), and `edm.skim_flushing`
+//! (#2686: the flushing of each skim pass). Each is an enumerated
 //! word with no default: unstated means the operator sets it at the
 //! control and the post writes nothing; a garbled word refuses the file
 //! by name. Which control word a post writes for each is the post's own
@@ -10,7 +11,9 @@
 //! the two choices are the ones the 1998 Sodick "Wire EDM Machine
 //! Operation" manual (Mark 21 / EX21) names in its T-code table
 //! (submersed / non-submersed machining, high / low pressure flushing).
-//! No vendor machine file or post was read.
+//! That a finish pass changes the flushing is the program example of the
+//! 2012 Sodick "Wire EDM Machine Operation Training, LN1W / LN2W Control"
+//! manual (part number 6300015). No vendor machine file or post was read.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -76,6 +79,25 @@ pub(super) fn parse_dielectric(v: &Value) -> Result<(Option<Tank>, Option<Flushi
     Ok((word(v, "tank", &TANK_WORDS)?, word(v, "flushing", &FLUSHING_WORDS)?))
 }
 
+/// Why a skim flushing needs the rough cut's: the word a post writes for
+/// it is modal, so it would stay active for the next rough cut.
+const SKIM_FLUSHING_NEEDS_FLUSHING: &str =
+    "machine file: edm.skim_flushing needs edm.flushing (the skim's flushing would stay active for the next rough cut)";
+
+/// Read `edm.skim_flushing` (#2686), the flushing of each skim pass.
+/// `flushing` is the file's `edm.flushing`, already read.
+///
+/// # Errors
+/// A value that is not one of the flushing words, or a skim flushing on
+/// a file that states no `edm.flushing`.
+pub(super) fn parse_skim_flushing(v: &Value, flushing: Option<Flushing>) -> Result<Option<Flushing>, String> {
+    let skim = word(v, "skim_flushing", &FLUSHING_WORDS)?;
+    if skim.is_some() && flushing.is_none() {
+        return Err(SKIM_FLUSHING_NEEDS_FLUSHING.to_owned());
+    }
+    Ok(skim)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,5 +127,31 @@ mod tests {
         assert_eq!(err, "machine file: edm.flushing must be one of high, low, not \"medium\"");
         let err = parse_dielectric(&json!({ "flushing": true })).err().unwrap_or_default();
         assert!(err.contains("edm.flushing must be one of high, low, not true"), "{err}");
+    }
+
+    /// #2686: the skim flushing takes the flushing words, and needs the
+    /// rough cut's flushing stated.
+    #[test]
+    fn a_skim_flushing_parses_with_the_rough_flushing_and_is_refused_without_it() {
+        let v = json!({ "flushing": "high", "skim_flushing": "low" });
+        assert_eq!(parse_skim_flushing(&v, Some(Flushing::High)), Ok(Some(Flushing::Low)));
+        assert_eq!(parse_skim_flushing(&json!({ "flushing": "high" }), Some(Flushing::High)), Ok(None));
+        assert_eq!(parse_skim_flushing(&json!({ "skim_flushing": null }), None), Ok(None));
+        assert_eq!(parse_skim_flushing(&json!({ "skim_flushing": "low" }), None), Err(SKIM_FLUSHING_NEEDS_FLUSHING.to_owned()));
+        let err = parse_skim_flushing(&json!({ "skim_flushing": "medium" }), Some(Flushing::High)).err().unwrap_or_default();
+        assert_eq!(err, "machine file: edm.skim_flushing must be one of high, low, not \"medium\"");
+    }
+
+    /// The same law over a parsed section (a hand-edited project file, an
+    /// MCP patch): not sane, and refused by its key.
+    #[test]
+    fn a_parsed_section_with_a_skim_flushing_and_no_flushing_is_not_sane() {
+        use crate::machine::{Edm, Kind};
+        let mut e = Edm { flushing: Some(Flushing::High), skim_flushing: Some(Flushing::Low), ..Edm::default() };
+        assert!(e.is_sane() && e.refusal().is_none());
+        e.flushing = None;
+        assert!(!e.is_sane());
+        assert_eq!(e.refusal().as_deref(), Some("edm.skim_flushing: needs edm.flushing (state the rough cut's flushing too)"));
+        assert!(e.fits(Kind::WireEdm) && !e.fits(Kind::SinkerEdm), "a wire key");
     }
 }

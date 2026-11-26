@@ -6,7 +6,7 @@
 //! leaves its answer on stdout. The spawns are real processes: CI
 //! runs this door, not a Rust call.
 //!
-//! Gate map (M4.4): covers app::cli, app::script.
+//! Gate map (M4.4): covers app::cli, app::cli_skill, app::script.
 
 use flecs_ecs::prelude::World;
 
@@ -38,7 +38,7 @@ fn fixture_proj() -> World {
     history.execute(&world, cmd.expect("box stock"));
     let tool = catalog().into_iter().find(|(n, _)| *n == "EM-0400-2FL").map(|(_, t)| t).expect("catalog entry");
     history.execute(&world, AddTool::new(&world, "EM-0400-2FL", tool).expect("catalog tool"));
-    let params = OpParams::Face { holes: Default::default(), blend_turns: false,
+    let params = OpParams::Face { holes: Default::default(), blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -48,6 +48,7 @@ fn fixture_proj() -> World {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     let cmd = CreateOperation::new(&world, "Face1", "EM-0400-2FL", SrcRef::Stock, params);
     history.execute(&world, cmd.expect("create"));
@@ -289,4 +290,97 @@ fn script_lane_accepts_camscript_extension() {
     assert_eq!(code(&o), 0, "{:?}", String::from_utf8_lossy(&o.stderr));
     let out = String::from_utf8_lossy(&o.stdout);
     assert_eq!(out.trim().lines().collect::<Vec<_>>(), ["camscript", "42"]);
+}
+
+/// A fresh, empty folder for one `--skill` test.
+fn skill_dir(tag: &str) -> PathBuf {
+    let d = tmp(&format!("skill-{tag}"), "d");
+    let _ = std::fs::remove_dir_all(&d);
+    std::fs::create_dir_all(&d).expect("temp folder");
+    d
+}
+
+/// `camcraft-cli --skill ...` in `cwd`, with HOME/USERPROFILE at `home`.
+fn skill_cli(cwd: &std::path::Path, home: &std::path::Path, args: &[&str]) -> Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_camcraft-cli"));
+    cmd.arg("--skill").args(args).current_dir(cwd).env("HOME", home).env("USERPROFILE", home);
+    cmd.output().expect("the CLI binary runs")
+}
+
+fn read(p: PathBuf) -> String {
+    std::fs::read_to_string(&p).unwrap_or_else(|e| panic!("{} was written: {e}", p.display()))
+}
+
+#[test]
+fn skill_folder_target_writes_skill_md_into_the_given_folder() {
+    let d = skill_dir("folder");
+    let out = d.join("my-skills");
+    let o = skill_cli(&d, &d, &["folder", "install", "--dir", out.to_str().unwrap()]);
+    assert_eq!(code(&o), 0, "{}", String::from_utf8_lossy(&o.stderr));
+    let text = read(out.join("SKILL.md"));
+    assert!(text.starts_with("---\nname: camcraft-cli\ndescription: \""), "a SKILL.md header: {text}");
+    assert!(text.contains("## Command reference"), "the help text rides along");
+    assert_eq!(code(&skill_cli(&d, &d, &["folder", "install"])), 2, "folder needs --dir");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn skill_claude_target_writes_the_project_skill_or_with_user_the_home_skill() {
+    let (proj, home) = (skill_dir("claude-proj"), skill_dir("claude-home"));
+    let o = skill_cli(&proj, &home, &["claude", "install"]);
+    assert_eq!(code(&o), 0, "{}", String::from_utf8_lossy(&o.stderr));
+    let text = read(proj.join(".claude/skills/camcraft-cli/SKILL.md"));
+    assert!(text.starts_with("---\nname: camcraft-cli\n"), "{text}");
+    assert!(!home.join(".claude").exists(), "the project scope writes nothing in the home folder");
+    let o = skill_cli(&proj, &home, &["claude", "install", "--user"]);
+    assert_eq!(code(&o), 0, "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(read(home.join(".claude/skills/camcraft-cli/SKILL.md")), text, "one text for both scopes");
+    for d in [proj, home] {
+        let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[test]
+fn skill_copilot_target_writes_an_instructions_file_for_all_paths() {
+    let d = skill_dir("copilot");
+    let o = skill_cli(&d, &d, &["copilot", "install"]);
+    assert_eq!(code(&o), 0, "{}", String::from_utf8_lossy(&o.stderr));
+    let text = read(d.join(".github/instructions/camcraft-cli.instructions.md"));
+    assert!(text.starts_with("---\napplyTo: \"**\"\n---\n"), "{text}");
+    assert!(!d.join(".github/copilot-instructions.md").exists(), "the user's own file is not touched");
+    assert_eq!(code(&skill_cli(&d, &d, &["copilot", "install", "--user"])), 2, "--user is claude only");
+    assert_eq!(code(&skill_cli(&d, &d, &["cursor", "install"])), 2, "an unknown target refuses");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn skill_install_never_replaces_a_file_without_force() {
+    let d = skill_dir("force");
+    let file = d.join(".claude/skills/camcraft-cli/SKILL.md");
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "the user's own text").unwrap();
+    let o = skill_cli(&d, &d, &["claude", "install"]);
+    assert_eq!(code(&o), 1, "an existing file refuses");
+    assert!(String::from_utf8_lossy(&o.stderr).contains("--force"), "the refusal names the way out");
+    assert_eq!(read(file.clone()), "the user's own text", "nothing was written");
+    assert_eq!(code(&skill_cli(&d, &d, &["claude", "install", "--force"])), 0);
+    assert!(read(file).contains("## Command reference"), "--force replaces it");
+    let _ = std::fs::remove_dir_all(&d);
+}
+
+#[test]
+fn skill_text_names_every_cli_lane_and_no_other() {
+    // Drift test: the installed skill names each lane the CLI dispatches,
+    // and each `camcraft-cli <word>` it names is a lane that exists.
+    let text = camcraft_app::cli_skill::Target::Claude.content();
+    for (lane, _) in camcraft_app::cli::HELP_LANES {
+        assert!(text.contains(&format!("camcraft-cli {lane}")), "the skill names {lane}");
+    }
+    let known: Vec<&str> = camcraft_app::cli::HELP_LANES.iter().map(|(n, _)| *n).chain(["help", "version"]).collect();
+    for rest in text.split("camcraft-cli ").skip(1) {
+        let word = rest.split(|c: char| c.is_whitespace() || c == '`').next().unwrap_or("");
+        if word.starts_with(|c: char| c.is_ascii_lowercase()) || word.starts_with("--") {
+            assert!(known.contains(&word), "the skill names a lane that does not exist: {word:?}");
+        }
+    }
 }

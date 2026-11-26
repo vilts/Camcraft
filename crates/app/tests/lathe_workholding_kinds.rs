@@ -285,12 +285,15 @@ fn drilled(m: Option<Machine>, rpm: f64) -> World {
         h.execute(&world, LoadMachine::new(&world, "bench.mch".into(), Some(m)).expect("machine"));
     }
     let drill = catalog().into_iter().find(|(n, _)| *n == "DR-0400").map(|(_, t)| t).expect("catalog drill");
-    h.execute(&world, AddTool::new(&world, "DR-0400", Tool { rpm, flute_len: 20.0, ..drill }).expect("drill"));
+    let drill = Tool { rpm, flute_len: 20.0, ..drill };
+    h.execute(&world, AddTool::new(&world, "DR-0400", drill.clone()).expect("drill"));
     h.execute(&world, ImportModel::from_mesh("bar", revolve(&BORED, 24)));
     h.execute(&world, CreateSetup::new(&world, None, None).expect("Setup1"));
     h.execute(&world, SetSetupWorkholdingRpm::new(&world, "Setup1", Some(CHUCK)).expect("chuck limit"));
     let i = KindInfo::ALL.iter().position(|k| k.ty == OpType::Drill).expect("Drill");
     let mut p = seed_params(i);
+    // #2598: the quick-add's seed - the drill feeds at DR-0400's own feed.
+    camcraft_app::cutting_rows::seed_feed_for_tool(&world, &mut p, &drill);
     on_centre(&mut p);
     h.execute(&world, CreateOperation::new(&world, "D1", "DR-0400", SrcRef::Entity("bar".into()), p).expect("create"));
     h.execute(&world, GenerateOperation::new(&world, "D1").expect("generate"));

@@ -37,12 +37,12 @@ fn open(h: &mut H, target: UiTarget) {
     h.run_steps(3);
 }
 
-/// Press "Pick for WCS" with the pointer. The pointer rests on the button
+/// Press "Pick Z axis" with the pointer. The pointer rests on the button
 /// for one frame first, so egui's hit test knows the row before the press.
 fn press_pick(h: &mut H) {
-    h.get_by_label("Pick for WCS").hover();
+    h.get_by_label("Pick Z axis").hover();
     h.run();
-    h.get_by_label("Pick for WCS").click();
+    h.get_by_label("Pick Z axis").click();
 }
 
 fn top(h: &H, label: &str) -> f32 {
@@ -78,14 +78,14 @@ fn the_wcs_page_shows_the_feature_pick_group_by_the_work_offset_and_the_setup_pa
     let mut h = wcs_harness();
     open(&mut h, UiTarget::SetupNode("Setup1".into(), SetupPage::Settings));
     assert_eq!(count(&h, GROUP), 0, "the Setup page has no feature-pick group");
-    assert_eq!(count(&h, "Pick for WCS"), 0, "the Setup page has no Pick for WCS");
+    assert_eq!(count(&h, "Pick Z axis"), 0, "the Setup page has no Pick for WCS");
     open(&mut h, UiTarget::Wcs);
     assert_eq!(count(&h, GROUP), 1, "the WCS page has the group");
-    assert_eq!(count(&h, "Pick for WCS"), 1, "and its Pick for WCS button");
+    assert_eq!(count(&h, "Pick Z axis"), 1, "and its Pick for WCS button");
     let g = top(&h, GROUP);
     assert!(h.query_all_by_label("Anchor on").map(|n| n.rect().top()).fold(f32::MIN, f32::max) < g, "the picks follow the origin, turns and anchor groups");
     assert!(g < top(&h, crate::egui_app::wcs_page::OFFSET_GROUP), "the picks sit just above the work offset");
-    assert!(top(&h, "Pick for WCS") > g && top(&h, "Pick for WCS") < top(&h, crate::egui_app::wcs_page::OFFSET_GROUP), "the button sits inside its group");
+    assert!(top(&h, "Pick Z axis") > g && top(&h, "Pick Z axis") < top(&h, crate::egui_app::wcs_page::OFFSET_GROUP), "the button sits inside its group");
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn an_armed_row_on_the_wcs_page_stays_armed_and_leaving_the_page_pauses_it() {
         crate::wcs_pick::collecting(&h.state().state),
         "the per-frame sweep keeps a draft whose row the WCS page draws"
     );
-    assert_eq!(count(&h, "Stop picking"), 1, "the row shows it is armed");
+    assert_eq!(h.state().state.wcs_pick.as_ref().expect("armed").role, Role::Z);
     open(&mut h, UiTarget::Stock);
     h.run_steps(3);
     assert!(!crate::wcs_pick::collecting(&h.state().state), "a page without the row pauses the draft");

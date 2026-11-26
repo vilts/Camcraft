@@ -2,8 +2,16 @@
 //! Provenance: our own tests over our own shell and egui_kittest; no external SDKs or vendor material.
 
 mod basic;
+mod budget;
+mod delete_confirmation;
+mod model_defaults;
 mod regressions;
 mod safety;
+mod settings;
+mod settings_failure_details;
+mod settings_hand_test;
+mod settings_help;
+mod settings_model;
 
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

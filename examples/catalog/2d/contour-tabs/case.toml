@@ -1,0 +1,3 @@
+kinds = ["2D Contour"]
+machine = "3-axis mill"
+expect = "post"

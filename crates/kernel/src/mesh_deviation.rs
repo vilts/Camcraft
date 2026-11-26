@@ -9,14 +9,12 @@
 
 use solidcore::eval::plan::uv;
 use solidcore::kernel::CancelToken;
-use solidcore_record::brep::{self, Frame};
+use solidcore_record::brep;
 use solidcore_tess::{EvalSurface, FacePlan, TessPlan};
 
 use crate::P3;
-use crate::mesh_bound::{
-    analytic_is_exact, analytic_tri_bound, cross, dot, norm, parametric_eps, project_sample, sub,
-    unit,
-};
+pub use crate::mesh_distance::analytic_distance;
+use crate::mesh_bound::{analytic_is_exact, analytic_tri_bound, norm, parametric_eps, project_sample, sub};
 
 /// Divisions per triangle side of the barycentric sampling grid: 4 gives
 /// 15 points per triangle - the corners, three points on each side
@@ -24,8 +22,17 @@ use crate::mesh_bound::{
 pub const SAMPLE_DIVISIONS: usize = 4;
 
 /// Maximum recursive 4-way sub-triangle refinement depth beyond `N = 4`
-/// (`N = 4 -> 8 -> 16 -> 32`).
+/// for [`measure`] (`N = 4 -> 8 -> 16 -> 32`).
 const MAX_REFINE_DEPTH: u8 = 3;
+
+/// [`measure_within`] refines a sub-triangle until its bound is inside the
+/// tolerance (#917): at most this deep (`N = 4 * 2^12`), and at most
+/// [`MAX_REFINE_SAMPLES`] new samples for one plan. Past either cap the
+/// bound found so far is the judged one: never smaller than the truth.
+const MAX_ADAPTIVE_DEPTH: u8 = 12;
+
+/// The most samples [`measure_within`] adds by refinement for one plan.
+pub const MAX_REFINE_SAMPLES: usize = 1 << 21;
 
 /// What [`measure`] / [`measure_within`] found. Every distance in millimetres.
 ///
@@ -92,50 +99,6 @@ fn point(s: &EvalSurface, uv_in: [f64; 2]) -> Option<P3> {
     let p = [p.x, p.y, p.z];
     p.iter().all(|c| c.is_finite()).then_some(p)
 }
-fn cylindrical(f: &Frame, p: P3) -> Option<(f64, f64)> {
-    let z = unit(cross(unit(f.x_axis)?, unit(f.y_axis)?))?;
-    let d = sub(p, f.origin);
-    let h = dot(d, z);
-    let rho = (dot(d, d) - h * h).max(0.0).sqrt();
-    Some((h, rho))
-}
-
-/// The distance from `p` to the untrimmed analytic surface of a record
-/// face, `None` for a surface with no closed form here (splines,
-/// revolutions) or a degenerate frame.
-#[must_use]
-pub fn analytic_distance(s: &brep::Surface, p: P3) -> Option<f64> {
-    use brep::Surface as S;
-    let d = match s {
-        S::Plane { origin, u_axis, v_axis } => {
-            dot(sub(p, *origin), unit(cross(*u_axis, *v_axis))?).abs()
-        }
-        S::PlaneThrough { origin, u_point, v_point } => {
-            dot(sub(p, *origin), unit(cross(sub(*u_point, *origin), sub(*v_point, *origin)))?).abs()
-        }
-        S::Cylinder { frame, radius } => (cylindrical(frame, p)?.1 - radius).abs(),
-        S::Sphere { frame, radius } => (norm(sub(p, frame.origin)) - radius).abs(),
-        S::BallPatch { center, radius } => (norm(sub(p, *center)) - radius).abs(),
-        S::Torus { frame, major_radius, minor_radius, .. } => {
-            let (h, rho) = cylindrical(frame, p)?;
-            ((rho - major_radius).hypot(h) - minor_radius).abs()
-        }
-        S::Cone { frame, radius_at_origin, half_angle } => {
-            let (h, rho) = cylindrical(frame, p)?;
-            let (sa, ca) = half_angle.sin_cos();
-            let t = (rho - radius_at_origin) * sa + h * ca;
-            if radius_at_origin + t * sa >= 0.0 {
-                ((rho - radius_at_origin) * ca - h * sa).abs()
-            } else {
-                let apex_h = if sa != 0.0 { -radius_at_origin * ca / sa } else { 0.0 };
-                rho.hypot(h - apex_h)
-            }
-        }
-        S::Spline { .. } | S::RationalSpline { .. } | S::PlacedRevolution { .. } => return None,
-    };
-    d.is_finite().then_some(d)
-}
-
 /// Measures every triangle of `plan` (see [`Deviation`]), adaptively tightening
 /// between-sample continuous bounds up to `N = 32`.
 pub fn measure(plan: &TessPlan, record: &brep::Brep, stop: &CancelToken) -> Result<Deviation, Unmeasured> {
@@ -151,6 +114,7 @@ pub fn measure_within(plan: &TessPlan, record: &brep::Brep, tol_mm: f64, stop: &
 fn measure_inner(plan: &TessPlan, record: &brep::Brep, tol_mm: Option<f64>, stop: &CancelToken) -> Result<Deviation, Unmeasured> {
     let mut out = Deviation::default();
     let mut worst = (0.0_f64, None);
+    let mut budget = MAX_REFINE_SAMPLES;
     for f in &plan.faces {
         if stop.is_cancelled() {
             return Err(Unmeasured::Cancelled);
@@ -169,7 +133,7 @@ fn measure_inner(plan: &TessPlan, record: &brep::Brep, tol_mm: Option<f64>, stop
             .surface
             .and_then(|i| plan.surfaces.get(i as usize))
             .ok_or(Unmeasured::NoSurface { face: f.face })?;
-        let (p, a, r, g, n) = face(f, s, analytic.filter(|_| has_analytic), tol_mm, stop)?;
+        let (p, a, r, g, n) = face(f, s, analytic.filter(|_| has_analytic), tol_mm, &mut budget, stop)?;
         out.parametric = out.parametric.max(p);
         out.analytic = out.analytic.max(a);
         out.projected = out.projected.max(r);
@@ -243,15 +207,25 @@ fn tri_metrics(
     tri: [SamplePt; 3],
 ) -> Result<(f64, f64, bool, f64), Unmeasured> {
     let dmax = tri[0].d.max(tri[1].d).max(tri[2].d);
+    // The distance to a surface is 1-Lipschitz: no point of the triangle is
+    // farther from a corner than its longest side, so `dmax + side` bounds
+    // it too. It shrinks with each split where the parametric bound cannot
+    // (a sliver at a pole spans the whole u range in parameters, #917).
+    let side = [(0, 1), (1, 2), (2, 0)]
+        .map(|(a, b)| norm(sub(tri[a].p, tri[b].p)))
+        .into_iter()
+        .fold(0.0_f64, f64::max);
     match ctx {
         FaceBoundCtx::Analytic { surf, face } => {
             let b = analytic_tri_bound(surf, tri.map(|v| v.p), tri.map(|v| v.d))
-                .ok_or(Unmeasured::NoPoint { face: *face, uv: tri[0].q })?;
+                .ok_or(Unmeasured::NoPoint { face: *face, uv: tri[0].q })?
+                .min(dmax + side);
             Ok((b, (b - dmax).max(0.0), !analytic_is_exact(surf), dmax))
         }
         FaceBoundCtx::Parametric { s, dom, face, .. } => {
             let eps = parametric_eps(s, dom, tri.map(|v| v.q))
-                .ok_or(Unmeasured::NoPoint { face: *face, uv: tri[0].q })?;
+                .ok_or(Unmeasured::NoPoint { face: *face, uv: tri[0].q })?
+                .min(side);
             Ok((dmax + eps, eps, true, dmax))
         }
     }
@@ -263,7 +237,7 @@ fn subtri_bound(
     depth: u8,
     tol_mm: Option<f64>,
     running_gate: &mut f64,
-    n: &mut usize,
+    (n, budget): (&mut usize, &mut usize),
     stop: &CancelToken,
 ) -> Result<f64, Unmeasured> {
     let (mut bound, mut eps, can_refine, mut dmax) = tri_metrics(ctx, tri)?;
@@ -271,8 +245,10 @@ fn subtri_bound(
         ensure_projected(ctx, &mut tri)?;
         (bound, eps, _, dmax) = tri_metrics(ctx, tri)?;
     }
+    let cap = if tol_mm.is_some() { MAX_ADAPTIVE_DEPTH } else { MAX_REFINE_DEPTH };
     let refine = bound.is_finite()
-        && depth < MAX_REFINE_DEPTH
+        && depth < cap
+        && *budget >= 3
         && can_refine
         && bound > *running_gate
         && match tol_mm {
@@ -286,10 +262,11 @@ fn subtri_bound(
     if stop.is_cancelled() {
         return Err(Unmeasured::Cancelled);
     }
+    *budget -= 3;
     let (m01, m12, m20) = (eval_mid(ctx, tri[0], tri[1], n)?, eval_mid(ctx, tri[1], tri[2], n)?, eval_mid(ctx, tri[2], tri[0], n)?);
     let mut worst = 0.0_f64;
     for ch in [[tri[0], m01, m20], [tri[1], m12, m01], [tri[2], m20, m12], [m01, m12, m20]] {
-        worst = worst.max(subtri_bound(ctx, ch, depth + 1, tol_mm, running_gate, n, stop)?);
+        worst = worst.max(subtri_bound(ctx, ch, depth + 1, tol_mm, running_gate, (&mut *n, &mut *budget), stop)?);
     }
     Ok(worst)
 }
@@ -299,6 +276,7 @@ fn face(
     s: &EvalSurface,
     analytic: Option<&brep::Surface>,
     tol_mm: Option<f64>,
+    budget: &mut usize,
     stop: &CancelToken,
 ) -> Result<(f64, f64, f64, f64, usize), Unmeasured> {
     let (dom, starts) = (uv::domain(s), uv::Starts::default());
@@ -345,7 +323,13 @@ fn face(
         let q0 = c0.0.1;
         let q1 = [uv::unwrap(c1.0.1[0], q0[0], dom.period[0]), uv::unwrap(c1.0.1[1], q0[1], dom.period[1])];
         let q2 = [uv::unwrap(c2.0.1[0], q0[0], dom.period[0]), uv::unwrap(c2.0.1[1], q0[1], dom.period[1])];
-        let same_uv = q0 == c0.1 && q1 == c1.1 && q2 == c2.1;
+        // A corner at a pole takes its free parameter from the others
+        // (#3034), so no hint inside the triangle crosses the surface.
+        let settled = if analytic.is_none() { crate::mesh_pole::settle(s, dom.period, [q0, q1, q2]) } else { None };
+        let ([q0, q1, q2], same_uv) = match settled {
+            Some(q) => (q, false),
+            None => ([q0, q1, q2], q0 == c0.1 && q1 == c1.1 && q2 == c2.1),
+        };
         let mut grid = [[zero_pt; 5]; 5];
         for (i, row) in grid.iter_mut().enumerate().take(SAMPLE_DIVISIONS + 1) {
             for (j, cell) in row.iter_mut().enumerate().take(SAMPLE_DIVISIONS - i + 1) {
@@ -383,7 +367,7 @@ fn face(
             continue;
         }
         let mut acc = |tri| -> Result<(), Unmeasured> {
-            let b = subtri_bound(&ctx, tri, 0, tol_mm, &mut running_gate, &mut n, stop)?;
+            let b = subtri_bound(&ctx, tri, 0, tol_mm, &mut running_gate, (&mut n, &mut *budget), stop)?;
             if analytic.is_some() { am = am.max(b); } else { rm = rm.max(b); }
             Ok(())
         };

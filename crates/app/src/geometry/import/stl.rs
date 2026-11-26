@@ -24,7 +24,7 @@ const FACET_BYTES: usize = 50;
 /// The one window the streaming paths read through: 50-byte records and
 /// physical lines are served from it by slice copy, so the disk sees
 /// window-sized reads and the file never doubles in memory.
-const READ_BUF_BYTES: usize = 8 << 20;
+pub(super) const READ_BUF_BYTES: usize = 8 << 20;
 
 pub fn parse(data: &[u8]) -> Result<Mesh, ImportError> {
     if data.is_empty() {
@@ -141,7 +141,7 @@ pub fn parse_file(path: &Path) -> Result<Mesh, ImportError> {
     parse_stream(BufReader::with_capacity(READ_BUF_BYTES, file), size)
 }
 
-fn parse_stream<R: Read + Seek>(
+pub(super) fn parse_stream<R: Read + Seek>(
     mut src: BufReader<R>,
     size: Option<u64>,
 ) -> Result<Mesh, ImportError> {

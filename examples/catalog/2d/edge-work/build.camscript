@@ -1,0 +1,37 @@
+// Provenance: original plate edge-work example using CamCraft commands.
+cam.import("model/edge-work.obj", "edge-work");
+cam.call("set_model_link", { model: "edge-work", path: null });
+cam.call("set_stock", { from_model: "edge-work" });
+cam.call("add_tool", { catalog: "CM-0600-90", holder: "none" });
+cam.call("add_tool", { catalog: "EM-0600-4FL", holder: "none" });
+
+cam.call("add_operation", {
+  kind: "2D Chamfer", name: "Chamfer", tool: "CM-0600-90", source: "edge-work",
+  params: { width: 0.8, angle_deg: 45.0, clearance_z: 21.0,
+    top_z: 6.0, feed: 800.0, plunge_feed: 200.0, climb: true, side: "auto" }
+});
+cam.call("add_operation", {
+  kind: "Deburr", name: "Deburr", tool: "CM-0600-90", source: "edge-work",
+  // The window bounds the tip, 0.3 mm below the top edge for a 90 degree cone.
+  // The width is the chord of that 0.3 mm setback on a 90 degree edge (#1890).
+  params: { width: 0.42426407, clearance_z: 21.0, top_z: 6.0, bottom_z: 5.0,
+    feed: 800.0, plunge_feed: 200.0 }
+});
+cam.call("add_operation", {
+  kind: "Engrave", name: "Engrave", tool: "EM-0600-4FL", source: "edge-work",
+  params: { clearance_z: 21.0, top_z: 6.0, bottom_z: 5.8,
+    stepdown: 1.0, feed: 600.0, plunge_feed: 150.0, climb: true }
+});
+cam.call("add_operation", {
+  kind: "Trace", name: "Trace", tool: "EM-0600-4FL", source: "edge-work",
+  params: { clearance_z: 21.0, top_z: 6.0, bottom_z: 5.8,
+    stepdown: 1.0, feed: 600.0, plunge_feed: 150.0, climb: true }
+});
+cam.generate();
+var verdict = cam.verify();
+if (!verdict.ok) {
+  throw new Error("catalog verify failed: " + JSON.stringify(verdict));
+}
+cam.save("edge-work.camproj");
+cam.post({ to: "edge-work.nc" });
+cam.report();

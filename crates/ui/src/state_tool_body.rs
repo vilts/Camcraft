@@ -82,6 +82,14 @@ pub struct ToolBodyUi {
     pub assembly: super::tool_body_assembly_ui::AssemblyUi,
 }
 
+impl ToolBodyUi {
+    /// The placement view's orbit, as one value (#3894).
+    #[must_use]
+    pub fn orbit(&self) -> Orbit {
+        Orbit { yaw: self.yaw, pitch: self.pitch, zoom: self.zoom, pan: self.pan }
+    }
+}
+
 type PreviewKey = (usize, [u64; 4]);
 
 /// The preview zoom's bounds, log2: a quarter of the fit view out to
@@ -96,6 +104,38 @@ pub const ZOOM_MAX: f32 = 5.0;
 pub fn clamp_zoom(z: f32, by: f32) -> f32 {
     let next = z + by;
     if next.is_finite() { next.clamp(ZOOM_MIN, ZOOM_MAX) } else { z.clamp(ZOOM_MIN, ZOOM_MAX) }
+}
+
+/// #3894: the orbit of a small model view (the body placement view, the
+/// tool library window's 3D view): radians off the default look, the
+/// zoom (log2 over the fit view) and the pan (view units). View state.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Orbit {
+    pub yaw: f32,
+    pub pitch: f32,
+    pub zoom: f32,
+    pub pan: [f64; 2],
+}
+
+impl Orbit {
+    /// Zoom by `by` (log2) about `about` - the cursor's offset from the
+    /// view centre in view units (right, up) - so the point under it
+    /// stays put.
+    pub fn zoom_about(&mut self, by: f32, about: [f64; 2]) {
+        let next = clamp_zoom(self.zoom, by);
+        let k = f64::from(next - self.zoom).exp2();
+        if k.is_finite() && k > 0.0 && about.iter().all(|v| v.is_finite()) {
+            self.pan[0] += about[0] * (1.0 - 1.0 / k);
+            self.pan[1] += about[1] * (1.0 - 1.0 / k);
+        }
+        self.zoom = next;
+    }
+
+    /// A drag of `dx`, `dy` screen px turns the view.
+    pub fn turn(&mut self, dx: f32, dy: f32) {
+        self.yaw -= dx * 0.01;
+        self.pitch = (self.pitch + dy * 0.01).clamp(-1.9, 1.0);
+    }
 }
 
 /// A body as Apply body states it, for the command queue. Debug prints
@@ -273,13 +313,9 @@ impl State {
     /// current zoom - so the point under it stays put. View state only.
     pub(crate) fn zoom_body_preview(&mut self, by: f32, about: [f64; 2]) {
         let d = &mut self.tool_body_ui;
-        let next = clamp_zoom(d.zoom, by);
-        let k = f64::from(next - d.zoom).exp2();
-        if k.is_finite() && k > 0.0 && about.iter().all(|v| v.is_finite()) {
-            d.pan[0] += about[0] * (1.0 - 1.0 / k);
-            d.pan[1] += about[1] * (1.0 - 1.0 / k);
-        }
-        d.zoom = next;
+        let mut o = d.orbit();
+        o.zoom_about(by, about);
+        (d.zoom, d.pan) = (o.zoom, o.pan);
     }
 
     /// Fit: the default view again - orbit, zoom and pan reset.

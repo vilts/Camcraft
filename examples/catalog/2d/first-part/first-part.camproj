@@ -1,5 +1,5 @@
 {
-  "version": 68,
+  "version": 71,
   "entities": [
     {
       "name": "2D Pocket1",
@@ -4279,7 +4279,10 @@
               ]
             }
           ],
-          "warnings": []
+          "warnings": [],
+          "notes": [
+            "2D Pocket: some corners of the area to clear are tighter than the 6.000 mm tool, leaving uncut corner material at X -50.000 mm to -47.000 mm, Y 27.000 mm to 30.000 mm; X 47.000 mm to 50.000 mm, Y 27.000 mm to 30.000 mm; X -50.000 mm to -47.000 mm, Y -30.000 mm to -27.000 mm; X 47.000 mm to 50.000 mm, Y -30.000 mm to -27.000 mm - extend the Boundary or use a smaller tool"
+          ]
         }
       }
     },
@@ -4312,7 +4315,8 @@
         "holder_len": 35.0,
         "material_group": "aluminum",
         "rpm": 7500.0,
-        "feed": 115.0
+        "feed": 115.0,
+        "number": 1
       }
     },
     {
@@ -4350,8 +4354,8 @@
             "cycle": "auto",
             "peck": 0.0,
             "dwell": 0.0,
-            "feed": 1200.0,
-            "plunge_feed": 300.0,
+            "feed": 115.0,
+            "plunge_feed": 115.0,
             "holes": [
               {
                 "xy": [
@@ -4401,7 +4405,7 @@
             "break_through_from": "full_diameter"
           }
         },
-        "stamp": 78146556622426435,
+        "stamp": 11657592767958746871,
         "cache": {
           "moves": [
             {
@@ -4429,7 +4433,7 @@
                 23.0,
                 16.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4456,7 +4460,7 @@
                 23.0,
                 10.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4483,7 +4487,7 @@
                 23.0,
                 4.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4510,7 +4514,7 @@
                 23.0,
                 -2.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4537,7 +4541,7 @@
                 23.0,
                 -2.802582
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4590,7 +4594,7 @@
                 23.0,
                 16.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4617,7 +4621,7 @@
                 23.0,
                 10.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4644,7 +4648,7 @@
                 23.0,
                 4.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4671,7 +4675,7 @@
                 23.0,
                 -2.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4698,7 +4702,7 @@
                 23.0,
                 -2.802582
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4751,7 +4755,7 @@
                 -23.0,
                 16.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4778,7 +4782,7 @@
                 -23.0,
                 10.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4805,7 +4809,7 @@
                 -23.0,
                 4.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4832,7 +4836,7 @@
                 -23.0,
                 -2.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4859,7 +4863,7 @@
                 -23.0,
                 -2.802582
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4912,7 +4916,7 @@
                 -23.0,
                 16.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4939,7 +4943,7 @@
                 -23.0,
                 10.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4966,7 +4970,7 @@
                 -23.0,
                 4.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -4993,7 +4997,7 @@
                 -23.0,
                 -2.0
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -5020,7 +5024,7 @@
                 -23.0,
                 -2.802582
               ],
-              "feed": 300.0
+              "feed": 115.0
             },
             {
               "kind": "rapid",
@@ -5129,7 +5133,8 @@
         "rpm": 9500.0,
         "feed": 1800.0,
         "tool_material": "carbide",
-        "flutes": 4
+        "flutes": 4,
+        "number": 2
       }
     },
     {
@@ -5163,7 +5168,8 @@
         "rpm": 5800.0,
         "feed": 3000.0,
         "tool_material": "carbide",
-        "flutes": 4
+        "flutes": 4,
+        "number": 3
       }
     },
     {

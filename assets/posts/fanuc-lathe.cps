@@ -155,7 +155,11 @@ explainBlockMax = 80;
 //    verified), and a record the cycle cannot state - alternating
 //    flank infeed, a one-pass thread, every roughing depth cut twice
 //    (issue #418: the cycle cuts each depth once), chip-break dips
-//    (issue #419: a cycle states no dip) - is refused by name.
+//    (issue #419: a cycle states no dip), or a start point above
+//    material (issue #2878: the control rapids to each pass's depth
+//    at the start Z, so the start must stand in free air in front of
+//    the end face or in a relief groove wider than the insert) - is
+//    refused by name.
 //    The control reads the ROUNDED words, so d is derived from their own
 //    ladder (g76Allowance): the allowance that makes the rounded Q, Q, P
 //    cut the record's rough pass count, nearest the record's allowance
@@ -833,6 +837,24 @@ function meridianArc(p) {
   var rc = yz ? radiusOf(orgX, c.J, "arc centre") : radiusOf(c.I, orgY, "arc centre");
   if (r0 === null || r1 === null || rc === null) return;
   if (!has(c.K)) { refuse("arc without a K centre word"); return; }
+  // #3442: an arc whose written ends coincide is no arc block (arcFate,
+  // PRELUDE), on this post's own X (radius) and Z words; the stream's
+  // direction seen in the (Z, radius) frame is the block's own.
+  var cwB = p.CircularDirection === "CW";
+  if (yz) cwB = !cwB;
+  var fate = arcFateOf({
+    plane: "XZ", ccw: !cwB, rotary: false,
+    start: { X: r0, Y: 0, Z: p.StartZ }, end: { X: r1, Y: 0, Z: p.Z }, center: { X: rc, Y: 0, Z: c.K }
+  }, function (k, v) { return k === "X" ? xWord(v) : (k === "Z" ? zWord(v) : ""); },
+  // #3474: the centre the control reads: the written start plus the
+  // written I (a radius, doubled to the diameter X scale) and K.
+  function (k, d) { return (k === "X" ? 2 : 1) * _arcWordNum(fu(d)); });
+  if (fate !== "arc") {
+    chainOn = false; modalR = r1;
+    // #3474: a short arc whose written ends differ on one ray: the feed move.
+    if (fate === "linear") block(["G01", xWord(r1), zWord(p.Z), feedWord(p.FeedRate)]);
+    return;
+  }
   chainOn = false;
   modalR = r1;
   var cw = p.CircularDirection === "CW";
@@ -946,6 +968,13 @@ function g76Why(p, r0, r1) {
   var rev = (p.Hand === "right") === (p.EndZ > p.Z);
   if (rev !== spinRev) {
     return "a " + p.Hand + "-hand thread cut " + (p.EndZ < p.Z ? "toward" : "away from") + " the chuck needs " + (rev ? "M04" : "M03") + ", the section's spindle runs " + (spinRev ? "M04" : "M03");
+  }
+  // #2878: a Fanuc-type G76 rapids from the start point to each pass's
+  // depth. If the start point stands above material (not in free air
+  // in front of the end face or in a relief groove wider than the
+  // insert), refuse the cycle by name and never write it.
+  if (p.StartInAir !== true) {
+    return "the start point is above material (G76 moves the insert to pass depth at rapid traverse) - start the thread in free air in front of the end face or in a relief groove wider than the insert, regenerate the operation, or choose G32 passes";
   }
   return null;
 }

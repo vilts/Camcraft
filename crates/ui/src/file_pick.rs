@@ -3,7 +3,9 @@
 //! `<input type=file>`: the shell asks for a file, returns at once, and the
 //! file's name and bytes arrive frames later. They land in an inbox here;
 //! `State::drain_actions` takes them each frame and runs them through the
-//! same commands an import or open from disk runs (`state_picked`).
+//! same commands an import or open from disk runs (`state_picked`). A
+//! machine (`.mch`), a post (`.cps`) or a whole folder of them comes the
+//! same way (#2950).
 //!
 //! The inbox and the `accept` filter are plain Rust on every target, so the
 //! bytes-to-document path is pinned by native tests. Only `open` (the DOM
@@ -16,6 +18,10 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 
 use crate::file_dialog::FileDialog;
+
+#[path = "file_pick_budget.rs"]
+mod budget;
+pub(crate) use budget::ReadBudget;
 
 /// The largest file the browser build reads into memory, in bytes. A wasm32
 /// module has at most 4 GiB of memory and an import needs several times
@@ -30,6 +36,13 @@ pub enum PickFor {
     Model,
     /// A `.camproj` to open in place of the document.
     Project,
+    /// A `.mch` to keep for the session and mount (#2950).
+    Machine,
+    /// A `.cps` to keep for the session and choose as the post (#2950).
+    Post,
+    /// One file of a folder pick or of a drop of several: kept for the
+    /// session's machine and post lists, nothing mounted (#2950).
+    Folder,
 }
 
 /// One file the picker answered with: its name and contents, or why the
@@ -103,6 +116,9 @@ pub fn chooser_status(purpose: PickFor, in_click: bool) -> String {
     let (ask, button) = match purpose {
         PickFor::Model => ("choose a model to import…", "File > Model"),
         PickFor::Project => ("choose a project to open…", "File > Open"),
+        PickFor::Machine => ("choose a machine file (.mch)…", "Load machine"),
+        PickFor::Post => ("choose a post script (.cps)…", "Load post"),
+        PickFor::Folder => ("choose a folder of machine and post files…", "Load folder"),
     };
     if in_click {
         ask.to_string()
@@ -113,12 +129,24 @@ pub fn chooser_status(purpose: PickFor, in_click: bool) -> String {
     }
 }
 
+/// The extensions of the session's machine and post files, lower case
+/// (#2950): what a folder pick keeps and what a drop sends to the lists.
+pub const SETUP_EXTENSIONS: &[&str] = &["mch", "cps"];
+
+/// `true` when `name` ends in `.mch` or `.cps` (any case).
+#[must_use]
+pub fn is_setup_file(name: &str) -> bool {
+    std::path::Path::new(name)
+        .extension()
+        .is_some_and(|e| SETUP_EXTENSIONS.iter().any(|x| e.eq_ignore_ascii_case(x)))
+}
+
 /// Why a file of `size` bytes is not read, or `None` when it may be.
 #[must_use]
 pub fn too_big(name: &str, size: f64) -> Option<String> {
     // 256 MiB is exact in an f64.
     let limit = BROWSER_READ_LIMIT as f64;
-    (!size.is_finite() || size > limit).then(|| {
+    (!size.is_finite() || size < 0.0 || size > limit).then(|| {
         format!(
             "{name} is {:.0} MiB, over the browser build's {} MiB read limit - open it in the desktop app",
             size / 1_048_576.0,
@@ -138,7 +166,7 @@ mod web {
     use wasm_bindgen::closure::Closure;
     use wasm_bindgen::{JsCast as _, JsValue};
 
-    use super::{PickFor, PickedFile, accept_attr, deliver, too_big};
+    use super::{PickFor, PickedFile, ReadBudget, accept_attr, deliver, is_setup_file, too_big};
     use crate::file_dialog::FileDialog;
 
     /// The open picker: its input and the change handler the input calls.
@@ -196,6 +224,15 @@ mod web {
             .map_err(|_| "the page's <input> is not an input element".to_string())?;
         input.set_type("file");
         input.set_accept(&accept_attr(dialog));
+        if purpose == PickFor::Folder {
+            // #2950: a folder pick, read-only - Chrome, Firefox and Safari
+            // all read `webkitdirectory`; `accept` does not filter a folder,
+            // so the read keeps only `.mch` and `.cps` names.
+            input
+                .set_attribute("webkitdirectory", "")
+                .map_err(|e| said("the page would not make a folder input", &e))?;
+            input.set_multiple(true);
+        }
         // In the page, hidden: the MDN pattern (a `display:none` input
         // whose `click()` runs from the user's click handler). A detached
         // input is not relied on to fire `change` in every browser.
@@ -209,7 +246,12 @@ mod web {
             .map_err(|e| said("the page would not take the file input", &e))?;
         let held = input.clone();
         let on_change = Closure::<dyn FnMut()>::new(move || {
-            if let Some(file) = held.files().and_then(|list| list.get(0)) {
+            let Some(list) = held.files() else { return };
+            if purpose == PickFor::Folder {
+                let files: Vec<web_sys::File> =
+                    (0..list.length()).filter_map(|i| list.get(i)).filter(|f| is_setup_file(&f.name())).collect();
+                wasm_bindgen_futures::spawn_local(read_folder(files));
+            } else if let Some(file) = list.get(0) {
                 wasm_bindgen_futures::spawn_local(read(file, purpose));
             }
         });
@@ -236,6 +278,38 @@ mod web {
     }
 
     async fn read(file: web_sys::File, purpose: PickFor) {
+        deliver(read_one(file, purpose).await);
+        repaint();
+    }
+
+    /// Every `.mch` / `.cps` file of a folder pick, read in turn and handed
+    /// over together, so one frame lands them with one status line.
+    async fn read_folder(files: Vec<web_sys::File>) {
+        if files.is_empty() {
+            let why = "it holds no .mch or .cps file".to_string();
+            deliver(PickedFile { purpose: PickFor::Folder, name: "the folder".to_string(), bytes: Err(why) });
+        }
+        // Plan every size before starting any read. Rejected files keep
+        // their names and never allocate an ArrayBuffer.
+        let mut budget = ReadBudget::default();
+        let plan: Vec<_> = files.into_iter().map(|file| {
+            let allowed = budget.reserve(&file.name(), file.size());
+            (file, allowed)
+        }).collect();
+        let mut done = Vec::with_capacity(plan.len());
+        for (file, allowed) in plan {
+            done.push(match allowed {
+                Ok(()) => read_one(file, PickFor::Folder).await,
+                Err(why) => PickedFile { purpose: PickFor::Folder, name: file.name(), bytes: Err(why) },
+            });
+        }
+        for file in done {
+            deliver(file);
+        }
+        repaint();
+    }
+
+    async fn read_one(file: web_sys::File, purpose: PickFor) -> PickedFile {
         let name = file.name();
         let bytes = match too_big(&name, file.size()) {
             Some(why) => Err(why),
@@ -247,8 +321,7 @@ mod web {
         if let Err(why) = &bytes {
             diag_warn!("file picker: {name}: {why}");
         }
-        deliver(PickedFile { purpose, name, bytes });
-        repaint();
+        PickedFile { purpose, name, bytes }
     }
 
     fn said(what: &str, err: &JsValue) -> String {

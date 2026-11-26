@@ -106,6 +106,9 @@ fn read(v: &Value, lookup: Option<HolderLookup>) -> Read {
 pub fn tooling_refusals(v: &Value, lookup: Option<HolderLookup>) -> Vec<(String, String)> {
     let (m, h) = read(v, lookup);
     let mut out = Vec::new();
+    if let Err(rule) = super::reservations::parse(v) {
+        out.push(("tooling.reserved".to_owned(), rule));
+    }
     if let Err(rule) = &m {
         out.push((MOUNT_KEY.to_owned(), rule.clone()));
     }

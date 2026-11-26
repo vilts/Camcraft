@@ -22,6 +22,7 @@ use camcraft_app::schema::Location;
 use camcraft_app::stock::StockShape;
 use camcraft_app::stock_fit::{self, FitKind};
 use camcraft_app::tools::{self, Tool};
+use camcraft_app::verify::Warning;
 use camcraft_app::vise::{ViseSize, size as vise_size};
 use flecs_ecs::prelude::World;
 
@@ -179,10 +180,11 @@ pub(super) fn build_workholding_world() -> World {
     add_catalog_tools(&world, &mut h, &["EM-1000-4FL", "EM-0600-4FL"]);
     let top_clr = Height::of(HeightReference::TopOfStock, 12.0);
     create_and_gen(&world, &mut h, "Face1", "EM-1000-4FL", SrcRef::Stock, OpParams::Face {
-        holes: Default::default(), blend_turns: false, tilt: None, stepover: 6.0,
+        holes: Default::default(), blend_turns: false, blend_radius: None, tilt: None, stepover: 6.0,
         clearance_z: top_clr, cut_z: Height::of(HeightReference::TopOfModel, 0.0),
         top_z: Some(Height::of(HeightReference::TopOfStock, 0.0)), stepdown: Some(1.0),
         feed: 1400.0, plunge_feed: 350.0, climb: true,
+        picks: Default::default(),
     });
     create_and_gen(&world, &mut h, "2D Contour1", "EM-0600-4FL", SrcRef::Entity("Workpiece".into()), OpParams::Contour {
         stock_to_leave: 0.0, clearance_z: top_clr,
@@ -191,8 +193,9 @@ pub(super) fn build_workholding_world() -> World {
         bottom_z: Height::of(HeightReference::TopOfModel, -4.0),
         stepdown: 2.0, feed: 1200.0, plunge_feed: 300.0, climb: true, side: Side::Outside,
         lead: Lead::Arc { radius: 4.0 }, tolerance: 0.01, tab_count: 0, tab_width: 8.0,
-        tab_height: 3.0, entry: Entry3D::Plunge, helix_radius: 1.0, blend_turns: false,
-        links: Links::PLANAR, tilt: None,
+        tab_height: 3.0, entry: Entry3D::Plunge, helix_radius: 1.0, blend_turns: false, blend_radius: None,
+        links: Links::PLANAR, tilt: None, chain_overrides: Vec::new(),
+        picks: Default::default(),
     });
     world
 }
@@ -209,21 +212,29 @@ pub(super) fn build_3d_world() -> World {
     let top_clr = Height::of(HeightReference::TopOfStock, 10.0);
     let ret_z = Height::of(HeightReference::TopOfStock, 4.0);
     create_and_gen(&world, &mut h, "3D Pocket1", "EM-0600-4FL", SrcRef::Entity("Mold".into()), OpParams::Pocket3D {
+        pass_start: Default::default(),
         stepover: 2.5, stock_to_leave: 0.3, clearance_z: top_clr, retract_z: Some(ret_z),
         top_z: Height::of(HeightReference::TopOfStock, 0.0),
         bottom_z: Height::of(HeightReference::BottomOfModel, 0.0),
         stepdown: 2.0, feed: 1200.0, plunge_feed: 300.0, climb: true,
         strategy: PocketStrategy::Waterline, entry: Entry3D::Helix, helix_radius: 1.5,
-        links: Links::ROUGH3D, rest_rough: false, optimal_load: 0.25, feed_opt: false, shell: false,
+        links: Links::ROUGH3D, rest_rough: false, optimal_load: 0.25, feed_opt: false, shell: false, method: camcraft_app::machining2d::AdaptiveMethod::Spiral,
+        picks: Default::default(),
     });
     create_and_gen(&world, &mut h, "3D Finish1", "BN-0600", SrcRef::Entity("Mold".into()), OpParams::Finish3D {
-        pattern: FinishPattern::Parallel, stepover: Some(2.0), tolerance: 0.08,
+        pattern: FinishPattern::Parallel, direction_angle: 0.0, stepover: Some(2.0), tolerance: 0.08,
         clearance_z: top_clr, retract_z: Some(ret_z),
         top_z: Height::of(HeightReference::TopOfModel, 0.0),
         bottom_z: Height::of(HeightReference::BottomOfModel, 0.0),
         feed: 900.0, plunge_feed: 250.0, climb: true, ramp: true, min_step: None,
         ramp_angle: 45.0, entry_ramp: false, steep_stepover: None,
         pencil_reference: None, fill_openings: None,
+        // #1713: the guide walkthrough posts without gap links - the
+        // Jump link is the pre-gap-link behaviour, as the text states.
+        gap_link: camcraft_app::finishing3d::GapLink::Jump,
+        waterlines: true,
+        pass_start: camcraft_app::machining2d::PassStart::Auto,
+        picks: Default::default(),
     });
     world
 }
@@ -241,6 +252,7 @@ pub(super) fn build_multiaxis_world() -> World {
         tolerance: 0.1, stepover: Some(2.0), clearance_z: Height::fixed(24.0), retract_z: None,
         top_z: Height::fixed(12.0), bottom_z: Height::fixed(3.0), feed: 500.0, plunge_feed: 120.0,
         climb: true, lead_deg: 15.0, lag_deg: 0.0, max_tilt_deg: 60.0,
+        picks: Default::default(),
     });
 
     run(&world, &mut h, CreateSetup::new(&world, Some("Setup2"), None), "setup2");
@@ -249,12 +261,13 @@ pub(super) fn build_multiaxis_world() -> World {
     set_box_stock(&world, &mut h, [54.0, 40.0, 22.0], [100.0, 0.0, 0.0], "stock2");
     set_wcs(&world, &mut h, [100.0, 0.0, 20.0], "wcs2");
     create_and_gen(&world, &mut h, "Indexed Face1", "EM-0600-4FL", SrcRef::Stock, OpParams::Face {
-        holes: Default::default(), blend_turns: false,
+        holes: Default::default(), blend_turns: false, blend_radius: None,
         // Preserve the persisted legacy basis of this documented unsafe example.
         tilt: Some(Tilt { basis_version: 0, a_deg: 0.0, b_deg: 20.0, origin: [100.0, 0.0, 20.0] }),
         stepover: 3.5, clearance_z: Height::fixed(30.0), cut_z: Height::fixed(18.0),
         top_z: Some(Height::fixed(21.0)), stepdown: Some(1.5),
         feed: 900.0, plunge_feed: 200.0, climb: true,
+        picks: Default::default(),
     });
     world
 }
@@ -334,6 +347,32 @@ fn indexed_guide_preserves_legacy_basis_and_path() {
         }
     }
     for warning in &expected.warnings {
-        assert!(actual.warnings.contains(warning), "documented warning lost: {warning:?}");
+        assert!(actual.warnings.iter().any(|w| same_warning(warning, w)), "documented warning lost: {warning:?}");
     }
+}
+
+/// #3233: the saved cache predates #2991, which gives a 3+2 first-traverse
+/// warning in the user's frame (`tilted`). The guide documents both forms:
+/// the same stock or fixture top and the same raise, along the tool axis.
+/// Every other warning must come back exactly.
+fn same_warning(saved: &Warning, regenerated: &Warning) -> bool {
+    match (saved, regenerated) {
+        (
+            Warning::FirstTraverseLow { at, height_mm, top_mm, fixture, tilted: false },
+            Warning::FirstTraverseLow { at: a, height_mm: h, top_mm: t, fixture: f, tilted: true },
+        ) => at == a && fixture == f && ((top_mm - height_mm) - (t - h)).abs() <= 0.000_001,
+        _ => saved == regenerated,
+    }
+}
+
+#[test]
+fn a_legacy_first_traverse_warning_matches_only_the_same_raise() {
+    let low = |height_mm, top_mm, fixture, tilted| Warning::FirstTraverseLow { at: 0, height_mm, top_mm, fixture, tilted };
+    let saved = low(10.0, 11.113_929, false, false);
+    assert!(same_warning(&saved, &low(30.0, 31.113_929, false, true)), "the same raise in the user's frame");
+    assert!(!same_warning(&saved, &low(30.0, 32.0, false, true)), "a different raise is lost");
+    assert!(!same_warning(&saved, &low(30.0, 31.113_929, true, true)), "a fixture top is not the stock top");
+    assert!(!same_warning(&saved, &low(30.0, 31.113_929, false, false)), "an upright warning matches only exactly");
+    assert!(!same_warning(&saved, &Warning::FirstTraverseLow { at: 1, height_mm: 30.0, top_mm: 31.113_929, fixture: false, tilted: true }));
+    assert!(same_warning(&saved, &saved.clone()), "an unchanged warning still matches");
 }

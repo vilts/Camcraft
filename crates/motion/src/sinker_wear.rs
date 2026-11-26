@@ -32,7 +32,7 @@ use crate::cl::{MoveKind, PathBuilder, Toolpath};
 use crate::geometry::Point3;
 use crate::machining2d::GenError;
 use crate::sinker::{check, stand, SinkerParams, ON_FLOOR};
-use crate::sinker_orbit::orbit_offsets;
+use crate::sinker_picks::{orbit_offsets_between, OrbitEnds};
 
 /// What an uncompensated burn says of itself, on its page and its path.
 pub const NOT_COMPENSATED: &str = "electrode wear: not compensated (no wear rate stated)";
@@ -127,8 +127,19 @@ pub fn worn_tip(t: f64, top: f64, gap: f64, rate: f64) -> f64 {
 /// compensated burn deeper than the electrode is long, or a move (plunge
 /// or orbit) past the compensated bound.
 pub fn burn_compensated(p: &SinkerParams, w: &SinkerWear) -> Result<Toolpath, GenError> {
+    burn_compensated_between(p, w, &OrbitEnds::default())
+}
+
+/// [`burn_compensated`] with the orbit's picked start and exit angles
+/// (#3333): each layer's orbit starts and ends where `ends` states, and
+/// returns to the burn position before the next layer or the retract.
+/// With no pick the moves and the notes are [`burn_compensated`]'s.
+///
+/// # Errors
+/// [`burn_compensated`]'s, and `sinker_picks::orbit_offsets_between`'s.
+pub fn burn_compensated_between(p: &SinkerParams, w: &SinkerWear, ends: &OrbitEnds) -> Result<Toolpath, GenError> {
     let z = check(p)?;
-    let orbit = p.orbit.as_ref().map(orbit_offsets).transpose()?;
+    let orbit = p.orbit.as_ref().map(|o| orbit_offsets_between(o, ends)).transpose()?;
     let rate = match &w.comp {
         Some(c) => match rate_refusal(&c.from, c.rate) {
             Some(why) => return Err(GenError::Invalid(why)),
@@ -190,6 +201,10 @@ pub fn burn_compensated(p: &SinkerParams, w: &SinkerWear) -> Result<Toolpath, Ge
             o.radius,
             pts.len()
         ));
+        // #3333: a picked start or exit angle says so on the path.
+        if let Some(note) = ends.note() {
+            b.note(note);
+        }
     }
     b.push(MoveKind::Rapid, Point3::new(p.x, p.y, p.approach_z), None);
     b.note(format!(

@@ -12,15 +12,21 @@
 
 mod clear;
 mod create;
+mod do_not_touch;
 mod edit;
 mod gates;
 mod generate;
 mod geometry;
 mod meta;
+mod recipe;
 
+pub(in crate::commands) use create::append_position;
+pub(in crate::commands) use gates::sketch_gate;
 pub use clear::ClearToolpath;
 pub use create::{CreateOperation, DeleteOperation, PasteOperation};
+pub use do_not_touch::SetOperationDoNotTouch;
 pub use edit::{ChangeOperationKind, EditOperationLinks, EditOperationParams};
 pub use generate::{GenerateOperation, RegenerateAll, StagedGeneration};
 pub use geometry::SetOperationGeometry;
 pub use meta::{MarkOperationReviewed, RenameOperation, ReorderOperation};
+pub use recipe::ApplyCutRecipe;

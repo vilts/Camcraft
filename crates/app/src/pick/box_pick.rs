@@ -234,9 +234,9 @@ pub fn box_bodies(bodies: &[PickBody], q: &BoxQuery<'_>, take: impl Fn(&PickBody
         }
         if q.kinds.faces {
             for f in &g.faces {
-                let Some(sel) = f.sel else { continue };
+                let Some(ref sel) = f.sel else { continue };
                 if ctx.face_samples(b, &f.facets).is_some_and(|s| ctx.seen(bi, &s)) {
-                    push(&b.name, sel);
+                    push(&b.name, sel.clone());
                 }
             }
         }

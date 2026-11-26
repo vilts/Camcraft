@@ -24,7 +24,7 @@ use camcraft_app::world::new_world;
 fn face_params(cut_z: f64) -> OpParams {
     OpParams::Face {
         holes: Default::default(),
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         tilt: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
@@ -34,6 +34,7 @@ fn face_params(cut_z: f64) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     }
 }
 
@@ -158,7 +159,7 @@ fn a_post_that_cannot_go_home_refuses_by_name() {
     // #710: grblHAL's G28/G30 positions are controller settings too;
     // TinyG's are set at the machine with G28.1 / G30.1 (its stops are
     // pinned in tinyg_post.rs: a tool change writes an M0 of its own).
-    for name in ["Heidenhain", "grblHAL", "TinyG"] {
+    for name in ["Heidenhain", "grblHAL", "TinyG", "Grbl 1.1", "Mach3"] {
         let out = post_with(&world, script(name));
         assert!(
             out.warnings.iter().any(|w| w.contains(name) && w.contains("home")),

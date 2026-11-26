@@ -132,13 +132,29 @@ fn rows() -> Vec<(&'static str, Value)> {
 /// few hundred moves (the 512-gon took 13,416 to 74,131) with their
 /// rings as arcs and verify exactly as before; the rows that cut past
 /// the modeled Ø6 wall (radius 4 and 6) are still gouges that hold the
-/// post - the arcs are judged, not waved through.
+/// post - the arcs are judged, not waved through. #3109: the rows whose
+/// rings' helices cross at a shared depth (helix radius 0.5, radius 4
+/// and 6 - each held by Crossing warnings before) are refused by name.
 #[test]
 fn the_issue_table_posts_arcs_and_verifies_the_same() {
     // (row, ceiling on moves, judged clean). The 512-gon counts, same
     // fixture: 74131, 13416, 13446, 26937, 26937, 26858, 53690, 67989.
     let ceilings = [500, 200, 250, 200, 200, 400, 700, 400];
+    let refused = ["helix_radius: 0.5", "radius: 4.0", "radius: 6.0"];
     for ((label, over), cap) in rows().into_iter().zip(ceilings) {
+        if refused.contains(&label) {
+            let (world, mut h) = job();
+            let src = SrcRef::Entity("part".into());
+            h.execute(&world, CreateOperation::new(&world, "c", TOOL, src, repro(&over)).expect("create"));
+            let why = GenerateOperation::new(&world, "c").err().map(|e| format!("{e:?}")).unwrap_or_default();
+            assert!(why.contains("helix entry:"), "{label}: {why}");
+            if let Some(r) = over.get("radius") {
+                // The past-the-wall rows still gouge, judged on a plunge.
+                let (_, w) = run(&json!({"radius": r, "entry": "plunge"}));
+                assert!(w.iter().any(|w| matches!(w, Warning::Gouge { .. })), "{label} (plunge): no gouge");
+            }
+            continue;
+        }
         let (p, w) = run(&over);
         let c = count(&p);
         println!("ROW | {label} | {} | {} rapids | {} arcs | {} warnings", c.moves, c.rapids, c.arcs, w.len());

@@ -260,10 +260,54 @@ fn saved_basis_contract_requires_a_version_that_legacy_readers_refuse() {
     );
     // The version guard also refuses future basis contracts in this reader.
     let mut future = saved;
-    future["version"] = (project::PROJECT_VERSION + 1).into();
+    future["version"] = (project::NEWEST_PROJECT_VERSION + 1).into();
     let error = project::open(&camcraft_app::world::new_world(), &future.to_string()).unwrap_err();
     assert!(matches!(
         error,
         project::ProjectError::UnsupportedVersion(_)
     ));
+}
+
+fn v65_tilt_steps_up(basis: Option<u8>) {
+    // Normalize the legacy fixture first; the v65 input differs only in its
+    // contour definition and stated basis. It has no profile rows.
+    let world = opened(OLD);
+    let mut file: Value = serde_json::from_str(&project::save_text(&world).unwrap()).unwrap();
+    file["version"] = 65.into();
+    let row = file["entities"].as_array().unwrap().iter()
+        .position(|e| e["name"] == NAME).unwrap();
+    let mut params = project::params_to_json(&operation::seed_params(operation::OpType::Contour.ordinal()));
+    let mut tilt = serde_json::json!({ "a_deg": 30.0, "b_deg": 20.0, "origin": [0.0, 0.0, 0.0] });
+    if let Some(basis) = basis { tilt["basis_version"] = basis.into(); }
+    params["contour"]["tilt"] = tilt;
+    file["entities"][row]["operation"]["params"] = params;
+    let expected_basis = basis.unwrap_or(0);
+    let loaded = opened(&file.to_string());
+    let entity = model::find_by_name(&loaded, NAME).unwrap();
+    let definition = model::operation_of(&loaded, &entity).unwrap();
+    let tilt = definition.params.tilt().unwrap();
+    assert_eq!((tilt.basis_version, tilt.a_deg, tilt.b_deg), (expected_basis, 30.0, 20.0));
+    let point = tilt.frame().unwrap().to_world(Point3::new(7.0, 11.0, 13.0));
+    let text = project::save_text(&loaded).unwrap();
+    let saved: Value = serde_json::from_str(&text).unwrap();
+    file["version"] = project::PROJECT_VERSION.into();
+    file["entities"][row]["operation"]["params"]["contour"]["tilt"]["basis_version"] = expected_basis.into();
+    assert_eq!(saved, file, "only the version and an unstated legacy basis may change");
+    let reloaded = opened(&text);
+    let entity = model::find_by_name(&reloaded, NAME).unwrap();
+    let again = model::operation_of(&reloaded, &entity).unwrap();
+    assert_eq!(again.params, definition.params, "the entire contour definition survives");
+    assert_eq!(again.params.tilt().unwrap().frame().unwrap().to_world(Point3::new(7.0, 11.0, 13.0)), point);
+    assert_eq!(project::save_text(&reloaded).unwrap(), text, "the migrated file is byte-stable");
+}
+
+#[test]
+fn a_v65_legacy_tilt_steps_up_without_changing_its_basis() {
+    v65_tilt_steps_up(None);
+    v65_tilt_steps_up(Some(0));
+}
+
+#[test]
+fn a_v65_basis_one_tilt_steps_up_without_losing_its_stated_basis() {
+    v65_tilt_steps_up(Some(1));
 }

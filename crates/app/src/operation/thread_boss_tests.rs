@@ -35,6 +35,7 @@ fn external(bosses: Vec<Hole>) -> OpParams {
         hand: ThreadHand::Right,
         external: true,
         passes: crate::machining2d::ThreadPasses::default(),
+        picks: Default::default(),
     }
 }
 

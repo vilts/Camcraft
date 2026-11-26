@@ -1,0 +1,52 @@
+// Provenance: original CamCraft stock-top probing and facing example (#2874).
+// Run from this case directory with camcraft-cli script build.camscript.
+cam.import("model/probe-face.obj", "probe-face");
+cam.call("set_model_link", { model: "probe-face", path: null });
+cam.call("set_stock", { box: { dx: 100.0, dy: 60.0, dz: 13.0 } });
+
+cam.call("add_tool", { catalog: "PRB-0400", holder: "none" });
+cam.call("add_tool", { catalog: "EM-1000-4FL", holder: "none" });
+
+cam.call("add_operation", {
+  kind: "Probe",
+  name: "Probe1",
+  tool: "PRB-0400",
+  source: "stock",
+  params: {
+    mode: "face",
+    dir: "z_neg",
+    target: [0.0, 0.0, 13.0],
+    clearance_z: { reference: "top_of_stock", offset: 25.0 },
+    approach: 5.0,
+    overtravel: 1.0,
+    backoff: 1.0,
+    fast_feed: 300.0,
+    slow_feed: 30.0,
+    set_wcs: 0,
+    tolerance: 0.5
+  }
+});
+
+cam.call("add_operation", {
+  kind: "Face",
+  name: "Face1",
+  tool: "EM-1000-4FL",
+  source: "stock",
+  params: {
+    stepover: 3.0,
+    clearance_z: { reference: "top_of_stock", offset: 25.0 },
+    cut_z: { reference: "top_of_model", offset: 0.0 },
+    feed: 1200.0,
+    plunge_feed: 300.0,
+    climb: true
+  }
+});
+
+cam.generate();
+var verdict = cam.verify();
+if (!verdict.ok) {
+  throw new Error("catalog verify failed: " + JSON.stringify(verdict));
+}
+cam.save("probe-face.camproj");
+cam.post({ to: "probe-face.nc" });
+cam.report();

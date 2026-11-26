@@ -162,3 +162,89 @@ fn a_move_inside_or_only_touching_a_vertex_still_answers_to_the_walls() {
     let touch = one_feed(p(16.0, 24.0), p(24.0, 16.0));
     assert_eq!(judge_in(&touch, None, &region), vec![Warning::Gouge { at: 1 }]);
 }
+
+fn box_at(x0: f64, y0: f64, z0: f64, x1: f64, y1: f64, z1: f64) -> Vec<Triangle> {
+    cube(Point3::new(x0, y0, z0), Point3::new(x1, y1, z1)).facets.to_vec()
+}
+
+fn rect_loop(x0: f64, y0: f64, x1: f64, y1: f64) -> Loop {
+    Loop::new(vec![
+        Point2::new(x0, y0),
+        Point2::new(x1, y0),
+        Point2::new(x1, y1),
+        Point2::new(x0, y1),
+    ])
+    .expect("rect loop")
+}
+
+fn circle_loop(cx: f64, cy: f64, r: f64, n: usize) -> Loop {
+    let pts = (0..n)
+        .map(|k| {
+            let th = std::f64::consts::TAU * k as f64 / n as f64;
+            Point2::new(cx + r * th.cos(), cy + r * th.sin())
+        })
+        .collect();
+    Loop::new(pts).expect("circle loop")
+}
+
+#[test]
+fn a_move_ending_near_an_open_outer_rim_with_a_model_is_clean() {
+    // 40 x 60 plate (-20..20 x -30..30, z 0..10) with a dia-6 hole near
+    // the -X outer rim, plus a boss standing z 10..15 away from that rim
+    // so the plane section at z 10 is non-empty.
+    let mut part = box_at(-20.0, -30.0, 0.0, 20.0, 30.0, 10.0);
+    part.extend(box_at(5.0, -10.0, 10.0, 15.0, 10.0, 15.0));
+    let region = Region::new(vec![rect_loop(-20.0, -30.0, 20.0, 30.0), circle_loop(-12.0, 0.0, 3.0, 32)]).expect("region");
+    let geom = ToolGeom { radius: 5.0, ..tool() };
+    let moves = vec![
+        Move::new(MoveKind::Plunge, Point3::new(-18.227, -5.0, 30.0), Point3::new(-18.227, -5.0, 10.0), Some(100.0)),
+        Move::new(MoveKind::Feed, Point3::new(-25.0, -5.0, 10.0), Point3::new(-18.227, -5.0, 10.0), Some(500.0)),
+    ];
+    let path = Toolpath { moves, ..Toolpath::default() };
+    let warns = verify(
+        &path,
+        &VerifyContext {
+            region: &region,
+            model: Some(&part),
+            tool: &geom,
+            mode: Mode::Boundary,
+            stock_top_z: 12.0,
+            clearance_z: 30.0,
+            gouge_tol: 0.01,
+            z_tol: 1e-6,
+            ..Default::default()
+        },
+    );
+    assert_eq!(warns, Vec::new(), "open outer rim at z 10 must not convict: {warns:?}");
+}
+
+#[test]
+fn a_move_within_a_tool_radius_of_a_wall_below_the_model_top_is_a_gouge() {
+    // Lower plate z 0..10 (outer wall below model top z 15) and boss z 10..15.
+    let mut part = box_at(-20.0, -30.0, 0.0, 20.0, 30.0, 10.0);
+    part.extend(box_at(5.0, -10.0, 10.0, 15.0, 10.0, 15.0));
+    let region = Region::new(vec![rect_loop(-20.0, -30.0, 20.0, 30.0)]).expect("region");
+    let geom = ToolGeom { radius: 5.0, ..tool() };
+    // At z 8 (below the z 10 wall top, which is below model top z 15),
+    // x = -24 is 4 mm off the x = -20 wall (< 5 - 0.01).
+    let wall_moves = vec![
+        Move::new(MoveKind::Plunge, Point3::new(-24.0, -10.0, 30.0), Point3::new(-24.0, -10.0, 8.0), Some(100.0)),
+        Move::new(MoveKind::Feed, Point3::new(-24.0, -10.0, 8.0), Point3::new(-24.0, 10.0, 8.0), Some(500.0)),
+    ];
+    let path = Toolpath { moves: wall_moves, ..Toolpath::default() };
+    let warns = verify(
+        &path,
+        &VerifyContext {
+            region: &region,
+            model: Some(&part),
+            tool: &geom,
+            mode: Mode::Boundary,
+            stock_top_z: 15.0,
+            clearance_z: 30.0,
+            gouge_tol: 0.01,
+            z_tol: 1e-6,
+            ..Default::default()
+        },
+    );
+    assert_eq!(warns, vec![Warning::Gouge { at: 0 }, Warning::Gouge { at: 1 }], "wall below model top must still convict: {warns:?}");
+}

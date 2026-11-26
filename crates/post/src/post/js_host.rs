@@ -7,22 +7,29 @@ use boa_engine::JsValue;
 pub const PRELUDE: &str = r#"
 var OUT = [];
 var _outputLines = 0;
-var _emitLine = (function (global, maxLines) {
+var _emitLine = (function (global, maxLines, operation) {
   var exceeded = false;
+  var count = 0;
   Object.defineProperty(global, "_outputLimitExceeded", {
     get: function () { return exceeded; },
     enumerable: false,
     configurable: false
   });
+  Object.defineProperty(global, "_outputLimitReached", {
+    get: function () { return exceeded ? count + 1 : 0; },
+    configurable: false
+  });
   return function (s) {
-    if (exceeded || _outputLines >= maxLines) {
+    if (exceeded || count >= maxLines) {
       exceeded = true;
-      throw new Error("post output line limit exceeded");
+      throw new Error("post output line limit exceeded: limit " + maxLines +
+        ", reached " + (count + 1) + ", operation " + operation);
     }
+    count++;
     _outputLines++;
     OUT.push(s);
   };
-})(this, _maxOutputLines);
+})(this, _maxOutputLines, _outputOperation);
 var MESSAGES = [];
 var LINE = "";
 var properties = {};
@@ -38,7 +45,7 @@ var programNumber = 1;
 // \`comment\` is the document's program comment, "" when it states none.
 var program = { number: 1, numbered: false, comment: "" };
 var postOptions = {};
-var machine = { name: "", rapidRate: 0, feedRateMax: 0, spindleMax: 0, coolants: [], rotaries: [], rtcp: false, units: "mm", spindleRanges: [], rigidTapping: true, safeRetractZ: null, model: "" };
+var machine = { name: "", rapidRate: 0, feedRateMax: 0, spindleMax: 0, coolants: [], rotaries: [], rtcp: false, units: "mm", spindleRanges: [], rigidTapping: true, rigidTappingStated: false, safeRetractZ: null, model: "" };
 function _flushLine() { if (LINE !== "") { _emitLine(LINE); LINE = ""; } }
 function writeln(s) { if (s !== undefined) LINE += String(s); _flushLine(); }
 function write(s) { if (s !== undefined) LINE += String(s); }
@@ -87,6 +94,13 @@ function formatFeed(v) {
   return String(Math.round(v));
 }
 function onComment(s) { writeln(s); }
+// Full program notes retain their bound; name cleaners may truncate it.
+// Remove the delimiter and control characters used by the shipped dialects.
+function commentText(s) {
+  return String(s === null || s === undefined ? "" : s)
+    .replace(/[()%;*\/!~{}$]/g, " ").replace(/[^\x20-\x7E]/g, "?")
+    .replace(/\s+/g, " ").trim();
+}
 // Bar-feeder lifecycle defaults (M5.2 G.2): the events carry no
 // motion and no post may invent an M-code, so the default voices
 // the intent as a comment - visible to the operator, harmless to
@@ -158,6 +172,9 @@ pub const HOOKS: &[&str] = &[
     "onPlasma",
     "onTorchOn",
     "onTorchOff",
+    // #1882: the waterjet jet spans.
+    "onJetOn",
+    "onJetOff",
     "onComment",
     "onClose",
 ];
@@ -165,35 +182,86 @@ pub const HOOKS: &[&str] = &[
 /// The program's identity a post writes (#258): its number (the
 /// O-word of a numbering dialect, 1 when the document states none),
 /// whether the document stated that number, and the document's
-/// program comment ("" for none - the dialect writes its own default).
+/// program comment ("" for none - the dialect writes its own default),
+/// and the header notes the program must carry (#2996: a model checked
+/// at reduced accuracy), each voiced through `onComment` after `onOpen`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProgramId {
     pub number: u32,
     pub numbered: bool,
     pub comment: String,
+    pub notes: Vec<String>,
 }
 
 impl Default for ProgramId {
     fn default() -> Self {
-        Self { number: 1, numbered: false, comment: String::new() }
+        Self { number: 1, numbered: false, comment: String::new(), notes: Vec::new() }
     }
 }
 
-/// Canonical refusal message when a post exceeds `MAX_OUTPUT_LINES`.
-pub const OUTPUT_LIMIT_ERROR: &str = "post output line limit exceeded";
+/// A finite expansion allowance, shared by emitted and directly appended lines.
+pub(crate) struct OutputBudget {
+    pub max: usize,
+    pub operation: String,
+    reached: Option<usize>,
+}
 
-/// Check and latch the JS output-limit flag so a caught exception cannot hide an exceeded limit.
-pub fn check_output_limit(ctx: &mut boa_engine::Context, latched: &mut bool) -> Result<(), super::PostError> {
-    if !*latched {
-        *latched = ctx
-            .eval(boa_engine::Source::from_bytes(
-                b"typeof _outputLimitExceeded !== \"undefined\" && _outputLimitExceeded === true",
-            ))
-            .map(|v| is_true(&v))
-            .unwrap_or(false);
+impl OutputBudget {
+    pub fn new(records: usize, operation: &str) -> Self {
+        // Sixteen output lines per input record plus header/footer space.
+        // u32::MAX keeps the JS counter exact on all supported host widths.
+        let max = records.saturating_mul(16).saturating_add(1024)
+            .max(super::js::MAX_OUTPUT_LINES).min(u32::MAX as usize);
+        Self { max, operation: operation.to_owned(), reached: None }
     }
-    if *latched {
-        return Err(super::PostError::Script(OUTPUT_LIMIT_ERROR.into()));
+
+    pub fn check(&mut self, ctx: &mut boa_engine::Context) -> Result<(), super::PostError> {
+        if self.reached.is_none() {
+            let count = ctx.eval(boa_engine::Source::from_bytes(b"_outputLimitReached"))
+                .map_err(|e| super::PostError::Script(format!("{e}")))?
+                .as_number().map(|n| n.max(0.0) as usize).unwrap_or(0);
+            return self.check_count(count);
+        }
+        self.check_count(0)
     }
-    Ok(())
+
+    pub fn check_count(&mut self, count: usize) -> Result<(), super::PostError> {
+        if self.reached.is_none() && count > self.max {
+            self.reached = Some(count);
+        }
+        if let Some(reached) = self.reached {
+            return Err(super::PostError::Script(format!(
+                "post output line limit exceeded: limit {}, reached {reached}, operation {}",
+                self.max, self.operation
+            )));
+        }
+        Ok(())
+    }
+
+    pub fn out_len(&mut self, ctx: &mut boa_engine::Context) -> Result<usize, super::PostError> {
+        self.check(ctx)?;
+        let result = ctx.eval(boa_engine::Source::from_bytes(b"(_flushLine(), OUT.length)"));
+        if result.is_err() {
+            self.check(ctx)?;
+        }
+        let len = result.map_err(|e| super::PostError::Script(format!("{e}")))?
+            .as_number().map(|n| n.max(0.0) as usize).unwrap_or(0);
+        self.check_count(len)?;
+        Ok(len)
+    }
+}
+
+/// Pull a host buffer after the caller checks and flushes its output budget.
+pub(crate) fn pull(ctx: &mut boa_engine::Context, global: &str) -> Result<Vec<String>, super::PostError> {
+    let v = ctx.eval(boa_engine::Source::from_bytes(global.as_bytes()))
+        .map_err(|e| super::PostError::Script(format!("{e}")))?;
+    let j = v.to_json(ctx).map_err(|e| super::PostError::Script(format!("{e}")))?
+        .unwrap_or(serde_json::Value::Array(vec![]));
+    Ok(match j {
+        serde_json::Value::Array(items) => items.iter().map(|v| match v {
+            serde_json::Value::String(s) => s.clone(),
+            other => other.to_string(),
+        }).collect(),
+        _ => Vec::new(),
+    })
 }

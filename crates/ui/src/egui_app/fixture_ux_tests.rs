@@ -63,7 +63,7 @@ fn a_model_row_menu_marks_and_unmarks_through_undoable_commands() {
     import(&mut state, "Vise", cube(p(0.0, 0.0, 0.0), p(5.0, 5.0, 5.0)));
     let target = TreeMenuTarget::Model { name: "Vise".into(), row: 0 };
     let rows = menu_rows(&state, &target);
-    assert_eq!(labels(&rows), ["Fixture", "Use as fixture"]);
+    assert_eq!(labels(&rows), ["Fixture", "Use as fixture", "Delete"]);
     assert!(rows[0].1.is_none(), "the header is no verb");
     let Some((_, Some(cmd))) = rows.into_iter().nth(1) else { panic!("a verb") };
     assert!(matches!(&cmd, CommandKind::TagFixture { name, setup: None } if name == "Vise"), "{cmd:?}");
@@ -72,7 +72,7 @@ fn a_model_row_menu_marks_and_unmarks_through_undoable_commands() {
     assert!(is_fixture(&state, "Vise"));
 
     let rows = menu_rows(&state, &target);
-    assert_eq!(labels(&rows), ["Fixture", "Stop using as fixture"]);
+    assert_eq!(labels(&rows), ["Fixture", "Stop using as fixture", "Delete"]);
     let Some((_, Some(cmd))) = rows.into_iter().nth(1) else { panic!("a verb") };
     assert!(matches!(&cmd, CommandKind::UntagFixture(n) if n == "Vise"), "{cmd:?}");
     state.pending.push_back(cmd);
@@ -94,7 +94,7 @@ fn use_as_fixture_binds_to_the_active_setup_and_fixtures_offers_import() {
     state.drain_actions();
     import(&mut state, "Vise", cube(p(0.0, 0.0, 0.0), p(5.0, 5.0, 5.0)));
     let rows = menu_rows(&state, &TreeMenuTarget::Model { name: "Vise".into(), row: 0 });
-    assert_eq!(labels(&rows), ["Fixture", "Use as fixture (Setup1)"]);
+    assert_eq!(labels(&rows), ["Fixture", "Use as fixture (Setup1)", "Delete"]);
     assert!(matches!(&rows[1].1, Some(CommandKind::TagFixture { setup: Some(s), .. }) if s == "Setup1"));
 
     let rows = menu_rows(&state, &TreeMenuTarget::Fixtures("Setup1".into()));
@@ -149,7 +149,7 @@ fn struck_world() -> State {
     let params = OpParams::Face {
         holes: Default::default(),
         tilt: None,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         stepover: 3.0,
         clearance_z: Height::fixed(25.0),
         cut_z: Height::fixed(19.5),
@@ -158,6 +158,7 @@ fn struck_world() -> State {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     state.history.execute(w, CreateOperation::new(w, "Face1", "EM-0400-2FL", SrcRef::Stock, params).expect("op"));
     state.history.execute(w, GenerateOperation::new(w, "Face1").expect("generate"));

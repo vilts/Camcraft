@@ -39,6 +39,17 @@ impl From<TiltDto> for Tilt {
     }
 }
 
+/// #1864: per-chain side and direction override row inside `ParamsDto::Contour`.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ChainOverrideDto {
+    pub entity: String,
+    pub chain: ChainIdDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub side: Option<ChainSideDto>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub reverse: bool,
+}
+
 /// Which point of a twist drill `break_through` is measured from (#2441).
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
@@ -46,6 +57,71 @@ pub enum BreakThroughFromDto {
     #[default]
     FullDiameter,
     Tip,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CornerReliefKindDto {
+    #[default]
+    None,
+    Dogbone,
+    #[serde(rename = "t_bone", alias = "tbone", alias = "t-bone", alias = "T-bone")]
+    TBone,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum TBoneDirectionDto {
+    #[default]
+    LongEdge,
+    ShortEdge,
+    Horizontal,
+    Vertical,
+}
+
+impl TBoneDirectionDto {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum CornerReliefChoiceDto {
+    None,
+    Dogbone,
+    #[serde(rename = "t_bone_first", alias = "tbone_first")]
+    TBoneFirst,
+    #[serde(rename = "t_bone_second", alias = "tbone_second")]
+    TBoneSecond,
+    #[serde(rename = "t_bone_x", alias = "tbone_x")]
+    TBoneX,
+    #[serde(rename = "t_bone_y", alias = "tbone_y")]
+    TBoneY,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+pub struct CornerReliefOverrideDto {
+    pub at: [f64; 2],
+    pub choice: CornerReliefChoiceDto,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct CornerReliefDto {
+    #[serde(default)]
+    pub kind: CornerReliefKindDto,
+    #[serde(default, skip_serializing_if = "TBoneDirectionDto::is_default")]
+    pub tbone_direction: TBoneDirectionDto,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overrides: Vec<CornerReliefOverrideDto>,
+}
+
+impl CornerReliefDto {
+    pub(super) fn is_default(&self) -> bool {
+        self.kind == CornerReliefKindDto::None
+            && self.tbone_direction == TBoneDirectionDto::default()
+            && self.overrides.is_empty()
+    }
 }
 
 /// The file mirror of `operation::OpParams`, tool-free by the same rule as
@@ -71,6 +147,10 @@ pub enum ParamsDto {
         /// version step, the same pure default as `tilt`.
         #[serde(default, skip_serializing_if = "is_false")]
         blend_turns: bool,
+        /// #1759 arc radius: absent on every earlier file - no version
+        /// step.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        blend_radius: Option<f64>,
         /// M13.11 hole law: absent (and written only when not the
         /// default) is `lift` - a file that predates the word lifts
         /// over its holes, the safe reading; no version step.
@@ -80,6 +160,8 @@ pub enum ParamsDto {
         /// prismatic op every earlier file held.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tilt: Option<TiltDto>,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     Contour {
         /// M11.2 level transitions and links: absent is the kind's earlier shape.
@@ -118,6 +200,10 @@ pub enum ParamsDto {
         /// is the sharp walk every earlier file held - no version step.
         #[serde(default, skip_serializing_if = "is_false")]
         blend_turns: bool,
+        /// #1759 arc radius: absent on every earlier file - no version
+        /// step.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        blend_radius: Option<f64>,
         /// Level to level: absent is `retract_reenter`, the transition
         /// every earlier file posted - written only when the user picks
         /// the stay-down ramp, so no version step.
@@ -130,6 +216,12 @@ pub enum ParamsDto {
         /// 3+2 index; see the Face arm.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tilt: Option<TiltDto>,
+        /// #1864: optional per-chain side and direction overrides for DXF
+        /// sketch contours; absent on every pre-v74 file.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        chain_overrides: Vec<ChainOverrideDto>,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     Pocket {
         /// M11.2 level transitions and links: absent is the kind's earlier shape.
@@ -186,9 +278,18 @@ pub enum ParamsDto {
         /// no version step.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         rest: Option<RestDto>,
+        /// #2400 corner relief: absent is off on every earlier file - no version step.
+        #[serde(default, skip_serializing_if = "CornerReliefDto::is_default")]
+        corner_relief: CornerReliefDto,
         /// 3+2 index; see the Face arm.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tilt: Option<TiltDto>,
+        /// #3354 where each level's rings start (the 2D Offset key of
+        /// #3316): absent is `auto` on every earlier file - no version step.
+        #[serde(default, skip_serializing_if = "PassStartDto::is_auto")]
+        pass_start: PassStartDto,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// 2D Adaptive (M2.4 A): the pocket arm without the strategy tag -
     /// the kind fixes the ladder; every default the pocket needs, this
@@ -248,8 +349,21 @@ pub enum ParamsDto {
         /// earlier file - no version step.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         blend_radius: Option<f64>,
+        /// #1446 rest machining: absent is off on every earlier file -
+        /// no version step. Only `source: previous_operations` is taken.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        rest: Option<RestDto>,
+        /// #2400 corner relief: absent is off on every earlier file.
+        #[serde(default, skip_serializing_if = "CornerReliefDto::is_default")]
+        corner_relief: CornerReliefDto,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tilt: Option<TiltDto>,
+        /// #3355 where each level's passes start: absent is `auto`, the
+        /// order every earlier file cut - no version step.
+        #[serde(default, skip_serializing_if = "PassStartDto::is_auto")]
+        pass_start: PassStartDto,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// 2D Offset (M2.4 A): the same arm minus the engagement door -
     /// style-A rings are spaced by the stepover alone.
@@ -280,8 +394,17 @@ pub enum ParamsDto {
         /// earlier file - no version step.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         blend_radius: Option<f64>,
+        /// #2400 corner relief: absent is off on every earlier file.
+        #[serde(default, skip_serializing_if = "CornerReliefDto::is_default")]
+        corner_relief: CornerReliefDto,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tilt: Option<TiltDto>,
+        /// #3316 where each level's rings start: absent is `auto`, the
+        /// order every earlier file cut - no version step.
+        #[serde(default, skip_serializing_if = "PassStartDto::is_auto")]
+        pass_start: PassStartDto,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Engraving (M2.4 B): the trace arm verbatim under the new tag -
     /// the twin law again, so the arms state the same shape by
@@ -299,6 +422,28 @@ pub enum ParamsDto {
         /// 3+2 index; see the Face arm.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tilt: Option<TiltDto>,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
+    },
+    /// V-carve (#1443): a new arm, appended. An older build refuses a
+    /// file with this arm by its name (the sinker side burn's law); no
+    /// version step.
+    VCarve {
+        clearance_z: HeightDto,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retract_z: Option<HeightDto>,
+        top_z: HeightDto,
+        bottom_z: HeightDto,
+        stepdown: f64,
+        feed: f64,
+        plunge_feed: f64,
+        flat_clear: bool,
+        flat_stepover: f64,
+        /// 3+2 index; see the Face arm.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tilt: Option<TiltDto>,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// 2D chamfer (M2.4 B): the two authored face numbers and three
     /// heights - no bottom key exists, because the face's depth is
@@ -310,6 +455,10 @@ pub enum ParamsDto {
     Chamfer2D {
         width: f64,
         angle_deg: f64,
+        /// #3153: an absent key is the ideal-tip cone band, which is
+        /// exactly what every older chamfer project used.
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        minimum_cone_radius: f64,
         clearance_z: HeightDto,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         retract_z: Option<HeightDto>,
@@ -323,6 +472,8 @@ pub enum ParamsDto {
         /// 3+2 index; see the Face arm.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tilt: Option<TiltDto>,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Circular pocket / vault (M2.4 B): the pocket's arm with the
     /// authored disk's two numbers in place of a picked region -
@@ -336,6 +487,8 @@ pub enum ParamsDto {
         center: [f64; 2],
         radius: f64,
         vault: bool,
+        #[serde(default, skip_serializing_if = "PassStartDto::is_auto")]
+        pass_start: PassStartDto,
         stepover: f64,
         stock_to_leave: f64,
         clearance_z: HeightDto,
@@ -354,6 +507,8 @@ pub enum ParamsDto {
         /// 3+2 index; see the Face arm.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tilt: Option<TiltDto>,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     Slot {
         /// M11.2 level transitions and links: absent is the kind's earlier shape.
@@ -383,6 +538,13 @@ pub enum ParamsDto {
         /// 1.0 mm, the same default the pockets carry.
         #[serde(default = "default_helix_radius")]
         helix_radius: f64,
+        /// #1759 arc turns at the row ends and their radius: absent
+        /// (written only when set) on every earlier file - no version
+        /// step.
+        #[serde(default, skip_serializing_if = "is_false")]
+        blend_turns: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        blend_radius: Option<f64>,
         /// 3+2 index; see the Face arm.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tilt: Option<TiltDto>,
@@ -393,6 +555,8 @@ pub enum ParamsDto {
         extend_start: f64,
         #[serde(default, skip_serializing_if = "is_zero_f64")]
         extend_end: f64,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     Trace {
         clearance_z: HeightDto,
@@ -407,6 +571,8 @@ pub enum ParamsDto {
         /// 3+2 index; see the Face arm.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tilt: Option<TiltDto>,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v10 with the drilling operation. The hole list is
     /// params data, not a live query: what recognition (or a typed edit)
@@ -444,6 +610,8 @@ pub enum ParamsDto {
         /// point tip (`"tip"`, pre-v68 files with the key absent).
         #[serde(default)]
         break_through_from: Option<BreakThroughFromDto>,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v11 with the 3-D pocket. No footprint on the wire:
     /// a 3-D op's machine area is the model's silhouette at generation
@@ -478,6 +646,12 @@ pub enum ParamsDto {
         /// the plain level ladder is exactly what they generated.
         #[serde(default)]
         rest_rough: bool,
+        /// #1591: how an Adaptive level is cleared. Absent on every
+        /// older file, which reads as `spiral` - the path those files
+        /// always cut. Written as a word, like 2D Adaptive's (#1509), so
+        /// an MCP patch can name either value.
+        #[serde(default)]
+        method: AdaptiveMethodDto,
         /// (v13: read only when `strategy` is `Adaptive`; v12 files can
         /// carry no Adaptive ring family to feed it.)
         /// The pre-M11.4 word: the contact angle in degrees. Still READ
@@ -504,6 +678,12 @@ pub enum ParamsDto {
         /// IS the old behavior.
         #[serde(default)]
         shell: bool,
+        /// #3361 where each level's rings start: absent is `auto`, the
+        /// order every earlier file cut - no version step.
+        #[serde(default, skip_serializing_if = "PassStartDto::is_auto")]
+        pass_start: PassStartDto,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v15 with the waterline. The rename states the tag
     /// for the same reason `pocket3d` does - the automatic snake_case
@@ -520,6 +700,9 @@ pub enum ParamsDto {
         /// Absent means Waterline (the v15 truth).
         #[serde(default)]
         pattern: FinishPatternDto,
+        /// Absent means 0 degrees, along +X.
+        #[serde(default)]
+        direction_angle: f64,
         /// Absent follows the stepover cos-law from the tolerance.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         stepover: Option<f64>,
@@ -571,6 +754,22 @@ pub enum ParamsDto {
         /// Absent spells None exactly like `stepover`.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         fill_openings: Option<f64>,
+        /// Absent means `jump` - the retract/clearance hop every
+        /// pre-gap-link file ran. Written always, like `ramp`;
+        /// `jump` and `straight` are new words in an existing
+        /// grammar, so no version step-up.
+        #[serde(default)]
+        gap_link: GapLinkDto,
+        /// Absent means the waterline ring pass runs on steep flanks,
+        /// what every older file ran (#2811). Written always, like `ramp`.
+        #[serde(default = "default_true")]
+        waterlines: bool,
+        /// #3362 where the nested offset loops start: absent is
+        /// `auto`, the order every earlier file cut - no version step.
+        #[serde(default, skip_serializing_if = "PassStartDto::is_auto")]
+        pass_start: PassStartDto,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v48 with the deburr ride (M2.5 E B). `Deburr`'s
     /// automatic snake_case tag IS the clean word - no rename needed -
@@ -587,6 +786,36 @@ pub enum ParamsDto {
         bottom_z: HeightDto,
         feed: f64,
         plunge_feed: f64,
+        /// #1888, additive: each key is absent at its rest value, so a
+        /// file from before the keys reads as the ride it stored (no
+        /// exclusion, every crease, every hole) and saves unchanged.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        exclude_edges: Vec<GeoSelDto>,
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        min_edge_angle_deg: f64,
+        #[serde(default, skip_serializing_if = "is_false")]
+        exclude_holes: bool,
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        hole_min_diameter: f64,
+        #[serde(default, skip_serializing_if = "is_zero_f64")]
+        hole_max_diameter: f64,
+        /// #1889: absent in each earlier file, which reads as the
+        /// default (`skip_with_note`). Always written, so that an MCP
+        /// patch and `list_operation_types` see the field.
+        #[serde(default)]
+        unreachable: UnreachableDto,
+        /// #1890: absent in each file before v75, which reads as one
+        /// Constant Width chamfer pass. Always written.
+        #[serde(default)]
+        break_mode: BreakModeDto,
+        #[serde(default = "default_break_depth")]
+        break_depth: f64,
+        #[serde(default)]
+        break_profile: BreakProfileDto,
+        #[serde(default = "default_passes")]
+        passes: u32,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v24 with the simultaneous-axis kinds (M5.1 stage
     /// C). The renames state the tags for the familiar reason - the
@@ -617,6 +846,8 @@ pub enum ParamsDto {
         /// stage F).
         #[serde(default)]
         shank_avoid: bool,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v24, the parallel twin (M5.1 stage C). The one
     /// extra field is the raster's optional stepover, absent-means-
@@ -641,6 +872,8 @@ pub enum ParamsDto {
         /// Absent means off, the contour's twin above.
         #[serde(default)]
         shank_avoid: bool,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v25 with the swarf family (M5.1 stage D). The
     /// parallel's shape field for field - the ruling is not a
@@ -664,6 +897,8 @@ pub enum ParamsDto {
         lead_deg: f64,
         lag_deg: f64,
         max_tilt_deg: f64,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// The ladder's one extra word: the count of tolerance rungs,
     /// written always - the kind IS the ladder, and an absent count
@@ -686,6 +921,8 @@ pub enum ParamsDto {
         lag_deg: f64,
         max_tilt_deg: f64,
         passes: u32,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v26 with the rotary twins (M5.1 stage E). The
     /// contour's shape field for field - the axis of revolution is a
@@ -705,6 +942,14 @@ pub enum ParamsDto {
         lead_deg: f64,
         lag_deg: f64,
         max_tilt_deg: f64,
+        /// #2772 parts 1-2 (v81): the op's own stated rotation axis,
+        /// a direction through the setup's work offset origin that
+        /// overrides the machine's stated rotary line. Absent is what
+        /// every v77 file stated: follow the machine, else fit.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stated_axis: Option<[f64; 3]>,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// The parallel twin's shape: the raster's optional stepover,
     /// absent-means-derived exactly as the finish's (M5.1 stage E).
@@ -724,6 +969,12 @@ pub enum ParamsDto {
         lead_deg: f64,
         lag_deg: f64,
         max_tilt_deg: f64,
+        /// #2772 parts 1-2 (v81): the op's own stated rotation axis -
+        /// see `RotaryContour`'s `stated_axis`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stated_axis: Option<[f64; 3]>,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v27 with the wrap ladder (M5.1 stage E2). The
     /// pocket's shape, read the wrap's way - and deliberately no
@@ -768,6 +1019,12 @@ pub enum ParamsDto {
         lead_deg: f64,
         lag_deg: f64,
         max_tilt_deg: f64,
+        /// #2772 parts 1-2 (v81): the op's own stated rotation axis -
+        /// see `RotaryContour`'s `stated_axis`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stated_axis: Option<[f64; 3]>,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v28 with the stamped ladder (M5.1 stage E3). The
     /// pocket's shape field for field, minus the `rest_rough` and
@@ -816,6 +1073,8 @@ pub enum ParamsDto {
         /// floors that answer to it, posed only when the shank speaks.
         #[serde(default)]
         shank_avoid: bool,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v31 with flowline finishing (M5.1 stage I). The
     /// parallel's shape field for field - the direction field is a
@@ -843,6 +1102,8 @@ pub enum ParamsDto {
         /// Absent means off, the twins' law.
         #[serde(default)]
         shank_avoid: bool,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v32 with the drive-curve contour (M5.1 stage J).
     /// Flow's shape minus the stepover - the picked chains ARE the
@@ -865,6 +1126,8 @@ pub enum ParamsDto {
         /// Absent means off, the twins' law.
         #[serde(default)]
         shank_avoid: bool,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v33 with the turning substrate (M5.2 stage A).
     /// Three heights, a radial infeed and two feeds - the whole
@@ -879,6 +1142,8 @@ pub enum ParamsDto {
         stepdown: f64,
         feed: f64,
         plunge_feed: f64,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v34 with the profile kinds (M5.2 stage B): the
     /// station window's three heights, the radial rung spacing, the
@@ -893,6 +1158,8 @@ pub enum ParamsDto {
         stock_to_leave: f64,
         feed: f64,
         plunge_feed: f64,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v34 (M5.2 stage B): the window and the feeds -
     /// one ride is the whole pattern.
@@ -903,6 +1170,8 @@ pub enum ParamsDto {
         bottom_z: HeightDto,
         feed: f64,
         plunge_feed: f64,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v35 with the blade kinds (M5.2 stage C): the
     /// window's three heights, the rung infeed, the leave and two
@@ -917,6 +1186,8 @@ pub enum ParamsDto {
         stock_to_leave: f64,
         feed: f64,
         plunge_feed: f64,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v35 (M5.2 stage C): the window and the feeds -
     /// one plunge per center is the whole pattern.
@@ -927,6 +1198,8 @@ pub enum ParamsDto {
         bottom_z: HeightDto,
         feed: f64,
         plunge_feed: f64,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v35 (M5.2 stage C): the bar's top and the parting
     /// plane (`bottom_z`'s name in this variant), the rung infeed
@@ -954,6 +1227,16 @@ pub enum ParamsDto {
         bar_transfer: bool,
         #[serde(default)]
         inspect_tol: f64,
+        /// #3469: the piece kept. Absent is the cut-off piece - the
+        /// #3452 kerf every earlier file cut; written only when not.
+        #[serde(default, skip_serializing_if = "PartKeptDto::is_default")]
+        kept: PartKeptDto,
+        /// #3469: the back stock (mm) the kerf stands off the plane.
+        /// Absent is 0; written only when not 0.
+        #[serde(default, skip_serializing_if = "super::part_kerf_dto::no_back_stock")]
+        back_stock: f64,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v36 with the threading kind (M5.2 stage D): the
     /// window of turns' three heights and the wave's own numbers -
@@ -980,6 +1263,8 @@ pub enum ParamsDto {
         /// load as the right-hand thread they modeled.
         #[serde(default)]
         hand: ThreadHandDto,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Declared at v37 with the contour kinds (M5.2 stage E): the
     /// ride trio of heights and the kind's own promise-numbers -
@@ -994,6 +1279,8 @@ pub enum ParamsDto {
         angle_deg: f64,
         feed: f64,
         plunge_feed: f64,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// See [`Self::Chamfering`] - the taper's way.
     TaperTurning {
@@ -1005,6 +1292,8 @@ pub enum ParamsDto {
         top_dia: f64,
         feed: f64,
         plunge_feed: f64,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// See [`Self::Chamfering`] - the multi-pass ladder's way.
     MultiPassTurning {
@@ -1017,6 +1306,8 @@ pub enum ParamsDto {
         passes: u32,
         feed: f64,
         plunge_feed: f64,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// See [`Self::Chamfering`] - the crown gauge's way: the window
     /// and the feeds, and no depth to file, because the model
@@ -1030,6 +1321,8 @@ pub enum ParamsDto {
         bottom_z: HeightDto,
         feed: f64,
         plunge_feed: f64,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// See [`Self::Chamfering`] - the boring bar's way (M5.2 stage
     /// F): the window, the tolerance and the two feeds, and no
@@ -1043,6 +1336,8 @@ pub enum ParamsDto {
         bottom_z: HeightDto,
         feed: f64,
         plunge_feed: f64,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Standalone boring (M2.4 C). The optional heights ride the
     /// drill's absent-means-law shape; the hole list is the drill's
@@ -1068,6 +1363,12 @@ pub enum ParamsDto {
         /// older file - is the kind's own default; written only when stated.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         break_through: Option<f64>,
+        /// #3360 where each level's rings start: absent is `auto`, the
+        /// centre-out order every earlier file cut - no version step.
+        #[serde(default, skip_serializing_if = "PassStartDto::is_auto")]
+        pass_start: PassStartDto,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// Helical thread milling (M2.4 C). The pitch rides no DTO -
     /// it lives on the tool, like every other tool number.
@@ -1105,6 +1406,8 @@ pub enum ParamsDto {
         /// older file - is the kind's own default; written only when stated.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         break_through: Option<f64>,
+        #[serde(default, skip_serializing_if = "PathPicksDto::is_empty")]
+        picks: PathPicksDto,
     },
     /// The probe (#108): an additive variant in the v50 grammar.
     Probe(ProbeDto),
@@ -1121,6 +1424,44 @@ pub enum ParamsDto {
     SinkerBurn(SinkerDto),
     /// The sinker side burn (#545): appended the same way.
     SinkerSideBurn(SinkerSideDto),
+    /// The slot undercut (#1444): appended the same way.
+    SlotUndercut(SlotUndercutDto),
+    /// The waterjet profile (#1883): additive - no older file names it.
+    WaterjetProfile(WaterjetDto),
+    /// The multi-axis deburr (#1894): appended the same way.
+    MultiAxisDeburr(MultiAxisDeburrDto),
+    /// The Rotary Flow band (#2826, declared at v82): the picked
+    /// guide chains' kind - the parallel's shape minus the station
+    /// window the picks replace, plus the op's own stated rotation
+    /// axis (the twins' v79 key). The heights are the radii the
+    /// kernel guards (see the wire grammar's refusal); absent
+    /// `stated_axis` follows the machine, else the fit, exactly the
+    /// twins' law.
+    RotaryFlow {
+        tolerance: f64,
+        /// Absent follows the scallop law from the tolerance.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stepover: Option<f64>,
+        /// Ball-center radius of the clearance cylinder about the
+        /// stated axis, authored through the height references - a
+        /// stock-top reference reads its radius above the stock's
+        /// max radius on a centreline-anchored offset (#2774).
+        clearance_z: HeightDto,
+        /// Ball-center radius of the pass-link cylinder; absent links
+        /// at clearance.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        retract_z: Option<HeightDto>,
+        feed: f64,
+        plunge_feed: f64,
+        climb: bool,
+        lead_deg: f64,
+        lag_deg: f64,
+        max_tilt_deg: f64,
+        /// #2772 parts 1-2 (v79): the op's own stated rotation axis -
+        /// see `RotaryContour`'s `stated_axis`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        stated_axis: Option<[f64; 3]>,
+    },
 }
 
 /// The angle an absent `ramp_angle` means: 45°, the ground the
@@ -1227,6 +1568,36 @@ impl From<crate::finishing3d::FinishPattern> for FinishPatternDto {
     }
 }
 
+/// The file mirror of `finishing3d::GapLink`; `default` is `jump`,
+/// the hop every pre-gap-link file ran. `straight` is a new word in
+/// an existing grammar - older files never carried it and still read
+/// unchanged, so no version step-up.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GapLinkDto {
+    #[default]
+    Jump,
+    Straight,
+}
+
+impl From<GapLinkDto> for crate::finishing3d::GapLink {
+    fn from(v: GapLinkDto) -> Self {
+        match v {
+            GapLinkDto::Jump => crate::finishing3d::GapLink::Jump,
+            GapLinkDto::Straight => crate::finishing3d::GapLink::Straight,
+        }
+    }
+}
+
+impl From<crate::finishing3d::GapLink> for GapLinkDto {
+    fn from(v: crate::finishing3d::GapLink) -> Self {
+        match v {
+            crate::finishing3d::GapLink::Jump => GapLinkDto::Jump,
+            crate::finishing3d::GapLink::Straight => GapLinkDto::Straight,
+        }
+    }
+}
+
 /// The file's adaptive words to the in-memory load (M11.4 B): the new
 /// key wins, else the legacy degree word converted exactly (its old door
 /// verdict kept - `load_of_legacy_degrees`), else the 45 deg default
@@ -1249,6 +1620,11 @@ fn default_helix_radius() -> f64 {
 /// `false` is absent from the file, so legacy saves stay byte-identical.
 fn is_false(b: &bool) -> bool {
     !*b
+}
+
+/// Default `true` for additive on-by-default flags (#2811 `waterlines`).
+fn default_true() -> bool {
+    true
 }
 
 /// Serde's skip test for an additive length that is zero by default
@@ -1434,7 +1810,7 @@ impl CrossHoleDto {
 /// `drilling::CycleChoice`. `Auto` resolves at generate time (tool kind
 /// first, then the depth-vs-diameter law), so the file stores only the
 /// user's ask, like `StrategyDto::Auto` and `SideDto::Auto`.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CycleChoiceDto {
     #[default]
@@ -1449,6 +1825,10 @@ pub enum CycleChoiceDto {
     FloatingTap,
     /// #1445: feed in, feed out (G85). Older files never carry it.
     Ream,
+    /// #1445: fine boring (G76) with its required shift, mm along X and Y
+    /// of the hole list: `{"fine_bore": {"shift_x": 0.3, "shift_y": 0.0}}`.
+    /// There is no default shift. Older files never carry it.
+    FineBore { shift_x: f64, shift_y: f64 },
 }
 
 /// The reference part of a stored height. Serialized as a plain string;

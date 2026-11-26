@@ -24,6 +24,7 @@ fn channel() -> Region {
 
 fn params(z: f64) -> Pocket3DParams {
     Pocket3DParams {
+        pass_start: Default::default(),
         tool_diameter: 10.0,
         stepover: 4.0,
         stock_to_leave: 0.0,
@@ -71,6 +72,17 @@ fn a_planar_level_the_planner_refuses_is_named_by_its_z() {
     assert!(!hsm && passes > 0, "rings cut the level: {notes:?}");
     let tag = rings_tag("the level at Z -2.000");
     assert!(notes.iter().any(|n| n.ends_with(&tag) && n.contains("channel")), "named with its reason: {notes:?}");
+}
+
+/// Issue #3035: the refused level counts as one fallback, so the op can
+/// raise its warning; a level the HSM plan keeps counts none.
+#[test]
+fn a_refused_level_counts_as_one_rings_fallback() {
+    let (notes, hsm, _) = plan(-2.0, None);
+    assert!(!hsm, "{notes:?}");
+    assert_eq!(crate::machining2d::rings_fallbacks(&notes), 1, "{notes:?}");
+    let kept = ["adaptive: the level is entered by a plunge in the air outside the stock".to_owned()];
+    assert_eq!(crate::machining2d::rings_fallbacks(&kept), 0);
 }
 
 /// A developed level the wrap's seam cuts goes through the same door.

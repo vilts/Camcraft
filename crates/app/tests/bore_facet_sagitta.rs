@@ -104,9 +104,36 @@ fn a_bore_at_the_step_holes_own_size_passes_the_gate() {
     assert_eq!(v["ok"], json!(true), "{v}");
 }
 
+/// The blocking finding that holds the post at 0.05 mm: a toolpath `gouge`
+/// warning of the bore, "move N cuts past the finish surface".
+fn held_by_a_toolpath_gouge(v: &Value) -> bool {
+    v["findings"].as_array().is_some_and(|f| {
+        f.iter().any(|w| {
+            w["op"] == json!("OP")
+                && w["kind"] == json!("gouge")
+                && w["blocks_post"] == json!(true)
+                && w["message"].as_str().is_some_and(|m| m.ends_with("cuts past the finish surface"))
+        })
+    })
+}
+
+/// 0.05 mm into the wall: the toolpath check holds the post (`ok` false,
+/// the bore in `held_by`). Since #917 the wall meshes finer than the stock
+/// sim's lattice, so the program gate alone sees no gouge cell at this depth
+/// (#2846); the 0.1 mm test below pins the gate's own refusal.
 #[test]
 fn a_bore_cut_oversize_into_the_same_wall_is_still_refused() {
     let v = bore_verdict(0.05);
+    assert_eq!(v["ok"], json!(false), "0.05 mm into the wall is refused: {v}");
+    assert_eq!(v["held_by"], json!(["OP"]), "the oversize bore holds the post: {v}");
+    assert!(held_by_a_toolpath_gouge(&v), "held by the bore's toolpath gouge warning: {v}");
+}
+
+/// 0.1 mm into the wall: the program gate itself names the gouge.
+#[test]
+fn a_bore_cut_a_tenth_into_the_same_wall_is_a_gate_gouge() {
+    let v = bore_verdict(0.1);
     let problems = gate_problems(&v);
-    assert!(problems.iter().any(|p| p.starts_with("gouge:")), "0.05 mm into the wall is a gouge: {v}");
+    assert!(problems.iter().any(|p| p.starts_with("gouge:")), "0.1 mm into the wall is a gouge: {v}");
+    assert_eq!(v["ok"], json!(false), "{v}");
 }

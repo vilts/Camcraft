@@ -36,7 +36,8 @@ fn seeded(ty: OpType) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
+        picks: Default::default(),
     };
     operation::retype_params(&base, ty.ordinal())
 }
@@ -111,12 +112,21 @@ fn a_default_deburr_on_a_finished_brick_posts() {
     // The issue's own ride (width 2, tips z 6..8): its 2 mm band was
     // 1455 of 1544 convicted columns, the vertical corners the rest.
     let world = finished_brick(OpParams::Deburr {
-        width: 2.0,
+        width: 2.0 * std::f64::consts::SQRT_2, // #1890: the chord of a 2.0 mm setback
         clearance_z: Height::fixed(25.0),
         top_z: Height::fixed(8.0),
         bottom_z: Height::fixed(6.0),
         feed: 500.0,
         plunge_feed: 100.0,
+        // #1888: the edge filters at rest - every exposed edge rides.
+        exclude_edges: Vec::new(),
+        min_edge_angle_deg: 0.0,
+        exclude_holes: false,
+        hole_min_diameter: 0.0,
+        hole_max_diameter: 0.0,
+        unreachable: camcraft_app::finishing3d::UnreachableEdges::SkipWithNote,
+        sizing: camcraft_app::finishing3d::DeburrBreak::default(),
+        picks: Default::default(),
     });
     assert_posts(&world, "deburr-w2");
 }

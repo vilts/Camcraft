@@ -103,6 +103,11 @@ pub enum SdfTool {
     /// revolved (`field_bull`), the dexel's `cut_bull` atom made a
     /// solid. `0 < corner <= r`, `flank >= corner`.
     BullNose { r: f64, corner: f64, flank: f64 },
+    /// Dovetail head (#1444): a frustum widest at the tip - radius `r`
+    /// there, falling by `cot` per mm of height up to `flank`, where it
+    /// must still be over 0. The neck above it is its own solid
+    /// (`field_undercut`).
+    Dovetail { r: f64, cot: f64, flank: f64 },
     /// Turning insert (M13.1 owed, the annular-sector sweep): moves
     /// are the nose CENTER's path (M5.2 E) in the mill world of a
     /// lathe whose spindle is `axis` (`LatheAxis::Z` for +Z through
@@ -230,6 +235,9 @@ pub(super) fn chord_sweep(kind: &ToolKind, ax: [f64; 3], a: Point3, b: Point3) -
         }
         ToolKind::Bull { r, corner, flank } => {
             Sweep::Revolve { a, b, kind: RevKind::Bull { r: *r, corner: *corner, flank: *flank } }
+        }
+        ToolKind::Dove { r, cot, flank } => {
+            Sweep::Revolve { a, b, kind: RevKind::Dove { r: *r, cot: *cot, flank: *flank } }
         }
         ToolKind::Lathe { foot, axis } => Sweep::Lathe(LatheSweep::of(*axis, a, b, foot)?),
     })

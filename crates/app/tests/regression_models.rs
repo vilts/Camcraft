@@ -74,7 +74,7 @@ fn pipeline(model_path: &Path, op_name: &str, stock: StockShape, cut_z: f64, ste
         .map(|(_, t)| t)
         .expect("catalog entry");
     history.execute(&world, AddTool::new(&world, "EM-0400-2FL", tool).expect("catalog tool"));
-    let params = OpParams::Face { holes: Default::default(), blend_turns: false,
+    let params = OpParams::Face { holes: Default::default(), blend_turns: false, blend_radius: None,
         tilt: None,
         stepover,
         clearance_z: Height::fixed(cut_z + 6.0),
@@ -84,6 +84,7 @@ fn pipeline(model_path: &Path, op_name: &str, stock: StockShape, cut_z: f64, ste
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     let cmd = CreateOperation::new(&world, op_name, "EM-0400-2FL", SrcRef::Stock, params);
     history.execute(&world, cmd.unwrap_or_else(|e| panic!("{op_name}: create refused: {e}")));
@@ -207,7 +208,7 @@ fn wavy_slab_faces_to_a_measured_program() {
     assert_eq!(m.facets, 386, "top 288 + walls 96 + bottom 2");
     assert_eq!(m.moves, 42, "path moves, the approach rapid (#690) included");
     close("cut_mm", m.cut_mm, 1342.0, TOL_MM);
-    close("minutes", m.minutes, 1.474753430541823, TOL_MIN); // + the approach rapid (#690)
+    close("minutes", m.minutes, 1.4676666666666667, TOL_MIN); // #2901: the approach rapid opens over its entry (no X/Y travel from the frame zero)
     assert_eq!(m.posted_lines, 59, "line count is exact (the operation and tool comments of #257, the approach of #690, the G21 of #901 and the first traverse's stated height of #1633 included)");
 }
 
@@ -225,6 +226,6 @@ fn cube_stl_faces_to_a_measured_program() {
     assert_eq!(m.facets, 12, "the unit cube's shell");
     assert_eq!(m.moves, 4, "path moves, the approach rapid (#690) included");
     close("cut_mm", m.cut_mm, 12.0, TOL_MM);
-    close("minutes", m.minutes, 0.35983333333333334, TOL_MIN); // + the approach rapid (#690)
+    close("minutes", m.minutes, 0.35933333333333334, TOL_MIN); // #2901: the approach rapid opens over its entry (no X/Y travel from the frame zero)
     assert_eq!(m.posted_lines, 21, "line count is exact (the operation and tool comments of #257, the approach of #690, the G21 of #901 and the first traverse's stated height of #1633 included)");
 }

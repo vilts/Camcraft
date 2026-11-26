@@ -1,0 +1,19 @@
+[package]
+name = "camcraft-gpu"
+description = "Headless GPU compute seam: device policy, capability probe, CPU fallback rule, facet binning kernel."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+# #2620: the one direct wgpu user, pinned to the egui set's version (root
+# Cargo.toml) so the lock keeps one wgpu.
+wgpu = { workspace = true }
+# #163: the fallback reason is a `tracing` event, printed by the
+# subscriber that each binary installs.
+tracing = { workspace = true }
+
+# Blocking on a GPU future is native-only: a browser answers from its
+# event loop, so the wasm32 build has the `*_async` twins only.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+pollster = { workspace = true }

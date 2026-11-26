@@ -251,7 +251,8 @@ fn full_fidelity_grows_nothing() {
     assert_eq!(cx.band_growth(), 0.0);
     let coarse = VerifyContext { gouge_tol: TOL, model_excess: EXCESS, ..Default::default() };
     assert!((coarse.band_growth() - EXCESS).abs() < 1e-12);
-    assert!((coarse.tightened(TOL) + coarse.band_growth() - TOL).abs() < 1e-12, "what the kerf loses, the band gains");
+    // An absent file-tolerance cause keeps the original strict kerf law.
+    assert!((coarse.tightened(TOL) - (TOL - EXCESS)).abs() < 1e-12, "the kerf loses the whole excess");
     let past = VerifyContext { gouge_tol: TOL, model_excess: 0.02, ..Default::default() };
     assert_eq!(past.band_growth(), 0.0, "past the bound the gate refuses; the laws read untightened");
 }

@@ -1,0 +1,3 @@
+kinds = ["Groove Rough", "Groove Finish", "Parting"]
+machine = "Lathe"
+expect = "post"

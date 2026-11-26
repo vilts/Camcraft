@@ -228,9 +228,10 @@ fn a_step_file_in_millimetres_keeps_its_numbers() {
 /// 0.4.0 (the newest crates.io release) cannot parse it, so one dead
 /// `DRAUGHTING_MODEL('', (), #2);` entity - what HOOPS Exchange exports -
 /// rejected the whole file with a syntax error pointing at `DATA;`. The
-/// fixture is box.step plus that one entity; the `[patch.crates-io]` pin in
-/// the root Cargo.toml (upstream fix ricosjp/ruststep@90fdc935) is what makes
-/// this pass - without it, `load_model` fails.
+/// fixture is box.step plus that one entity. The `[patch.crates-io]` pin of
+/// ruststep (upstream fix ricosjp/ruststep@90fdc935) made this pass until
+/// #2789; since then solidcore's Part 21 parser reads it, and #2790 removed
+/// ruststep and its pin. This test keeps the empty list legal.
 #[test]
 fn step_file_with_empty_parameter_list_imports() {
     let m = import::load_model(&testdata("empty_list.step")).expect("must import");

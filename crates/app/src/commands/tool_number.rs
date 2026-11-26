@@ -16,7 +16,7 @@ use crate::tool_numbers;
 pub struct SetToolNumber {
     name: String,
     prev: Option<u32>,
-    next: Option<u32>,
+    next: u32,
 }
 
 fn machines_of(world: &World, tool: &str) -> Vec<(String, Option<crate::machine::Machine>)> {
@@ -67,6 +67,9 @@ impl SetToolNumber {
                 tool_numbers::RANGE_TEXT
             )));
         }
+        if let Some(tool) = model::tool_of(world, &entity) {
+            crate::tool_reservations::for_tool(world, name, tool.kind, n).map_err(CommandError::Invalid)?;
+        }
         let taken = model::named_entities(world).into_iter().find(|(other, e)| {
             other != name
                 && model::tool_number_of(world, e) == Some(n)
@@ -86,8 +89,15 @@ impl SetToolNumber {
         Ok(Self {
             name: name.to_string(),
             prev,
-            next: Some(n),
+            next: n,
         })
+    }
+
+    /// The number this set writes. Always a number: `new` refuses `None`
+    /// (#2442), so a caller's status line needs no "cleared" case (#2517).
+    #[must_use]
+    pub fn number(&self) -> u32 {
+        self.next
     }
 }
 
@@ -101,7 +111,7 @@ fn write(world: &World, name: &str, number: Option<u32>) {
 
 impl Command for SetToolNumber {
     fn apply(&self, world: &World) {
-        write(world, &self.name, self.next);
+        write(world, &self.name, Some(self.next));
     }
 
     fn invert(&self, world: &World) {

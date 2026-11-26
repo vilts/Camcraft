@@ -128,11 +128,16 @@ pub const PITCH: f64 = 2.0;
 pub const DEPTH: f64 = 1.2;
 
 /// The threading suite's bar: wall r 6, a 60-degree V every `pitch`
-/// from z 8 to z 14, `depth` deep.
-pub fn threaded(pitch: f64, depth: f64) -> Mesh {
+/// from z 8 to z 14, `depth` deep. Solid (`free_end` false): the wall
+/// runs on from z -16 to z 40, so a cycle that starts at z 14 stands
+/// above material. With `free_end` (#2952, the law of #2878) the bar
+/// runs from z -26 and ends at the free end face z 14 + half the V, so
+/// a G76 that starts one lead further out (z 16) stands in free air.
+pub fn threaded(pitch: f64, depth: f64, free_end: bool) -> Mesh {
     let half = depth * (30.0_f64).to_radians().tan();
     let root = MAJOR - depth;
-    let mut m = vec![(0.0, -16.0), (MAJOR, -16.0), (MAJOR, 8.0 - half)];
+    let z0 = bar_bottom(free_end);
+    let mut m = vec![(0.0, z0), (MAJOR, z0), (MAJOR, 8.0 - half)];
     let mut c = 8.0;
     while c <= 14.0 + 1e-9 {
         m.push((root, c));
@@ -142,21 +147,58 @@ pub fn threaded(pitch: f64, depth: f64) -> Mesh {
         }
         c += pitch;
     }
-    m.push((MAJOR, 14.0 + half));
-    m.push((MAJOR, 40.0));
-    m.push((0.0, 40.0));
+    if free_end {
+        m.push((0.0, 14.0 + half));
+    } else {
+        m.push((MAJOR, 14.0 + half));
+        m.push((MAJOR, 40.0));
+        m.push((0.0, 40.0));
+    }
     revolve(&m, 16)
 }
 
-/// The threading world: an external thread on the Ø12 bar from z 14 to
-/// z 8 (top -> toward the chuck), this hand, lead and depth.
+/// The bar's (and the stock's) bottom z.
+fn bar_bottom(free_end: bool) -> f64 {
+    if free_end { -26.0 } else { -16.0 }
+}
+
+/// The bar's (and the stock's) top z.
+fn bar_top(free_end: bool, depth: f64) -> f64 {
+    if free_end { 14.0 + depth * (30.0_f64).to_radians().tan() } else { 40.0 }
+}
+
+/// The threading world: an external thread on the solid Ø12 bar from
+/// z 14 to z 8 (top -> toward the chuck), this hand, lead and depth.
+/// Its start stands above material: G33 passes post, a G76 is refused.
 pub fn thread_world_with(inch: bool, hand: ThreadHand, pitch: f64, depth: f64) -> (World, History) {
-    let stock = camcraft_app::stock::StockShape::Cylinder { diameter: 12.0, height: 56.0 };
-    let (world, mut history) = world_with(threaded(pitch, depth), stock, -16.0, &["TD-1732-60"], inch);
+    threading_world(inch, hand, pitch, depth, false)
+}
+
+pub fn thread_world(inch: bool) -> (World, History) {
+    thread_world_with(inch, ThreadHand::Right, PITCH, DEPTH)
+}
+
+/// The G76 world (#2952): the same thread on the bar that ends at its
+/// free end face, the top one lead further out, so the cycle starts at
+/// z 16 in free air in front of the face (the start of #2878's Fanuc
+/// fixture).
+pub fn g76_world_with(inch: bool, hand: ThreadHand, pitch: f64, depth: f64) -> (World, History) {
+    threading_world(inch, hand, pitch, depth, true)
+}
+
+pub fn g76_world(inch: bool) -> (World, History) {
+    g76_world_with(inch, ThreadHand::Right, PITCH, DEPTH)
+}
+
+fn threading_world(inch: bool, hand: ThreadHand, pitch: f64, depth: f64, free_end: bool) -> (World, History) {
+    let (z0, top) = (bar_bottom(free_end), bar_top(free_end, depth));
+    let stock = camcraft_app::stock::StockShape::Cylinder { diameter: 12.0, height: top - z0 };
+    let (world, mut history) = world_with(threaded(pitch, depth, free_end), stock, z0, &["TD-1732-60"], inch);
+    let top_z = if free_end { 14.3 + pitch } else { 14.3 };
     let params = OpParams::Threading {
         tolerance: 0.05,
         clearance_z: Height::fixed(24.0),
-        top_z: Height::fixed(14.3),
+        top_z: Height::fixed(top_z),
         bottom_z: Height::fixed(7.7),
         pitch,
         depth,
@@ -165,13 +207,10 @@ pub fn thread_world_with(inch: bool, hand: ThreadHand, pitch: f64, depth: f64) -
         plunge_feed: 40.0,
         infeed_plan: Default::default(),
         hand,
+        picks: Default::default(),
     };
     create(&world, &mut history, "TH1", "TD-1732-60", params);
     (world, history)
-}
-
-pub fn thread_world(inch: bool) -> (World, History) {
-    thread_world_with(inch, ThreadHand::Right, PITCH, DEPTH)
 }
 
 pub fn g76() -> PostOptions {

@@ -75,7 +75,7 @@ pub fn take(state: &mut State, pick: GeoSel) {
     let what = camcraft_app::pick::geo_label(&state.world, &pick);
     let Some(draft) = state.cylinder_pick.as_mut().filter(|d| d.picking) else { return };
     let setup = draft.setup.clone();
-    state.status = match pick.feature {
+    state.status = match &pick.feature {
         FeatureSel::Face(_) | FeatureSel::Patch(_) => {
             draft.pick = Some(pick);
             format!("{setup}: {what} picked as wall - choose the target axis and Apply")
@@ -86,6 +86,9 @@ pub fn take(state: &mut State, pick: GeoSel) {
         ),
         FeatureSel::Vertex(_) => {
             format!("{setup}: {what} is a point - pick the bore's or cylinder's curved wall")
+        }
+        FeatureSel::SketchChain(_) | FeatureSel::SketchLayer(_) => {
+            format!("{setup}: {what} is a DXF sketch pick - pick a curved wall")
         }
     };
 }

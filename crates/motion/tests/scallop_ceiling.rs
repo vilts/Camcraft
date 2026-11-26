@@ -34,6 +34,7 @@ fn box_facets() -> Vec<Triangle> {
 
 fn params(pattern: FinishPattern) -> Finish3DParams {
     Finish3DParams {
+        gap_link: camcraft_motion::finishing3d::GapLink::Jump,
         pattern,
         stepover: None,
         tool_diameter: 2.0 * R,
@@ -51,6 +52,7 @@ fn params(pattern: FinishPattern) -> Finish3DParams {
         entry_ramp: false,
         steep_stepover: None,
         pencil_reference: None,
+        waterlines: true,
     }
 }
 

@@ -4,6 +4,7 @@
 use camcraft_app::commands::History;
 use flecs_ecs::prelude::World;
 
+use super::budget;
 use super::transport::{ScreenshotAttachment, SelectionSnapshot, TurnMessage};
 use super::worker::{ToolCard, ToolCardStatus, TurnFinish};
 
@@ -197,6 +198,8 @@ pub(super) fn build_turn_messages(
     screenshot: Option<ScreenshotAttachment>,
 ) -> Vec<TurnMessage> {
     let mut messages = Vec::new();
+    // #1944: rolling history; a dropped span leaves the latest get_job reply.
+    let (prior_turns, kept_job) = budget::prior_window(prior_turns);
     for prior in prior_turns {
         messages.push(TurnMessage {
             role: "user".to_owned(),
@@ -222,5 +225,9 @@ pub(super) fn build_turn_messages(
         screenshot,
         raw: None,
     });
+    if let (Some(job), Some(first)) = (kept_job, messages.first_mut()) {
+        first.text.insert_str(0, &job);
+    }
+    budget::cap_images(&mut messages);
     messages
 }

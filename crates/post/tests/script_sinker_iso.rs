@@ -202,14 +202,14 @@ fn an_orbit_is_refused_by_name_even_one_the_machine_lists() {
     }
 }
 
-/// #545: a Sinker Side Burn moves the electrode along X or Y - not a
-/// straight burn - and is refused by name, not as a stray feed.
+/// #3001: a Side Burn needs an explicit lateral servo block in the
+/// machine dialect. The straight-only fixture must refuse it by name.
 #[test]
 fn a_sinker_side_burn_is_refused_by_name() {
     let stream = stream_with(&[]).replace("PARAM OperationKind Sinker Burn", "PARAM OperationKind Sinker Side Burn");
     assert!(stream.contains("Sinker Side Burn"), "the stream names the side burn");
     let out = post(&dialect(), &stream);
-    assert!(out.warnings.iter().any(|w| w.contains("a Sinker Side Burn moves the electrode sideways")), "{:?}", out.warnings);
+    assert!(out.warnings.iter().any(|w| w.contains("states no edm.codes.side")), "{:?}", out.warnings);
     assert!(!out.program.contains("M101"), "nothing burns\n{}", out.program);
 }
 

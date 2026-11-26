@@ -4,6 +4,7 @@ use super::types::{VerifyContext, Warning};
 use super::laws::{bands_vs_fixtures, rapids_vs_fixtures_spindle};
 use super::axis_door::axis_door;
 use super::rest::Rest;
+use super::types::Mode;
 use super::{crossing, finish, rapids, reach, section};
 
 use crate::cl::Toolpath;
@@ -59,10 +60,19 @@ pub fn verify_bodies(
     if section::judged(cx.mode) {
         section::tangency(path, cx, &rest, lift, chord_tol, &mut warns);
         section::solid(path, cx, &cutter, &mut warns);
+    } else if cx.mode == Mode::Undercut {
+        // #1444: no region tangency under a roof; the mesh still speaks.
+        section::solid(path, cx, &cutter, &mut warns);
     }
 
     // (c) Shank/holder reach and (c3) the mid-turn sweep - [`reach`].
     reach::band_reach(path, cx, &rest, chord_tol, &mut warns);
+
+    // (g) The undercut law (#1444) - [`super::undercut`]: it owns the
+    // bands and the Z moves of an undercut path.
+    if cx.mode == Mode::Undercut {
+        super::undercut::undercut_law(path, cx, &rest, &cutter, &mut warns);
+    }
 
     // (c2) Bands against fixtures (M3.2 stage B) - the law lives in
     // [`bands_vs_fixtures`] so the post gate can run it without a
@@ -78,7 +88,13 @@ pub fn verify_bodies(
     }
 
     // (d) Rapids in stock - [`rapids`].
-    rapids::rapids_in_stock(path, cx, &rest, &cutter, &mut warns);
+    let mut rapid_warns = Vec::new();
+    rapids::rapids_in_stock(path, cx, &rest, &cutter, &mut rapid_warns);
+    // #1445: a fine bore's stopped-spindle rapids are read with the
+    // stopped bar, inside the cylinder its own feed in cut. Only law (d)
+    // is acquitted: the solid law's shank and holder collisions remain.
+    super::fine_bore::acquit(path, cx.tool.radius, cx.tool.shank_radius, &mut rapid_warns);
+    warns.extend(rapid_warns);
 
     // (d2) Rapids against fixtures (M3.2 stage B) - the law lives in
     // [`rapids_vs_fixtures`] so the post gate can run it without a
@@ -86,6 +102,11 @@ pub fn verify_bodies(
     if !cx.fixtures.is_empty() {
         warns.extend(rapids_vs_fixtures_spindle(path, cx.tool, cx.fixtures, cx.spindle));
     }
+
+    // (d3) Feed plunge depth (#3679) - [`plunge_depth`]: a feed descent
+    // judged against the floor the cuts before it left under the full
+    // disc, at the op's stated stepdown. Advisory by the #3525 pattern.
+    super::plunge_depth::plunge_depth(path, cx, &rest, &cutter, &mut warns);
 
     // (e) Cycle reach - [`reach::cycle_reach`].
     reach::cycle_reach(path, cx, &mut warns);

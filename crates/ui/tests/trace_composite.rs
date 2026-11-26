@@ -8,6 +8,7 @@
 //!
 //! Gate map (M4.4): covers ui::trace::{eye, composite} and
 //! viewport::View3D::render_with.
+//! #2958: the composite follows the pass's MSAA sample count.
 
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ use egui_wgpu::wgpu;
 use camcraft_app::geometry::{cube, Point3};
 use camcraft_app::stock_sim::{Backend, Stock, FIELD_BAND};
 use camcraft_app::stock_view::FieldView;
+use camcraft_ui::headless_gpu::TestGpu;
 use camcraft_ui::state::DisplayMode;
 use camcraft_ui::trace::eye::StockEye;
 use camcraft_ui::viewport::{Camera, GpuPart, View3D};
@@ -26,9 +28,12 @@ const H: u32 = 72;
 
 /// Software adapter first, else the hardware one (#615); no adapter at
 /// all prints a loud SKIP, and `CAMCRAFT_REQUIRE_GPU=1` fails instead.
-fn device_and_queue() -> Option<(wgpu::Device, wgpu::Queue)> {
-    match camcraft_ui::headless_gpu::device_for_test("trace_composite") {
-        Ok(gpu) => gpu.map(|g| (g.device, g.queue)),
+/// #3605: the one device of this binary, held under the process GPU lock
+/// for the life of the returned value. Parallel per-test devices crashed
+/// a hybrid-GPU Windows box with 0xC0000005.
+fn device_and_queue() -> Option<TestGpu> {
+    match camcraft_ui::headless_gpu::test_gpu("trace_composite") {
+        Ok(gpu) => gpu,
         Err(err) => panic!("{err}"),
     }
 }
@@ -69,7 +74,14 @@ fn centre(dev: &wgpu::Device, q: &wgpu::Queue, parts: &[GpuPart], traced: bool) 
 }
 
 fn centre_with(dev: &wgpu::Device, q: &wgpu::Queue, parts: &[GpuPart], traced: bool, cpu: bool) -> [u8; 4] {
+    centre_at(dev, q, parts, traced, cpu, 1)
+}
+
+/// `centre_with` at `samples` per pixel (#2958): the viewport and the
+/// composite build their pipelines for the same count.
+fn centre_at(dev: &wgpu::Device, q: &wgpu::Queue, parts: &[GpuPart], traced: bool, cpu: bool, samples: u32) -> [u8; 4] {
     let mut view = View3D::new(dev, FORMAT, W, H);
+    view.set_samples(dev, samples);
     view.set_document(dev, q, parts);
     let cam = Camera { target: [5.0, 5.0, 2.5], yaw: 0.9, pitch: 0.9, dist: 30.0, ..Camera::default() };
     let mvp = cam.mvp(f64::from(W) / f64::from(H));
@@ -77,6 +89,7 @@ fn centre_with(dev: &wgpu::Device, q: &wgpu::Queue, parts: &[GpuPart], traced: b
     if cpu {
         eye = eye.cpu_only();
     }
+    eye.set_samples(dev, samples);
     let mut enc = dev.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: None });
     let fv = field_view();
     if traced {
@@ -106,10 +119,11 @@ fn close(a: [u8; 4], b: [u8; 4]) -> bool {
 
 #[test]
 fn the_traced_stock_paints_opaque_gray_where_the_sheet_was() {
-    let Some((dev, q)) = device_and_queue() else {
+    let Some(gpu) = device_and_queue() else {
         eprintln!("trace_composite: no adapter - skipped");
         return;
     };
+    let (dev, q) = (gpu.device.clone(), gpu.queue.clone());
     let sheet = centre(&dev, &q, &[stock_part()], false);
     let traced = centre(&dev, &q, &[stock_part()], true);
     assert!(!close(sheet, traced), "the trace must replace the sheet: {sheet:?} vs {traced:?}");
@@ -122,10 +136,11 @@ fn the_traced_stock_paints_opaque_gray_where_the_sheet_was() {
 
 #[test]
 fn the_traced_depth_sorts_against_models_both_ways() {
-    let Some((dev, q)) = device_and_queue() else {
+    let Some(gpu) = device_and_queue() else {
         eprintln!("trace_composite: no adapter - skipped");
         return;
     };
+    let (dev, q) = (gpu.device.clone(), gpu.queue.clone());
     let traced_alone = centre(&dev, &q, &[stock_part()], true);
     // A plate above the stock hides it: the pixel is the plate's own.
     let above = [plate(8.0), stock_part()];
@@ -141,10 +156,11 @@ fn the_traced_depth_sorts_against_models_both_ways() {
 /// picture arrives on the worker, and the next `prepare` binds it.
 #[test]
 fn the_cpu_fallback_marches_off_the_ui_thread_and_the_picture_arrives() {
-    let Some((dev, q)) = device_and_queue() else {
+    let Some(gpu) = device_and_queue() else {
         eprintln!("trace_composite: no adapter - skipped");
         return;
     };
+    let (dev, q) = (gpu.device.clone(), gpu.queue.clone());
     let cam = Camera { target: [5.0, 5.0, 2.5], yaw: 0.9, pitch: 0.9, dist: 30.0, ..Camera::default() };
     let mvp = cam.mvp(f64::from(W) / f64::from(H));
     let mut eye = StockEye::new(&dev, FORMAT).unwrap().cpu_only();
@@ -172,13 +188,31 @@ fn the_cpu_fallback_marches_off_the_ui_thread_and_the_picture_arrives() {
 
 #[test]
 fn the_cpu_fallback_paints_what_the_gpu_eye_paints() {
-    let Some((dev, q)) = device_and_queue() else {
+    let Some(gpu) = device_and_queue() else {
         eprintln!("trace_composite: no adapter - skipped");
         return;
     };
+    let (dev, q) = (gpu.device.clone(), gpu.queue.clone());
     let gpu = centre_with(&dev, &q, &[stock_part()], true, false);
     let cpu = centre_with(&dev, &q, &[stock_part()], true, true);
     // Same field, same eye, same shade law: the fallback is a speedup
     // lost, never a different picture.
     assert!(gpu.iter().zip(cpu).all(|(a, b)| a.abs_diff(b) <= 8), "{gpu:?} vs {cpu:?}");
+}
+
+/// #2958: with 4x anti-aliasing the composite draws into the multisample
+/// pass (its pipeline is built for the same count), and the traced stock
+/// paints as it does at one sample.
+#[test]
+fn the_traced_stock_paints_the_same_with_msaa() {
+    let Some(gpu) = device_and_queue() else {
+        eprintln!("trace_composite: no adapter - skipped");
+        return;
+    };
+    let (dev, q) = (gpu.device.clone(), gpu.queue.clone());
+    let scope = dev.push_error_scope(wgpu::ErrorFilter::Validation);
+    let one = centre_at(&dev, &q, &[stock_part()], true, false, 1);
+    let four = centre_at(&dev, &q, &[stock_part()], true, false, 4);
+    assert!(pollster::block_on(scope.pop()).is_none(), "the 4x pass validates");
+    assert!(close(one, four), "the traced stock paints the same at 4x: {one:?} vs {four:?}");
 }

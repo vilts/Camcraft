@@ -90,7 +90,9 @@ fn shipped_milling_posts_declare_valid_option_schemas() {
         "assets/posts/doosan-dnm.cps",
         "assets/posts/tormach.cps",
         "assets/posts/grblhal.cps",
+        "assets/posts/mach3.cps",
         "assets/posts/tinyg.cps",
+        "assets/posts/grbl.cps",
         "assets/posts/carvera.cps",
     ] {
         let cps = read(rel);

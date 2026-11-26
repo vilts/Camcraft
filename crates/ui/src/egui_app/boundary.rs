@@ -21,8 +21,10 @@
 use egui::{RichText, Ui};
 
 use camcraft_app::operation::{
-    AreaControls, BoundaryMode, BoundaryShape, Containment, CornerStyle, ExtraBoundary, PickShape, area_unsupported,
+    self, AreaControls, BoundaryMode, BoundaryShape, Containment, CornerStyle, ExtraBoundary,
+    PickShape, area_unsupported,
 };
+use camcraft_app::{model, units};
 
 use crate::boundary_draft::{self, Entry, EntryRef, Role};
 use crate::boundary_summary;
@@ -51,7 +53,8 @@ pub fn hints() -> [String; 4] {
 }
 
 const CONTAINMENT_HINT: &str = "Inside: the tool's edge touches the boundary from inside (its centre a tool radius in). On: the tool centre rides the boundary. Outside: the tool's edge touches it from outside (its centre a tool radius out). As the kind cuts: the kind's own law.";
-const OFFSET_HINT: &str = "+ grows the area outward, - shrinks it inward, before the tool containment applies.";
+pub(super) const OFFSET_HINT: &str = "Moves the picked edge or face loop: + grows the area outward, - shrinks it inward, before the tool containment applies.";
+pub(super) const OUTER_OFFSET_HINT: &str = "Moves only the outer side of an open boundary, the stock side the area runs on to: - pulls the air passes in, + reaches further. The picked edge stays. A closed area has no outer side.";
 const CORNER_HINT: &str = "How the offset treats convex corners: Round arcs them, Sharp keeps them square.";
 const EXTEND_HINT: &str = "Carries the area past its exterior edges - edges with no part material beyond them - by this distance. An open boundary is never crossed.";
 
@@ -109,7 +112,8 @@ fn body(ui: &mut Ui, state: &mut State, u: camcraft_app::units::Unit) {
             3 => Some(Containment::Outside),
             _ => None,
         };
-        prop_row_hint(ui, "Boundary offset", OFFSET_HINT, |ui| num(ui, u, &mut a.offset));
+        prop_row_hint(ui, "Inside boundary offset", OFFSET_HINT, |ui| num(ui, u, &mut a.offset));
+        prop_row_hint(ui, "Outside boundary offset", OUTER_OFFSET_HINT, |ui| num(ui, u, &mut a.outer_offset));
         let mut corner = usize::from(a.corner == CornerStyle::Sharp);
         prop_row_hint(ui, "Offset corners", CORNER_HINT, |ui| combo(ui, "area_corner", &mut corner, &["Round", "Sharp"]));
         a.corner = if corner == 1 { CornerStyle::Sharp } else { CornerStyle::Round };
@@ -132,6 +136,7 @@ fn body(ui: &mut Ui, state: &mut State, u: camcraft_app::units::Unit) {
         }
         add_row(ui, state, &mut acts);
         collecting_line(ui, state, &mut acts);
+        do_not_touch_ui(ui, state, u, &mut acts);
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new("(i) roles, picking and the fill").small().weak())
                 .on_hover_text(hints().join("\n\n"));
@@ -150,6 +155,7 @@ fn body(ui: &mut Ui, state: &mut State, u: camcraft_app::units::Unit) {
 enum Act {
     Role(EntryRef, Role),
     Pick(Option<BoundaryPick>),
+    RemoveDoNotTouch(usize),
     Extend(EntryRef),
     Remove(EntryRef),
     Add(ExtraBoundary),
@@ -167,6 +173,12 @@ fn apply(state: &mut State, act: Act) {
             Ok(if t.is_some() { "click edges or faces in the viewport".to_owned() } else { "boundary picking stopped".to_owned() })
         }
         Act::Extend(at) => boundary_draft::extend(state, at).map(|()| "closed around its face loop".to_owned()),
+        Act::RemoveDoNotTouch(i) => {
+            if i < state.op_ui.area.do_not_touch.picks.len() {
+                state.op_ui.area.do_not_touch.picks.remove(i);
+            }
+            Ok("removed item from Do not touch".to_owned())
+        }
         Act::Remove(at) => {
             boundary_draft::remove(state, at);
             Ok("boundary removed from the draft".to_owned())
@@ -282,6 +294,7 @@ fn collecting_line(ui: &mut Ui, state: &State, acts: &mut Vec<Act>) {
         BoundaryPick::Exclude => "a new exclude boundary".to_owned(),
         BoundaryPick::Open => "the open boundary".to_owned(),
         BoundaryPick::Extra(i) => format!("boundary {}", i + 1),
+        BoundaryPick::DoNotTouch => "Do not touch".to_owned(),
     };
     ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new(format!("Picking into {what} - viewport clicks fill it, not the selection.")).strong());
@@ -289,6 +302,58 @@ fn collecting_line(ui: &mut Ui, state: &State, acts: &mut Vec<Act>) {
             acts.push(Act::Pick(None));
         }
     });
+}
+
+fn do_not_touch_ui(ui: &mut Ui, state: &mut State, u: units::Unit, acts: &mut Vec<Act>) {
+    ui.separator();
+    ui.label(RichText::new("Do not touch").strong());
+    if let Some(why) = operation::do_not_touch_unsupported(state.op_ui.params.kind()) {
+        if state.boundary_pick == Some(BoundaryPick::DoNotTouch) {
+            state.boundary_pick = None;
+        }
+        ui.label(RichText::new(why).small().weak());
+        return;
+    }
+    ui.horizontal(|ui| {
+        ui.label("Clearance");
+        num(ui, u, &mut state.op_ui.area.do_not_touch.clearance);
+        if state.op_ui.area.do_not_touch.clearance < 0.0 || !state.op_ui.area.do_not_touch.clearance.is_finite() {
+            state.op_ui.area.do_not_touch.clearance = 0.0;
+        }
+        let picking = state.boundary_pick == Some(BoundaryPick::DoNotTouch);
+        let label = if picking { "Picking…" } else { "Pick protected" };
+        if ui
+            .selectable_label(picking, label)
+            .on_hover_text("click faces or edges in the viewport to keep the full tool (flutes, shank, holder) clear")
+            .clicked()
+        {
+            acts.push(Act::Pick(if picking { None } else { Some(BoundaryPick::DoNotTouch) }));
+        }
+    });
+    let picks = state.op_ui.area.do_not_touch.picks.clone();
+    if picks.is_empty() {
+        ui.label(RichText::new("None - pick faces or edges the tool assembly must never touch.").small().weak());
+    } else {
+        for (i, pick) in picks.iter().enumerate() {
+            let row = ui
+                .horizontal(|ui| {
+                    ui.label(operation::describe_sel(pick));
+                    if ui.small_button("×").on_hover_text("remove from Do not touch").clicked() {
+                        acts.push(Act::RemoveDoNotTouch(i));
+                    }
+                })
+                .response;
+            if row.hovered() {
+                state.geo_hover = Some(pick.clone());
+            }
+        }
+    }
+    let src = model::find_by_name(&state.world, &state.op_ui.name)
+        .and_then(|e| model::operation_of(&state.world, &e))
+        .map(|op| op.src);
+    if let Some(why) = operation::avoid_overlap_issue(&state.world, &picks, src.as_ref(), &state.op_ui.area) {
+        ui.colored_label(text_inks(ui, &state.world).warn, why);
+    }
 }
 
 #[cfg(test)]
@@ -315,7 +380,7 @@ mod frame {
         let tool = catalog().into_iter().find(|(n, _)| *n == "EM-0400-2FL").map(|(_, t)| t).expect("tool");
         state.pending.push_back(CommandKind::AddTool { name: "EM-0400-2FL".into(), tool });
         let params = OpParams::Face { holes: Default::default(),
-            blend_turns: false,
+            blend_turns: false, blend_radius: None,
             tilt: None,
             stepover: 3.0,
             clearance_z: Height::fixed(25.0),
@@ -325,6 +390,7 @@ mod frame {
             feed: 1200.0,
             plunge_feed: 300.0,
             climb: true,
+            picks: Default::default(),
         };
         state.pending.push_back(CommandKind::CreateOperation {
             name: "Face1".into(),

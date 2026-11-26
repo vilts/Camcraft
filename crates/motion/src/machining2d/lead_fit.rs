@@ -10,9 +10,10 @@ use std::f64::consts::TAU;
 
 use crate::geo2d::Point2;
 
-use super::arcs::{Seg, chord_dev, fit_arcs_sided, lead_in, lead_out, walk_tangent};
+use super::arcs::{Seg, chord_dev, fit_arcs_sided, lead_in, lead_out};
 use super::contour::{ContourParams, Lead, air_side};
 use super::fillet::Legal;
+use super::lead_seam::seam_tangents;
 use super::ring::{Ring, dist};
 
 /// Halvings a blocked lead gets before it is refused.
@@ -154,12 +155,11 @@ fn both_fit(walk: &[Seg], poly: &[Point2], p: &ContourParams, f: f64, legal: &Le
     if n < 2 {
         return true;
     }
-    let t0 = walk_tangent(walk, poly, true);
+    let (t0, t1) = seam_tangents(walk, poly, p);
     let (e, segs) = lead_in(poly[0], t0, air_side(t0, p.climb), scaled(p.lead, f));
     if !segs_hold(legal, e, &segs, slack(p)) {
         return false;
     }
-    let t1 = walk_tangent(walk, poly, false);
     let out = lead_out(poly[n - 1], t1, air_side(t1, p.climb), scaled(p.lead_out_shape(), f));
     segs_hold(legal, poly[n - 1], &out, slack(p))
 }
@@ -285,8 +285,7 @@ pub(super) fn plan_leads(
     if no_leads(p) || n < 2 {
         return (s, Vec::new(), Vec::new());
     }
-    let t0 = walk_tangent(walk, poly, true);
-    let t1 = walk_tangent(walk, poly, false);
+    let (t0, t1) = seam_tangents(walk, poly, p);
     let out_shape = p.lead_out_shape();
     let mut lin = None;
     let mut lout = None;

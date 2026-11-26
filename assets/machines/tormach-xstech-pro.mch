@@ -1,5 +1,5 @@
 {
-  "general": { "model": "Tormach xsTECH Pro", "vendor": "Camcraft", "kind": "mill" },
+  "general": { "model": "Tormach xsTECH Pro", "vendor": "Camcraft", "kind": "router" },
   "kinematics": { "default": {
     "units": { "length": "inch", "angle": "degrees" },
     "parts": [
@@ -14,7 +14,7 @@
             "rigid_tapping": false } }
       ] }
     ] } },
-  "controller": { "synced_configuration": { "parts": {
+  "controller": { "post": "Tormach PathPilot", "synced_configuration": { "parts": {
     "X": { "coordinate": 0 },
     "Y": { "coordinate": 1 },
     "Z": { "coordinate": 2 }

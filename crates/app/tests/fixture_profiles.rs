@@ -123,7 +123,7 @@ fn extruded_vise_jaw_from_dxf_is_hit_by_rapid_until_edited_below_it() {
     let op = OpParams::Face {
         holes: Default::default(),
         tilt: None,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         stepover: 4.0,
         clearance_z: Height::fixed(30.0),
         cut_z: Height::fixed(19.5),
@@ -132,6 +132,7 @@ fn extruded_vise_jaw_from_dxf_is_hit_by_rapid_until_edited_below_it() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     history.execute(&world, CreateOperation::new(&world, "Face1", "EM-0400-2FL", SrcRef::Stock, op).expect("op"));
     history.execute(&world, GenerateOperation::new(&world, "Face1").expect("gen"));

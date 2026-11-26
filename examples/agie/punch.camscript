@@ -1,0 +1,19 @@
+// Original CAMCraft example. Run from the project root with a fresh output name.
+cam.call("load_machine", {builtin: "AGIECUT Classic 2S (template)"});
+// Request the qualified process. The operator reviews and assigns it on the control.
+cam.call("edit_machine", {patch: {edm: {conditions: [{
+  id: "AGIE_QN2", role: "rough", gap: 0.005, wire_diameter: 0.25
+}]}}});
+cam.call("add_tool", {catalog: "EDM-W025"});
+cam.import("examples/agie/punch.obj", "punch");
+cam.call("set_stock", {box: {dx: 80, dy: 60, dz: 20}});
+cam.call("set_wcs", {origin: [0, 0, 20]});
+cam.call("add_operation", {
+  kind: "Wire Contour", name: "Punch1", source: "punch", tool: "EDM-W025",
+  params: {
+    top_z: 20, bottom_z: 0, side: "punch", condition: "AGIE_QN2",
+    start: [-30, 0], capture: true
+  }
+});
+cam.generate();
+cam.post({to: "PUNCH40", cps: "Native wire EDM job files", options: {separationLengthMm: 1.0}});

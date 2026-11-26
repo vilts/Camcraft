@@ -1,0 +1,18 @@
+(synthetic program, posted for syntax conformance)
+%
+O0001 (CAMCRAFT)
+G21 G18 G40 G80 G99
+(OPERATION: Ream - G54)
+G54
+(T0303 REAMER 8H7 - D8)
+T0303
+G97 S400 M03
+G00 X0. Z10.
+G00 X0. Z2.
+G85 Z-12. F0.375
+G80
+G00 X0. Z10.
+M05
+G28 U0 W0
+M30
+%

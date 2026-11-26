@@ -60,15 +60,21 @@ fn judge(t: &Toolpath, region: &Region, model: Option<&[Triangle]>) -> Vec<Warni
         cutter: None,
         mode: Mode::Boundary,
         stock_top_z: 0.0,
+        rim_top_z: None,
         clearance_z: 5.0,
         stock_to_leave: 0.0,
         gouge_tol: TOL,
         model_excess: 0.0,
+            file_tolerance: false,
         z_tol: 1e-6,
         finish_tol: None,
         fixtures: &[],
         spindle: None,
         rims: &[],
+        corner_reliefs: &[],
+        // #3679: this fixture states no stepdown, so the plunge law
+        // stays silent.
+        plunge_stepdown: None,
     };
     verify(t, &cx)
 }

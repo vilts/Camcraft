@@ -1,7 +1,8 @@
 //! The tool editor's catalog rows (#898): part number, vendor, coating,
-//! helix angle and notes. Draft fields only; Apply / Add carry them
-//! through `ChangeTool` / `AddTool` like every other tool number, so one
-//! edit is one undo step and a bad value is refused by name there.
+//! helix angle and notes - label-left rows of the settings grid (#2014).
+//! Draft fields only; Apply / Add carry them through `ChangeTool` /
+//! `AddTool` like every other tool number, so one edit is one undo step
+//! and a bad value is refused by name there.
 //!
 //! Provenance: our own widget over the tool model's catalog fields.
 
@@ -9,27 +10,22 @@ use egui::{TextEdit, Ui};
 
 use crate::state::ToolUi;
 
-use super::fields::field;
+use super::layout::{CTRL_W, prop_row, row_label_id, text_row};
 
-/// The rows, in the editor's single column, under one collapsed header
-/// (open when the tool states any fact) so the editor keeps its height.
+/// The rows, in the Catalog group of the settings grid.
 pub(super) fn catalog_rows(ui: &mut Ui, t: &mut ToolUi) {
-    let any = [&t.part_number, &t.vendor, &t.coating, &t.helix_deg, &t.notes].iter().any(|s| !s.trim().is_empty());
-    egui::CollapsingHeader::new("Tool information")
-        .id_salt("tool_catalog_header")
-        .default_open(any)
-        .show(ui, |ui| {
-            field(ui, "Part number");
-            ui.add(TextEdit::singleline(&mut t.part_number).id_salt("tool_part_number").desired_width(140.0));
-            field(ui, "Vendor");
-            ui.add(TextEdit::singleline(&mut t.vendor).id_salt("tool_vendor").desired_width(140.0));
-            field(ui, "Coating");
-            ui.add(TextEdit::singleline(&mut t.coating).id_salt("tool_coating").desired_width(140.0));
-            field(ui, "Helix angle (deg)");
-            ui.add(TextEdit::singleline(&mut t.helix_deg).id_salt("tool_helix").desired_width(60.0).hint_text("0-90"));
-            field(ui, "Notes");
-            ui.add(TextEdit::multiline(&mut t.notes).id_salt("tool_notes").desired_width(140.0).desired_rows(2));
-        });
+    text_row(ui, "Part number", &mut t.part_number, "tool_part_number", CTRL_W * 1.3);
+    text_row(ui, "Vendor", &mut t.vendor, "tool_vendor", CTRL_W * 1.3);
+    text_row(ui, "Coating", &mut t.coating, "tool_coating", CTRL_W * 1.3);
+    text_row(ui, "Helix angle (deg)", &mut t.helix_deg, "tool_helix", CTRL_W);
+    prop_row(ui, "Notes", |ui| {
+        let mut r = ui
+            .add(TextEdit::multiline(&mut t.notes).id_salt("tool_notes").desired_width(CTRL_W * 1.3).desired_rows(2));
+        if let Some(l) = row_label_id(ui) {
+            r = r.labelled_by(l);
+        }
+        r
+    });
 }
 
 #[cfg(test)]

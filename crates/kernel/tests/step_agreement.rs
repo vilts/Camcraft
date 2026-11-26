@@ -1,176 +1,31 @@
 //! Dual-importer STEP bench (M12.1 stage 4, #916): every STEP file under
-//! testdata/models through the solidcore-side importer and through
-//! truck-stepio as crates/app reads it today. Per file both import, or one
-//! refuses by name; where both import, solid count, bounding box, volume,
-//! area and the length unit are compared within the stated tolerances. The
-//! verdicts are pinned in a table like stages 1-3: a disagreement is
-//! recorded, never averaged away, and a file with no row fails the bench.
+//! testdata/models through the solidcore-side importer, judged against the
+//! RECORDED reading of truck-stepio on the same file (rows.rs; #2790 took
+//! the truck reader out of the workspace, so its side is a recording now).
+//! Per file both import, or one refuses by name; where both import, solid
+//! count, bounding box, volume, area and the length unit are compared
+//! within the stated tolerances (verdict.rs). The verdicts are pinned: a
+//! disagreement is recorded, never averaged away, and a file with no row
+//! fails the bench.
 //! Provenance: our own bench design; the fixtures are the repo's own.
 //!
 //! Gate map (M12.1): covers camcraft_kernel::solidcore_step (read_step,
 //! import_step).
 
+#[path = "step_agreement/rows.rs"]
+mod rows;
 mod step_util;
+#[path = "step_agreement/verdict.rs"]
+mod verdict;
 
 use std::path::PathBuf;
 use std::time::Instant;
 
 use camcraft_kernel::solidcore_impl::SolidcoreKernel;
-use camcraft_kernel::solidcore_step::{StepRead, read_step};
-use camcraft_kernel::{KernelError, Measure};
-use step_util::{
-    CASE_TIMEOUT, CHORD_MM, SolidcoreMesh, TruckStep, bounded_cancel, solidcore_mesh, truck_read,
-};
-
-/// truck's numbers are a mesh's at [`CHORD_MM`]; solidcore's are exact.
-/// Relative volume and area distance the two may keep.
-const REL_TOL: f64 = 1e-3;
-/// Bounding-box corner distance the two may keep, in chords of the mesh
-/// it is judged against (a mesh stands inside its solid by its sagitta).
-const BOX_CHORDS: f64 = 2.0;
-
-/// One fixture: its length unit (mm per unit, what crates/app's
-/// `step_units` reads from it, pinned in crates/app/tests/import.rs) and
-/// the pinned verdicts of the importer comparison and of the mesh
-/// comparison.
-struct Row {
-    file: &'static str,
-    mm_per_unit: f64,
-    import: &'static str,
-    mesh: &'static str,
-}
-
-/// The pinned verdicts (readings in docs/decisions/916-solidcore-step-bench.md).
-///
-/// DISAGREEMENT, both Milling-test files: the port's "tight" bounding box
-/// of the imported solid is Y -30..30; the part is a 60 mm disc with a
-/// flat at Y = 19.719 (the file's own vertices, truck's mesh and
-/// solidcore's own mesh all stop there). Volume and area agree, so the
-/// solid is right and its box is not: the box takes the whole cylinder,
-/// not the trimmed face. Nothing may size stock from that box until it is
-/// fixed (#939).
-///
-/// The three tool_csys files hold a coordinate system and no solid: both
-/// importers refuse them by name.
-const ROWS: &[Row] = &[
-    Row {
-        file: "Milling-test-inch.step",
-        mm_per_unit: 25.4,
-        import: "disagree: bounding box",
-        mesh: "watertight, within tolerance",
-    },
-    Row {
-        file: "Milling-test.step",
-        mm_per_unit: 1.0,
-        import: "disagree: bounding box",
-        mesh: "watertight, within tolerance",
-    },
-    Row {
-        file: "bad_entity_mid_data.step",
-        mm_per_unit: 1.0,
-        import: "both refuse (solidcore: read_step: invalid input: STEP syntax error)",
-        mesh: "no exact solid to judge against",
-    },
-    Row {
-        file: "box.step",
-        mm_per_unit: 1.0,
-        import: "agree",
-        mesh: "watertight, within tolerance",
-    },
-    // #1697: truck's face meter refuses face 6 (the B-spline that jumps);
-    // solidcore refuses the solid at its pcurves (a line on a spline).
-    Row {
-        file: "bspline_discontinuous.step",
-        mm_per_unit: 1.0,
-        import: "both refuse (solidcore: #16 at read: pcurves failed on)",
-        mesh: "no exact solid to judge against",
-    },
-    // FINDING (#1697): solidcore's mesh of the dome stands off the exact
-    // volume by more than REL_TOL; the importers agree.
-    Row {
-        file: "bspline_dome.step",
-        mm_per_unit: 1.0,
-        import: "agree",
-        mesh: "off: volume",
-    },
-    Row {
-        file: "empty_list.step",
-        mm_per_unit: 1.0,
-        import: "agree",
-        mesh: "watertight, within tolerance",
-    },
-    // #2209 (PR #2215): two curved faces that meet at one smooth crease.
-    // As fillet_corner: solidcore has no exact pcurve for a face of it;
-    // truck reads the file (#2244 pinned the reading).
-    Row {
-        file: "fig8.step",
-        mm_per_unit: 1.0,
-        import: "solidcore refuses: #14 at read: pcurves failed on",
-        mesh: "no exact solid to judge against",
-    },
-    // solidcore has no exact pcurve of a NURBS on a spline surface (the
-    // corner blend); truck meshes the corner.
-    Row {
-        file: "fillet_corner.step",
-        mm_per_unit: 1.0,
-        import: "solidcore refuses: #1289 at read: pcurves failed on",
-        mesh: "no exact solid to judge against",
-    },
-    Row {
-        file: "lathe_holder_offset.step",
-        mm_per_unit: 1.0,
-        import: "agree",
-        mesh: "watertight, within tolerance",
-    },
-    Row {
-        file: "modular_clamp_unit.step",
-        mm_per_unit: 1.0,
-        import: "agree",
-        mesh: "watertight, within tolerance",
-    },
-    Row {
-        file: "modular_lathe_head.step",
-        mm_per_unit: 1.0,
-        import: "agree",
-        mesh: "watertight, within tolerance",
-    },
-    Row {
-        file: "sample_ap214.step",
-        mm_per_unit: 1000.0,
-        import: "agree",
-        mesh: "watertight, within tolerance",
-    },
-    Row {
-        file: "spline_revolved.step",
-        mm_per_unit: 1.0,
-        import: "agree",
-        mesh: "watertight, within tolerance",
-    },
-    Row {
-        file: "tool_csys_box_iso13399.step",
-        mm_per_unit: 1.0,
-        import: "agree",
-        mesh: "watertight, within tolerance",
-    },
-    Row {
-        file: "tool_csys_degenerate.step",
-        mm_per_unit: 1.0,
-        import: "both refuse (solidcore: the file holds no solid)",
-        mesh: "no exact solid to judge against",
-    },
-    Row {
-        file: "tool_csys_iso13399.step",
-        mm_per_unit: 1.0,
-        import: "both refuse (solidcore: the file holds no solid)",
-        mesh: "no exact solid to judge against",
-    },
-    Row {
-        file: "tool_csys_none.step",
-        mm_per_unit: 1.0,
-        import: "both refuse (solidcore: the file holds no solid)",
-        mesh: "no exact solid to judge against",
-    },
-];
+use camcraft_kernel::solidcore_step::read_step;
+use rows::{ROWS, Truck};
+use step_util::{CASE_TIMEOUT, CHORD_MM, bounded_cancel, solidcore_mesh};
+use verdict::{import_verdict, mesh_verdict, whole};
 
 fn models_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models")
@@ -193,153 +48,13 @@ fn step_files() -> Vec<String> {
     names
 }
 
-/// The solidcore side of one file, summed over its solids.
-struct Whole {
-    solids: usize,
-    measure: Measure,
-    area: f64,
-    gap: f64,
-}
-
-fn whole(read: &StepRead) -> Option<Whole> {
-    let first = read.solids.first()?;
-    let mut w = Whole {
-        solids: read.solids.len(),
-        measure: Measure {
-            volume: 0.0,
-            ..first.measure
-        },
-        area: 0.0,
-        gap: 0.0,
-    };
-    for s in &read.solids {
-        w.measure.volume += s.measure.volume;
-        w.area += s.area;
-        w.gap = w.gap.max(s.vertex_gap);
-        for i in 0..3 {
-            w.measure.min[i] = w.measure.min[i].min(s.measure.min[i]);
-            w.measure.max[i] = w.measure.max[i].max(s.measure.max[i]);
-        }
-    }
-    Some(w)
-}
-
-fn rel(a: f64, b: f64) -> f64 {
-    (a - b).abs() / b.abs().max(f64::MIN_POSITIVE)
-}
-
-/// The importer verdict of one file.
-fn import_verdict(
-    row_unit: f64,
-    sc: &Result<StepRead, KernelError>,
-    tr: &Result<TruckStep, String>,
-) -> String {
-    let sc_whole = match sc {
-        Err(e) => Err(format!("{e}")),
-        Ok(r) => match (r.refused.first(), whole(r)) {
-            (Some(f), _) => Err(format!("#{} at {}: {}", f.item, f.stage, f.reason)),
-            (None, None) => Err("the file holds no solid".into()),
-            (None, Some(w)) => Ok((r, w)),
-        },
-    };
-    match (sc_whole, tr) {
-        (Err(a), Err(_)) => format!("both refuse (solidcore: {})", first_words(&a)),
-        (Err(a), Ok(_)) => format!("solidcore refuses: {}", first_words(&a)),
-        (Ok(_), Err(b)) => format!("truck refuses: {}", first_words(b)),
-        (Ok((r, w)), Ok(t)) => {
-            let mut off = Vec::new();
-            let unit = match r.length_units_mm.as_slice() {
-                [] => 1.0,
-                [one] => *one,
-                _ => f64::NAN,
-            };
-            if rel(unit, row_unit) > 1e-12 || unit.is_nan() {
-                off.push("unit");
-            }
-            if w.solids != t.shells {
-                off.push("solid count");
-            }
-            let tm = Measure {
-                volume: t.mesh.volume,
-                min: t.mesh.min,
-                max: t.mesh.max,
-            };
-            if w.measure.bbox_deviation(&tm) > BOX_CHORDS * t.chord_mm {
-                off.push("bounding box");
-            }
-            if rel(t.mesh.volume, w.measure.volume) > REL_TOL {
-                off.push("volume");
-            }
-            if rel(t.mesh.area, w.area) > REL_TOL {
-                off.push("area");
-            }
-            if off.is_empty() {
-                "agree".into()
-            } else {
-                format!("disagree: {}", off.join(", "))
-            }
-        }
-    }
-}
-
-/// The first few words of a refusal: enough to name it, short enough to
-/// stay stable when a count or an id in its tail moves.
-fn first_words(s: &str) -> String {
-    s.split_whitespace().take(6).collect::<Vec<_>>().join(" ")
-}
-
-/// The mesh verdict of one file: solidcore's mesher against the exact
-/// solid, and against truck's mesh at the same chord.
-fn mesh_verdict(
-    sc: &Result<StepRead, KernelError>,
-    tr: &Result<TruckStep, String>,
-    tess: &Result<SolidcoreMesh, String>,
-) -> String {
-    let Some(w) = sc.as_ref().ok().and_then(whole) else {
-        return "no exact solid to judge against".into();
-    };
-    match tess {
-        Err(e) => format!("no mesh: {}", first_words(e)),
-        Ok(m) => {
-            let mut off = Vec::new();
-            if !m.refused_faces.is_empty() {
-                off.push("faces left out");
-            }
-            if m.mesh.open_edges > 0 {
-                off.push("open");
-            }
-            if rel(m.mesh.volume, w.measure.volume) > REL_TOL {
-                off.push("volume");
-            }
-            if rel(m.mesh.area, w.area) > REL_TOL {
-                off.push("area");
-            }
-            // The two meshes' boxes: each stands a chord inside the solid.
-            if let Ok(t) = tr {
-                let d = (0..3).fold(0.0_f64, |d, i| {
-                    d.max((m.mesh.min[i] - t.mesh.min[i]).abs())
-                        .max((m.mesh.max[i] - t.mesh.max[i]).abs())
-                });
-                if d > BOX_CHORDS * t.chord_mm.max(CHORD_MM) {
-                    off.push("box off truck's mesh");
-                }
-            }
-            if off.is_empty() {
-                "watertight, within tolerance".into()
-            } else {
-                format!("off: {}", off.join(", "))
-            }
-        }
-    }
-}
-
 struct Reading {
     file: String,
     import: String,
     mesh: String,
 }
 
-fn read_one(file: &str, unit: f64) -> Reading {
+fn read_one(file: &str, unit: f64, truck: &Truck) -> Reading {
     let bytes = std::fs::read(models_dir().join(file)).unwrap_or_default();
     assert!(!bytes.is_empty(), "{file}: fixture missing or empty");
     let b = bytes.clone();
@@ -349,10 +64,6 @@ fn read_one(file: &str, unit: f64) -> Reading {
         read_step(&mut k, &b, stop)
     });
     let t_sc = t0.elapsed();
-    let b = bytes.clone();
-    let t0 = Instant::now();
-    let tr = bounded_cancel(file, CASE_TIMEOUT, move |stop| truck_read(&b, unit, stop));
-    let t_tr = t0.elapsed();
     let t0 = Instant::now();
     let tess = bounded_cancel(file, CASE_TIMEOUT, move |_| solidcore_mesh(&bytes));
     let t_tess = t0.elapsed();
@@ -378,12 +89,19 @@ fn read_one(file: &str, unit: f64) -> Reading {
             }
         }
     }
-    match &tr {
-        Err(e) => println!("  truck      Err {e}"),
-        Ok(t) => println!(
-            "  truck      shells={} V={:.6} A={:.6} box={:?}..{:?} tris={} open={} chord={:.4} mm ({t_tr:.1?})",
-            t.shells, t.mesh.volume, t.mesh.area, t.mesh.min, t.mesh.max, t.mesh.triangles,
-            t.mesh.open_edges, t.chord_mm
+    match truck {
+        Truck::Refused(e) => println!("  truck      (recorded) Err {e}"),
+        Truck::NotRecorded => println!("  truck      not recorded (fixture added after #2790)"),
+        Truck::Read {
+            shells,
+            volume,
+            area,
+            min,
+            max,
+            open_edges,
+            chord_mm,
+        } => println!(
+            "  truck      (recorded) shells={shells} V={volume:.6} A={area:.6} box={min:?}..{max:?} open={open_edges} chord={chord_mm:.4} mm"
         ),
     }
     match &tess {
@@ -396,8 +114,8 @@ fn read_one(file: &str, unit: f64) -> Reading {
     }
     let reading = Reading {
         file: file.to_string(),
-        import: import_verdict(unit, &sc, &tr),
-        mesh: mesh_verdict(&sc, &tr, &tess),
+        import: import_verdict(unit, &sc, truck),
+        mesh: mesh_verdict(&sc, truck, &tess),
     };
     println!("  verdict    import: {} | mesh: {}", reading.import, reading.mesh);
     reading
@@ -408,7 +126,7 @@ fn check_row(file: &str) {
     let row = ROWS.iter().find(|r| r.file == file);
     assert!(row.is_some(), "{file}: no pinned row - re-triage");
     let Some(row) = row else { return };
-    let r = read_one(file, row.mm_per_unit);
+    let r = read_one(file, row.mm_per_unit, &row.truck);
     assert_eq!(r.file, file);
     assert_eq!(
         (r.import.as_str(), r.mesh.as_str()),
@@ -438,21 +156,30 @@ per_file! {
     step_milling_test_inch => "Milling-test-inch.step",
     step_milling_test => "Milling-test.step",
     step_bad_entity_mid_data => "bad_entity_mid_data.step",
+    step_bar_cross_holes => "bar_cross_holes.step",
     step_box => "box.step",
     step_bspline_discontinuous => "bspline_discontinuous.step",
     step_bspline_dome => "bspline_dome.step",
     step_empty_list => "empty_list.step",
     step_fig8 => "fig8.step",
     step_fillet_corner => "fillet_corner.step",
+    step_hole_on_pocket_wall => "hole_on_pocket_wall.step",
     step_lathe_holder_offset => "lathe_holder_offset.step",
     step_modular_clamp_unit => "modular_clamp_unit.step",
     step_modular_lathe_head => "modular_lathe_head.step",
+    step_q02_3d_mold => "q02_3d_mold.step",
     step_sample_ap214 => "sample_ap214.step",
+    step_short_units_degree_cone => "short_units_degree_cone.step",
+    step_short_units_inch => "short_units_inch.step",
+    step_short_units_metre => "short_units_metre.step",
+    step_sphere_quarter_pole => "sphere_quarter_pole.step",
     step_spline_revolved => "spline_revolved.step",
     step_tool_csys_box_iso13399 => "tool_csys_box_iso13399.step",
     step_tool_csys_degenerate => "tool_csys_degenerate.step",
     step_tool_csys_iso13399 => "tool_csys_iso13399.step",
     step_tool_csys_none => "tool_csys_none.step",
+    step_twisted_flank => "twisted_flank.step",
+    step_twisted_flank_off => "twisted_flank_off.step",
 }
 
 /// Every STEP fixture has exactly one pinned row, and every row has a
@@ -465,4 +192,76 @@ fn step_files_agree_or_refuse_by_name() {
     let pinned: Vec<&str> = ROWS.iter().map(|r| r.file).collect();
     assert_eq!(files, pinned, "a fixture has no row, or a row has no fixture - re-triage");
     assert_eq!(TESTED, pinned.as_slice(), "every row needs its own test in per_file!");
+}
+
+/// The recorded truck side (#2790) keeps its shape and the findings that
+/// the live truck reader gave before it left the workspace: #1697's
+/// runaway face refused by name while the smooth dome meshed, the open
+/// meshes of the free-form files (so their volume is short), and the
+/// zero volume of the twisted flank (#2780). Every recorded mesh is finite
+/// and made at a chord the app's target permits. This test took the place
+/// of step_import.rs's live `truck_side_refuses_a_runaway_face_and_obeys_its_cancel`.
+#[test]
+fn recorded_truck_readings_keep_their_findings() {
+    let truck = |file: &str| ROWS.iter().find(|r| r.file == file).map(|r| &r.truck);
+    match truck("bspline_discontinuous.step") {
+        Some(Truck::Refused(e)) => {
+            assert!(e.contains("B-spline surface) not meshed: its subdivision did not converge"), "{e}");
+        }
+        _ => panic!("bspline_discontinuous.step: the runaway face is not a recorded refusal"),
+    }
+    for file in ["short_units_inch.step", "short_units_metre.step"] {
+        assert!(
+            matches!(truck(file), Some(Truck::Refused("a shell's mesh is not finite"))),
+            "{file}: the recorded short-name refusal changed"
+        );
+    }
+    assert!(
+        matches!(truck("bspline_dome.step"), Some(Truck::Read { volume, .. }) if *volume > 0.0),
+        "bspline_dome.step: the smooth B-spline is not a recorded mesh"
+    );
+    for (file, open) in [("fillet_corner.step", 121), ("bar_cross_holes.step", 1090)] {
+        assert!(
+            matches!(truck(file), Some(Truck::Read { open_edges, .. }) if *open_edges == open),
+            "{file}: the recorded open mesh changed"
+        );
+    }
+    assert!(
+        matches!(truck("twisted_flank.step"), Some(Truck::Read { volume, .. }) if *volume == 0.0),
+        "twisted_flank.step: the recorded open shell changed"
+    );
+    for row in ROWS {
+        match &row.truck {
+            Truck::Refused(e) => assert!(!e.is_empty(), "{}: a refusal with no reason", row.file),
+            Truck::NotRecorded => assert!(
+                row.import.starts_with("no truck reading") || row.import.starts_with("solidcore refuses"),
+                "{}: a fixture with no truck reading has a truck verdict",
+                row.file
+            ),
+            Truck::Read {
+                shells,
+                volume,
+                area,
+                min,
+                max,
+                chord_mm,
+                ..
+            } => {
+                let finite = [*volume, *area, *chord_mm].iter().chain(min).chain(max).all(|v| v.is_finite());
+                assert!(finite && *shells > 0, "{}: a recorded mesh that is not finite", row.file);
+                assert!((0..3).all(|i| min[i] <= max[i]), "{}: a recorded box inside out", row.file);
+                assert!(
+                    *chord_mm > 0.0 && *chord_mm <= 2.0 * CHORD_MM,
+                    "{}: a recorded chord of {chord_mm} mm",
+                    row.file
+                );
+            }
+        }
+        assert_eq!(
+            matches!(row.truck, Truck::Refused(_)),
+            row.import.starts_with("both refuse") || row.import.starts_with("truck refuses"),
+            "{}: the recorded truck side and the pinned verdict disagree",
+            row.file
+        );
+    }
 }

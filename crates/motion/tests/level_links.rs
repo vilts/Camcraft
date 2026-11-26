@@ -282,11 +282,15 @@ fn keep_down_pass_links_stay_at_depth_where_proved_and_say_where_not() {
     assert!(lifted == 0 || said, "every lift is named: {:?}", t.notes);
     let base = pocket(&r, &PocketParams { links: Links::PLANAR, ..p }).expect("pocket");
     let rapids = |t: &Toolpath| t.moves.iter().filter(|m| m.kind == MoveKind::Rapid).count();
-    assert!(stayed > 0 || rapids(&t) == rapids(&base), "keep-down found nothing to keep: {gaps:?}");
+    // A successful planar KeepDown feed is absent from pass_gaps. Fewer
+    // rapids than the retract plan also prove that a pass link stayed down.
+    assert!(stayed > 0 || rapids(&t) < rapids(&base), "keep-down found nothing to keep: {gaps:?}");
     assert!(rapids(&t) <= rapids(&base));
     // A stay-down limit shorter than every link lifts them all, named.
     let short = PocketParams { links: Links { pass: Link::KeepDown, max_stay_down: 1e-3, ..Links::PLANAR }, ..p };
-    let t = pocket(&r, &short).expect("pocket");
+    let short_path = pocket(&r, &short).expect("pocket");
+    assert!(rapids(&t) < rapids(&short_path), "the proved links must avoid a lift");
+    let t = short_path;
     assert!(pass_gaps(&t).iter().all(|(z, ms)| top(ms) > z + 1e-9));
     assert!(t.notes.iter().any(|n| n.contains("maximum stay-down distance")), "{:?}", t.notes);
 }
@@ -366,8 +370,9 @@ fn wall(entry: Entry3D, links: Links) -> ContourParams {
         tab_height: 0.0,
         entry,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links,
+        picks: Default::default(),
     }
 }
 
@@ -484,6 +489,7 @@ fn box_facets(min: [f64; 3], max: [f64; 3]) -> Vec<Triangle> {
 
 fn p3(links: Links) -> Pocket3DParams {
     Pocket3DParams {
+        pass_start: Default::default(),
         tool_diameter: 8.0,
         stepover: 3.0,
         stock_to_leave: 0.0,

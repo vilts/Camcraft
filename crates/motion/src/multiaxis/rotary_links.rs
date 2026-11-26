@@ -65,11 +65,14 @@ pub(super) fn local_rho_max(facets: &[Triangle]) -> f64 {
 /// The sloped-entry reading of [`radial_relink`] (#15): the ramp angle
 /// in degrees, the laid-frame part facets the ramps are proved against,
 /// and the plan tolerance. None keeps every infeed a radial plunge.
+/// `span` is the stations a ramp's top may stand at (#2343: a ramp
+/// never starts past a held end's plane); unbounded where no end is held.
 #[derive(Clone, Copy)]
 pub(super) struct Ramp<'a> {
     pub deg: f64,
     pub facets: &'a [Triangle],
     pub tol: f64,
+    pub span: (f64, f64),
 }
 
 /// Rotary Parallel's links, rebuilt radial. `base` is the laid-frame
@@ -206,6 +209,9 @@ fn ramp_start(run: &[Move], b: Point3, r: f64, hop: f64, rp: Ramp<'_>) -> Result
     let rho_b = b.y.hypot(b.z + r);
     let Some(l) = ramp_run(hop + r - rho_b, rp.deg) else { return Ok(None) };
     let s = Point3::new(ub.x - dx.signum() * l, ub.y, ub.z);
+    if !(s.x >= rp.span.0 && s.x <= rp.span.1) {
+        return Ok(None);
+    }
     let up = |q: Point3| Point3::new(q.x, q.y, q.z + r);
     let bx = boxes(rp.facets);
     Ok(segment_clear(up(s), up(b), r, rp.tol, rp.facets, &bx).then_some(s))

@@ -100,7 +100,8 @@ fn a_cutter_below_the_minimum_is_still_refused_beside_a_probe() {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
+        picks: Default::default(),
     };
     h.execute(&world, CreateOperation::new(&world, "Face1", "EM-0400-2FL", SrcRef::Stock, face).expect("face"));
     h.execute(&world, GenerateOperation::new(&world, "Face1").expect("generate"));

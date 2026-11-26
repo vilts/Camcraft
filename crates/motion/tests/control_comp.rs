@@ -41,8 +41,9 @@ fn params(side: Side, lead: Lead, climb: bool, comp: Compensation) -> ContourPar
         tab_height: 0.0,
         entry: Entry3D::Plunge,
         helix_radius: 1.0,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         links: Links { approach: Approach { compensation: comp, ..Approach::DEFAULT }, ..Links::PLANAR },
+        picks: Default::default(),
     }
 }
 
@@ -106,7 +107,9 @@ fn spans_are_the_part_contour(t: &Toolpath, side: CompSide) {
 
 #[test]
 fn computer_is_the_default_and_control_walks_the_same_ring_seamed_mid_run() {
-    let lead = Lead::Linear { length: 8.0 };
+    // #3891: the Perpendicular lead - the Linear shape is refused because
+    // its dive point rides the ring's own offset line.
+    let lead = Lead::Perpendicular { length: 8.0 };
     let a = contour(&square(), &params(Side::Auto, lead, true, Compensation::Computer)).unwrap();
     assert!(a.comps.is_empty(), "in computer records no span");
     assert_eq!(Approach::DEFAULT.compensation, Compensation::Computer);
@@ -119,13 +122,15 @@ fn computer_is_the_default_and_control_walks_the_same_ring_seamed_mid_run() {
     assert_eq!(a.notes, b.notes);
     // #1555: climb keeps the material right of travel - the tool left, G41.
     spans_are_the_part_contour(&b, CompSide::Left);
-    // The engage lead is collinear with the first cut: the control's
-    // offset at its end is square to that cut, where the centre stands.
+    // The engage lead meets the first cut square: the control's offset
+    // at its end lands on the centre's seam, wherever the lead came
+    // from, and the dive at the lead's start stands the lead's length
+    // beyond the ring (#3891's law).
     for c in &b.comps {
         let (e, w) = (b.moves[c.first], b.moves[c.first + 1]);
         let (ex, ey) = (e.to.x - e.from.x, e.to.y - e.from.y);
         let (wx, wy) = (w.to.x - w.from.x, w.to.y - w.from.y);
-        assert!((ex * wy - ey * wx).abs() < 1e-6, "lead and first cut collinear");
+        assert!((ex * wx + ey * wy).abs() < 1e-6, "the Perpendicular lead meets the first cut square");
     }
 }
 
@@ -142,7 +147,7 @@ fn the_side_follows_the_travel_and_the_contour_side() {
 
 #[test]
 fn stock_to_leave_rides_the_programmed_contour_not_the_register() {
-    let mut p = params(Side::Outside, Lead::Linear { length: 8.0 }, true, Compensation::Control);
+    let mut p = params(Side::Outside, Lead::Perpendicular { length: 8.0 }, true, Compensation::Control);
     p.stock_to_leave = 0.5;
     let t = contour(&square(), &p).unwrap();
     assert_eq!(t.comps.len(), cut_levels(&t).len());
@@ -174,10 +179,18 @@ fn every_lead_the_control_cannot_engage_on_is_refused_by_name() {
     let short = refusal(&params(Side::Auto, Lead::Linear { length: 2.0 }, true, Compensation::Control));
     assert!(short.contains("at least the tool radius (3.000 mm)") && short.contains("2.000 mm"), "{short}");
     // The lead-out is judged the same way, on its own shape.
-    let mut p = params(Side::Auto, Lead::Linear { length: 8.0 }, true, Compensation::Control);
+    let mut p = params(Side::Auto, Lead::Perpendicular { length: 8.0 }, true, Compensation::Control);
     p.links.approach.lead_out = Some(Lead::Arc { radius: 3.0 });
     let out = refusal(&p);
     assert!(out.contains("straight lead-out"), "{out}");
+    // #3891: the Linear shape is refused on both ends - its dive point
+    // (and the cancel's end) ride the ring's own offset line.
+    let lin_in = refusal(&params(Side::Auto, Lead::Linear { length: 8.0 }, true, Compensation::Control));
+    assert!(lin_in.contains("does not ride a Linear lead-in") && lin_in.contains("Perpendicular lead-in"), "{lin_in}");
+    let mut p = params(Side::Auto, Lead::Perpendicular { length: 8.0 }, true, Compensation::Control);
+    p.links.approach.lead_out = Some(Lead::Linear { length: 8.0 });
+    let lin_out = refusal(&p);
+    assert!(lin_out.contains("does not ride a Linear lead-out"), "{lin_out}");
     // And the same parameters in computer generate.
     for lead in [Lead::Arc { radius: 3.0 }, Lead::None, Lead::Linear { length: 2.0 }] {
         contour(&square(), &params(Side::Auto, lead, true, Compensation::Computer)).unwrap();
@@ -186,7 +199,7 @@ fn every_lead_the_control_cannot_engage_on_is_refused_by_name() {
 
 /// Control comp with a Ø10 tool on `side`.
 fn d10(side: Side) -> ContourParams {
-    ContourParams { tool_diameter: 10.0, ..params(side, Lead::Linear { length: 8.0 }, true, Compensation::Control) }
+    ContourParams { tool_diameter: 10.0, ..params(side, Lead::Perpendicular { length: 8.0 }, true, Compensation::Control) }
 }
 
 fn refused_on(region: &Region, p: &ContourParams) -> String {
@@ -255,12 +268,12 @@ fn a_neck_narrower_than_the_tool_is_refused_by_name() {
 
 #[test]
 fn tabs_blends_overlap_and_keep_down_links_are_refused_by_name() {
-    let base = params(Side::Auto, Lead::Linear { length: 8.0 }, true, Compensation::Control);
-    let tabs = refusal(&ContourParams { tab_count: 2, tab_width: 4.0, tab_height: 1.0, ..base });
+    let base = params(Side::Auto, Lead::Perpendicular { length: 8.0 }, true, Compensation::Control);
+    let tabs = refusal(&ContourParams { tab_count: 2, tab_width: 4.0, tab_height: 1.0, ..base.clone() });
     assert!(tabs.contains("does not ride tabs"), "{tabs}");
-    let blend = refusal(&ContourParams { blend_turns: true, ..base });
+    let blend = refusal(&ContourParams { blend_turns: true, ..base.clone() });
     assert!(blend.contains("corner blends"), "{blend}");
-    let mut ov = base;
+    let mut ov = base.clone();
     ov.links.approach.overlap = 2.0;
     let ov = refusal(&ov);
     assert!(ov.contains("overlap"), "{ov}");

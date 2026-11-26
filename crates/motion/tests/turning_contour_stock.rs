@@ -61,6 +61,7 @@ fn controls(part: &[Triangle], blind: Toolpath, ride: impl Fn(Option<StockEnv>, 
             r_out: 10.0,
             clearance: 1.0,
             s_top: frame.station_of(top),
+            s_bot: f64::NAN,
         })
     };
     let short = ride(stock(40.0), 40.0);
@@ -110,6 +111,7 @@ fn controls(part: &[Triangle], blind: Toolpath, ride: impl Fn(Option<StockEnv>, 
             r_out: 14.0,
             clearance: 1.0,
             s_top: frame.station_of(48.0),
+            s_bot: f64::NAN,
         }),
         40.0,
     );
@@ -235,6 +237,7 @@ fn a_wide_stock_ladder_drops_air_rungs_outside_a_restricted_window() {
             r_out: 14.0,
             clearance: 1.0,
             s_top: frame.station_of(48.0),
+            s_bot: f64::NAN,
         }),
     )
     .expect("windowed multipass");

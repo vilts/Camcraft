@@ -81,7 +81,10 @@ fn mark_z(state: &State) -> Option<f64> {
     let src = camcraft_app::model::find_by_name(&state.world, &state.op_ui.name)
         .and_then(|e| camcraft_app::model::operation_of(&state.world, &e))
         .map(|o| (o.setup, o.src))?;
-    operation::region_z(&state.world, src.0.as_deref(), Some(&src.1), &state.op_ui.params)
+    // A per-frame display read: the sketch Z span may come from the frame memo.
+    operation::display_heights(|| {
+        operation::region_z(&state.world, src.0.as_deref(), Some(&src.1), &state.op_ui.params)
+    })
 }
 
 /// Every mark of the group this frame (empty when not [`active`]).
@@ -106,7 +109,7 @@ pub fn boundary_marks(state: &State, aspect: f64) -> Vec<Mark> {
         let width = if target { 4.0 } else { 3.0 };
         for g in &e.picks {
             let mut segs = Vec::new();
-            feature_segments(state, &g.entity, g.feature, aspect, &mut segs);
+            feature_segments(state, &g.entity, g.feature.clone(), aspect, &mut segs);
             // An open boundary's edges draw dashed - told apart from a
             // closed loop by shape, not by colour alone.
             for (a, b) in segs {
@@ -147,10 +150,10 @@ pub fn boundary_marks(state: &State, aspect: f64) -> Vec<Mark> {
     }
     if state.boundary_pick.is_some()
         && let Some(h) = &state.hover
-        && let Some(f) = h.feature
+        && let Some(ref f) = h.feature
     {
         let mut segs = Vec::new();
-        feature_segments(state, &h.entity, f, aspect, &mut segs);
+        feature_segments(state, &h.entity, f.clone(), aspect, &mut segs);
         out.extend(segs.into_iter().map(|(a, b)| Mark { a, b, rgb: overlay(Overlay::Hover), width: 2.5, kind: MarkKind::Hover }));
     }
     out

@@ -64,6 +64,7 @@ fn swept(dex: &Dexel, mark: &Mark) -> Option<Dexel> {
         stock_z: f64::INFINITY,
         tiles: vec![None; dex.tiles.len()],
         history: None,
+        laid: None,
     };
     simulate(&mut s, &[mark.op]).ok()?;
     Some(s)

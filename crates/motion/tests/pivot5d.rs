@@ -36,6 +36,7 @@ fn p3(x: f64, y: f64, z: f64) -> Point3 {
 
 fn finish(pattern: FinishPattern, top_z: f64, bottom_z: f64) -> Finish3DParams {
     Finish3DParams {
+        gap_link: camcraft_motion::finishing3d::GapLink::Jump,
         pattern,
         stepover: Some(2.0),
         tool_diameter: 2.0 * R,
@@ -53,6 +54,7 @@ fn finish(pattern: FinishPattern, top_z: f64, bottom_z: f64) -> Finish3DParams {
         entry_ramp: false,
         steep_stepover: None,
         pencil_reference: None,
+        waterlines: true,
     }
 }
 
@@ -175,6 +177,7 @@ fn slab_with_boss() -> Vec<Triangle> {
 
 fn rough_params() -> Pocket3DParams {
     Pocket3DParams {
+        pass_start: Default::default(),
         links: camcraft_motion::links::Links::ROUGH3D,
         tool_diameter: 2.0 * R,
         stepover: 2.5,
@@ -560,4 +563,83 @@ fn contour_curve_balls_are_the_station_balls() {
         // air by design, so measure the feeds.
         assert_pivot(name, measure_kinds(&plan, &got, &facets, R, |k| k == MoveKind::Feed));
     }
+}
+
+/// #3414: the approach never turns the rotaries while it descends.
+/// The first pose posts as its own zero-travel rapid (the swing) on
+/// the hop plane BEFORE the plunge, and the plunge holds the pose the
+/// swing already stated. The law over the whole stream: a pose change
+/// never rides the move that crosses from air to material - every cut
+/// move that follows a rapid holds the pose that rapid travelled
+/// under. The leans between two cut moves keep the modal law: the
+/// tool tilts while it is already in the cut, never on the way in.
+fn no_pose_change_rides_the_air_to_cut_move(name: &str, path: &Toolpath) {
+    let mut prev_axis: Option<[f64; 3]> = None;
+    let mut prev_kind = MoveKind::Rapid;
+    for (i, m) in path.moves.iter().enumerate() {
+        if m.kind != MoveKind::Rapid && prev_kind == MoveKind::Rapid {
+            assert_eq!(
+                m.axis, prev_axis,
+                "{name}: move {i} turns the rotaries while it reaches the part"
+            );
+        }
+        prev_axis = m.axis;
+        prev_kind = m.kind;
+    }
+}
+
+fn is_upright(a: [f64; 3]) -> bool {
+    a[0].abs() < 1e-9 && a[1].abs() < 1e-9
+}
+
+#[test]
+fn the_approach_rotates_before_it_descends() {
+    let facets = box_facets([0.0, 0.0, 0.0], [40.0, 40.0, 15.0]);
+    let cp = CurveParams {
+        tool_diameter: 2.0 * R,
+        clearance_z: 25.0,
+        retract_z: None,
+        feed: 500.0,
+        plunge_feed: 100.0,
+        climb: true,
+    };
+    let chain = vec![p3(5.0, 0.0, 15.0), p3(20.0, 0.0, 15.0), p3(35.0, 0.0, 15.0)];
+    let got = contour_curve(&[chain], &facets, &cp, &control(), None).unwrap();
+    no_pose_change_rides_the_air_to_cut_move("curve edge", &got);
+    // The swing itself: a zero-travel rapid that states the first
+    // lean, ahead of every cut move.
+    let swing = got
+        .moves
+        .iter()
+        .position(|m| m.kind == MoveKind::Rapid && m.from == m.to && m.axis.is_some_and(|a| !is_upright(a)))
+        .unwrap_or_else(|| panic!("no zero-travel rotary swing before the first descend"));
+    let first_cut = got.moves.iter().position(|m| m.kind != MoveKind::Rapid).unwrap();
+    assert!(swing < first_cut, "the swing posted after the first cut move");
+    // The plunge descends under the pose the swing stated.
+    let plunge = &got.moves[first_cut];
+    assert_eq!(plunge.kind, MoveKind::Plunge, "the approach descend is a plunge");
+    assert_eq!(plunge.axis, got.moves[swing].axis, "the plunge does not hold the pose the swing stated");
+    // The same law over the STAMP-based kinds.
+    let dome = dome();
+    let fp = finish(FinishPattern::Parallel, 15.0, 9.8);
+    no_pose_change_rides_the_air_to_cut_move("parallel5d", &parallel5d(&dome, &fp, &control(), None).unwrap());
+    no_pose_change_rides_the_air_to_cut_move("flow5d", &flow5d(&dome, &fp, &control(), None).unwrap());
+    let blade = capped_blade();
+    let sp = finish(FinishPattern::Parallel, 11.0, -11.0);
+    no_pose_change_rides_the_air_to_cut_move("swarf5d", &swarf5d(&blade, &sp, &control()).unwrap());
+    // The rough ladder over the slab with a boss: its walls lean and
+    // its floors cut upright, so a floor approach that follows a
+    // link rapid under a lean must swing back to upright at a
+    // standstill first - the upright arms of the stamp (#3414).
+    let slab = slab_with_boss();
+    let region = camcraft_motion::geometry::slice::project(&slab, 64).unwrap();
+    no_pose_change_rides_the_air_to_cut_move(
+        "multiaxis_rough",
+        &multiaxis_rough(&slab, &region, &rough_params(), &control(), None).unwrap(),
+    );
+    // The waterline rings of the dome complete the stamped kinds.
+    no_pose_change_rides_the_air_to_cut_move(
+        "contour5d",
+        &contour5d(&dome, &finish(FinishPattern::Waterline, 14.0, 9.8), &control(), None).unwrap(),
+    );
 }

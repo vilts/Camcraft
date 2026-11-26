@@ -1,15 +1,13 @@
 //! The viewport's pick marks (#1505): one style for what an
 //! operation's Geometry has selected and one, clearly different, for what
 //! the pointer is over - the edge a click would take (the Geometry-list row
-//! hover is main's `interact::row_hover_segments`, #1507). Both
+//! hover is `pick_highlight_mesh::paint_row_hover`, #1507). Both
 //! are screen-space strokes drawn over the model with a dark halo, so they
 //! read on the shaded and the wireframe model in either theme. Hover is
 //! ephemeral view state: nothing here is a command.
 //!
 //! Provenance: our own overlay styling; the stroke widths are plain UI
 //! choices, no vendor material consulted.
-
-use camcraft_app::operation::FeatureSel;
 
 use crate::egui_app::ground_ink::{Overlay, overlay};
 use crate::state::State;
@@ -25,18 +23,6 @@ pub const HALO_EXTRA_PX: f32 = 2.5;
 /// or a dark model.
 pub const HALO_ALPHA: u8 = 200;
 
-/// Screen segments of the selected picks (viewport uv), points excluded:
-/// those draw as their own diamonds (`vertex_pick::picked_point_marks`).
-pub(crate) fn selected_segments(state: &State, aspect: f64) -> Vec<([f32; 2], [f32; 2])> {
-    let mut out = Vec::new();
-    for g in crate::interact::shown_picks(state) {
-        if !matches!(g.feature, FeatureSel::Vertex(_)) {
-            crate::interact::feature_segments(state, &g.entity, g.feature, aspect, &mut out);
-        }
-    }
-    out
-}
-
 /// Paint the selected picks, then the hover over them. `to_px` maps a
 /// viewport uv into the pane; `ink` turns an overlay rgb into a colour.
 pub(crate) fn paint(
@@ -47,6 +33,18 @@ pub(crate) fn paint(
     ink: impl Fn([f32; 3]) -> egui::Color32,
 ) {
     let halo = egui::Color32::from_black_alpha(HALO_ALPHA);
+    crate::pick_highlight_mesh::paint_selected(
+        painter,
+        state,
+        aspect,
+        &to_px,
+        SELECTED_PX,
+        SELECTED_PX + HALO_EXTRA_PX,
+        ink(overlay(Overlay::Pick)),
+        halo,
+    );
+    // The start and exit marks stay plain strokes - a handful of
+    // segments, no feature resolution.
     let stroke = |segs: Vec<([f32; 2], [f32; 2])>, px: f32, rgb: [f32; 3]| {
         for (a, b) in &segs {
             painter.line_segment([to_px(*a), to_px(*b)], egui::Stroke::new(px + HALO_EXTRA_PX, halo));
@@ -55,11 +53,19 @@ pub(crate) fn paint(
             painter.line_segment([to_px(*a), to_px(*b)], egui::Stroke::new(px, ink(rgb)));
         }
     };
-    stroke(selected_segments(state, aspect), SELECTED_PX, overlay(Overlay::Pick));
     let (start_marks, exit_marks) = crate::start_exit_pick::marks(state, aspect);
     stroke(start_marks, SELECTED_PX, overlay(Overlay::Pick));
     stroke(exit_marks, SELECTED_PX, overlay(Overlay::Region));
-    stroke(crate::interact::hover_features(state, aspect), HOVER_PX, overlay(Overlay::Hover));
+    crate::pick_highlight_mesh::paint_hover(
+        painter,
+        state,
+        aspect,
+        &to_px,
+        HOVER_PX,
+        HOVER_PX + HALO_EXTRA_PX,
+        ink(overlay(Overlay::Hover)),
+        halo,
+    );
 }
 
 #[cfg(test)]

@@ -14,8 +14,11 @@ def read_page(path):
 class GuideAfter1995(unittest.TestCase):
     def test_ai_chat_pane_is_described_with_its_limits(self):
         mcp = read_page("automate/mcp.md")
+        # #3271: 028495f5c gave the pane its transport, so the old limit
+        # "no live transport endpoint" is gone; the limits that stay are
+        # the missing key entry form and endpoint field.
         for fact in ("ai chat", "offline only", "undo turn", "allow",
-                     "deny", "no live transport endpoint"):
+                     "deny", "no key entry form", "no endpoint field"):
             with self.subTest(fact=fact):
                 self.assertIn(fact, mcp)
 
@@ -39,6 +42,13 @@ class GuideAfter1995(unittest.TestCase):
         self.assertIn("left-hand tap", tools)
         self.assertIn("tool information", tools)
         self.assertIn("tool library", tools)
+
+    def test_tools_page_covers_pathpilot_and_hurco_tool_tables(self):
+        tools = read_page("set-up/tools.md")
+        for fact in ("pathpilot", "offsets", "pathpilot hub", ".csv",
+                     "hurco", ".tcm", "absolutegaugelength", "t<n>"):
+            with self.subTest(fact=fact):
+                self.assertIn(fact, tools)
 
     def test_contour_slot_and_bore_changes_are_documented(self):
         ops = read_page("operations/operations-2d.md")

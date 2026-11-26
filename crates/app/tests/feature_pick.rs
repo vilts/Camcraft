@@ -194,6 +194,39 @@ fn pick_through_does_pick_the_far_side_edge() {
     }
 }
 
+/// #2636: the picking rule of the "Wireframe, see-through" display mode,
+/// which asks for `through`. Each edge can be picked, front or back. The
+/// edge nearest to the cursor (the ray) wins. Edges at the same distance
+/// from the cursor: the edge nearest to the camera wins.
+#[test]
+fn see_through_takes_the_edge_nearest_the_cursor_then_nearest_the_eye() {
+    let b = body("block", block());
+    let one = std::slice::from_ref(&b);
+    let ys = |pick: &FeaturePick| {
+        let (p, r) = edge_ends(&b, pick);
+        assert!(p[2] == 10.0 && r[2] == 10.0, "a top edge along X, got {p:?} {r:?}");
+        (p[1], r[1])
+    };
+    // A level ray along +Y, 1 mm below the top: the front and the back top
+    // edges are at the same distance from it. The front edge is nearer.
+    let mut level = query([10.0, -100.0, 9.0], [0.0, 1.0, 0.0], Projection::Ortho, PickKinds::EDGES);
+    level.radius = 2.0;
+    level.through = true;
+    let pick = pick_bodies(one, &level).expect("an edge");
+    assert_eq!(ys(&pick), (0.0, 0.0), "the same distance: the edge nearest to the eye");
+    // The same ray climbing: 1 mm from the front top edge, about 0.2 mm
+    // from the back one. The back edge wins, behind the front face.
+    let mut climb = query([10.0, -100.0, 5.0], [0.0, 1.0, 0.04], Projection::Ortho, PickKinds::EDGES);
+    climb.radius = 2.0;
+    climb.through = true;
+    let pick = pick_bodies(one, &climb).expect("an edge");
+    assert_eq!(ys(&pick), (20.0, 20.0), "nearer to the cursor wins over nearer to the eye");
+    // With `through` off the back edge is hidden, and the front edge is taken.
+    climb.through = false;
+    let pick = pick_bodies(one, &climb).expect("the visible edge");
+    assert_eq!(ys(&pick), (0.0, 0.0), "only the edge in sight");
+}
+
 #[test]
 fn the_world_pick_honours_placements() {
     let world = new_world();

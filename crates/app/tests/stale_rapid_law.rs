@@ -64,11 +64,17 @@ fn regenerating_the_old_cache_judges_it_under_the_new_law() {
     let e = model::find_by_name(&world, OP).expect("op");
     assert_eq!(operation::status_of(&world, &e), OpStatus::Ok);
     let tp = model::toolpath_of(&world, &e).expect("path");
+    // #2901: the opening rapid starts over its own entry now, so no
+    // invented line from the WCS origin crosses the stock (the old
+    // `RapidInStock { at: 0 }`). The program is convicted at the same
+    // move for the same cause - the clearance plane Z 8 under the stock
+    // top Z 10 - by the first-traverse law: the machine comes to that
+    // plane from an X/Y it does not know.
     assert!(
-        tp.warnings.iter().any(|w| matches!(w, Warning::RapidInStock { at: 0 })),
+        tp.warnings.contains(&Warning::FirstTraverseLow { at: 0, height_mm: 8.0, top_mm: 10.0, fixture: false, tilted: false }),
         "the traverse at the plane is convicted now: {:?}",
         tp.warnings
     );
     let err = posting::post_setup_unwritten(&world).expect_err("the convicted program must not post");
-    assert!(err.contains("travels through stock"), "{err}");
+    assert!(err.contains(OP) && err.contains("under the stock top at Z10.000") && err.contains("raise the clearance height above Z10.000"), "{err}");
 }

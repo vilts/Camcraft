@@ -101,6 +101,7 @@ fn faced(tool: Tool, chuck: Option<f64>) -> (World, History) {
         stepdown: 0.5,
         feed: 150.0,
         plunge_feed: 80.0,
+        picks: Default::default(),
     };
     let op = CreateOperation::new(&world, "F1", "TN", SrcRef::Entity("bar".into()), params);
     h.execute(&world, op.expect("create"));

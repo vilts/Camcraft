@@ -50,6 +50,13 @@ fn set(world: &World, h: &mut History, name: &str, n: Option<u32>) {
 /// Stock, a part, two end mills (catalog order: EM-0400 first) and one
 /// generated Face per tool, so the program uses both.
 fn two_tool_job() -> (World, History) {
+    tool_job(["EM-0400-2FL", "EM-0600-4FL"])
+}
+
+/// [`two_tool_job`] with the two end mills added in `order` (#2517: a
+/// document order that is not the name order). Face1 still uses EM-0400,
+/// Face2 EM-0600.
+fn tool_job(order: [&str; 2]) -> (World, History) {
     let world = new_world();
     let mut h = History::default();
     let stock = SetStock::new(
@@ -69,7 +76,7 @@ fn two_tool_job() -> (World, History) {
             cube(Point3::new(0.0, 0.0, 0.0), Point3::new(40.0, 40.0, 19.0)),
         ),
     );
-    for t in ["EM-0400-2FL", "EM-0600-4FL"] {
+    for t in order {
         h.execute(&world, AddTool::new(&world, t, tool(t)).expect("tool"));
     }
     for (op, t, z) in [
@@ -78,7 +85,7 @@ fn two_tool_job() -> (World, History) {
     ] {
         let face = OpParams::Face {
             holes: Default::default(),
-            blend_turns: false,
+            blend_turns: false, blend_radius: None,
             tilt: None,
             stepover: 3.0,
             clearance_z: Height::fixed(25.0),
@@ -88,6 +95,7 @@ fn two_tool_job() -> (World, History) {
             feed: 1200.0,
             plunge_feed: 300.0,
             climb: true,
+            picks: Default::default(),
         };
         h.execute(
             &world,
@@ -326,151 +334,22 @@ fn the_project_file_carries_the_number_from_add() {
     );
 }
 
-fn post_nc(world: &World, tag: &str) -> String {
-    let path = std::env::temp_dir().join(format!(
-        "camcraft_tool_numbers_{tag}_{}.nc",
-        std::process::id()
-    ));
-    let posted = posting::post_setup(world, &path);
-    let _ = std::fs::remove_file(&path);
-    posted.expect("program posts").program
-}
-
 #[test]
-fn adding_an_earlier_sorting_tool_keeps_posted_t_and_h_words() {
-    let (world, mut h) = two_tool_job();
-    let before_tools = posted_tools(&world).expect("posts before");
-    let before_nc = post_nc(&world, "before_add");
-    assert!(
-        before_nc.contains("T01")
-            && before_nc.contains("H01")
-            && before_nc.contains("T02")
-            && before_nc.contains("H02"),
-        "{before_nc}"
-    );
-
-    // Adding a tool whose name sorts earlier than both existing tools
-    // (and one sorting between them) must not renumber any existing tool.
-    h.execute(
-        &world,
-        AddTool::new(&world, "AA-FIRST", tool("EM-0600-4FL")).expect("add AA-FIRST"),
-    );
-    h.execute(
-        &world,
-        AddTool::new(&world, "EM-0500-MID", tool("EM-0600-4FL")).expect("add EM-0500-MID"),
-    );
-
-    let after_tools = posted_tools(&world).expect("posts after");
-    let after_nc = post_nc(&world, "after_add");
-    assert_eq!(
-        after_tools, before_tools,
-        "existing tools keep their posted T numbers after adding earlier-sorting tools"
-    );
-    assert_eq!(
-        after_nc, before_nc,
-        "re-posting the same operations emits the exact same T/H program"
-    );
-    let aa = tool_numbers::number_of(&world, "AA-FIRST").expect("AA-FIRST number");
-    let mid = tool_numbers::number_of(&world, "EM-0500-MID").expect("EM-0500-MID number");
-    assert_ne!(aa, before_tools[0].0);
-    assert_ne!(aa, before_tools[1].0);
-    assert_ne!(mid, before_tools[0].0);
-    assert_ne!(mid, before_tools[1].0);
-    assert_ne!(aa, mid);
+fn an_unnumbered_tool_with_no_free_number_is_refused_by_name() {
+    // #2517: every number taken, one tool without its own - it has no
+    // number to post as, so the law refuses it by name (it once took u32::MAX).
+    let mut tools: Vec<(String, Option<u32>)> =
+        (1..=tool_numbers::MAX).map(|n| (format!("T{n}"), Some(n))).collect();
+    tools.push(("LAST".to_owned(), None));
+    let err = tool_numbers::assign(tools).expect_err("no number is free");
+    assert!(err.contains("tool 'LAST'") && err.contains(tool_numbers::RANGE_TEXT), "{err}");
+    // With a number free, the unnumbered tool takes the lowest one, in order.
+    let tools = vec![("A".to_owned(), Some(1)), ("B".to_owned(), None), ("C".to_owned(), Some(2))];
+    let got = tool_numbers::assign(tools).expect("a number is free");
+    assert_eq!(got, vec![("A".to_owned(), 1), ("B".to_owned(), 3), ("C".to_owned(), 2)]);
 }
 
-#[test]
-fn deleting_an_earlier_tool_keeps_remaining_posted_t_and_h_words() {
-    let (world, mut h) = two_tool_job();
-    // Add an unused earlier tool, post, then delete it: the used tools
-    // keep their exact posted T/H words.
-    h.execute(
-        &world,
-        AddTool::new(&world, "AA-UNUSED", tool("EM-0600-4FL")).expect("add unused"),
-    );
-    let before_tools = posted_tools(&world).expect("posts before delete");
-    let before_nc = post_nc(&world, "before_delete");
+// ---- Numbers that never shift (#2442) and legacy loads ---------------
 
-    h.execute(
-        &world,
-        DeleteTool::new(&world, "AA-UNUSED").expect("delete AA-UNUSED"),
-    );
-    assert_eq!(posted_tools(&world).expect("posts after delete"), before_tools);
-    assert_eq!(post_nc(&world, "after_delete"), before_nc);
-
-    // Undo restores the deleted tool without shifting the others either.
-    assert!(h.undo(&world));
-    assert_eq!(posted_tools(&world).expect("posts after undo"), before_tools);
-    assert_eq!(post_nc(&world, "after_undo"), before_nc);
-
-    // Also delete a tool added before EM-0600-4FL (in a single-op program
-    // on EM-0600-4FL) and verify EM-0600-4FL keeps T2.
-    let (w2, mut h2) = two_tool_job();
-    let em6_before = tool_numbers::number_of(&w2, "EM-0600-4FL").expect("EM-0600-4FL number");
-    h2.execute(&w2, camcraft_app::commands::DeleteOperation::new(&w2, "Face1").expect("del Face1"));
-    h2.execute(&w2, DeleteTool::new(&w2, "EM-0400-2FL").expect("del EM-0400-2FL"));
-    h2.execute(&w2, camcraft_app::commands::GenerateOperation::new(&w2, "Face2").expect("regen Face2"));
-    assert_eq!(tool_numbers::number_of(&w2, "EM-0600-4FL"), Some(em6_before));
-    assert_eq!(posted_tools(&w2).expect("posts remaining"), vec![(em6_before, "EM-0600-4FL".to_owned())]);
-}
-
-#[test]
-fn legacy_unnumbered_project_keeps_posted_numbers_after_add_and_delete() {
-    // A project saved before #2442 without "number" keys on its tools.
-    let (seed, _h) = two_tool_job();
-    let raw = project::save_text(&seed).expect("save seed");
-    let mut json: serde_json::Value = serde_json::from_str(&raw).expect("parse json");
-    for e in json["entities"].as_array_mut().expect("entities") {
-        if let Some(t) = e.get_mut("tool").and_then(serde_json::Value::as_object_mut) {
-            t.remove("number");
-        }
-    }
-    let world = new_world();
-    project::open(&world, &json.to_string()).expect("load unnumbered legacy project");
-
-    let before_tools = posted_tools(&world).expect("posts legacy");
-    let before_nc = post_nc(&world, "legacy_before");
-
-    let mut h = History::default();
-    h.execute(
-        &world,
-        AddTool::new(&world, "AA-FIRST", tool("EM-0600-4FL")).expect("add AA-FIRST"),
-    );
-    assert_eq!(
-        posted_tools(&world).expect("posts after add"),
-        before_tools,
-        "legacy project tools keep their numbers when an earlier-sorting tool is added"
-    );
-    assert_eq!(post_nc(&world, "legacy_after_add"), before_nc);
-
-    h.execute(
-        &world,
-        DeleteTool::new(&world, "AA-FIRST").expect("delete AA-FIRST"),
-    );
-    assert_eq!(posted_tools(&world).expect("posts after delete"), before_tools);
-    assert_eq!(post_nc(&world, "legacy_after_delete"), before_nc);
-
-    h.execute(&world, camcraft_app::commands::DeleteOperation::new(&world, "Face1").expect("del Face1"));
-    h.execute(&world, DeleteTool::new(&world, "EM-0400-2FL").expect("del EM-0400-2FL"));
-    h.execute(&world, camcraft_app::commands::GenerateOperation::new(&world, "Face2").expect("regen Face2"));
-    assert_eq!(
-        posted_tools(&world).expect("posts after deleting first legacy tool"),
-        vec![before_tools[1].clone()]
-    );
-}
-
-#[test]
-fn importing_earlier_sorting_tool_keeps_existing_numbers() {
-    let (world, mut h) = two_tool_job();
-    let before_tools = posted_tools(&world).expect("posts before import");
-    let before_nc = post_nc(&world, "before_import");
-
-    let lib = vec![LibraryTool::bare("AA-IMPORTED", tool("EM-0800-4FL"))];
-    h.execute(&world, ImportTools::new(&world, lib).expect("import"));
-
-    assert_eq!(posted_tools(&world).expect("posts after import"), before_tools);
-    assert_eq!(post_nc(&world, "after_import"), before_nc);
-    let imported = tool_numbers::number_of(&world, "AA-IMPORTED").expect("imported tool number");
-    assert_eq!(number(&world, "AA-IMPORTED"), Some(imported));
-    assert!(!before_tools.iter().any(|(n, _)| *n == imported));
-}
+#[path = "tool_numbers/stable.rs"]
+mod stable;

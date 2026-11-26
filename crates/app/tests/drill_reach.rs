@@ -123,6 +123,7 @@ fn drill_op(src: &str, top: f64, clear: f64, holes: Vec<Hole>, cross: Vec<CrossH
             plunge_feed: 80.0,
             holes,
             cross,
+            picks: Default::default(),
         },
         stamp: None,
         setup: None,

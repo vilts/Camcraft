@@ -87,7 +87,7 @@ fn faced_doc() -> (World, History) {
         "Face1",
         "EM-0400-2FL",
         SrcRef::Stock,
-        OpParams::Face { holes: Default::default(), tilt: None, blend_turns: false,
+        OpParams::Face { holes: Default::default(), tilt: None, blend_turns: false, blend_radius: None,
             stepover: 3.0,
             clearance_z: Height::fixed(25.0),
             cut_z: Height::fixed(18.0),
@@ -96,6 +96,7 @@ fn faced_doc() -> (World, History) {
             feed: 1200.0,
             plunge_feed: 300.0,
             climb: true,
+            picks: Default::default(),
         },
     );
     history.execute(&world, cmd.expect("create face"));
@@ -602,16 +603,16 @@ fn a_coolant_list_at_the_tooling_root_also_reads() {
 fn a_kind_that_is_not_a_kind_refuses_at_the_door() {
     // The one gate is parse_mch: an unreadable word never reaches a
     // mounted machine, so nothing downstream re-litigates it.
-    let bad = r#"{"general": {"kind": "router"}}"#;
+    let bad = r#"{"general": {"kind": "drill press"}}"#;
     let err = parse_mch(bad).expect_err("a word the grammar does not know");
-    assert!(err.contains("router"), "the refusal names the word: {err}");
+    assert!(err.contains("drill press"), "the refusal names the word: {err}");
     let notaword = r#"{"general": {"kind": {"surprise": 1}}}"#;
     assert!(parse_mch(notaword).is_err(), "a table is not a declaration");
     let empty = r#"{"general": {"kind": ""}}"#;
     assert_eq!(parse_mch(empty).expect("empty states nothing").kind, None);
     // Hand-edited project files face the loader's is_sane gate.
     let smuggled = Machine {
-        kind: Some("router".to_string()),
+        kind: Some("drill press".to_string()),
         ..Default::default()
     };
     assert!(!smuggled.is_sane());
@@ -641,7 +642,7 @@ fn the_changer_counts_the_distinct_tools() {
             "Face2",
             "EM-0600-4FL",
             SrcRef::Stock,
-            OpParams::Face { holes: Default::default(), tilt: None, blend_turns: false,
+            OpParams::Face { holes: Default::default(), tilt: None, blend_turns: false, blend_radius: None,
                 stepover: 3.0,
                 clearance_z: Height::fixed(25.0),
                 cut_z: Height::fixed(18.0),
@@ -650,6 +651,7 @@ fn the_changer_counts_the_distinct_tools() {
                 feed: 1200.0,
                 plunge_feed: 300.0,
                 climb: true,
+                picks: Default::default(),
             },
         )
         .expect("second op"),
@@ -723,6 +725,7 @@ fn every_shipped_machine_mounts_and_speaks_its_declaration() {
     use camcraft_app::machine::{Kind, kind};
     let expectations = [
         ("VMC 3-axis", Kind::Mill),
+        ("Fehlmann Picomax 55 (iTNC 530)", Kind::Mill),
         ("Tilt-head 5-axis", Kind::Mill),
         ("Mill-turn", Kind::MillTurn),
         ("Lathe", Kind::Lathe),
@@ -744,6 +747,8 @@ fn every_shipped_machine_mounts_and_speaks_its_declaration() {
         ("Tormach 1100M+", Kind::Mill),
         ("grblHAL 3-axis", Kind::Mill),
         ("TinyG 3-axis", Kind::Mill),
+        ("LinuxCNC 3-axis", Kind::Mill),
+        ("Grbl 3-axis", Kind::Mill),
         ("Tormach 24R", Kind::Mill),
         ("Tormach xsTECH Pro", Kind::Mill),
         ("Tormach xsTECH", Kind::Mill),
@@ -757,6 +762,7 @@ fn every_shipped_machine_mounts_and_speaks_its_declaration() {
         ("Sienci AltMill 2x4", Kind::Mill),
         ("Sienci AltMill 4x4", Kind::Mill),
         ("Sienci AltMill 4x8", Kind::Mill),
+        ("Ooznest WorkBee 1000x1500 (Estlcam)", Kind::Mill),
         ("Doosan DNM 5700", Kind::Mill),
         ("Doosan DNM 5700 + rotary table", Kind::Mill),
         ("Haas VF-2", Kind::Mill),
@@ -764,8 +770,10 @@ fn every_shipped_machine_mounts_and_speaks_its_declaration() {
         ("Haas Mini Mill", Kind::Mill),
         ("Haas DT-1", Kind::Mill),
         ("Haas DM-1", Kind::Mill),
+        ("EMCO VMC-200", Kind::Mill),
         ("Sinker EDM 3-axis (template)", Kind::SinkerEdm),
         ("Sodick ALC400G", Kind::WireEdm),
+        ("AGIECUT Classic 2S (template)", Kind::WireEdm),
     ];
     assert_eq!(camcraft_app::posting::shipped_machines().expect("the shipped machines read").len(), expectations.len(), "the pane offers what the tests pin");
     for ((name, text), (want_name, want_kind)) in camcraft_app::posting::shipped_machines().expect("the shipped machines read").iter().zip(expectations) {

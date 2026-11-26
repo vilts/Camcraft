@@ -80,11 +80,13 @@ fn drill_from(break_through: Option<f64>, break_through_from: BreakThroughFrom) 
         cross: Vec::new(),
         break_through,
         break_through_from,
+        picks: Default::default(),
     }
 }
 
 fn bore(break_through: Option<f64>) -> OpParams {
     OpParams::Bore {
+        pass_start: camcraft_app::machining2d::PassStart::Auto,
         links: camcraft_app::links::Links::PLANAR,
         clearance_z: Height::fixed(30.0),
         retract_z: None,
@@ -98,6 +100,7 @@ fn bore(break_through: Option<f64>) -> OpParams {
         tolerance: 0.01,
         holes: vec![hole()],
         break_through,
+        picks: Default::default(),
     }
 }
 
@@ -379,7 +382,7 @@ fn issue_2441_through_hole_drill_adds_point_length_and_posts_full_breakthrough()
     let face = OpParams::Face {
         holes: camcraft_app::machining2d::FaceHoles::CutAir,
         tilt: None,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         stepover: 4.0,
         clearance_z: Height::of(HeightReference::TopOfStock, 15.0),
         cut_z: Height::of(HeightReference::TopOfModel, 0.0),
@@ -388,6 +391,7 @@ fn issue_2441_through_hole_drill_adds_point_length_and_posts_full_breakthrough()
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
+        picks: Default::default(),
     };
     h.execute(&world, CreateOperation::new(&world, "F1", "EM-1000-4FL", SrcRef::Stock, face).expect("create face"));
     h.execute(&world, GenerateOperation::new(&world, "F1").expect("gen face"));
@@ -407,6 +411,7 @@ fn issue_2441_through_hole_drill_adds_point_length_and_posts_full_breakthrough()
         cross: Vec::new(),
         break_through: None,
         break_through_from: BreakThroughFrom::FullDiameter,
+        picks: Default::default(),
     };
     let (tp, _) = run(&world, &mut h, "D1", "DR-0600", p);
     let want_world_z = -(1.0 + point_len);
@@ -455,6 +460,7 @@ fn issue_2441_stock_sim_models_drill_point_cone_lip_when_stopped_at_floor() {
         cross: Vec::new(),
         break_through: None,
         break_through_from: BreakThroughFrom::FullDiameter,
+        picks: Default::default(),
     };
     let _ = run(&world, &mut h, "D1", "DR-0600", p);
     let col_z = column_max_z_in_ring(&world, 2.2, 2.7).expect("columns inside r=2.5 ring");

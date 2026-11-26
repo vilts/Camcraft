@@ -8,7 +8,10 @@
 //! Gate map (#2435): covers app::operation (material_source, the
 //! Chamfer2D region), motion::machining2d (chamfer_ride), app::stock_sim
 //! (breaks::program_breaks), sim::stock_sim (wall_anchor::on_walls),
-//! app::posting (verification_gate).
+//! app::posting (verification_gate). #2596: also
+//! sim::stock_sim (wall_anchor::models_a_bevel), app::stock_sim_breaks
+//! (auto_edges) - a no-pick chamfer leaves a sharp edge beside a
+//! modelled chamfer alone, and a cut there is a gouge.
 
 use camcraft_app::cl::MoveKind;
 use camcraft_app::commands::{AddTool, CreateOperation, GenerateOperation, History, ImportModel, SetStock};
@@ -61,7 +64,8 @@ fn chamfer(width: f64) -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
+        picks: Default::default(),
     };
     let mut p = operation::retype_params(&base, OpType::Chamfer2D.ordinal());
     if let OpParams::Chamfer2D { width: w, .. } = &mut p {
@@ -214,5 +218,78 @@ fn a_no_pick_chamfer_on_a_rectangular_pocket_stays_clean() {
     let tips = tips(&world);
     assert!(!tips.is_empty(), "the chamfer rides the pocket");
     assert!(tips.iter().any(|p| on_rect(*p, 10.0, 10.0)), "the ride includes the pocket rim");
+    // #2596: a model with no modelled bevel at all still breaks every
+    // top edge (#303) - the pocket rim here is the op's own break.
     assert_eq!(posting::verification_gate(&world), Vec::<String>::new(), "the legal pocket keeps its credit");
+}
+
+/// #2596's plate: 60 x 40 x 10 centred in plan, a modelled 1 x 45
+/// chamfer on its four outer top edges (walls x = +-30, y = +-20 up to
+/// z 9, top face inset 1 mm), and a SHARP 20 x 10 pocket down to z 5.
+fn bevelled_plate_with_sharp_pocket() -> Mesh {
+    let ring = |hx: f64, hy: f64, z| [Point3::new(-hx, -hy, z), Point3::new(hx, -hy, z), Point3::new(hx, hy, z), Point3::new(-hx, hy, z)];
+    let (bottom, wall, top) = (ring(30.0, 20.0, 0.0), ring(30.0, 20.0, 9.0), ring(29.0, 19.0, 10.0));
+    let (rim, floor) = (ring(10.0, 5.0, 10.0), ring(10.0, 5.0, 5.0));
+    let mut facets = Vec::new();
+    quad(&mut facets, bottom[3], bottom[2], bottom[1], bottom[0]);
+    quad(&mut facets, floor[0], floor[1], floor[2], floor[3]);
+    for i in 0..4 {
+        let j = (i + 1) % 4;
+        quad(&mut facets, bottom[i], bottom[j], wall[j], wall[i]);
+        quad(&mut facets, wall[i], wall[j], top[j], top[i]);
+        quad(&mut facets, top[i], top[j], rim[j], rim[i]);
+        quad(&mut facets, rim[i], rim[j], floor[j], floor[i]);
+    }
+    Mesh::from_facets(facets)
+}
+
+#[test]
+fn a_no_pick_chamfer_leaves_a_sharp_pocket_beside_a_modelled_chamfer_alone() {
+    // #2596: the outer edge carries the model's chamfer, the pocket rim
+    // is sharp in the model. The cone rides the outer wall only.
+    let world = job_on_mesh(1.0, bevelled_plate_with_sharp_pocket());
+    let tips = tips(&world);
+    assert!(!tips.is_empty(), "the chamfer rides the modelled chamfer");
+    for p in &tips {
+        assert!((p.z - 9.0).abs() <= 1e-6, "tip at the corner depth: {p:?}");
+        assert!(on_rect(*p, 30.0, 20.0), "tip on the outer wall, never on the pocket rim: {p:?}");
+    }
+    assert_eq!(posting::verification_gate(&world), Vec::<String>::new(), "the modelled chamfer's own ride posts");
+}
+
+#[test]
+fn a_no_pick_chamfer_cut_into_a_sharp_pocket_rim_is_a_gouge() {
+    // #2596: the old ride, put back by hand - the outer ride plus a copy
+    // carried onto the sharp pocket rim (+-10, +-5), with its declared
+    // break. The model leaves that rim sharp: no credit, a gouge.
+    let world = job_on_mesh(1.0, bevelled_plate_with_sharp_pocket());
+    let e = model::find_by_name(&world, "OP").expect("op");
+    let mut t = model::toolpath_of(&world, &e).expect("cached");
+    let onto_rim = |p: Point3| Point3::new(p.x / 3.0, p.y / 4.0, p.z);
+    let rim_moves: Vec<_> = t
+        .path
+        .moves
+        .iter()
+        .map(|m| {
+            let mut m = *m;
+            (m.from, m.to) = (onto_rim(m.from), onto_rim(m.to));
+            m
+        })
+        .collect();
+    let rim_breaks: Vec<_> = t
+        .path
+        .breaks
+        .iter()
+        .map(|b| {
+            let mut b = b.clone();
+            b.edge.iter_mut().for_each(|q| *q = onto_rim(*q));
+            b
+        })
+        .collect();
+    assert!(!rim_breaks.is_empty(), "the chamfer declares its loop");
+    t.path.moves.extend(rim_moves);
+    t.path.breaks.extend(rim_breaks);
+    e.entity_view(&world).set(camcraft_app::schema::Toolpath::new(t.path, t.warnings));
+    let line = gouge_line(&world).expect("a chamfer into the sharp pocket rim posted");
+    assert!(line.contains("worst 0.") || line.contains("worst 1."), "charged at the V's depth: {line}");
 }

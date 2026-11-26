@@ -303,8 +303,12 @@ fn load_machine(env: &mut Env, a: &Map<String, Value>) -> Result<Value, String> 
         Some(s) => crate::machine::of_setup(&env.world, Some(s)),
         None => crate::machine::document_of(&env.world),
     };
+    // #2374: the mount never changes the post; it says which one the machine asks for.
+    let offered = target.map(str::to_owned).or_else(|| crate::setup::active(&env.world));
+    let post_offer = super::post_offer_view::offer_view(&env.world, offered.as_deref());
     Ok(json!({
         "setup": target,
+        "post_offer": post_offer,
         "machine": m.as_ref().map(|m| m.model.clone()),
         "path": (!path.is_empty()).then_some(path),
         // #828: the holder system and the holder new tools start with.

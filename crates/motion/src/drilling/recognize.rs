@@ -21,13 +21,12 @@
 //! round wall wherever its axis points. No vendor feature-
 //! recognition strategy consulted.
 
-use super::cylinder::{cmp64, coord, fit_circle_uv, hypot, ray_hit, same_surface, vkey, AXES};
+use super::cylinder::{coord, fit_circle_uv, hypot, same_surface, vkey, AXES};
+use super::mouth::ray_open;
 use super::hole::{CrossHole, Hole};
 
 use std::collections::HashMap;
 
-use crate::cl::lattice;
-use crate::geo2d::Point2;
 use crate::geometry::{Point3, Triangle};
 
 /// Facets with a normal-component at or above this along the
@@ -49,9 +48,9 @@ pub(super) const R_MIN: f64 = 0.05;
 
 pub(super) const R_MAX: f64 = 500.0;
 
-/// Two wall components this close in the transverse plane are one
-/// hole stepped along its axis (counterbore, shallow chamfer): fold
-/// their spans, keep the narrow radius - the actual bore.
+/// Transverse tolerance for coaxial wall components. Only touching or
+/// overlapping axial spans can fold into one stepped hole; separated
+/// blind holes keep their own spans and mouths.
 pub(super) const MERGE_DXY: f64 = 0.05;
 
 /// A closed rim spans this much of the compass; a flat wall's vertices
@@ -89,12 +88,11 @@ pub fn recognize(tris: &[Triangle]) -> Vec<Hole> {
     analyze(tris).0
 }
 
-/// The cross-drilled holes - the same walls, standing on a radial
-/// (X or Y) axis, the lathe's live tooling plunging along it. The
-/// mill-side law above is untouched by their finding, and a wall
-/// reports where it fits: a cylinder about Z projects to a band in
-/// YZ and fails X's fit, so the three passes agree by geometry, not
-/// by a priority rule.
+/// Directed findings: radial X/Y holes from either side, plus Z holes
+/// whose mouth is below their blind floor. Each record preserves its
+/// own mouth, inward plunge direction and depth. The live-tooling
+/// generator still refuses Z plunges; recognition does not promise
+/// that the mounted machine can generate every detected direction.
 #[must_use]
 pub fn recognize_cross(tris: &[Triangle]) -> Vec<CrossHole> {
     analyze(tris).1
@@ -131,54 +129,10 @@ fn analyze(tris: &[Triangle]) -> (Vec<Hole>, Vec<CrossHole>) {
         found[ci] = analyze_axis(tris, along, u, v, mins[along], false);
     }
 
-    // Z readings: the original Hole path - snap, fold steps, sort.
-    let mut holes: Vec<Hole> = found[0]
-        .iter()
-        .map(|f| Hole {
-            xy: Point2::new(lattice(f.cu), lattice(f.cv)),
-            radius: lattice(f.rad),
-            entry_z: lattice(f.smax),
-            floor_z: lattice(f.smin),
-            through: f.through,
-            stepped: false, // a single wall is not a step; merge_z decides
-        })
-        .collect();
-    holes = merge_z(holes, mins[2]);
-
-    // Radial readings: fold same-axis steps at Found level (spans
-    // stay absolute there), then state each as a CrossHole: mouth
-    // at the wall's highest axis coordinate, plunge inward.
-    let mut cross: Vec<CrossHole> = Vec::new();
-    for (ci, along) in [(1usize, 0usize), (2, 1)] {
-        let (u, v) = (AXES[ci].1, AXES[ci].2);
-        for f in merge_found(found[ci].clone()) {
-            let mut origin = Point3::new(0.0, 0.0, 0.0);
-            set(&mut origin, u, lattice(f.cu));
-            set(&mut origin, v, lattice(f.cv));
-            set(&mut origin, along, lattice(f.smax));
-            let mut dir = Point3::new(0.0, 0.0, 0.0);
-            set(&mut dir, along, -1.0);
-            cross.push(CrossHole {
-                origin,
-                dir,
-                radius: lattice(f.rad),
-                entry_d: 0.0,
-                floor_d: lattice(f.smin - f.smax),
-                through: f.through,
-            });
-        }
-    }
-    cross.sort_by(|a, b| {
-        cmp64(a.origin.x + a.origin.y, b.origin.x + b.origin.y) // +X holes, then +Y
-            .then(cmp64(a.origin.z, b.origin.z))
-            .then(cmp64(a.origin.y, b.origin.y))
-            .then(cmp64(a.origin.x, b.origin.x))
-            .then(cmp64(a.radius, b.radius))
-    });
-    (holes, cross)
+    super::merge::collect(tris, found, mins[2])
 }
 
-fn set(p: &mut Point3, i: usize, val: f64) {
+pub(super) fn set(p: &mut Point3, i: usize, val: f64) {
     match i {
         0 => p.x = val,
         1 => p.y = val,
@@ -391,47 +345,6 @@ fn classify(
     })
 }
 
-/// Parity ray for the radial through-law: from a point halfway
-/// between the hole's floor and the mesh's far extreme, offset
-/// half a radius off the axis (so it rides the tunnel, never the
-/// wall), shoot along +axis and count mesh crossings. A solid
-/// floor ahead makes the point's side material (an odd count to
-/// infinity); an open exit - the tunnel continuous through faces
-/// whose patches the hole itself removed - reads even. Tangencies
-/// double-count here, which is why the offset rides the 3-4-5
-/// bearing, not an axis: the floor's fan seams and the wall's rim
-/// meridians stand at `k * 360/N` degrees, and atan2(3, 4) is no
-/// rational fraction of the turn, so the ray can never land on two
-/// facets of one surface at once. A misread reads blind, and a
-/// blind through-hole's floor sits at the wall's own deepest
-/// vertex - tangent, complete, just short of the exit allowance.
-#[allow(clippy::too_many_arguments)] // flat geometry reads for one parity vote, like the doors' frames
-fn ray_open(
-    tris: &[Triangle],
-    along: usize,
-    u: usize,
-    v: usize,
-    cu: f64,
-    cv: f64,
-    rad: f64,
-    smin: f64,
-    mesh_min: f64,
-) -> bool {
-    let mut o = Point3::new(0.0, 0.0, 0.0);
-    set(&mut o, along, (smin + mesh_min) * 0.5);
-    set(&mut o, u, cu + rad * 0.4);
-    set(&mut o, v, cv + rad * 0.3);
-    let mut d = Point3::new(0.0, 0.0, 0.0);
-    set(&mut d, along, 1.0);
-    let mut hits = 0usize;
-    for t in tris {
-        if ray_hit(o, d, t) {
-            hits += 1;
-        }
-    }
-    hits.is_multiple_of(2)
-}
-
 /// Union-find, path-halving, on the vertex table.
 fn union(parent: &mut [usize], i: usize, j: usize) {
     let (ra, rb) = (root(parent, i), root(parent, j));
@@ -446,99 +359,4 @@ fn root(parent: &mut [usize], mut i: usize) -> usize {
         i = parent[i];
     }
     i
-}
-
-/// Merge Z-stepped same-axis components (counterbores, shallow
-/// chamfers): one hole, narrowest radius, whole z span. The
-/// pre-F2 fold, run on the snapped Holes exactly as it ran then.
-fn merge_z(holes: Vec<Hole>, mesh_min_z: f64) -> Vec<Hole> {
-    let mut merged: Vec<Hole> = Vec::new();
-    let mut used = vec![false; holes.len()];
-    for i in 0..holes.len() {
-        if used[i] {
-            continue;
-        }
-        used[i] = true;
-        let mut h = holes[i];
-        loop {
-            let mut grew = false;
-            for j in 0..holes.len() {
-                if !used[j] && hypot(h.xy.x - holes[j].xy.x, h.xy.y - holes[j].xy.y) <= MERGE_DXY {
-                    used[j] = true;
-                    h = Hole {
-                        xy: Point2::new(
-                            lattice(h.xy.x.min(holes[j].xy.x)),
-                            lattice(h.xy.y.min(holes[j].xy.y)),
-                        ),
-                        radius: h.radius.min(holes[j].radius),
-                        entry_z: h.entry_z.max(holes[j].entry_z),
-                        floor_z: h.floor_z.min(holes[j].floor_z),
-                        through: false,
-                        // The fold keeps the narrow wall and loses the
-                        // wide one - if the radii differ by more than
-                        // the circle-fit noise, say so (M8.3): below
-                        // FIT_TOL the two walls are the same wall as
-                        // far as we can tell, above it the ring is a
-                        // real feature the record cannot show. The
-                        // bore door in cycle.rs reads this flag.
-                        stepped: h.stepped
-                            || (h.radius - holes[j].radius).abs() > FIT_TOL,
-                    };
-                    h.through = (h.floor_z - mesh_min_z).abs() <= 1e-6;
-                    grew = true;
-                }
-            }
-            if !grew {
-                break;
-            }
-        }
-        merged.push(h);
-    }
-    merged.sort_by(|a, b| {
-        cmp64(a.xy.y, b.xy.y)
-            .then(cmp64(a.xy.x, b.xy.x))
-            .then(cmp64(a.radius, b.radius))
-    });
-    merged
-}
-
-/// The same fold for radial counterbores, at Found level so spans
-/// stay absolute: same axis line within MERGE_DXY, mouth at the
-/// highest end, floor at the lowest, narrowest radius - and the
-/// through verdict follows the DEEPEST member (a through hole
-/// counterbored short is still a through hole).
-fn merge_found(found: Vec<Found>) -> Vec<Found> {
-    let mut merged: Vec<Found> = Vec::new();
-    let mut used = vec![false; found.len()];
-    for i in 0..found.len() {
-        if used[i] {
-            continue;
-        }
-        used[i] = true;
-        let mut f = found[i];
-        loop {
-            let mut grew = false;
-            for j in 0..found.len() {
-                if !used[j] && hypot(f.cu - found[j].cu, f.cv - found[j].cv) <= MERGE_DXY {
-                    used[j] = true;
-                    let deeper = found[j].smin < f.smin;
-                    let through = if deeper { found[j].through } else { f.through };
-                    f = Found {
-                        cu: f.cu.min(found[j].cu),
-                        cv: f.cv.min(found[j].cv),
-                        rad: f.rad.min(found[j].rad),
-                        smin: f.smin.min(found[j].smin),
-                        smax: f.smax.max(found[j].smax),
-                        through,
-                    };
-                    grew = true;
-                }
-            }
-            if !grew {
-                break;
-            }
-        }
-        merged.push(f);
-    }
-    merged
 }

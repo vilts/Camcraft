@@ -54,6 +54,7 @@ fn drill(radius: f64, entry: f64, floor: f64, r: f64) -> OpParams {
         plunge_feed: 80.0,
         holes: vec![hole],
         cross: vec![],
+        picks: Default::default(),
     }
 }
 
@@ -177,6 +178,7 @@ fn a_turned_boring_op_ahead_of_a_lathe_axial_drill_is_not_credited() {
         bottom_z: Height::fixed(10.5),
         feed: 120.0,
         plunge_feed: 40.0,
+        picks: Default::default(),
     };
     create(&world, &mut h, "Op1", "BAR", "bar", bore);
     generate(&world, &mut h, "Op1").expect("the boring generates");
@@ -214,6 +216,7 @@ fn a_turned_boring_op_ahead_of_a_mill_turn_axial_drill_is_not_credited() {
         bottom_z: Height::fixed(10.5),
         feed: 120.0,
         plunge_feed: 40.0,
+        picks: Default::default(),
     };
     create(&world, &mut h, "Op1", "BAR", "bar", bore);
     generate(&world, &mut h, "Op1").expect("the boring generates");

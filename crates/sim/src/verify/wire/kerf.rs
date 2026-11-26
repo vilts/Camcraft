@@ -19,6 +19,10 @@ pub(crate) struct Wire {
     pub(super) pts: Vec<Point2>,
     pub(super) lean: Vec<[f64; 2]>,
     z0: f64,
+    /// Per segment `i` (`pts[i]` to `pts[i + 1]`): the move it belongs to
+    /// (1-based) and how far the recorded curve may stand off it - 0 for
+    /// a straight move, the chord's sagitta for a piece of an arc (#3937).
+    pub(super) seg: Vec<(usize, f64)>,
 }
 
 impl Wire {
@@ -31,7 +35,21 @@ impl Wire {
     /// The wire through its first `n` points (#539: a tabbed cut's main
     /// cut, judged before its cut-off); `None` past the path's end.
     pub(super) fn prefix(&self, n: usize) -> Option<Wire> {
-        Some(Wire { pts: self.pts.get(..n)?.to_vec(), lean: self.lean.get(..n)?.to_vec(), z0: self.z0 })
+        if self.has_arcs() {
+            return None;
+        }
+        let seg = self.seg.get(..n.saturating_sub(1))?.to_vec();
+        Some(Wire { pts: self.pts.get(..n)?.to_vec(), lean: self.lean.get(..n)?.to_vec(), z0: self.z0, seg })
+    }
+
+    /// Whether any move is an arc, read as chords.
+    pub(super) fn has_arcs(&self) -> bool {
+        self.seg.iter().any(|s| s.1 > 0.0) || self.seg.iter().enumerate().any(|(i, s)| s.0 != i + 1)
+    }
+
+    /// Segment `i`'s move (1-based) and the most its curve stands off it.
+    pub(super) fn seg(&self, i: usize) -> (usize, f64) {
+        self.seg.get(i).copied().unwrap_or((i + 1, 0.0))
     }
 }
 
@@ -68,7 +86,7 @@ impl Reading {
     pub(super) fn close(self, z: f64) -> (Option<WireFinding>, Option<WireUnder>) {
         let (moves, tol, deepest) = (self.moves, self.tol, self.deepest);
         (
-            self.first.map(|(move_no, at, depth)| WireFinding::Gouge { move_no, z, at, depth, moves, tol, deepest }),
+            self.first.map(|(move_no, at, depth)| WireFinding::Gouge { move_no, z, at, depth, moves, tol, deepest, chord: false }),
             self.under.map(|(depth, at)| WireUnder { depth, z, at }),
         )
     }
@@ -82,8 +100,9 @@ pub(super) fn gouge_at(p: &Product<'_>, wire: &Wire, k: f64, z: f64, tol: f64) -
     let pts = wire.at(z);
     let mut read = Reading::new(tol);
     for (i, w) in pts.windows(2).enumerate() {
-        let (d, at) = dist::clearance(p, w[0], w[1]);
-        read.take(i + 1, d, reach(k, w[0], w[1], wire.lean.get(i).copied(), wire.lean.get(i + 1).copied(), at), at);
+        let (d, at) = dist::entry(p, w[0], w[1]);
+        let (n, sag) = wire.seg(i);
+        read.take(n, d - sag, reach(k, w[0], w[1], wire.lean.get(i).copied(), wire.lean.get(i + 1).copied(), at), at);
     }
     read.close(z)
 }
@@ -109,9 +128,11 @@ pub(super) fn reach(k: f64, a: Point2, b: Point2, ta: Option<[f64; 2]>, tb: Opti
     k * tu.mul_add(tu, 1.0).sqrt()
 }
 
-/// The path as the laws read it: straight moves on one plane, chained.
-/// A pose is read as the wire's lean only when the cut states a taper;
-/// a wire leaning past 89 degrees is no wire.
+/// The path as the laws read it: moves on one plane, chained - straight
+/// moves as they stand, the arcs of a vertical cut as chords (`arcs`,
+/// #3937). A pose is read as the wire's lean only when the cut states a
+/// taper; a wire leaning past 89 degrees is no wire; an arc under a
+/// stated taper is a cone, which the laws do not read.
 pub(super) fn polyline(path: &Toolpath, taper: bool) -> Result<Wire, String> {
     let Some(m0) = path.moves.first() else {
         return Err("the path has no moves".into());
@@ -128,10 +149,11 @@ pub(super) fn polyline(path: &Toolpath, taper: bool) -> Result<Wire, String> {
     };
     let mut pts = vec![Point2::new(m0.from.x, m0.from.y)];
     let mut lean = vec![[0.0; 2]];
+    let mut seg = Vec::with_capacity(path.moves.len());
     for (i, m) in path.moves.iter().enumerate() {
         let n = i + 1;
-        if m.arc.is_some() {
-            return Err(format!("move {n} is an arc - the wire laws read straight moves only"));
+        if m.arc.is_some() && (taper || m.axis.is_some()) {
+            return Err(format!("move {n} is an arc on a leaning wire - the wire laws read a cone's arc as no move; cut the taper with straight moves"));
         }
         let finite = [m.from.x, m.from.y, m.from.z, m.to.x, m.to.y, m.to.z].iter().all(|c| c.is_finite());
         if !finite || (m.from.z - m0.from.z).abs() > 1e-9 || (m.to.z - m0.from.z).abs() > 1e-9 {
@@ -141,8 +163,18 @@ pub(super) fn polyline(path: &Toolpath, taper: bool) -> Result<Wire, String> {
         if pts.last().is_some_and(|l| dist::pp(*l, from) > 1e-6) {
             return Err(format!("move {n} does not start where the move before it ended"));
         }
+        if m.arc.is_some() {
+            let cs = super::arcs::chords(m).ok_or_else(|| format!("move {n} is an arc the wire laws cannot read (not a flat XY circle)"))?;
+            for (q, sag) in cs {
+                pts.push(q);
+                lean.push([0.0; 2]);
+                seg.push((n, sag));
+            }
+            continue;
+        }
         pts.push(Point2::new(m.to.x, m.to.y));
         lean.push(lean_of(n, m.axis)?);
+        seg.push((n, 0.0));
     }
-    Ok(Wire { pts, lean, z0: m0.from.z })
+    Ok(Wire { pts, lean, z0: m0.from.z, seg })
 }

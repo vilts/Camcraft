@@ -206,6 +206,7 @@ fn the_pocket3d_consumers_read_both_engines_alike() {
     // M11.4: the rings are `OffsetRings` (Adaptive is the HSM plan per level).
     for strategy in [PocketStrategy::Zigzag, PocketStrategy::OffsetRings] {
         let p = Pocket3DParams {
+            pass_start: Default::default(),
             tool_diameter: 8.0,
             stepover: 3.0,
             stock_to_leave: 0.0,

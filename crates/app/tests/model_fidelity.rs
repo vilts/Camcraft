@@ -27,8 +27,8 @@ use flecs_ecs::prelude::World;
 use serde_json::{json, Value};
 
 const MILL: &str = "EM-1000-4FL";
-/// A chord error that leaves a positive tolerance (excess 0.007 of 0.01),
-/// and one that leaves none.
+/// A chord error that leaves a positive tolerance (past DEV_TOL, so #2996
+/// takes only the promised 0.005 of 0.01), and one that leaves none.
 const TIGHT: f64 = 0.012;
 const TOO_COARSE: f64 = 0.03;
 
@@ -52,7 +52,8 @@ fn face() -> OpParams {
         feed: 1200.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
+        picks: Default::default(),
     }
 }
 
@@ -98,6 +99,7 @@ fn an_over_budget_step_import_is_flagged_and_one_that_fits_is_not() {
     assert_eq!(model_fidelity::excess_of(&world, "full"), 0.0);
 
     let coarse = step::with_facet_budget(2_000, || ImportModel::new(&path)).expect("imports at reduced fidelity");
+    assert!(!coarse.file_tolerance, "a facet budget cannot opt in to the wider law");
     let chord = coarse.coarse_mm.expect("the kept mesh's own chord error rides the command");
     assert!(chord > step::CHORD_CAP && chord.is_finite(), "{chord}");
     h.execute(&world, coarse.renamed("coarse"));
@@ -136,26 +138,32 @@ fn the_round_trip_of_a_unit_scaled_cap_is_not_a_reduced_fidelity_flag() {
     assert_eq!(step::coarse(step::CHORD_CAP), None);
     assert_eq!(step::coarse((step::CHORD_CAP / 25.4) * 25.4), None);
     assert_eq!(step::coarse(step::CHORD_CAP * (1.0 + 1e-12)), None);
-    assert_eq!(step::coarse(0.01), Some(0.01), "a metre file stopped at the kernel's 0.01 mm floor");
+    assert_eq!(step::coarse(0.01), Some(0.01), "a chord twice the promise is flagged");
+    // The old metre-file pin's excess floor (restored, #917): a model
+    // flagged at 0.01 mm still leaves a 0.005 mm verdict tolerance.
+    let left = camcraft_app::verify::excess_floor(DEV_TOL, model_fidelity::excess(0.01)).expect("a tolerance is left");
+    assert!((left - 0.005).abs() < 1e-9, "{left}");
     assert_eq!(step::coarse(f64::NAN), None);
 }
 
 #[test]
-fn an_inch_step_is_full_fidelity_and_a_metre_step_is_flagged_at_the_kernels_floor() {
+fn an_inch_step_and_a_metre_step_are_full_fidelity_by_measure() {
     let model = |n: &str| std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../testdata/models").join(n);
     // The inch twin of the fixture meets the promise: no flag (#839's cap
     // is unit-correct, and the unit round trip is not an excess).
     let inch = ImportModel::new(&model("Milling-test-inch.step")).expect("the inch part imports");
     assert_eq!(inch.coarse_mm, None);
-    // A metre file stops at the kernel's least tolerance, 1e-5 m: 0.01 mm,
-    // twice the promise. Before #864 that was a log line; now it is the
-    // same flag an over-budget model gets - with a tolerance left, so its
-    // verdicts are tightened, not refused.
+    // A metre file has no floor of its own since #917 (the old reader
+    // stopped at 1e-5 m, 0.01 mm, and was flagged): the kernel meshes it in
+    // millimetres at the cap, and its measured deviation proves it.
     let metre = ImportModel::new(&model("sample_ap214.step")).expect("the metre sample imports");
-    let chord = metre.coarse_mm.expect("flagged");
-    assert!((chord - 0.01).abs() < 1e-9, "{chord}");
-    let left = camcraft_app::verify::excess_floor(DEV_TOL, model_fidelity::excess(chord)).expect("a tolerance is left");
-    assert!((left - 0.005).abs() < 1e-9, "{left}");
+    assert_eq!(metre.coarse_mm, None, "a metre file meets the promise");
+    // The measured deviation at the cap is pinned where the reader lives:
+    // camcraft-geometry tests/step_metre_unit.rs (#2904 review).
+    let bytes = std::fs::read(model("sample_ap214.step")).expect("read");
+    let (mesh, chord) = step::parse_with_chord(&bytes).expect("the metre sample meshes");
+    assert_eq!(chord, step::CHORD_CAP, "meshed at the cap, not coarser");
+    assert_eq!(mesh.facets.len(), metre.mesh.facets.len(), "the same mesh the import landed");
 }
 
 #[test]
@@ -207,6 +215,7 @@ fn the_program_verdict_tightens_by_the_excess_while_a_tolerance_is_left() {
     // Reduced fidelity with a tolerance left: an exactly finished flat
     // face still posts clean - and the same 0.006 mm is now convicted.
     let tight = faced_brick(Some(TIGHT));
+    // The missing cause record keeps the original budget-model law.
     let tol = model_fidelity::verdict_tol(&tight).expect("a positive tolerance is left");
     assert!((tol - (DEV_TOL - (TIGHT - step::CHORD_CAP))).abs() < 1e-12 && tol > 0.0, "{tol}");
     let e = model::find_by_name(&tight, "OP").expect("op");
@@ -223,7 +232,7 @@ fn the_program_verdict_tightens_by_the_excess_while_a_tolerance_is_left() {
 fn a_model_too_coarse_to_verify_is_refused_by_name_with_no_gouge_verdict() {
     let world = faced_brick(Some(TOO_COARSE));
     assert!(model_fidelity::verdict_tol(&world).is_err());
-    let refusal = "OP: model 'brick' was imported too coarsely to verify; re-import with a larger STEP facet budget (surfaces are approximated to within 0.030 mm)";
+    let refusal = "OP: model 'brick' was imported too coarsely to verify; re-import with a larger STEP facet budget, or export the file again with a tighter tolerance (surfaces are approximated to within 0.030 mm)";
     // The exactly finished flat face: refused by name, not called a gouge.
     let report = posting::verification_report(&world);
     assert_eq!(report.problems, vec![refusal.to_string()], "{:?}", report.problems);
@@ -267,7 +276,7 @@ fn a_kind_whose_laws_do_not_read_the_excess_is_refused_on_any_reduced_model() {
     assert_eq!(op(None), None);
     let why = op(Some(TIGHT)).expect("refused");
     assert!(why.starts_with("CH: model 'brick' was imported at reduced fidelity (surfaces are approximated to within 0.012 mm)"), "{why}");
-    assert!(why.ends_with("re-import with a larger STEP facet budget"), "{why}");
+    assert!(why.ends_with("re-import with a larger STEP facet budget, or export the file again with a tighter tolerance"), "{why}");
 }
 
 #[test]
@@ -326,6 +335,11 @@ fn mcp_reports_a_reduced_fidelity_import_and_says_nothing_of_a_normal_one() {
     let note = facts["note"].as_str().expect("a sentence");
     assert!(note.starts_with("Reduced fidelity: surfaces are approximated to within "), "{note}");
     assert!(!note.contains("chord") && !note.contains("sagitta"), "plain words: {note}");
+    // #2976: the document does not record the cause, so both remedies.
+    assert!(
+        note.ends_with("Re-import with a larger STEP facet budget, or export the file again with a tighter tolerance, to clear this."),
+        "{note}"
+    );
 
     // The model read tool carries the same facts, on that model only.
     let job = c.ok("get_job", json!({}));

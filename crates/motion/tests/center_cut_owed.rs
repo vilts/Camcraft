@@ -49,6 +49,7 @@ fn box_facets() -> Vec<Triangle> {
 
 fn fparams(pattern: FinishPattern) -> Finish3DParams {
     Finish3DParams {
+        gap_link: camcraft_motion::finishing3d::GapLink::Jump,
         pattern,
         stepover: None,
         tool_diameter: 6.0,
@@ -66,6 +67,7 @@ fn fparams(pattern: FinishPattern) -> Finish3DParams {
         entry_ramp: false,
         steep_stepover: None,
         pencil_reference: None,
+        waterlines: true,
     }
 }
 
@@ -134,7 +136,7 @@ fn face_p(top_z: Option<f64>) -> FaceParams {
         feed: 1000.0,
         plunge_feed: 300.0,
         climb: true,
-        blend_turns: false,
+        blend_turns: false, blend_radius: None,
         stock_top: None,
     }
 }
@@ -241,6 +243,9 @@ fn tool(kind: ToolKind, center_cutting: bool) -> Tool {
         cutting: Vec::new(),
         outline: Vec::new(),
         turning: None,
+        tip_form: Default::default(),
+        tip_diameter: 0.0,
+        form: None,
     }
 }
 

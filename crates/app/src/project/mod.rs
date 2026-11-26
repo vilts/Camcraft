@@ -1,4 +1,4 @@
-//! Project save/load: `.camproj`, JSON, version 69 (see `PROJECT_VERSION`).
+//! Project save/load for the `.camproj` JSON format. See [`PROJECT_VERSION`].
 //!
 //! Serialization goes through plain DTO structs (deliberately not flecs
 //! reflection): the file format is our public persistence contract and must
@@ -111,14 +111,32 @@ mod file;
 pub use file::*;
 mod params;
 pub use params::*;
+mod pass_start_dto;
+pub use pass_start_dto::PassStartDto;
+mod path_picks_dto;
+pub use path_picks_dto::{migrate_legacy_patch, PathPickDto, PathPicksDto};
 mod entity;
+// #2463: a linked model's source file and its digest.
+mod source_dto;
+pub use source_dto::SourceDto;
+// #1339: who vouched for a mesh of unknown fidelity.
+mod vouch_dto;
+pub use vouch_dto::VouchDto;
 mod vise_dto;
 mod fixture_keys;
 mod plate_dto;
 mod modvise_dto;
 pub use vise_dto::ViseDto;
 mod thread_dto;
+// #3469: the part-off's kept piece and back stock.
+mod part_kerf_dto;
+pub use part_kerf_dto::PartKeptDto;
 mod break_dto;
+mod unreachable_dto;
+use unreachable_dto::UnreachableDto;
+// #1890: the Deburr break sizing's file words and the v75 chord step.
+mod deburr_break_dto;
+use deburr_break_dto::{break_dto, break_of, default_break_depth, default_passes, BreakModeDto, BreakProfileDto};
 pub use break_dto::EdgeBreakDto;
 // #416: the threading infeed plan's file mirror.
 mod thread_infeed_dto;
@@ -136,6 +154,9 @@ mod plasma_dto;
 mod cutting_rows_dto;
 pub use cutting_rows_dto::{CuttingRowDto, MaterialWord, StockMaterialWord};
 pub use plasma_dto::*;
+// #1883: the waterjet profile's file mirror.
+mod waterjet_dto;
+pub use waterjet_dto::*;
 mod wire_edm_dto;
 pub use wire_edm_dto::*;
 // #541: the sinker burn's file mirror.
@@ -143,6 +164,15 @@ mod sinker_dto;
 pub use sinker_dto::*;
 mod trochoid_dto;
 pub use trochoid_dto::*;
+// #1444: the Slot Undercut's file mirror.
+mod undercut_dto;
+pub use undercut_dto::*;
+// #1894: the Multi-Axis Deburr's file mirror.
+mod multiaxis_deburr_dto;
+pub use multiaxis_deburr_dto::*;
+// #1862: a DXF profile's row.
+mod sketch_dto;
+pub use sketch_dto::{PrimitiveDto, SketchDto};
 mod rest_dto;
 pub use rest_dto::*;
 mod approach;
@@ -152,6 +182,12 @@ pub use links::*;
 pub use entity::*;
 mod wire;
 pub use wire::*;
+// #3609: a project open read-only refuses a save over its own file.
+mod read_only;
+pub use read_only::refuse_read_only_save;
+// #3608: the project file's size and modification time, for the overwrite guard of a save.
+mod disk_stamp;
+pub use disk_stamp::DiskStamp;
 mod json;
 pub use json::*;
 mod apply;
@@ -179,7 +215,7 @@ pub use setup_options_dto::SetupPostOptionsDto;
 mod setup_links;
 // #368: a tool's modelled body on file (v57).
 mod tool_body_wire;
-pub use tool_body_wire::ToolBodyDto;
+pub use tool_body_wire::{body_to_dto, stated_body, HolderRefDto, ToolBodyDto};
 // #155: Pause / Home entries of the operation list.
 mod program_entry_dto;
 pub use program_entry_dto::ProgramEntryDto;

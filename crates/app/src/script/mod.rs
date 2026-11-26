@@ -28,8 +28,14 @@
 
 pub(crate) mod api;
 mod call;
+// #1862: `cam.importDxf` and the profile view.
+pub(crate) mod dxf;
+// #2679, #2891: `cam.insertText`.
+pub(crate) mod text;
 pub use api::refusal_text;
 mod report;
+// #3608: the overwrite guard of `cam.save` and `save_project`.
+mod save_guard;
 #[cfg(test)]
 mod step_source_tests;
 
@@ -71,6 +77,14 @@ pub(crate) struct Env {
     /// The document file a `cam.load` opened, or a `cam.save` wrote to
     /// - what a bare `cam.save()` means the way the app's Ctrl+S does.
     pub doc_path: Option<PathBuf>,
+    /// `doc_path` is open read-only (`open_project` with `read_only`,
+    /// or a window started with `--read-only` on the live seam, #3609): a
+    /// save to it is refused, and a save to another file ends it.
+    pub doc_read_only: bool,
+    /// The disk stamp of `doc_path` when `cam.load` read it or `cam.save`
+    /// wrote it (#3608): a save over that file is refused when another
+    /// program changed it since, unless the call says `overwrite`.
+    pub doc_stamp: Option<crate::project::DiskStamp>,
     pub posted: Option<PathBuf>,
     /// The last verb result, parked for the shapes the host cannot
     /// pull (`cam.result()`, and the non-string read of a parked
@@ -86,10 +100,13 @@ pub(crate) struct Env {
 /// header does not name, nor a header line the runtime does not back.
 pub(crate) const VERBS: &[Verb] = &[
     Verb::new("load", 1, api::v_load, "load(path: string): DocumentInfo"),
-    Verb::new("save", -1, api::v_save, "save(path?: string): { path: string }"),
-    Verb::new("import", -1, api::v_import, "import(path: string, name?: string | null, facetBudget?: number): { model: string; facets: number; facet_budget?: number; notes?: string[] }"),
-    Verb::new("exportTools", 1, api::v_export_tools, "exportTools(path: string): { path: string; tools: number }"),
-    Verb::new("importTools", -1, api::v_import_tools, "importTools(path: string, mode?: \"add\" | \"update\" | \"replace\", holders?: boolean): { path: string; mode: string; added: string[]; renamed: { from: string; to: string }[]; skipped: string[]; updated: string[]; replaced: string[]; removed: string[]; holders: number; holders_left_out: number; summary: string }"),
+    Verb::new("save", -1, api::v_save, "save(path?: string | null, options?: { overwrite?: boolean }): { path: string }"),
+    Verb::new("import", -1, api::v_import, "import(path: string, name?: string | null, facetBudget?: number | null, units?: \"mm\" | \"in\"): { model: string; facets: number; facet_budget?: number; notes?: string[] }"),
+    Verb::new("importDxf", -1, dxf::v_import_dxf, "importDxf(path: string, options?: { setup?: string; units?: \"mm\" | \"in\"; join_tol?: number; name?: string }): DxfProfile"),
+    Verb::new("importSvg", -1, dxf::v_import_svg, "importSvg(path: string, options?: { setup?: string; units?: \"mm\" | \"in\"; join_tol?: number; name?: string }): DxfProfile"),
+    Verb::new("insertText", -1, text::v_insert_text, "insertText(text: string, options: { height: number; position?: [number, number]; angle?: number; letter_spacing?: number; setup?: string; name?: string }): TextProfile"),
+    Verb::new("exportTools", -1, api::v_export_tools, "exportTools(path: string, format?: \"auto\" | \"camtools\" | \"pathpilot\" | \"hurco\", units?: \"mm\" | \"inch\"): { path: string; tools: number; format: string }"),
+    Verb::new("importTools", -1, api::v_import_tools, "importTools(path: string, mode?: \"add\" | \"update\" | \"replace\", holders?: boolean, format?: \"auto\" | \"camtools\" | \"pathpilot\" | \"hurco\", units?: \"mm\" | \"inch\"): { path: string; format: string; mode: string; added: string[]; renamed: { from: string; to: string }[]; skipped: string[]; updated: string[]; replaced: string[]; removed: string[]; holders: number; holders_left_out: number; summary: string }"),
     Verb::new("operations", 0, api::v_operations, "operations(): OperationInfo[]"),
     Verb::new("generate", -1, api::v_generate, "generate(...names: string[]): OperationInfo[]"),
     Verb::new("verify", -1, api::v_verify, "verify(...names: string[]): VerifyReport"),
@@ -122,6 +139,8 @@ impl Env {
             logs: Vec::new(),
             errors: Vec::new(),
             doc_path: None,
+            doc_read_only: false,
+            doc_stamp: None,
             posted: None,
             last_value: Value::Null,
             selection: None,
@@ -329,6 +348,34 @@ interface OperationInfo {
   warnings?: string[];
 }
 
+/** A DXF profile placed on the stock of a setup (not a model). */
+interface DxfProfile {
+  profile: string;
+  /** null for the implicit first setup. */
+  setup: string | null;
+  /** stated: the file's own unit (null: none stated); used: the unit the drawing was read in. */
+  units: { stated: string | null; used: string; from: "file" | "caller"; mm_per_unit: number };
+  layers: string[];
+  primitives: number;
+  join_tol: number;
+  chains: { closed: number; open: number; rejected: number };
+  /** Skipped DXF entities, counted by kind (TEXT, DIMENSION, ...). */
+  skipped: { [kind: string]: number };
+  skipped_total: number;
+  bounds: { min: number[]; max: number[] } | null;
+  /** On the top face of the setup's stock, from the stock origin: mm and degrees. */
+  placement: { x: number; y: number; angle: number };
+  origin: number[] | null;
+  rotation: number[] | null;
+  summary?: string;
+}
+
+/** A text engraving profile placed on the stock of a setup. */
+interface TextProfile extends DxfProfile {
+  text: string;
+  height: number;
+}
+
 interface DocumentInfo {
   path: string;
   operations: OperationInfo[];
@@ -349,7 +396,7 @@ interface PostOptions {
   /** The .nc (or .cnc) file to write. Required. */
   to: string;
   /** A built-in post name - "Fanuc", "Haas", "Siemens 840D",
-   *  "Heidenhain", "Mazak", "Tormach PathPilot", "grblHAL", "TinyG" - or the
+   *  "Heidenhain", "Mazak", "Tormach PathPilot", "grblHAL", "TinyG", "LinuxCNC" - or the
    *  path of a .cps file.
    *  Omitted means the document's own post. */
   cps?: string;

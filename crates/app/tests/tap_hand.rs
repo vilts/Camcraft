@@ -90,6 +90,7 @@ fn job_on_machine(hand: Option<&str>, cycle: CycleChoice, lathe: bool) -> (World
             xy: Point2::new(0.0, 0.0), radius: 3.05, entry_z: 10.0, floor_z: 2.0,
             through: false, stepped: false,
         }], cross: Vec::new(),
+        picks: Default::default(),
     };
     h.execute(&world, CreateOperation::new(&world, "Tap1", "Tap", SrcRef::Entity("puck".into()), params).expect("tap op"));
     h.execute(&world, GenerateOperation::new(&world, "Tap1").expect("generate"));

@@ -188,3 +188,31 @@ fn project_roundtrips_non_rtcp_trunnion_and_protects_version() {
     assert_eq!(props["rotaries"][1]["zeroOffset"], json!(45.0));
     assert_eq!(props["rotaries"][1]["rollover"], json!(true));
 }
+
+#[test]
+fn a_v66_trunnion_steps_up_without_losing_its_stated_rtcp_and_kinematics() {
+    let expected = machine::parse_mch(&valid_trunnion_json().to_string()).expect("trunnion parses");
+    let source = new_world();
+    machine::set(&source, "trunnion.mch", Some(&expected));
+    let mut file: serde_json::Value =
+        serde_json::from_str(&project::save_text(&source).unwrap()).unwrap();
+    file["version"] = json!(66);
+    assert_eq!(file["machine"]["machine"]["controller_rtcp"], json!(false));
+
+    let loaded = new_world();
+    project::open(&loaded, &file.to_string()).expect("v66 trunnion loads");
+    assert_eq!(machine::of(&loaded).1.as_ref(), Some(&expected));
+    let saved = project::save_text(&loaded).expect("save migrated trunnion");
+    let actual: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    file["version"] = json!(project::PROJECT_VERSION);
+    assert_eq!(actual, file, "only the format version changes; all stated trunnion fields survive");
+
+    let reloaded = new_world();
+    project::open(&reloaded, &saved).expect("current-format trunnion reloads");
+    let (_, back) = machine::of(&reloaded);
+    let back = back.expect("reloaded machine");
+    assert_eq!(back, expected, "RTCP, chain, pivots, offsets, zeros, rollover and convention survive");
+    let props = post_machine::script_props(&post_machine::mirror(&back));
+    assert_eq!(props["rtcp"], json!(false), "explicit controller refusal survives into post properties");
+    assert_eq!(project::save_text(&reloaded).unwrap(), saved, "migrated file is byte-stable");
+}

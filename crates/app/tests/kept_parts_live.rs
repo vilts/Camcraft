@@ -69,7 +69,7 @@ fn job(models: Vec<(&str, Mesh)>, turned: bool) -> (World, History) {
 /// A Trace round its source's outline, 0.3 mm deep.
 fn trace() -> OpParams {
     let (clearance_z, top_z, bottom_z) = (Height::fixed(25.0), Height::fixed(TOP), Height::fixed(7.7));
-    OpParams::Trace { clearance_z, retract_z: None, top_z, bottom_z, stepdown: 10.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None }
+    OpParams::Trace { clearance_z, retract_z: None, top_z, bottom_z, stepdown: 10.0, feed: 800.0, plunge_feed: 200.0, climb: true, tilt: None, picks: Default::default() }
 }
 
 /// A 10 mm Slot along X from -6 to 6 at y 0, from the top to the pocket floor.
@@ -90,10 +90,11 @@ fn slot() -> OpParams {
         plunge_feed: 200.0,
         climb: true,
         entry: Entry3D::Plunge,
-        helix_radius: 1.0,
+        helix_radius: 1.0, blend_turns: false, blend_radius: None,
         tilt: None,
         extend_start: 0.0,
         extend_end: 0.0,
+        picks: Default::default(),
     }
 }
 
